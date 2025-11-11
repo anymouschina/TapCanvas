@@ -35,6 +35,12 @@ type RFState = {
   endRunToken: (id: string) => void
   cancelNode: (id: string) => void
   isCanceled: (id: string) => boolean
+  cancelAll: () => void
+  retryFailed: () => void
+  deleteNode: (id: string) => void
+  deleteEdge: (id: string) => void
+  duplicateNode: (id: string) => void
+  pasteFromClipboardAt: (pos: { x: number; y: number }) => void
 }
 
 function genId(prefix: string, n: number) {
@@ -198,6 +204,70 @@ export const useRFStore = create<RFState>((set, get) => ({
     const future = s.historyFuture.slice(1)
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
+  }),
+  cancelAll: () => set((s) => ({
+    nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, canceled: true } }))
+  })),
+  retryFailed: () => set((s) => ({
+    nodes: s.nodes.map((n) => {
+      const st = (n.data as any)?.status
+      if (st === 'error' || st === 'canceled') {
+        const { logs, lastError, progress, status, ...rest } = (n.data as any) || {}
+        return { ...n, data: { ...rest, status: 'idle', progress: 0 } }
+      }
+      return n
+    })
+  })),
+  deleteNode: (id) => set((s) => ({
+    nodes: s.nodes.filter(n => n.id !== id),
+    edges: s.edges.filter(e => e.source !== id && e.target !== id),
+    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+    historyFuture: [],
+  })),
+  deleteEdge: (id) => set((s) => ({
+    edges: s.edges.filter(e => e.id !== id),
+    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+    historyFuture: [],
+  })),
+  duplicateNode: (id) => set((s) => {
+    const n = s.nodes.find(n => n.id === id)
+    if (!n) return {}
+    const newId = genId('n', s.nextId)
+    const dup: Node = {
+      ...n,
+      id: newId,
+      position: { x: n.position.x + 24, y: n.position.y + 24 },
+      selected: false,
+    }
+    return { nodes: [...s.nodes, dup], nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
+  }),
+  pasteFromClipboardAt: (pos) => set((s) => {
+    if (!s.clipboard || !s.clipboard.nodes.length) return {}
+    const minX = Math.min(...s.clipboard.nodes.map(n => n.position.x))
+    const minY = Math.min(...s.clipboard.nodes.map(n => n.position.y))
+    const shift = { x: pos.x - minX, y: pos.y - minY }
+    const idMap = new Map<string, string>()
+    const baseNext = s.nextId
+    let counter = 0
+    const newNodes: Node[] = s.clipboard.nodes.map((n) => {
+      const newId = genId('n', baseNext + counter++)
+      idMap.set(n.id, newId)
+      return { ...n, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } }
+    })
+    const newEdges: Edge[] = s.clipboard.edges.map((e) => ({
+      ...e,
+      id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
+      source: idMap.get(e.source) || e.source,
+      target: idMap.get(e.target) || e.target,
+      selected: false,
+    }))
+    return {
+      nodes: [...s.nodes, ...newNodes],
+      edges: [...s.edges, ...newEdges],
+      nextId: baseNext + counter,
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
   }),
 }))
 

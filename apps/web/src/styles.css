@@ -44,3 +44,21 @@ body {
 
 .toolbar button { margin-right: 8px; }
 
+/* Connecting highlight: dim all handles when connecting, highlight compatible ones */
+[data-connecting-active="true"] .react-flow__handle {
+  opacity: 0.25;
+}
+[data-connecting-active="true"][data-connecting="image"] .react-flow__handle[data-handle-type="image"] {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(59,130,246,.6);
+}
+[data-connecting-active="true"][data-connecting="audio"] .react-flow__handle[data-handle-type="audio"] {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(16,185,129,.6);
+}
+[data-connecting-active="true"][data-connecting="subtitle"] .react-flow__handle[data-handle-type="subtitle"] {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(234,179,8,.6);
+}
+[data-connecting-active="true"] .react-flow__edge-path { opacity: 0.6 }
+.react-flow__edge:hover .react-flow__edge-path { filter: drop-shadow(0 0 6px rgba(59,130,246,.5)); }

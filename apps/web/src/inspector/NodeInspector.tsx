@@ -18,6 +18,7 @@ export default function NodeInspector(): JSX.Element {
 
   const selected = useMemo(() => nodes.find((n) => n.selected), [nodes])
   const logs = (selected?.data as any)?.logs as string[] | undefined
+  const result = (selected?.data as any)?.lastResult as any
 
   const kind = (selected?.data as any)?.kind as string | undefined
 
@@ -158,6 +159,19 @@ export default function NodeInspector(): JSX.Element {
         }}>
           {(logs && logs.length) ? logs.map((l, i) => (<div key={i}>{l}</div>)) : <div style={{ opacity: .6 }}>暂无日志</div>}
         </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <h3 style={{ margin: '8px 0 8px', fontSize: 14 }}>预览</h3>
+        {result?.preview?.type === 'image' && result.preview.src && (
+          <img src={result.preview.src} alt={String((selected.data as any)?.label || '')} style={{ width: '100%', borderRadius: 8, border: '1px solid rgba(127,127,127,.25)' }} />
+        )}
+        {result?.preview?.type === 'audio' && (
+          <div style={{ fontSize: 12, opacity: .7 }}>（音频占位，暂未生成音频数据）</div>
+        )}
+        {!result?.preview && (
+          <div style={{ fontSize: 12, opacity: .6 }}>暂无预览</div>
+        )}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactFlow, {
   Background,
   Controls,
@@ -7,19 +7,36 @@ import ReactFlow, {
   NodeTypes,
   ConnectionLineType,
   ReactFlowProvider,
+  EdgeTypes,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 
 import TaskNode from './nodes/TaskNode'
 import { persistToLocalStorage, restoreFromLocalStorage, useRFStore } from './store'
+import { toast } from '../ui/toast'
+import { applyTemplateAt } from '../templates'
+import TypedEdge from './edges/TypedEdge'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
 }
 
+const edgeTypes: EdgeTypes = {
+  typed: TypedEdge,
+}
+
 function CanvasInner(): JSX.Element {
   const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore()
+  const deleteNode = useRFStore(s => s.deleteNode)
+  const deleteEdge = useRFStore(s => s.deleteEdge)
+  const duplicateNode = useRFStore(s => s.duplicateNode)
+  const pasteFromClipboardAt = useRFStore(s => s.pasteFromClipboardAt)
+  const runSelected = useRFStore(s => s.runSelected)
+  const cancelNode = useRFStore(s => s.cancelNode)
   const rf = useReactFlow()
+  const [connectingType, setConnectingType] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
+  const [guides, setGuides] = useState<{ vx?: number; hy?: number } | null>(null)
 
   useEffect(() => {
     // initial load
@@ -43,21 +60,27 @@ function CanvasInner(): JSX.Element {
 
   const onDrop = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
-    const txt = evt.dataTransfer.getData('application/reactflow')
-    if (!txt) return
-    const data = JSON.parse(txt) as { type: string; label?: string; kind?: string }
+    const tplName = evt.dataTransfer.getData('application/tap-template')
+    const rfdata = evt.dataTransfer.getData('application/reactflow')
     const pos = rf.screenToFlowPosition({ x: evt.clientX, y: evt.clientY })
-    // create node via store but place at computed position
-    useRFStore.setState((s) => {
-      const id = `n${s.nextId}`
-      const node = {
-        id,
-        type: data.type as any,
-        position: pos,
-        data: { label: data.label ?? data.type, kind: data.kind },
-      }
-      return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
-    })
+    if (tplName) {
+      applyTemplateAt(tplName, pos)
+      return
+    }
+    if (rfdata) {
+      const data = JSON.parse(rfdata) as { type: string; label?: string; kind?: string }
+      // create node via store but place at computed position
+      useRFStore.setState((s) => {
+        const id = `n${s.nextId}`
+        const node = {
+          id,
+          type: data.type as any,
+          position: pos,
+          data: { label: data.label ?? data.type, kind: data.kind },
+        }
+        return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
+      })
+    }
   }, [rf])
 
   const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
@@ -96,15 +119,120 @@ function CanvasInner(): JSX.Element {
     return false
   }, [nodes, edges])
 
+  const onConnectStart = useCallback((_evt: any, params: { nodeId?: string|null; handleId?: string|null; handleType?: 'source'|'target' }) => {
+    const h = params.handleId || ''
+    // if source handle like out-image -> type=image
+    if (params.handleType === 'source' && h.startsWith('out-')) {
+      setConnectingType(h.slice(4))
+    } else if (params.handleType === 'target' && h.startsWith('in-')) {
+      setConnectingType(h.slice(3))
+    } else {
+      setConnectingType(null)
+    }
+  }, [])
+
+  const onConnectStop = useCallback((_evt: any) => {
+    // user released on invalid target
+    if (connectingType) {
+      toast(lastReason.current || '连接无效：类型不兼容、重复或形成环', 'error')
+    }
+    setConnectingType(null)
+    lastReason.current = null
+  }, [connectingType])
+
+  const onConnectEnd = useCallback((_evt: any) => {
+    setConnectingType(null)
+  }, [])
+
+  const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
+    evt.preventDefault()
+    setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'canvas' })
+  }, [])
+
+  const onNodeContextMenu = useCallback((evt: React.MouseEvent, node: any) => {
+    evt.preventDefault()
+    setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'node', id: node.id })
+  }, [])
+
+  const onEdgeContextMenu = useCallback((evt: React.MouseEvent, edge: any) => {
+    evt.preventDefault()
+    setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'edge', id: edge.id })
+  }, [])
+
+  const viewport = rf.getViewport?.() || { x: 0, y: 0, zoom: 1 }
+  const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * viewport.zoom + viewport.x, y: p.y * viewport.zoom + viewport.y }), [viewport.x, viewport.y, viewport.zoom])
+
+  const onNodeDrag = useCallback((_evt: any, node: any) => {
+    // simple align guides to other nodes centers
+    const threshold = 5
+    let vx: number | undefined
+    let hy: number | undefined
+    for (const n of nodes) {
+      if (n.id === node.id) continue
+      if (Math.abs(n.position.x - node.position.x) <= threshold) vx = n.position.x
+      if (Math.abs(n.position.y - node.position.y) <= threshold) hy = n.position.y
+    }
+    setGuides({ vx, hy })
+  }, [nodes])
+
+  const onNodeDragStop = useCallback(() => {
+    setGuides(null)
+  }, [])
+
+  const handleNodesChange = useCallback((changes: any[]) => {
+    const threshold = 6
+    const xs = nodes.map(n => n.position.x)
+    const ys = nodes.map(n => n.position.y)
+    const snapped = changes.map((ch) => {
+      if (ch.type === 'position' && ch.position) {
+        // try snap x
+        let sx = ch.position.x
+        let sy = ch.position.y
+        let foundX = false
+        let foundY = false
+        for (const x of xs) { if (Math.abs(x - sx) <= threshold) { sx = x; foundX = true; break } }
+        for (const y of ys) { if (Math.abs(y - sy) <= threshold) { sy = y; foundY = true; break } }
+        return { ...ch, position: { x: sx, y: sy } }
+      }
+      return ch
+    })
+    onNodesChange(snapped)
+  }, [nodes, onNodesChange])
+
+  const lastReason = React.useRef<string | null>(null)
+
+  const handleConnect = useCallback((c: any) => {
+    lastReason.current = null
+    onConnect(c)
+  }, [onConnect])
+
+  const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
+
   return (
-    <div style={{ height: '100%', width: '100%' }} onDrop={onDrop} onDragOver={onDragOver}>
+    <div
+      style={{ height: '100%', width: '100%', position: 'relative' }}
+      data-connecting={connectingType || ''}
+      data-connecting-active={connectingType ? 'true' : 'false'}
+      onMouseMove={(e) => { if (connectingType) setMouse({ x: e.clientX, y: e.clientY }) }}
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        onConnect={handleConnect}
+        onConnectStart={onConnectStart}
+        onConnectStop={onConnectStop}
+        onConnectEnd={onConnectEnd}
+        onPaneContextMenu={onPaneContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         onInit={onInit}
         selectionOnDrag
@@ -115,16 +243,28 @@ function CanvasInner(): JSX.Element {
         isValidConnection={(c) => {
           if (!c.source || !c.target) return false
           if (c.source === c.target) return false
-          if (createsCycle({ source: c.source, target: c.target })) return false
+          if (createsCycle({ source: c.source, target: c.target })) { lastReason.current = '连接会导致环'; return false }
           const dup = edges.some(e => e.source === c.source && e.target === c.target)
-          if (dup) return false
-          const sKind = nodes.find(n => n.id === c.source)?.data?.kind as string | undefined
-          const tKind = nodes.find(n => n.id === c.target)?.data?.kind as string | undefined
-          return isValidEdgeByType(sKind, tKind)
+          if (dup) { lastReason.current = '重复连接'; return false }
+          const sNode = nodes.find(n => n.id === c.source)
+          const tNode = nodes.find(n => n.id === c.target)
+          const sKind = sNode?.data?.kind as string | undefined
+          const tKind = tNode?.data?.kind as string | undefined
+          // handle type matching
+          const sHandle = c.sourceHandle || ''
+          const tHandle = c.targetHandle || ''
+          if (sHandle && tHandle) {
+            const sType = sHandle.toString().startsWith('out-') ? sHandle.toString().slice(4) : undefined
+            const tType = tHandle.toString().startsWith('in-') ? tHandle.toString().slice(3) : undefined
+            if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) { lastReason.current = `类型不兼容：${sType} → ${tType}`; return false }
+          }
+          const ok = isValidEdgeByType(sKind, tKind)
+          if (!ok) lastReason.current = '不允许的连接方向'
+          return ok
         }}
         snapToGrid
         snapGrid={[16, 16]}
-        defaultEdgeOptions={{ animated: true, type: 'smoothstep' }}
+        defaultEdgeOptions={{ animated: true, type: 'typed' }}
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 2 }}
       >
@@ -132,6 +272,41 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-right" />
         <Background gap={16} size={1} />
       </ReactFlow>
+      {guides?.vx !== undefined && (
+        <div style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
+      )}
+      {guides?.hy !== undefined && (
+        <div style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
+      )}
+      {menu?.show && (
+        <div style={{ position: 'fixed', left: menu.x, top: menu.y, background: 'white', color: 'inherit', border: '1px solid rgba(127,127,127,.25)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.12)', zIndex: 60 }} onMouseLeave={() => setMenu(null)}>
+          {menu.type === 'canvas' && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { pasteFromClipboardAt(rf.screenToFlowPosition({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</button>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { useRFStore.getState().addNode('taskNode', '文本转图像', { kind: 'textToImage' }); setMenu(null) }}>新建 文本转图像</button>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { useRFStore.getState().addNode('taskNode', '视频合成', { kind: 'composeVideo' }); setMenu(null) }}>新建 视频合成</button>
+            </div>
+          )}
+          {menu.type === 'node' && menu.id && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</button>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</button>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { runSelected(); setMenu(null) }}>运行该节点</button>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</button>
+            </div>
+          )}
+          {menu.type === 'edge' && menu.id && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</button>
+            </div>
+          )}
+        </div>
+      )}
+      {connectingType && (
+        <div style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,.1)' }}>
+          连接类型: {connectingType}，拖到兼容端口
+        </div>
+      )}
     </div>
   )
 }

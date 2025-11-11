@@ -4,6 +4,8 @@ import { useRFStore } from './canvas/store'
 import './styles.css'
 import KeyboardShortcuts from './KeyboardShortcuts'
 import NodeInspector from './inspector/NodeInspector'
+import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNames, saveTemplate, renameTemplate } from './templates'
+import { ToastHost } from './ui/toast'
 
 export default function App(): JSX.Element {
   const addNode = useRFStore((s) => s.addNode)
@@ -14,6 +16,8 @@ export default function App(): JSX.Element {
   const runAll = useRFStore((s) => s.runAll)
   const runDag = useRFStore((s) => s.runDag)
   const [concurrency, setConcurrency] = useState(2)
+  const cancelAll = useRFStore((s) => s.cancelAll)
+  const retryFailed = useRFStore((s) => s.retryFailed)
 
   return (
     <div className="app-shell" style={{ fontFamily: 'system-ui, sans-serif', gridTemplateColumns: '260px 1fr 280px' }}>
@@ -66,6 +70,8 @@ export default function App(): JSX.Element {
               style={{ width: 56, marginLeft: 4, padding: '4px 6px', borderRadius: 6, border: '1px solid rgba(127,127,127,.3)' }}
             />
             <button onClick={() => runDag(concurrency)} style={{ marginLeft: 6 }}>运行流程(DAG)</button>
+            <button onClick={() => cancelAll()} style={{ marginLeft: 6 }}>全部停止</button>
+            <button onClick={() => retryFailed()} style={{ marginLeft: 6 }}>重试失败</button>
             <span style={{ fontSize: 12, opacity: .7, marginLeft: 8 }}>React Flow + TypeScript</span>
           </div>
         </div>
@@ -105,8 +111,48 @@ export default function App(): JSX.Element {
             input.click()
           }} style={{ marginTop: 8 }}>导入 JSON</button>
         </div>
+        <div style={{ marginTop: 16 }}>
+          <h2 style={{ margin: '8px 0 12px', fontSize: 16 }}>模板</h2>
+          <button onClick={() => {
+            const data = captureCurrentSelection()
+            if (!data) { alert('请先选择要保存为模板的节点'); return }
+            const name = prompt('模板名称：')?.trim()
+            if (!name) return
+            saveTemplate(name, data)
+            // force re-render by triggering state update
+            setConcurrency(c => c)
+          }}>保存所选为模板</button>
+
+          <div style={{ marginTop: 8 }}>
+            {listTemplateNames().length === 0 && (
+              <div style={{ fontSize: 12, opacity: .6 }}>暂无模板</div>
+            )}
+            {listTemplateNames().map(n => (
+              <div key={n} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, opacity: .85 }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/tap-template', n)
+                  }}
+                  title="拖拽到画布以插入"
+                >{n}</span>
+                <span>
+                  <button onClick={() => applyTemplate(n)}>插入</button>
+                  <button onClick={() => {
+                    const next = prompt('重命名为：', n)?.trim()
+                    if (!next || next === n) return
+                    renameTemplate(n, next)
+                    setConcurrency(c => c)
+                  }} style={{ marginLeft: 6 }}>重命名</button>
+                  <button onClick={() => { deleteTemplate(n); setConcurrency(c => c) }} style={{ marginLeft: 6 }}>删除</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </aside>
       <KeyboardShortcuts />
+      <ToastHost />
     </div>
   )
 }
