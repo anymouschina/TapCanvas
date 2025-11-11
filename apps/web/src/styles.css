@@ -1,0 +1,46 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid rgba(127,127,127,.2);
+  padding: 12px;
+  overflow: auto;
+}
+
+.sidebar h2 {
+  margin: 8px 0 12px;
+  font-size: 16px;
+}
+
+.sidebar button {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(127,127,127,.3);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(127,127,127,.2);
+}
+
+.toolbar button { margin-right: 8px; }
+
