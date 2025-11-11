@@ -12,7 +12,10 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "reactflow": "^11.10.4",
-    "zustand": "^4.5.4"
+    "zustand": "^4.5.4",
+    "zod": "^3.23.8",
+    "react-hook-form": "^7.53.0",
+    "@hookform/resolvers": "^3.9.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
