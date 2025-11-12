@@ -69,10 +69,22 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const imageUrl = (data as any)?.imageUrl as string | undefined
   const [hovered, setHovered] = React.useState<number|null>(null)
   const [showMore, setShowMore] = React.useState(false)
+  const moreRef = React.useRef<HTMLDivElement|null>(null)
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
   }, [selected, selectedCount])
+
+  React.useEffect(() => {
+    const onDown = (ev: MouseEvent) => {
+      if (!showMore) return
+      const root = (moreRef.current || document.querySelector('[data-more-root]')) as HTMLElement | null
+      if (root && ev.target instanceof HTMLElement && root.contains(ev.target)) return
+      setShowMore(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [showMore])
 
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
@@ -135,7 +147,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>{data?.label ?? (kind==='image' ? 'Image' : 'Task')}</div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
-        <div style={{ position: 'relative', display: 'inline-block' }}>
+        <div ref={moreRef} style={{ position: 'relative', display: 'inline-block' }} data-more-root>
           <Paper withBorder shadow="sm" radius="xl" className="glass" p={4}>
             <Group gap={6}>
             <ActionIcon key="preview" variant="subtle" title="放大预览" onClick={()=>{
@@ -158,10 +170,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               <Button key={d.key} size="xs" variant="subtle" leftSection={d.icon} onClick={d.onClick}>{d.label}</Button>
             ))}
             {extraDefs.length > 0 && (
-              <ActionIcon variant="subtle" title="更多" onClick={()=>setShowMore(v=>!v)}><IconDots size={16} /></ActionIcon>
+              <ActionIcon variant="subtle" title="更多" onClick={(e)=>{ e.stopPropagation(); setShowMore(v=>!v) }}><IconDots size={16} /></ActionIcon>
             )}
-            </Group>
-          </Paper>
+          </Group>
+        </Paper>
           {showMore && (
             <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 2 }}>
               <Paper withBorder shadow="md" radius="md" className="glass" p="xs" style={{ width: 260 }}>

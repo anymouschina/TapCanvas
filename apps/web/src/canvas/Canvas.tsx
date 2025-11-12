@@ -255,10 +255,13 @@ function CanvasInner(): JSX.Element {
   }, [onConnect])
 
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
+  // MiniMap drag-to-pan
+  const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect }|null>(null)
 
   // Group overlay computation
   const selectedNodes = nodes.filter(n=>n.selected)
   const groupMatch = useRFStore(s => s.findGroupMatchingSelection())
+  const groups = useRFStore(s => s.groups)
   const defaultW = 180, defaultH = 96
   let groupRect: { sx: number; sy: number; w: number; h: number } | null = null
   if (selectedNodes.length > 1) {
@@ -271,6 +274,36 @@ function CanvasInner(): JSX.Element {
     const padding = 8
     groupRect = { sx: tl.x - padding, sy: tl.y - padding, w: (br.x - tl.x) + padding*2, h: (br.y - tl.y) + padding*2 }
   }
+
+  // persistent group outlines
+  const groupOutlines = useMemo(() => {
+    return groups.map(g => {
+      const members = nodes.filter(n => g.nodeIds.includes(n.id))
+      if (members.length < 2) return null
+      const minX = Math.min(...members.map(n => n.position.x))
+      const minY = Math.min(...members.map(n => n.position.y))
+      const maxX = Math.max(...members.map(n => n.position.x + (((n as any).width) || defaultW)))
+      const maxY = Math.max(...members.map(n => n.position.y + (((n as any).height) || defaultH)))
+      const tl = flowToScreen({ x: minX, y: minY })
+      const br = flowToScreen({ x: maxX, y: maxY })
+      const padding = 8
+      return { id: g.id, name: g.name, sx: tl.x - padding, sy: tl.y - padding, w: (br.x - tl.x) + padding*2, h: (br.y - tl.y) + padding*2 }
+    }).filter(Boolean) as { id: string; name?: string; sx:number; sy:number; w:number; h:number }[]
+  }, [groups, nodes, flowToScreen])
+
+  // selection partially overlaps existing groups?
+  const selectionPartialOverlaps = useMemo(() => {
+    if (selectedNodes.length < 2) return false
+    const selSet = new Set(selectedNodes.map(n=>n.id))
+    for (const g of groups) {
+      const interCount = g.nodeIds.filter(id => selSet.has(id)).length
+      if (interCount > 0 && (interCount !== g.nodeIds.length || g.nodeIds.length !== selectedNodes.length)) {
+        return true
+      }
+      if (g.nodeIds.every(id => selSet.has(id)) && g.nodeIds.length < selectedNodes.length) return true
+    }
+    return false
+  }, [groups, selectedNodes])
 
   // Edge highlight when connected to a selected node
   const selectedIds = new Set(selectedNodes.map(n=>n.id))
@@ -376,6 +409,38 @@ function CanvasInner(): JSX.Element {
     e.preventDefault()
   }, [nodes, rf, viewport.zoom])
 
+  const handleRootMouseDown = useCallback((e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
+    if (!el) return
+    minimapDragRef.current = { el, rect: el.getBoundingClientRect() }
+    handleRootClick(e) // center to initial point
+  }, [handleRootClick])
+
+  useEffect(() => {
+    const onMove = (ev: MouseEvent) => {
+      if (!minimapDragRef.current) return
+      const rect = minimapDragRef.current.rect
+      const cx = ev.clientX - rect.left
+      const cy = ev.clientY - rect.top
+      const rx = Math.max(0, Math.min(1, cx / rect.width))
+      const ry = Math.max(0, Math.min(1, cy / rect.height))
+      const defaultW = 180, defaultH = 96
+      if (nodes.length === 0) return
+      const minX = Math.min(...nodes.map(n => n.position.x))
+      const minY = Math.min(...nodes.map(n => n.position.y))
+      const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
+      const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+      const worldX = minX + rx * (maxX - minX)
+      const worldY = minY + ry * (maxY - minY)
+      const z = viewport.zoom || 1
+      rf.setCenter?.(worldX, worldY, { zoom: z, duration: 0 })
+    }
+    const onUp = () => { minimapDragRef.current = null }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [nodes, rf, viewport.zoom])
+
   return (
     <div
       style={{ height: '100%', width: '100%', position: 'relative' }}
@@ -386,6 +451,7 @@ function CanvasInner(): JSX.Element {
       onDrop={onDrop}
       onDragOver={onDragOver}
       onClick={handleRootClick}
+      onMouseDown={handleRootMouseDown}
     >
       <ReactFlow
         nodes={nodes}
@@ -448,6 +514,25 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
+      {/* Persistent group outlines */}
+      {groupOutlines.map(g => (
+        <div
+          key={g.id}
+          style={{ position: 'absolute', left: g.sx, top: g.sy, width: g.w, height: g.h, borderRadius: 12, border: '1px dashed rgba(148,163,184,0.35)', background: 'transparent', cursor: 'pointer' }}
+          onMouseDown={(e)=>{ e.stopPropagation(); e.preventDefault() }}
+          onClick={(e)=>{
+            e.stopPropagation();
+            // select this group's members
+            const ids = new Set((groups.find(x=>x.id===g.id)?.nodeIds) || [])
+            useRFStore.setState(s => ({
+              nodes: s.nodes.map(n => ({ ...n, selected: ids.has(n.id) })),
+              edges: s.edges.map(e => ({ ...e, selected: false }))
+            }))
+          }}
+        >
+          <div style={{ position: 'absolute', left: 8, top: -18, fontSize: 11, color: '#94a3b8', background: 'rgba(15,16,20,.8)', padding: '1px 6px', borderRadius: 999, border: '1px solid rgba(148,163,184,0.35)' }}>{g.name || '组'}</div>
+        </div>
+      ))}
       {groupRect && (
         <>
           <div onMouseDown={startGroupDrag} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy, width: groupRect.w, height: groupRect.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)', cursor: 'move' }} />
@@ -466,11 +551,16 @@ function CanvasInner(): JSX.Element {
                 const { saveAsset } = require('../assets/registry') as any
                 saveAsset({ name, nodes: sel, edges: es })
               }}>创建资产</Button>
-              <Button size="xs" variant="subtle" onClick={()=>{
-                // 直接打组：不弹框，使用默认或现有名称
-                useRFStore.getState().addGroupForSelection(groupMatch?.name)
-              }}>打组</Button>
-              <Button size="xs" variant="subtle" color="red" onClick={()=>{ if (groupMatch) useRFStore.getState().removeGroupById(groupMatch.id) }}>解组</Button>
+              {!groupMatch && !selectionPartialOverlaps && (
+                <Button size="xs" variant="subtle" onClick={()=>{
+                  // 直接打组：不弹框，使用默认或现有名称，并自动整理布局避免重叠
+                  useRFStore.getState().addGroupForSelection(undefined)
+                  layoutGrid()
+                }}>打组</Button>
+              )}
+              {groupMatch && (
+                <Button size="xs" variant="subtle" color="red" onClick={()=>{ useRFStore.getState().removeGroupById(groupMatch.id) }}>解组</Button>
+              )}
             </Group>
           </Paper>
         </>
