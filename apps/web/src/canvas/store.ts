@@ -52,6 +52,7 @@ type RFState = {
   addGroupForSelection: (name?: string) => void
   removeGroupById: (id: string) => void
   findGroupMatchingSelection: () => GroupRec | null
+  renameGroup: (id: string, name: string) => void
 }
 
 function genId(prefix: string, n: number) {
@@ -301,7 +302,19 @@ export const useRFStore = create<RFState>((set, get) => ({
   addGroupForSelection: (name) => set((s) => {
     const selected = s.nodes.filter(n => n.selected).map(n => n.id)
     if (selected.length < 2) return {}
-    const exists = s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selected.includes(id)))
+    // block partial overlaps: if any group intersects but is not exactly equal, do nothing
+    const selSet = new Set(selected)
+    for (const g of s.groups) {
+      const interCount = g.nodeIds.filter(id => selSet.has(id)).length
+      if (interCount > 0 && (interCount !== g.nodeIds.length || g.nodeIds.length !== selected.length)) {
+        return {}
+      }
+      // also prevent grouping if selection is a superset of a group's nodes
+      if (g.nodeIds.every(id => selSet.has(id)) && g.nodeIds.length < selected.length) {
+        return {}
+      }
+    }
+    const exists = s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selSet.has(id)))
     if (exists) return {}
     const id = `g${s.nextGroupId}`
     const rec: GroupRec = { id, name: name || '新建组', nodeIds: selected }
@@ -314,6 +327,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (selected.length < 2) return null
     return s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selected.includes(id))) || null
   },
+  renameGroup: (id, name) => set((s) => ({ groups: s.groups.map(g => g.id === id ? { ...g, name } : g) })),
 }))
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {
