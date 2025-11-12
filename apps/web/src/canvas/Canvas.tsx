@@ -204,7 +204,7 @@ function CanvasInner(): JSX.Element {
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'edge', id: edge.id })
   }, [])
 
-  const viewport = rf.getViewport?.() || { x: 0, y: 0, zoom: 1 }
+  const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>(() => rf.getViewport?.() || { x: 0, y: 0, zoom: 1 })
   const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * viewport.zoom + viewport.x, y: p.y * viewport.zoom + viewport.y }), [viewport.x, viewport.y, viewport.zoom])
   const screenToFlow = useCallback((p: { x: number; y: number }) => rf.screenToFlowPosition ? rf.screenToFlowPosition(p) : p, [rf])
 
@@ -405,6 +405,7 @@ function CanvasInner(): JSX.Element {
         onPaneMouseDown={onPaneMouseDown}
         onPaneMouseMove={onPaneMouseMove}
         onPaneMouseUp={onPaneMouseUp}
+        onMove={(_evt, vp) => setViewport(vp)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
