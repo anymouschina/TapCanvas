@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
   Background,
   Controls,
@@ -39,6 +39,9 @@ function CanvasInner(): JSX.Element {
   const [connectingType, setConnectingType] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
   const [guides, setGuides] = useState<{ vx?: number; hy?: number } | null>(null)
+  const [longSelect, setLongSelect] = useState(false)
+  const downPos = useRef<{x:number;y:number}|null>(null)
+  const timerRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     // initial load
@@ -158,6 +161,33 @@ function CanvasInner(): JSX.Element {
     setConnectingType(null)
   }, [])
 
+  const onPaneMouseDown = useCallback((evt: React.MouseEvent) => {
+    if (evt.button !== 0) return
+    downPos.current = { x: evt.clientX, y: evt.clientY }
+    timerRef.current = window.setTimeout(() => {
+      setLongSelect(true)
+    }, 250)
+  }, [])
+
+  const onPaneMouseMove = useCallback((evt: React.MouseEvent) => {
+    if (!downPos.current || !timerRef.current) return
+    const dx = Math.abs(evt.clientX - downPos.current.x)
+    const dy = Math.abs(evt.clientY - downPos.current.y)
+    if (dx > 4 || dy > 4) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = undefined
+    }
+  }, [])
+
+  const onPaneMouseUp = useCallback(() => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = undefined
+    }
+    setLongSelect(false)
+    downPos.current = null
+  }, [])
+
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
     evt.preventDefault()
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'canvas' })
@@ -245,11 +275,14 @@ function CanvasInner(): JSX.Element {
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
+        onPaneMouseDown={onPaneMouseDown}
+        onPaneMouseMove={onPaneMouseMove}
+        onPaneMouseUp={onPaneMouseUp}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
         onInit={onInit}
-        selectionOnDrag
+        selectionOnDrag={longSelect}
         panOnScroll
         zoomOnPinch
         zoomOnScroll
