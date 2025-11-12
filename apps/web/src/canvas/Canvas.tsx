@@ -103,10 +103,10 @@ function CanvasInner(): JSX.Element {
 
   const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
     if (!sourceKind || !targetKind) return true
-    // Allowed: textToImage -> composeVideo; tts -> composeVideo; subtitleAlign -> composeVideo
-    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo'].includes(sourceKind)
-    // composeVideo cannot feed others in this mock
-    return false
+    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image'].includes(sourceKind)
+    if (targetKind === 'image') return ['image','textToImage'].includes(sourceKind)
+    if (targetKind === 'video') return ['image','composeVideo'].includes(sourceKind)
+    return true
   }, [])
 
   const createsCycle = useCallback((proposed: { source?: string|null; target?: string|null }) => {

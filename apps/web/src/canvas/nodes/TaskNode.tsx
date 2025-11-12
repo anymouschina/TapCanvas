@@ -4,7 +4,7 @@ import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text } from '@mantine/core'
-import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments } from '@tabler/icons-react'
+import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight } from '@tabler/icons-react'
 
 type Data = {
   label: string
@@ -31,6 +31,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     targets.push({ id: 'in-audio', type: 'audio', pos: Position.Left })
     targets.push({ id: 'in-subtitle', type: 'subtitle', pos: Position.Left })
     sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
+  } else if (kind === 'image') {
+    targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
+    sources.push({ id: 'out-image', type: 'image', pos: Position.Right })
+  } else if (kind === 'video') {
+    targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
+    sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
   } else if (kind === 'subflow') {
     const io = (data as any)?.io as { inputs?: { id: string; type: string; label?: string }[]; outputs?: { id: string; type: string; label?: string }[] } | undefined
     if (io?.inputs?.length) io.inputs.forEach((p, idx) => targets.push({ id: `in-${p.type}`, type: p.type, pos: Position.Left }))
@@ -53,18 +59,42 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openParamFor = useUIStore(s => s.openParamFor)
   const runSelected = useRFStore(s => s.runSelected)
   const updateNodeData = useRFStore(s => s.updateNodeData)
+  const addNode = useRFStore(s => s.addNode)
+  const addEdge = useRFStore(s => s.onConnect)
   const [prompt, setPrompt] = React.useState<string>((data as any)?.prompt || '')
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const selectedCount = useRFStore(s => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
+  const fileRef = React.useRef<HTMLInputElement|null>(null)
+  const imageUrl = (data as any)?.imageUrl as string | undefined
+  const [hovered, setHovered] = React.useState<number|null>(null)
 
+  const connectToRight = (targetKind: string, targetLabel: string) => {
+    // create a node to the right and connect
+    const all = useRFStore.getState().nodes
+    const self = all.find(n => n.id === id)
+    if (!self) return
+    const pos = { x: self.position.x + 260, y: self.position.y }
+    const before = useRFStore.getState().nextId
+    addNode('taskNode', targetLabel, { kind: targetKind })
+    const after = useRFStore.getState().nextId
+    const newId = `n${after-1}`
+    useRFStore.setState(s => ({ nodes: s.nodes.map(n => n.id === newId ? { ...n, position: pos } : n) }))
+    // best-effort connection
+    addEdge({ source: id, target: newId, sourceHandle: 'out-image', targetHandle: targetKind==='video' ? 'in-image' : 'in-image' } as any)
+  }
+
+  const fixedWidth = kind === 'image' ? 320 : undefined
   return (
     <div style={{
       border: '1px solid rgba(127,127,127,.35)',
       borderRadius: 12,
       padding: '10px 12px',
-      background: 'rgba(127,127,127,.08)'
+      background: 'rgba(127,127,127,.08)',
+      width: fixedWidth
     }}>
+      {/* Title */}
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>{data?.label ?? (kind==='image' ? 'Image' : 'Task')}</div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Top} align="center">
         <Paper withBorder shadow="sm" radius="xl" className="glass" p={4}>
@@ -90,45 +120,69 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           title={`输入: ${h.type}`}
         />
       ))}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {!editing ? (
-          <strong
-            onDoubleClick={() => {
-              if (kind === 'subflow') openSubflow(id)
-              else setEditing(true)
-            }}
-            title="双击重命名"
-            style={{ cursor: 'text' }}
-          >{data?.label ?? 'Task'}</strong>
-        ) : (
-          <input
-            autoFocus
-            defaultValue={data?.label ?? ''}
-            onBlur={(e) => { updateNodeLabel(id, e.currentTarget.value); setEditing(false) }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { updateNodeLabel(id, (e.target as HTMLInputElement).value); setEditing(false) }
-              if (e.key === 'Escape') { setEditing(false) }
-            }}
-            style={{ fontWeight: 700, fontSize: '1em', background: 'transparent', border: '1px solid rgba(127,127,127,.35)', borderRadius: 6, padding: '2px 6px' }}
-          />
-        )}
-        <span style={{
-          fontSize: 11,
-          color,
-          border: `1px solid ${color}`,
-          padding: '1px 6px',
-          borderRadius: 999,
-          background: 'transparent'
-        }}>{status}</span>
-      </div>
-      <div style={{ fontSize: 12, opacity: .8 }}>{data?.kind ?? '节点'}</div>
-      {sources.length > 0 && (
-        <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {sources.map(s => (
-            <span key={s.id} style={{ fontSize: 10, opacity: .7, border: '1px solid rgba(127,127,127,.35)', borderRadius: 999, padding: '1px 6px' }}>{s.type}</span>
-          ))}
+      {/* Content Area for Image/Video kinds */}
+      {kind === 'image' && (
+        <div style={{ position: 'relative', marginTop: 6 }}>
+          {!imageUrl ? (
+            <div style={{ width: 296, height: 180, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
+              {[
+                { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
+                { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
+                { label: '首帧图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
+              ].map((row, idx) => {
+                const active = hovered === idx
+                const dimOthers = hovered !== null && hovered !== idx
+                return (
+                  <div key={row.label}
+                    onMouseEnter={()=>setHovered(idx)}
+                    onClick={row.onClick}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '10px 10px', borderRadius: 6,
+                      background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                      transition: 'background .12s ease, opacity .12s ease',
+                      opacity: dimOthers ? 0.8 : 1,
+                    }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ color: active ? '#ffffff' : '#cbd5e1' }}>{row.icon}</div>
+                      <div style={{ flex: 1, color: '#e5e7eb', fontSize: 13 }}>{row.label}</div>
+                      <div style={{ color: active ? '#ffffff' : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
+                        <IconArrowRight size={14} />
+                      </div>
+                    </div>
+                    {active && idx === 0 && (
+                      <div style={{ marginLeft: 36, marginTop: 4, color: '#9ca3af', fontSize: 11 }}>
+                        图片大小不能超过30MB
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
+                const f = e.currentTarget.files?.[0]
+                if (!f) return
+                const url = URL.createObjectURL(f)
+                updateNodeData(id, { imageUrl: url })
+              }} />
+            </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <img src={imageUrl} alt="uploaded" style={{ width: 296, maxWidth: '100%', height: 'auto', borderRadius: 10, display: 'block', border: '1px solid rgba(127,127,127,.35)' }} />
+              <ActionIcon size={28} variant="light" style={{ position: 'absolute', right: 8, top: 8 }} title="替换图片" onClick={()=>fileRef.current?.click()}>
+                <IconUpload size={14} />
+              </ActionIcon>
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
+                const f = e.currentTarget.files?.[0]
+                if (!f) return
+                const url = URL.createObjectURL(f)
+                updateNodeData(id, { imageUrl: url })
+              }} />
+            </div>
+          )}
         </div>
       )}
+      {/* remove bottom kind text for all nodes */}
+      {/* Removed bottom tag list; top-left label identifies node type */}
       {status === 'running' && (
         <div style={{ marginTop: 6, height: 6, background: 'rgba(127,127,127,.25)', borderRadius: 4 }}>
           <div style={{ width: `${Math.min(100, Math.max(0, data?.progress ?? 0))}%`, height: '100%', background: color, borderRadius: 4 }} />

@@ -23,8 +23,8 @@ export default function AddNodePanel(): JSX.Element | null {
         <Title order={6} mb={8}>添加节点</Title>
         <Stack gap={8}>
           <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode','文本',{kind:'textToImage'}); setActivePanel(null) }}>文本</Button>
+          <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode','Image',{kind:'image'}); setActivePanel(null) }}>Image</Button>
           <Group grow>
-            <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode','图片',{kind:'textToImage'}); setActivePanel(null) }}>图片</Button>
             <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode','视频',{kind:'composeVideo'}); setActivePanel(null) }}>视频</Button>
           </Group>
           <Group grow>
