@@ -4,7 +4,7 @@ import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text } from '@mantine/core'
-import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight } from '@tabler/icons-react'
+import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight, IconScissors, IconPhotoEdit } from '@tabler/icons-react'
 
 type Data = {
   label: string
@@ -75,12 +75,22 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [selected, selectedCount])
 
   // Define node-specific tools and overflow calculation
-  const uniqueDefs = React.useMemo(() => ([
-    { key: 'extend', label: '扩图/重绘', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
-    { key: 'inpaint', label: '局部重绘', icon: <IconBrush size={16} />, onClick: () => {} },
-    { key: 'upscale', label: '高清增强', icon: <IconPhotoUp size={16} />, onClick: () => {} },
-    { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
-  ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]), [id, openParamFor])
+  const uniqueDefs = React.useMemo(() => {
+    if (kind === 'image') {
+      return [
+        { key: 'extend', label: '扩图', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
+        { key: 'cutout', label: '抠图', icon: <IconScissors size={16} />, onClick: () => {} },
+        { key: 'upscale', label: 'HD 增强', icon: <IconPhotoUp size={16} />, onClick: () => {} },
+        { key: 'inpaint', label: '局部重绘', icon: <IconBrush size={16} />, onClick: () => {} },
+        { key: 'editor', label: '图片编辑器', icon: <IconPhotoEdit size={16} />, onClick: () => {} },
+      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+    }
+    // default tools for other node kinds (kept minimal)
+    return [
+      { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
+      { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
+    ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+  }, [id, kind, openParamFor])
 
   const maxTools = 5
   const commonLen = 2

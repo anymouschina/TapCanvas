@@ -353,6 +353,29 @@ function CanvasInner(): JSX.Element {
     }))
   }
 
+  const handleRootClick = useCallback((e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+    const rx = Math.max(0, Math.min(1, cx / rect.width))
+    const ry = Math.max(0, Math.min(1, cy / rect.height))
+    // compute world bounds from nodes
+    const defaultW = 180, defaultH = 96
+    if (nodes.length === 0) return
+    const minX = Math.min(...nodes.map(n => n.position.x))
+    const minY = Math.min(...nodes.map(n => n.position.y))
+    const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
+    const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+    const worldX = minX + rx * (maxX - minX)
+    const worldY = minY + ry * (maxY - minY)
+    const z = viewport.zoom || 1
+    rf.setCenter?.(worldX, worldY, { zoom: z, duration: 200 })
+    e.stopPropagation()
+    e.preventDefault()
+  }, [nodes, rf, viewport.zoom])
+
   return (
     <div
       style={{ height: '100%', width: '100%', position: 'relative' }}
@@ -362,6 +385,7 @@ function CanvasInner(): JSX.Element {
       onMouseMove={(e) => { if (connectingType) setMouse({ x: e.clientX, y: e.clientY }) }}
       onDrop={onDrop}
       onDragOver={onDragOver}
+      onClick={handleRootClick}
     >
       <ReactFlow
         nodes={nodes}
@@ -419,7 +443,7 @@ function CanvasInner(): JSX.Element {
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 3 }}
       >
-        <MiniMap />
+        <MiniMap width={160} height={110} />
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
