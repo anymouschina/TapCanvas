@@ -7,6 +7,9 @@ export default function KeyboardShortcuts() {
   const pasteFromClipboard = useRFStore((s) => s.pasteFromClipboard)
   const undo = useRFStore((s) => s.undo)
   const redo = useRFStore((s) => s.redo)
+  const selectAll = useRFStore((s) => s.selectAll)
+  const clearSelection = useRFStore((s) => s.clearSelection)
+  const invertSelection = useRFStore((s) => s.invertSelection)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -40,6 +43,16 @@ export default function KeyboardShortcuts() {
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault()
         persistToLocalStorage()
+      }
+      // Select All / Invert / Clear
+      if (mod && e.key.toLowerCase() === 'a' && !e.shiftKey) {
+        e.preventDefault(); selectAll()
+      }
+      if (mod && e.key.toLowerCase() === 'a' && e.shiftKey) {
+        e.preventDefault(); invertSelection()
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault(); clearSelection()
       }
     }
     window.addEventListener('keydown', onKey)

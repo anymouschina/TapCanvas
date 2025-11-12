@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { create } from 'zustand'
+import { notifications } from '@mantine/notifications'
 
 type Toast = { id: string; message: string; type?: 'info'|'success'|'error'; ttl?: number }
 
@@ -22,7 +23,13 @@ export const useToastStore = create<ToastState>((set, get) => ({
 }))
 
 export function toast(message: string, type?: 'info'|'success'|'error') {
-  useToastStore.getState().push({ message, type })
+  const color = type === 'error' ? 'red' : type === 'success' ? 'teal' : 'gray'
+  try {
+    notifications.show({ message, color })
+  } catch {
+    // fallback to local store host
+    useToastStore.getState().push({ message, type })
+  }
 }
 
 export function ToastHost(): JSX.Element {
@@ -43,4 +50,3 @@ export function ToastHost(): JSX.Element {
     </div>
   )
 }
-

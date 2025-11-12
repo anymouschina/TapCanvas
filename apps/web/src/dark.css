@@ -1,0 +1,85 @@
+:root[data-mantine-color-scheme="dark"] {
+  --mantine-color-body: #0b0b0d;          /* 主背景 - 近纯黑 */
+  --mantine-color-text: #e5e7eb;          /* 文字 - 略偏白 */
+  --mantine-color-dimmed: #9ca3af;        /* 次级文字 */
+  --mantine-color-default: #0f1014;       /* 组件背景 */
+  --mantine-color-default-hover: #13151c; /* 悬停 */
+  --mantine-color-gray-6: #1f2430;       /* 边框色 */
+  --mantine-color-gray-7: #0f1014;
+}
+
+/* AppShell 区块边框更克制 */
+.mantine-AppShell-header { border-bottom: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
+.mantine-AppShell-navbar { border-right: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
+.mantine-AppShell-aside { border-left: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
+.mantine-AppShell-main { background: var(--mantine-color-body) !important; }
+
+/* 通用按钮低饱和度 */
+button { color: var(--mantine-color-text); }
+
+/* Button 边框弱化（outline / light）*/
+.mantine-Button-root[data-variant="outline"] {
+  border-color: rgba(255,255,255,.14) !important;
+  background: rgba(255,255,255,.02) !important;
+}
+.mantine-Button-root[data-variant="outline"]:hover {
+  border-color: rgba(255,255,255,.20) !important;
+  background: rgba(255,255,255,.04) !important;
+}
+.mantine-Button-root[data-variant="light"] {
+  border-color: rgba(255,255,255,.08) !important;
+  background: rgba(255,255,255,.03) !important;
+}
+.mantine-Button-root[data-variant="light"]:hover {
+  border-color: rgba(255,255,255,.12) !important;
+  background: rgba(255,255,255,.05) !important;
+}
+.mantine-Button-root[data-variant="subtle"] {
+  background: transparent !important;
+}
+
+/* Paper withBorder 边框也更柔和 */
+.mantine-Paper-root[data-with-border] {
+  border-color: rgba(255,255,255,.12) !important;
+}
+
+/* React Flow 细节暗色化与弱化 */
+.react-flow__controls {
+  background: rgba(255,255,255,0.02) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+.react-flow__controls-button {
+  background: transparent !important;
+  border-top: 1px solid rgba(255,255,255,0.08) !important;
+  color: var(--mantine-color-text) !important;
+}
+.react-flow__controls-button:hover { background: rgba(255,255,255,0.06) !important; }
+
+.react-flow__minimap { background: #0f1014 !important; border: 1px solid rgba(255,255,255,0.08) !important; }
+.react-flow__minimap-mask { fill: rgba(255,255,255,0.03) !important; }
+
+/* 选择框与句柄更柔和 */
+.react-flow__selection {
+  background: rgba(59,130,246,0.12) !important;
+  border: 1px solid rgba(59,130,246,0.35) !important;
+}
+.react-flow__handle {
+  width: 8px; height: 8px;
+  background: #1a1d24 !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+}
+.react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
+
+/* 滚动条弱化 */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* 紧凑模式：整体减小控件尺寸与间距 */
+[data-compact="true"] .mantine-Button-root { padding: 4px 8px !important; }
+[data-compact="true"] .mantine-NumberInput-input, 
+[data-compact="true"] .mantine-TextInput-input, 
+[data-compact="true"] textarea { padding: 6px 8px !important; }
+[data-compact="true"] .mantine-Stack-root { gap: 6px !important; }
+[data-compact="true"] .mantine-Group-root { gap: 6px !important; }

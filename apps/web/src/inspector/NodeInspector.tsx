@@ -1,14 +1,9 @@
 import React, { useEffect, useMemo } from 'react'
 import { useRFStore } from '../canvas/store'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import {
-  textToImageSchema,
-  composeVideoSchema,
-  ttsSchema,
-  subtitleAlignSchema,
-  defaultsFor
-} from './forms'
+import { textToImageSchema, composeVideoSchema, ttsSchema, subtitleAlignSchema, defaultsFor } from './forms'
+import { TextInput, Textarea, NumberInput, Select, Button, Title, Divider, Text, Group } from '@mantine/core'
 
 export default function NodeInspector(): JSX.Element {
   const nodes = useRFStore((s) => s.nodes)
@@ -56,22 +51,22 @@ export default function NodeInspector(): JSX.Element {
 
   return (
     <div>
-      <h2 style={{ margin: '8px 0 12px', fontSize: 16 }}>属性</h2>
-      <div style={{ marginBottom: 8, fontSize: 12, opacity: .7 }}>ID: {selected.id}</div>
-      <div style={{ marginBottom: 6, fontSize: 12, opacity: .7 }}>状态：{(selected.data as any)?.status ?? 'idle'}</div>
-      <div style={{ display: 'flex', gap: 8, margin: '4px 0 10px' }}>
-        <button onClick={() => runSelected()}>运行</button>
-        <button onClick={() => cancelNode(selected.id)}>停止</button>
-        <button onClick={() => useRFStore.getState().updateNodeData(selected.id, { logs: [] })}>清空日志</button>
-      </div>
+      <Title order={6} style={{ margin: '2px 0 8px' }}>属性</Title>
+      <Text size="xs" c="dimmed" style={{ marginBottom: 6 }}>ID: {selected.id}</Text>
+      <Text size="xs" c="dimmed" style={{ marginBottom: 8 }}>状态：{(selected.data as any)?.status ?? 'idle'}</Text>
+      <Group gap="xs" style={{ margin: '4px 0 10px' }}>
+        <Button size="xs" onClick={() => runSelected()}>运行</Button>
+        <Button size="xs" variant="light" color="red" onClick={() => cancelNode(selected.id)}>停止</Button>
+        <Button size="xs" variant="subtle" onClick={() => useRFStore.getState().updateNodeData(selected.id, { logs: [] })}>清空日志</Button>
+      </Group>
 
       {kind === 'subflow' && (
-        <div style={{ padding: '10px 10px', border: '1px dashed rgba(127,127,127,.35)', borderRadius: 8, marginBottom: 10 }}>
-          <div style={{ fontSize: 12, opacity: .8, marginBottom: 6 }}>子工作流模式：{subflowRef ? `引用 (${subflowRef})` : '嵌入'}</div>
+        <div style={{ padding: 10, border: '1px dashed rgba(127,127,127,.35)', borderRadius: 8, marginBottom: 10 }}>
+          <Text size="xs" c="dimmed" mb={6}>子工作流模式：{subflowRef ? `引用 (${subflowRef})` : '嵌入'}</Text>
           {!subflowRef && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button onClick={() => useUIStore.getState().openSubflow(selected.id)}>打开子工作流</button>
-              <button onClick={() => {
+            <Group gap="xs" wrap="wrap">
+              <Button size="xs" onClick={() => useUIStore.getState().openSubflow(selected.id)}>打开子工作流</Button>
+              <Button size="xs" variant="subtle" onClick={() => {
                 const flows = require('../flows/registry') as any
                 const list = flows.listFlows?.() || []
                 if (!list.length) { alert('库中暂无工作流'); return }
@@ -81,109 +76,87 @@ export default function NodeInspector(): JSX.Element {
                   const rec = flows.getFlow?.(match.id)
                   useRFStore.getState().updateNodeData(selected.id, { subflowRef: match.id, label: match.name, subflow: undefined, io: rec?.io })
                 }
-              }}>转换为引用</button>
-            </div>
+              }}>转换为引用</Button>
+            </Group>
           )}
           {subflowRef && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button onClick={() => {
+            <Group gap="xs" wrap="wrap">
+              <Button size="xs" variant="subtle" onClick={() => {
                 const flows = require('../flows/registry') as any
                 const rec = flows.getFlow?.(subflowRef)
                 if (!rec) { alert('引用的 Flow 不存在'); return }
                 useRFStore.getState().updateNodeData(selected.id, { subflow: { nodes: rec.nodes, edges: rec.edges }, subflowRef: undefined })
-              }}>解除引用并嵌入副本</button>
-              <button onClick={() => {
+              }}>解除引用并嵌入副本</Button>
+              <Button size="xs" variant="subtle" onClick={() => {
                 const flows = require('../flows/registry') as any
                 const rec = flows.getFlow?.(subflowRef)
                 if (!rec) { alert('Flow 不存在'); return }
                 useRFStore.getState().updateNodeData(selected.id, { io: rec.io })
-              }}>同步 IO</button>
-            </div>
+              }}>同步 IO</Button>
+            </Group>
           )}
         </div>
       )}
-      <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>标题</label>
-      <input
+      <TextInput
+        label="标题"
+        size="sm"
         value={(selected.data as any)?.label ?? ''}
-        onChange={(e) => updateNodeLabel(selected.id, e.target.value)}
-        style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }}
+        onChange={(e) => updateNodeLabel(selected.id, e.currentTarget.value)}
       />
 
       {kind === 'textToImage' && (
         <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>提示词</label>
-          <textarea {...form.register('prompt')} rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-          <div style={{ color: 'tomato', fontSize: 12 }}>{form.formState.errors.prompt?.message as any}</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>Steps</label>
-              <input type="number" {...form.register('steps', { valueAsNumber: true })} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>Seed</label>
-              <input type="number" {...form.register('seed', { valueAsNumber: true })} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-            </div>
-          </div>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, margin: '8px 0 4px' }}>比例</label>
-          <select {...form.register('aspect')} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }}>
-            <option value="16:9">16:9</option>
-            <option value="1:1">1:1</option>
-            <option value="9:16">9:16</option>
-          </select>
-          <button type="submit" style={{ marginTop: 10 }}>应用</button>
+          <Textarea label="提示词" autosize minRows={3} {...form.register('prompt')} error={form.formState.errors.prompt?.message as any} />
+          <Group grow mt={8}>
+            <Controller name="steps" control={form.control} render={({ field }) => (
+              <NumberInput label="Steps" min={1} max={100} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
+            )} />
+            <Controller name="seed" control={form.control} render={({ field }) => (
+              <NumberInput label="Seed" value={field.value ?? ''} onChange={(v)=>field.onChange(v===undefined? undefined : Number(v))} />
+            )} />
+          </Group>
+          <Controller name="aspect" control={form.control} render={({ field }) => (
+            <Select mt={8} label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={field.value} onChange={field.onChange} />
+          )} />
+          <Button type="submit" mt={10}>应用</Button>
         </form>
       )}
 
       {kind === 'composeVideo' && (
         <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>分镜/脚本</label>
-          <textarea {...form.register('storyboard')} rows={4} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-          <div style={{ color: 'tomato', fontSize: 12 }}>{form.formState.errors.storyboard?.message as any}</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>Duration(s)</label>
-              <input type="number" {...form.register('duration', { valueAsNumber: true })} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>FPS</label>
-              <input type="number" {...form.register('fps', { valueAsNumber: true })} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-            </div>
-          </div>
-          <button type="submit" style={{ marginTop: 10 }}>应用</button>
+          <Textarea label="分镜/脚本" autosize minRows={4} {...form.register('storyboard')} error={form.formState.errors.storyboard?.message as any} />
+          <Group grow mt={8}>
+            <Controller name="duration" control={form.control} render={({ field }) => (
+              <NumberInput label="Duration(s)" min={1} max={600} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
+            )} />
+            <Controller name="fps" control={form.control} render={({ field }) => (
+              <NumberInput label="FPS" min={1} max={60} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
+            )} />
+          </Group>
+          <Button type="submit" mt={10}>应用</Button>
         </form>
       )}
 
       {kind === 'tts' && (
         <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>文本</label>
-          <textarea {...form.register('text')} rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-          <div style={{ color: 'tomato', fontSize: 12 }}>{form.formState.errors.text?.message as any}</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>声音</label>
-              <select {...form.register('voice')} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }}>
-                <option value="female">female</option>
-                <option value="male">male</option>
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>速度</label>
-              <input type="number" step="0.1" {...form.register('speed', { valueAsNumber: true })} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-            </div>
-          </div>
-          <button type="submit" style={{ marginTop: 10 }}>应用</button>
+          <Textarea label="文本" autosize minRows={3} {...form.register('text')} error={form.formState.errors.text?.message as any} />
+          <Group grow mt={8}>
+            <Controller name="voice" control={form.control} render={({ field }) => (
+              <Select label="声音" data={[{value:'female',label:'female'},{value:'male',label:'male'}]} value={field.value} onChange={field.onChange} />
+            )} />
+            <Controller name="speed" control={form.control} render={({ field }) => (
+              <NumberInput label="速度" step={0.1} min={0.5} max={1.5} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
+            )} />
+          </Group>
+          <Button type="submit" mt={10}>应用</Button>
         </form>
       )}
 
       {kind === 'subtitleAlign' && (
         <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, marginBottom: 4 }}>音频 URL</label>
-          <input {...form.register('audioUrl')} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-          <div style={{ color: 'tomato', fontSize: 12 }}>{form.formState.errors.audioUrl?.message as any}</div>
-          <label style={{ display: 'block', fontSize: 12, opacity: .8, margin: '8px 0 4px' }}>字幕文本</label>
-          <textarea {...form.register('transcript')} rows={4} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(127,127,127,.3)' }} />
-          <div style={{ color: 'tomato', fontSize: 12 }}>{form.formState.errors.transcript?.message as any}</div>
-          <button type="submit" style={{ marginTop: 10 }}>应用</button>
+          <TextInput label="音频 URL" {...form.register('audioUrl')} error={form.formState.errors.audioUrl?.message as any} />
+          <Textarea mt={8} label="字幕文本" autosize minRows={4} {...form.register('transcript')} error={form.formState.errors.transcript?.message as any} />
+          <Button type="submit" mt={10}>应用</Button>
         </form>
       )}
 
@@ -220,33 +193,24 @@ export default function NodeInspector(): JSX.Element {
         </div>
       )}
 
-      <div style={{ marginTop: 16 }}>
-        <h3 style={{ margin: '8px 0 8px', fontSize: 14 }}>运行日志</h3>
-        <div style={{
-          maxHeight: 160,
-          overflow: 'auto',
-          border: '1px solid rgba(127,127,127,.25)',
-          borderRadius: 8,
-          padding: '8px 10px',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-          fontSize: 12
-        }}>
-          {(logs && logs.length) ? logs.map((l, i) => (<div key={i}>{l}</div>)) : <div style={{ opacity: .6 }}>暂无日志</div>}
-        </div>
+      <Divider my={12} />
+      <Title order={6}>运行日志</Title>
+      <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid rgba(127,127,127,.25)', borderRadius: 8, padding: '8px 10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: 12 }}>
+        {(logs && logs.length) ? logs.map((l, i) => (<div key={i}>{l}</div>)) : <Text size="xs" c="dimmed">暂无日志</Text>}
       </div>
 
-      <div style={{ marginTop: 16 }}>
-        <h3 style={{ margin: '8px 0 8px', fontSize: 14 }}>预览</h3>
+      <Divider my={12} />
+      <Title order={6}>预览</Title>
         {result?.preview?.type === 'image' && result.preview.src && (
           <img src={result.preview.src} alt={String((selected.data as any)?.label || '')} style={{ width: '100%', borderRadius: 8, border: '1px solid rgba(127,127,127,.25)' }} />
         )}
         {result?.preview?.type === 'audio' && (
-          <div style={{ fontSize: 12, opacity: .7 }}>（音频占位，暂未生成音频数据）</div>
+          <Text size="xs" c="dimmed">（音频占位，暂未生成音频数据）</Text>
         )}
         {!result?.preview && (
-          <div style={{ fontSize: 12, opacity: .6 }}>暂无预览</div>
+          <Text size="xs" c="dimmed">暂无预览</Text>
         )}
-      </div>
+      
     </div>
   )
 }

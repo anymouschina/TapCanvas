@@ -8,11 +8,11 @@ import {
 
 function colorFor(t?: string) {
   switch (t) {
-    case 'image': return '#3b82f6' // blue-500
-    case 'audio': return '#10b981' // emerald-500
-    case 'subtitle': return '#f59e0b' // amber-500
-    case 'video': return '#8b5cf6' // violet-500
-    default: return '#9ca3af' // gray-400
+    case 'image': return 'rgba(59,130,246,.7)'
+    case 'audio': return 'rgba(16,185,129,.7)'
+    case 'subtitle': return 'rgba(234,179,8,.7)'
+    case 'video': return 'rgba(139,92,246,.7)'
+    default: return 'rgba(156,163,175,.7)'
   }
 }
 
@@ -37,7 +37,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
 
   return (
     <>
-      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 2 }} />
+      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 2, opacity: 0.9 }} />
       <EdgeLabelRenderer>
         <div style={{
           position: 'absolute',
@@ -45,12 +45,12 @@ export default function TypedEdge(props: EdgeProps<any>) {
           pointerEvents: 'none',
           fontSize: 10,
           color: stroke,
-          background: 'rgba(255,255,255,.75)',
+          background: 'rgba(15,16,20,.8)',
           WebkitBackdropFilter: 'blur(2px)',
           backdropFilter: 'blur(2px)',
           padding: '2px 6px',
           borderRadius: 999,
-          border: `1px solid ${stroke}33`,
+          border: `1px solid ${stroke}`,
         }}>
           {t}
         </div>
@@ -58,4 +58,3 @@ export default function TypedEdge(props: EdgeProps<any>) {
     </>
   )
 }
-

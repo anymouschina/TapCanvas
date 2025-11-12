@@ -15,6 +15,7 @@ import TaskNode from './nodes/TaskNode'
 import { persistToLocalStorage, restoreFromLocalStorage, useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
+import { Paper, Stack, Button, Divider } from '@mantine/core'
 import TypedEdge from './edges/TypedEdge'
 
 const nodeTypes: NodeTypes = {
@@ -282,7 +283,7 @@ function CanvasInner(): JSX.Element {
       >
         <MiniMap />
         <Controls position="bottom-right" />
-        <Background gap={16} size={1} />
+        <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
       {guides?.vx !== undefined && (
         <div style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
@@ -291,28 +292,30 @@ function CanvasInner(): JSX.Element {
         <div style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
       )}
       {menu?.show && (
-        <div style={{ position: 'fixed', left: menu.x, top: menu.y, background: 'white', color: 'inherit', border: '1px solid rgba(127,127,127,.25)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.12)', zIndex: 60 }} onMouseLeave={() => setMenu(null)}>
-          {menu.type === 'canvas' && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { pasteFromClipboardAt(rf.screenToFlowPosition({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</button>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { useRFStore.getState().addNode('taskNode', '文本转图像', { kind: 'textToImage' }); setMenu(null) }}>新建 文本转图像</button>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { useRFStore.getState().addNode('taskNode', '视频合成', { kind: 'composeVideo' }); setMenu(null) }}>新建 视频合成</button>
-            </div>
-          )}
-          {menu.type === 'node' && menu.id && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</button>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</button>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { runSelected(); setMenu(null) }}>运行该节点</button>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</button>
-            </div>
-          )}
-          {menu.type === 'edge' && menu.id && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <button style={{ padding: '8px 12px', textAlign: 'left' }} onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</button>
-            </div>
-          )}
-        </div>
+        <Paper withBorder shadow="md" onMouseLeave={() => setMenu(null)} style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 60, minWidth: 200 }}>
+          <Stack gap={4} p="xs">
+            {menu.type === 'canvas' && (
+              <>
+                <Button variant="subtle" onClick={() => { pasteFromClipboardAt(rf.screenToFlowPosition({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
+                <Divider my={2} />
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '文本转图像', { kind: 'textToImage' }); setMenu(null) }}>新建 文本转图像</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '视频合成', { kind: 'composeVideo' }); setMenu(null) }}>新建 视频合成</Button>
+              </>
+            )}
+            {menu.type === 'node' && menu.id && (
+              <>
+                <Button variant="subtle" onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</Button>
+                <Button variant="subtle" color="red" onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</Button>
+                <Divider my={2} />
+                <Button variant="subtle" onClick={() => { runSelected(); setMenu(null) }}>运行该节点</Button>
+                <Button variant="subtle" onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</Button>
+              </>
+            )}
+            {menu.type === 'edge' && menu.id && (
+              <Button variant="subtle" color="red" onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</Button>
+            )}
+          </Stack>
+        </Paper>
       )}
       {connectingType && (
         <div style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,.1)' }}>
