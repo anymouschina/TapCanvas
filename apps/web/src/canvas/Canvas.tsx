@@ -467,8 +467,8 @@ function CanvasInner(): JSX.Element {
                 saveAsset({ name, nodes: sel, edges: es })
               }}>创建资产</Button>
               <Button size="xs" variant="subtle" onClick={()=>{
-                const name = prompt('组名称：', groupMatch?.name || '新建组')?.trim() || undefined
-                useRFStore.getState().addGroupForSelection(name)
+                // 直接打组：不弹框，使用默认或现有名称
+                useRFStore.getState().addGroupForSelection(groupMatch?.name)
               }}>打组</Button>
               <Button size="xs" variant="subtle" color="red" onClick={()=>{ if (groupMatch) useRFStore.getState().removeGroupById(groupMatch.id) }}>解组</Button>
             </Group>
