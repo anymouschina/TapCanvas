@@ -16,7 +16,7 @@ import TaskNode from './nodes/TaskNode'
 import { persistToLocalStorage, restoreFromLocalStorage, useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
-import { Paper, Stack, Button, Divider } from '@mantine/core'
+import { Paper, Stack, Button, Divider, Group, Text } from '@mantine/core'
 import TypedEdge from './edges/TypedEdge'
 
 const nodeTypes: NodeTypes = {
@@ -42,6 +42,7 @@ function CanvasInner(): JSX.Element {
   const [longSelect, setLongSelect] = useState(false)
   const downPos = useRef<{x:number;y:number}|null>(null)
   const timerRef = useRef<number | undefined>(undefined)
+  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     // initial load
@@ -206,6 +207,7 @@ function CanvasInner(): JSX.Element {
   const viewport = rf.getViewport?.() || { x: 0, y: 0, zoom: 1 }
   const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * viewport.zoom + viewport.x, y: p.y * viewport.zoom + viewport.y }), [viewport.x, viewport.y, viewport.zoom])
 
+  const onNodeDragStart = useCallback(() => setDragging(true), [])
   const onNodeDrag = useCallback((_evt: any, node: any) => {
     // simple align guides to other nodes centers
     const threshold = 5
@@ -221,6 +223,7 @@ function CanvasInner(): JSX.Element {
 
   const onNodeDragStop = useCallback(() => {
     setGuides(null)
+    setDragging(false)
   }, [])
 
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -252,11 +255,60 @@ function CanvasInner(): JSX.Element {
 
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
 
+  // Group overlay computation
+  const selectedNodes = nodes.filter(n=>n.selected)
+  const defaultW = 180, defaultH = 96
+  let groupRect: { sx: number; sy: number; w: number; h: number } | null = null
+  if (selectedNodes.length > 1) {
+    const minX = Math.min(...selectedNodes.map(n => n.position.x))
+    const minY = Math.min(...selectedNodes.map(n => n.position.y))
+    const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
+    const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+    const tl = flowToScreen({ x: minX, y: minY })
+    const br = flowToScreen({ x: maxX, y: maxY })
+    const padding = 8
+    groupRect = { sx: tl.x - padding, sy: tl.y - padding, w: (br.x - tl.x) + padding*2, h: (br.y - tl.y) + padding*2 }
+  }
+
+  const layoutGrid = () => {
+    if (selectedNodes.length < 2) return
+    const nodesSorted = [...selectedNodes].sort((a,b)=> (a.position.y-b.position.y) || (a.position.x-b.position.x))
+    const cols = Math.ceil(Math.sqrt(nodesSorted.length))
+    const gapX = 220, gapY = 140
+    const minX = Math.min(...nodesSorted.map(n=>n.position.x))
+    const minY = Math.min(...nodesSorted.map(n=>n.position.y))
+    useRFStore.setState(s => ({
+      nodes: s.nodes.map(n => {
+        const idx = nodesSorted.findIndex(m => m.id === n.id)
+        if (idx === -1) return n
+        const r = Math.floor(idx / cols)
+        const c = idx % cols
+        return { ...n, position: { x: minX + c*gapX, y: minY + r*gapY } }
+      })
+    }))
+  }
+
+  const layoutHorizontal = () => {
+    if (selectedNodes.length < 2) return
+    const nodesSorted = [...selectedNodes].sort((a,b)=> a.position.x - b.position.x)
+    const gapX = 220
+    const minX = Math.min(...nodesSorted.map(n=>n.position.x))
+    const minY = Math.min(...nodesSorted.map(n=>n.position.y))
+    useRFStore.setState(s => ({
+      nodes: s.nodes.map(n => {
+        const idx = nodesSorted.findIndex(m => m.id === n.id)
+        if (idx === -1) return n
+        return { ...n, position: { x: minX + idx*gapX, y: minY } }
+      })
+    }))
+  }
+
   return (
     <div
       style={{ height: '100%', width: '100%', position: 'relative' }}
       data-connecting={connectingType || ''}
       data-connecting-active={connectingType ? 'true' : 'false'}
+      data-dragging={dragging ? 'true' : 'false'}
       onMouseMove={(e) => { if (connectingType) setMouse({ x: e.clientX, y: e.clientY }) }}
       onDrop={onDrop}
       onDragOver={onDragOver}
@@ -270,6 +322,7 @@ function CanvasInner(): JSX.Element {
         onConnectStart={onConnectStart}
         onConnectStop={onConnectStop}
         onConnectEnd={onConnectEnd}
+        onNodeDragStart={onNodeDragStart}
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
@@ -282,7 +335,8 @@ function CanvasInner(): JSX.Element {
         edgeTypes={edgeTypes}
         fitView
         onInit={onInit}
-        selectionOnDrag={longSelect}
+        selectionOnDrag
+        panOnDrag={false}
         panOnScroll
         zoomOnPinch
         zoomOnScroll
@@ -319,6 +373,47 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
+      {groupRect && (
+        <>
+          <div style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy, width: groupRect.w, height: groupRect.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)', pointerEvents: 'none' }} />
+          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy - 36 }}>
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">Group</Text>
+              <Divider orientation="vertical" style={{ height: 16 }} />
+              <Button size="xs" variant="subtle" onClick={layoutGrid}>宫格布局</Button>
+              <Button size="xs" variant="subtle" onClick={layoutHorizontal}>水平布局</Button>
+              <Button size="xs" variant="subtle" onClick={()=>{
+                const name = prompt('保存为资产名称：')?.trim();
+                if (!name) return;
+                const sel = nodes.filter(n=>n.selected)
+                const setIds = new Set(sel.map(n=>n.id))
+                const es = edges.filter(e=> setIds.has(e.source) && setIds.has(e.target))
+                const { saveAsset } = require('../assets/registry') as any
+                saveAsset({ name, nodes: sel, edges: es })
+              }}>创建资产</Button>
+              <Button size="xs" variant="subtle" onClick={()=>{
+                // 打组：封装为一个 subflow 节点
+                if (nodes.filter(n=>n.selected).length < 2) return
+                const sel = nodes.filter(n=>n.selected)
+                const setIds = new Set(sel.map(n=>n.id))
+                const es = edges.filter(e=> setIds.has(e.source) && setIds.has(e.target))
+                const cx = (groupRect!.sx + groupRect!.w/2)
+                const cy = (groupRect!.sy + groupRect!.h/2)
+                const flowPos = rf.project({ x: cx, y: cy })
+                useRFStore.setState(s => ({
+                  nodes: [
+                    ...s.nodes.filter(n=>!setIds.has(n.id)),
+                    { id: `n${s.nextId}`, type: 'taskNode', position: { x: flowPos.x - 90, y: flowPos.y - 60 }, data: { label: '新建组', kind: 'subflow', subflow: { nodes: sel, edges: es } } }
+                  ],
+                  edges: s.edges.filter(e=> !(setIds.has(e.source) && setIds.has(e.target))),
+                  nextId: s.nextId + 1
+                }))
+              }}>打组</Button>
+              <Button size="xs" variant="subtle" color="red" onClick={()=>useRFStore.getState().clearSelection()}>解组</Button>
+            </Group>
+          </Paper>
+        </>
+      )}
       {guides?.vx !== undefined && (
         <div style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
       )}

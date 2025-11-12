@@ -107,3 +107,6 @@ button { color: var(--mantine-color-text); }
 [data-compact="true"] textarea { padding: 6px 8px !important; }
 [data-compact="true"] .mantine-Stack-root { gap: 6px !important; }
 [data-compact="true"] .mantine-Group-root { gap: 6px !important; }
+
+/* 拖动时未选中节点弱化 */
+[data-dragging="true"] .react-flow__node:not(.selected) { opacity: .45; transition: opacity .12s ease; }

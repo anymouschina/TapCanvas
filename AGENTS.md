@@ -1,42 +1,36 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- Monorepo (suggested): `apps/`, `packages/`, `infra/`, `artifacts/`.
-- Apps: `apps/web` (React-Flow canvas + Remotion Player), `apps/compose` (render/export).
-- Infra: `infra/activepieces` (flows, custom pieces, docker compose).
-- Packages: `packages/schemas` (zod), `packages/sdk` (shared types/client), `packages/pieces` (Activepieces pieces).
+## Project Structure & Modules
+- Monorepo: `apps/`, `packages/`, `infra/`.
+- Web app: `apps/web` (Vite + React + TypeScript, Mantine UI, React Flow canvas).
+  - Canvas and UI: `apps/web/src/canvas`, `apps/web/src/ui`, `apps/web/src/flows`, `apps/web/src/assets`.
+- Shared libs: `packages/schemas`, `packages/sdk`, `packages/pieces`.
+- Local orchestration (optional): `infra/activepieces` (Docker Compose setup).
 
-## Build, Test, and Development Commands
-- Install workspace deps: `pnpm -w install`
-- Dev web app: `pnpm --filter apps/web dev`
-- Build all packages: `pnpm -w build`
-- Run unit tests: `pnpm -w test`
-- Start Activepieces locally: `cd infra/activepieces && docker compose up -d`
-- Import example flows: `infra/activepieces/flows/*.json`
+## Build, Test, and Dev
+- Install deps (workspace): `pnpm -w install`
+- Dev web: `pnpm dev:web` (or `pnpm --filter @tapcanvas/web dev`)
+- Build all: `pnpm build`
+- Preview web: `pnpm --filter @tapcanvas/web preview`
+- Compose up/down (optional): `pnpm compose:up` / `pnpm compose:down`
+- Tests: currently minimal; placeholder in `apps/web`.
 
-## Coding Style & Naming Conventions
-- Language: TypeScript (strict). UI: React.
-- Lint/format: ESLint + Prettier; run `pnpm -w lint` and `pnpm -w format`.
-- Filenames: kebab-case (`compose-worker.ts`); React components: PascalCase (`CanvasPanel.tsx`).
-- Functions/vars: camelCase; Types/Zod schemas: PascalCase; schema files end with `.schema.ts`.
-- Keep modules small; colocate tests and component styles.
+## Coding Style & Naming
+- Language: TypeScript (strict), React function components.
+- UI: Mantine (dark theme), React Flow for canvas; Zustand for local stores.
+- Filenames: React components PascalCase (`TaskNode.tsx`), utilities kebab/camel case (`mock-runner.ts`, `useCanvasStore.ts`).
+- Types/interfaces PascalCase; variables/functions camelCase.
+- Keep modules focused; colocate component styles in `apps/web/src`.
 
 ## Testing Guidelines
-- Framework: Vitest or Jest (project may choose one; prefer Vitest in new code).
-- Test names: `*.test.ts` / `*.test.tsx`, colocated with source.
-- Coverage target: 80% lines/branches for packages and critical app code.
-- Run: `pnpm -w test` or `pnpm --filter {pkg} test`.
+- Preferred: Vitest for new tests (TBD in repo).
+- Test files: `*.test.ts` / `*.test.tsx`, colocated near source.
+- Run (when added): `pnpm test` or `pnpm --filter @tapcanvas/web test`.
 
-## Commit & Pull Request Guidelines
-- Use Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, etc.
-- Scope by package/app when possible: `feat(web): timeline snapping`.
-- PRs must include: summary, linked issues, test plan (commands/screens), and updated docs when applicable.
-- Keep PRs focused; note any infra/migration steps.
+## Commit & PR
+- Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`; scope when relevant, e.g., `feat(web): multi-select group overlay`.
+- PRs include: summary, screenshots/GIFs for UI, steps to run (`pnpm -w install && pnpm dev:web`), and any migration notes.
 
-## Security & Configuration Tips
-- Never commit secrets. Use environment files: `apps/web/.env.local`, service `.env` files, or Docker secrets.
-- Webhooks/callbacks must validate `X-Signature` (HMAC-SHA256) and honor `X-Idempotency-Key`.
-- Multi-tenant calls include `X-Tenant-Id`. Persist assets/metadata to S3/OSS per README.
-
-## Architecture Overview (Quick)
-- Zero-GPU: generate media via third‑party AI APIs; orchestrate via Activepieces; preview/export via Remotion; assets to S3/OSS.
+## Canvas Dev Tips
+- Use `ReactFlowProvider` at the app level; hooks like `useReactFlow` require the provider.
+- Canvas fills the viewport; header is transparent with only TapCanvas (left) and GitHub icon (right).

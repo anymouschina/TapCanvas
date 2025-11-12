@@ -32,7 +32,7 @@ export default function FloatingNav(): JSX.Element {
           </Tooltip>
           <div style={{ height: 6 }} />
           <Item label="工作流" icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
-          <Item label="资源库" icon={<IconListDetails size={18} />} onHover={() => { /* no panel yet */ }} />
+          <Item label="我的资产" icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
           <Item label="历史记录" icon={<IconHistory size={18} />} onHover={() => { /* no panel yet */ }} />
           <Item label="图片编辑" icon={<IconPhotoEdit size={18} />} onHover={() => { /* no panel yet */ }} badge="Beta" />
           <Item label="标尺" icon={<IconRuler size={18} />} onHover={() => { /* no panel yet */ }} />

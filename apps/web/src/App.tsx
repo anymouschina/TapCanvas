@@ -14,6 +14,7 @@ import { listFlows, saveFlow, deleteFlow as deleteLibraryFlow, renameFlow, scanC
 import FloatingNav from './ui/FloatingNav'
 import AddNodePanel from './ui/AddNodePanel'
 import TemplatePanel from './ui/TemplatePanel'
+import AssetPanel from './ui/AssetPanel'
 import ParamModal from './ui/ParamModal'
 
 export default function App(): JSX.Element {
@@ -67,6 +68,7 @@ export default function App(): JSX.Element {
       <FloatingNav />
       <AddNodePanel />
       <TemplatePanel />
+      <AssetPanel />
       <ParamModal />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}
       {libraryFlowId && (<LibraryEditor flowId={libraryFlowId} onClose={closeLibraryFlow} />)}
