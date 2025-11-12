@@ -8,6 +8,7 @@ import ReactFlow, {
   ConnectionLineType,
   ReactFlowProvider,
   EdgeTypes,
+  MarkerType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 
@@ -277,7 +278,7 @@ function CanvasInner(): JSX.Element {
         }}
         snapToGrid
         snapGrid={[16, 16]}
-        defaultEdgeOptions={{ animated: true, type: 'typed' }}
+        defaultEdgeOptions={{ animated: true, type: 'typed', markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280', width: 16, height: 16 } }}
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 2 }}
       >

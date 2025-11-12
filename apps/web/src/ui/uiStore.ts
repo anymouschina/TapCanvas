@@ -9,6 +9,14 @@ type UIState = {
   closeLibraryFlow: () => void
   compact: boolean
   toggleCompact: () => void
+  addPanelOpen: boolean
+  setAddPanelOpen: (v: boolean) => void
+  templatePanelOpen: boolean
+  setTemplatePanelOpen: (v: boolean) => void
+  activePanel: 'add' | 'template' | null
+  setActivePanel: (p: 'add' | 'template' | null) => void
+  panelAnchorY: number | null
+  setPanelAnchorY: (y: number | null) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -20,4 +28,12 @@ export const useUIStore = create<UIState>((set) => ({
   closeLibraryFlow: () => set({ libraryFlowId: null }),
   compact: false,
   toggleCompact: () => set((s) => ({ compact: !s.compact })),
+  addPanelOpen: false,
+  setAddPanelOpen: (v) => set({ addPanelOpen: v }),
+  templatePanelOpen: false,
+  setTemplatePanelOpen: (v) => set({ templatePanelOpen: v }),
+  activePanel: null,
+  setActivePanel: (p) => set({ activePanel: p }),
+  panelAnchorY: null,
+  setPanelAnchorY: (y) => set({ panelAnchorY: y }),
 }))

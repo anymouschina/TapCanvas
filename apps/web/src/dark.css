@@ -43,6 +43,12 @@ button { color: var(--mantine-color-text); }
   border-color: rgba(255,255,255,.12) !important;
 }
 
+.glass {
+  background: rgba(255,255,255,0.06) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
 /* React Flow 细节暗色化与弱化 */
 .react-flow__controls {
   background: rgba(255,255,255,0.02) !important;
@@ -69,6 +75,8 @@ button { color: var(--mantine-color-text); }
   border: 1px solid rgba(255,255,255,0.18) !important;
 }
 .react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
+.react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
+.react-flow__edge:hover .react-flow__edge-path { opacity: 1; }
 
 /* 滚动条弱化 */
 *::-webkit-scrollbar { width: 8px; height: 8px; }
