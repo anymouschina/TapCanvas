@@ -41,6 +41,9 @@ type RFState = {
   deleteEdge: (id: string) => void
   duplicateNode: (id: string) => void
   pasteFromClipboardAt: (pos: { x: number; y: number }) => void
+  selectAll: () => void
+  clearSelection: () => void
+  invertSelection: () => void
 }
 
 function genId(prefix: string, n: number) {
@@ -269,6 +272,18 @@ export const useRFStore = create<RFState>((set, get) => ({
       historyFuture: [],
     }
   }),
+  selectAll: () => set((s) => ({
+    nodes: s.nodes.map(n => ({ ...n, selected: true })),
+    edges: s.edges.map(e => ({ ...e, selected: true })),
+  })),
+  clearSelection: () => set((s) => ({
+    nodes: s.nodes.map(n => ({ ...n, selected: false })),
+    edges: s.edges.map(e => ({ ...e, selected: false })),
+  })),
+  invertSelection: () => set((s) => ({
+    nodes: s.nodes.map(n => ({ ...n, selected: !n.selected })),
+    edges: s.edges.map(e => ({ ...e, selected: !e.selected })),
+  })),
 }))
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {

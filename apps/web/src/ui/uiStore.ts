@@ -7,6 +7,8 @@ type UIState = {
   libraryFlowId: string | null
   openLibraryFlow: (flowId: string) => void
   closeLibraryFlow: () => void
+  compact: boolean
+  toggleCompact: () => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -16,4 +18,6 @@ export const useUIStore = create<UIState>((set) => ({
   libraryFlowId: null,
   openLibraryFlow: (flowId) => set({ libraryFlowId: flowId }),
   closeLibraryFlow: () => set({ libraryFlowId: null }),
+  compact: false,
+  toggleCompact: () => set((s) => ({ compact: !s.compact })),
 }))

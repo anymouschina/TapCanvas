@@ -3,6 +3,7 @@ import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, Connection
 import 'reactflow/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
 import { useRFStore } from '../canvas/store'
+import { Button, Group, Title } from '@mantine/core'
 
 type Props = { nodeId: string; onClose: () => void }
 
@@ -25,13 +26,13 @@ export default function SubflowEditor({ nodeId, onClose }: Props) {
   if (!open) return null
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: '88%', height: '88%', background: 'white', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)' }}>
-        <div style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between' }}>
-          <div>编辑子工作流 - {node?.data?.label || nodeId}</div>
-          <div>
-            <button onClick={save}>保存</button>
-            <button onClick={onClose} style={{ marginLeft: 8 }}>关闭</button>
-          </div>
+      <div style={{ width: '88%', height: '88%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', border: '1px solid rgba(127,127,127,.25)' }}>
+        <div style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Title order={5}>编辑子工作流 - {node?.data?.label || nodeId}</Title>
+          <Group gap="xs">
+            <Button size="xs" onClick={save}>保存</Button>
+            <Button size="xs" variant="light" onClick={onClose}>关闭</Button>
+          </Group>
         </div>
         <div style={{ height: 'calc(100% - 44px)' }}>
           <ReactFlowProvider>
@@ -47,7 +48,7 @@ export default function SubflowEditor({ nodeId, onClose }: Props) {
             >
               <MiniMap />
               <Controls />
-              <Background gap={16} />
+              <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
             </ReactFlow>
           </ReactFlowProvider>
         </div>
@@ -55,4 +56,3 @@ export default function SubflowEditor({ nodeId, onClose }: Props) {
     </div>
   )
 }
-

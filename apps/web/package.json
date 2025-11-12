@@ -15,7 +15,11 @@
     "zustand": "^4.5.4",
     "zod": "^3.23.8",
     "react-hook-form": "^7.53.0",
-    "@hookform/resolvers": "^3.9.0"
+    "@hookform/resolvers": "^3.9.0",
+    "@mantine/core": "^7.13.1",
+    "@mantine/hooks": "^7.13.1",
+    "@mantine/notifications": "^7.13.1",
+    "@tabler/icons-react": "^3.19.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
