@@ -16,6 +16,7 @@ import AddNodePanel from './ui/AddNodePanel'
 import TemplatePanel from './ui/TemplatePanel'
 import AssetPanel from './ui/AssetPanel'
 import ParamModal from './ui/ParamModal'
+import PreviewModal from './ui/PreviewModal'
 
 export default function App(): JSX.Element {
   const addNode = useRFStore((s) => s.addNode)
@@ -70,6 +71,7 @@ export default function App(): JSX.Element {
       <TemplatePanel />
       <AssetPanel />
       <ParamModal />
+      <PreviewModal />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}
       {libraryFlowId && (<LibraryEditor flowId={libraryFlowId} onClose={closeLibraryFlow} />)}
     </AppShell>

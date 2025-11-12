@@ -20,6 +20,9 @@ type UIState = {
   paramNodeId: string | null
   openParamFor: (id: string) => void
   closeParam: () => void
+  preview: { url: string; kind: 'image'|'video'|'audio'; name?: string } | null
+  openPreview: (m: { url: string; kind: 'image'|'video'|'audio'; name?: string }) => void
+  closePreview: () => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -42,4 +45,7 @@ export const useUIStore = create<UIState>((set) => ({
   paramNodeId: null,
   openParamFor: (id) => set({ paramNodeId: id }),
   closeParam: () => set({ paramNodeId: null }),
+  preview: null,
+  openPreview: (m) => set({ preview: m }),
+  closePreview: () => set({ preview: null }),
 }))

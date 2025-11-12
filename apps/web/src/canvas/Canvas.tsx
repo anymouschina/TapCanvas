@@ -415,9 +415,9 @@ function CanvasInner(): JSX.Element {
         }}
         snapToGrid
         snapGrid={[16, 16]}
-        defaultEdgeOptions={{ animated: true, type: 'typed', markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280', width: 16, height: 16 } }}
+        defaultEdgeOptions={{ animated: true, type: 'typed', style: { strokeWidth: 3 }, interactionWidth: 24, markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280', width: 16, height: 16 } }}
         connectionLineType={ConnectionLineType.SmoothStep}
-        connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 2 }}
+        connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 3 }}
       >
         <MiniMap />
         <Controls position="bottom-left" />

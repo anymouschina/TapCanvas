@@ -37,7 +37,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
 
   return (
     <>
-      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 2, opacity: 0.9 }} />
+      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 3, opacity: 0.95 }} />
       <EdgeLabelRenderer>
         <div style={{
           position: 'absolute',
