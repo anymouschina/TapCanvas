@@ -49,6 +49,19 @@ button { color: var(--mantine-color-text); }
   -webkit-backdrop-filter: blur(8px) !important;
 }
 
+/* 面板小三角指示（指向左侧图标） */
+.panel-arrow {
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0; height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-right: 8px solid rgba(255,255,255,0.06);
+  filter: drop-shadow(0 0 2px rgba(0,0,0,0.25));
+}
+
 /* React Flow 细节暗色化与弱化 */
 .react-flow__controls {
   background: rgba(255,255,255,0.02) !important;

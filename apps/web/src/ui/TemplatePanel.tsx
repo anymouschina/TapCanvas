@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, Tabs, SimpleGrid, Card, Image, Text, Button, Group, Badge, Stack } from '@mantine/core'
+import { Paper, Title, Tabs, SimpleGrid, Card, Image, Text, Button, Group, Badge, Stack, Transition } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { listFlows } from '../flows/registry'
 import { useRFStore } from '../canvas/store'
@@ -22,10 +22,15 @@ export default function TemplatePanel(): JSX.Element | null {
   const anchorY = useUIStore(s => s.panelAnchorY)
   const addNode = useRFStore(s => s.addNode)
   const flows = listFlows()
-  if (active !== 'template') return null
+  const mounted = active === 'template'
+  if (!mounted) return null
   return (
     <div style={{ position: 'fixed', left: 76, top: (anchorY ? anchorY - 150 : 140), zIndex: 74 }} data-ux-panel>
-      <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720 }} data-ux-panel>
+      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+        {(styles) => (
+          <div style={styles}>
+            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, transformOrigin: 'left center' }} data-ux-panel>
+              <div className="panel-arrow" />
         <Group justify="space-between" mb={8}>
           <Title order={6}>工作流模板</Title>
           <Group>
@@ -67,7 +72,10 @@ export default function TemplatePanel(): JSX.Element | null {
             </SimpleGrid>
           </Tabs.Panel>
         </Tabs>
-      </Paper>
+            </Paper>
+          </div>
+        )}
+      </Transition>
     </div>
   )
 }
