@@ -230,6 +230,41 @@ function CanvasInner(): JSX.Element {
     setDragging(false)
   }, [])
 
+  // Auto-fit group node size to its children
+  useEffect(() => {
+    // collect group nodes
+    const groupNodes = nodes.filter((n: any) => n.type === 'groupNode')
+    if (!groupNodes.length) return
+    const padding = 8
+    const defaultW = 180, defaultH = 96
+    const updates: Record<string, { width: number; height: number }> = {}
+    for (const g of groupNodes) {
+      const kids = nodes.filter(n => n.parentNode === g.id)
+      if (!kids.length) continue
+      const minX = Math.min(...kids.map(n => n.position.x))
+      const minY = Math.min(...kids.map(n => n.position.y))
+      const maxX = Math.max(...kids.map(n => n.position.x + ((n as any).width || defaultW)))
+      const maxY = Math.max(...kids.map(n => n.position.y + ((n as any).height || defaultH)))
+      const reqW = (maxX - minX) + padding * 2
+      const reqH = (maxY - minY) + padding * 2
+      const curW = (g as any).width || (g.style as any)?.width || 0
+      const curH = (g as any).height || (g.style as any)?.height || 0
+      if (Math.abs(reqW - curW) > 1 || Math.abs(reqH - curH) > 1) {
+        updates[g.id] = { width: reqW, height: reqH }
+      }
+    }
+    const ids = Object.keys(updates)
+    if (!ids.length) return
+    useRFStore.setState(s => ({
+      nodes: s.nodes.map(n => {
+        if (!updates[n.id]) return n
+        const w = updates[n.id].width
+        const h = updates[n.id].height
+        return { ...n, style: { ...(n.style || {}), width: w, height: h } }
+      })
+    }))
+  }, [nodes])
+
   const handleNodesChange = useCallback((changes: any[]) => {
     const threshold = 6
     const xs = nodes.map(n => n.position.x)
@@ -467,8 +502,8 @@ function CanvasInner(): JSX.Element {
           <div style={{ position: 'absolute', transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: '0 0', pointerEvents: 'none' }}>
             <div style={{ position: 'absolute', left: groupRectFlow.x, top: groupRectFlow.y, width: groupRectFlow.w, height: groupRectFlow.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)' }} />
           </div>
-          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto' }}>
-            <Group gap={6}>
+          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
+            <Group gap={6} style={{ flexWrap: 'nowrap' }}>
               <Text size="xs" c="dimmed">新建组</Text>
               <Divider orientation="vertical" style={{ height: 16 }} />
               {/* pre-group state: no run button */}
