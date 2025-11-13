@@ -1,5 +1,5 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, Avatar, Modal, Stack, Text } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, Modal, Stack, Text } from '@mantine/core'
 import { IconBrandGithub } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
@@ -81,13 +81,6 @@ export default function App(): JSX.Element {
             {currentFlow.id && (
               <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentFlow.id!)) } catch { setVersions([]) } }}>历史</Button>
             )}
-            {auth.user ? (
-              <Group gap={6}>
-                <Avatar size={24} src={auth.user.avatarUrl} alt={auth.user.login} />
-                <Text size="sm">{auth.user.login}</Text>
-                <Button size="xs" variant="subtle" onClick={()=> auth.clear()}>退出</Button>
-              </Group>
-            ) : null}
             <ActionIcon component="a" href="https://github.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer" variant="subtle" aria-label="GitHub">
               <IconBrandGithub size={18} />
             </ActionIcon>

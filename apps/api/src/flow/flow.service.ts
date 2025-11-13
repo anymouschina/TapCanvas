@@ -6,20 +6,20 @@ export class FlowService {
   constructor(private readonly prisma: PrismaService) {}
 
   list(userId: string) {
-    return this.prisma.flow.findMany({ where: { ownerId: userId }, orderBy: { updatedAt: 'desc' } })
+    return this.prisma.flow.findMany({ where: { ownerId: String(userId) }, orderBy: { updatedAt: 'desc' } })
   }
 
   get(id: string, userId: string) {
-    return this.prisma.flow.findFirst({ where: { id, ownerId: userId } })
+    return this.prisma.flow.findFirst({ where: { id, ownerId: String(userId) } })
   }
 
-  async upsert(userId: string, input: { id?: string; name: string; data: any }) {
+  async upsert(userId: string, input: { id?: string; name: string; data: any; projectId?: string|null }) {
     if (input.id) {
-      const updated = await this.prisma.flow.update({ where: { id: input.id }, data: { name: input.name, data: input.data as any, ownerId: userId } })
+      const updated = await this.prisma.flow.update({ where: { id: input.id }, data: { name: input.name, data: input.data as any, ownerId: String(userId), projectId: input.projectId || undefined } })
       await this.prisma.flowVersion.create({ data: { flowId: updated.id, name: updated.name, data: (updated as any).data as any, userId } })
       return updated
     }
-    const created = await this.prisma.flow.create({ data: { name: input.name, data: input.data as any, ownerId: userId } })
+    const created = await this.prisma.flow.create({ data: { name: input.name, data: input.data as any, ownerId: String(userId), projectId: input.projectId || undefined } })
     await this.prisma.flowVersion.create({ data: { flowId: created.id, name: created.name, data: (created as any).data as any, userId } })
     return created
   }

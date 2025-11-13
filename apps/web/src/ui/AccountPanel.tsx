@@ -12,7 +12,7 @@ export default function AccountPanel(): JSX.Element | null {
   const clear = useAuth(s => s.clear)
   if (!mounted) return null
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 74 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 6001 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
@@ -39,4 +39,3 @@ export default function AccountPanel(): JSX.Element | null {
     </div>
   )
 }
-
