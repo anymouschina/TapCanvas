@@ -1,5 +1,5 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Select, Badge, Avatar, Modal, Stack, Text } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, Avatar, Modal, Stack, Text } from '@mantine/core'
 import { IconBrandGithub } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
@@ -10,7 +10,6 @@ import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNam
 import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
 import { saveServerFlow, listFlowVersions, rollbackFlow, getServerFlow } from './api/server'
-import { saveFlow as saveLocalFlow } from './flows/registry'
 import { useAuth } from './auth/store'
 import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
@@ -18,6 +17,7 @@ import { listFlows, saveFlow, deleteFlow as deleteLibraryFlow, renameFlow, scanC
 import FloatingNav from './ui/FloatingNav'
 import AddNodePanel from './ui/AddNodePanel'
 import TemplatePanel from './ui/TemplatePanel'
+import AccountPanel from './ui/AccountPanel'
 import AssetPanel from './ui/AssetPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
@@ -55,13 +55,8 @@ export default function App(): JSX.Element {
     const name = currentFlow.name?.trim() || prompt('工作流名称：')?.trim() || '未命名'
     const nodes = useRFStore.getState().nodes
     const edges = useRFStore.getState().edges
-    if (currentFlow.source === 'server') {
-      const saved = await saveServerFlow({ id: currentFlow.id || undefined, name, nodes, edges })
-      setCurrentFlow({ id: saved.id, name, source: 'server' })
-    } else {
-      const saved = saveLocalFlow({ id: (currentFlow.id || undefined) as any, name, nodes, edges, io: undefined as any })
-      setCurrentFlow({ id: saved.id, name, source: 'local' })
-    }
+    const saved = await saveServerFlow({ id: currentFlow.id || undefined, name, nodes, edges })
+    setCurrentFlow({ id: saved.id, name, source: 'server' })
     setDirty(false)
   }
 
@@ -81,10 +76,9 @@ export default function App(): JSX.Element {
             {isDirty && (<Badge color="red" variant="light">未保存</Badge>)}
           </Group>
           <Group gap="xs">
-            <Select size="xs" data={[{value:'local',label:'本地'},{value:'server',label:'服务端'}]} value={currentFlow.source} onChange={(v)=> setCurrentFlow({ source: (v as any)||'local' })} allowDeselect={false} style={{ width: 110 }} />
             <TextInput size="xs" placeholder="名称" value={currentFlow.name} onChange={(e)=> setCurrentFlow({ name: e.currentTarget.value })} style={{ width: 200 }} />
             <Button size="xs" onClick={doSave} disabled={!isDirty}>保存</Button>
-            {currentFlow.source === 'server' && currentFlow.id && (
+            {currentFlow.id && (
               <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentFlow.id!)) } catch { setVersions([]) } }}>历史</Button>
             )}
             {auth.user ? (
@@ -123,6 +117,7 @@ export default function App(): JSX.Element {
       <FloatingNav />
       <AddNodePanel />
       <TemplatePanel />
+      <AccountPanel />
       <AssetPanel />
       <ParamModal />
       <PreviewModal />

@@ -1,8 +1,9 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Tooltip, Avatar, Badge } from '@mantine/core'
 import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconCloudUpload, IconCloudDownload } from '@tabler/icons-react'
-import { useUIStore } from './uiStore'
 import { notifications } from '@mantine/notifications'
+import { useAuth } from '../auth/store'
+import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { listServerFlows, saveServerFlow, getServerFlow } from '../api/server'
 
@@ -79,9 +80,16 @@ export default function FloatingNav(): JSX.Element {
             </ActionIcon>
           </Tooltip>
           <div style={{ height: 8 }} />
-          <Avatar size={30} radius={999} src={undefined} alt="user" data-ux-floating>
-            🐰
-          </Avatar>
+          {(() => {
+            const user = useAuth.getState().user
+            return (
+              <div onMouseEnter={(e)=>{ const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); useUIStore.getState().setPanelAnchorY(r.top + r.height/2); useUIStore.getState().setActivePanel('account') }} data-ux-floating>
+                <Avatar size={30} radius={999} src={user?.avatarUrl} alt={user?.login || 'user'}>
+                  {user?.login?.[0]?.toUpperCase() || 'U'}
+                </Avatar>
+              </div>
+            )
+          })()}
         </Stack>
       </Paper>
     </div>

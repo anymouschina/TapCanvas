@@ -15,7 +15,7 @@ import 'reactflow/dist/style.css'
 import TaskNode from './nodes/TaskNode'
 import GroupNode from './nodes/GroupNode'
 import IONode from './nodes/IONode'
-import { persistToLocalStorage, restoreFromLocalStorage, useRFStore } from './store'
+import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
 import { Paper, Stack, Button, Divider, Group, Text } from '@mantine/core'
@@ -61,15 +61,8 @@ function CanvasInner(): JSX.Element {
   const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
-    // initial load
-    const restored = restoreFromLocalStorage()
-    if (restored && restored.nodes.length) {
-      load(restored)
-      setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
-    }
-    // autosave
-    const h = setInterval(() => persistToLocalStorage(), 1500)
-    return () => clearInterval(h)
+    // initial: no local restore, rely on explicit load from server via UI
+    setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -178,32 +171,7 @@ function CanvasInner(): JSX.Element {
     setConnectingType(null)
   }, [])
 
-  const onPaneMouseDown = useCallback((evt: React.MouseEvent) => {
-    if (evt.button !== 0) return
-    downPos.current = { x: evt.clientX, y: evt.clientY }
-    timerRef.current = window.setTimeout(() => {
-      setLongSelect(true)
-    }, 250)
-  }, [])
-
-  const onPaneMouseMove = useCallback((evt: React.MouseEvent) => {
-    if (!downPos.current || !timerRef.current) return
-    const dx = Math.abs(evt.clientX - downPos.current.x)
-    const dy = Math.abs(evt.clientY - downPos.current.y)
-    if (dx > 4 || dy > 4) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = undefined
-    }
-  }, [])
-
-  const onPaneMouseUp = useCallback(() => {
-    if (timerRef.current) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = undefined
-    }
-    setLongSelect(false)
-    downPos.current = null
-  }, [])
+  // removed pane mouse handlers (not supported by current reactflow typings). Root listeners are used instead.
 
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
     evt.preventDefault()
@@ -511,9 +479,7 @@ function CanvasInner(): JSX.Element {
             setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
           }
         }}
-        onPaneMouseDown={onPaneMouseDown}
-        onPaneMouseMove={onPaneMouseMove}
-        onPaneMouseUp={onPaneMouseUp}
+        
         onMove={(_evt, vp) => setViewport(vp)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}

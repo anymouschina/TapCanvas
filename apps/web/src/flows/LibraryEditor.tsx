@@ -2,41 +2,42 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from 'reactflow'
 import 'reactflow/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
-import { getFlow, saveFlow, listFlows, deleteFlow as deleteLocalFlow, type FlowIO, validateNoCycle } from './registry'
+import { type FlowIO } from './registry'
 import { listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersions, rollbackFlow, type FlowDto } from '../api/server'
 import { Button, Group, Title, TextInput, Stack, Text, Divider, Select, Modal } from '@mantine/core'
 
 type Props = { flowId: string; onClose: () => void }
 
 export default function LibraryEditor({ flowId, onClose }: Props) {
-  const rec = getFlow(flowId)
-  const [source, setSource] = useState<'local'|'server'>('local')
   const [currentId, setCurrentId] = useState<string>(flowId)
-  const [nodes, setNodes] = useState<Node[]>(rec?.nodes || [])
-  const [edges, setEdges] = useState<Edge[]>(rec?.edges || [])
-  const [name, setName] = useState(rec?.name || '')
-  const [io, setIo] = useState<FlowIO>(rec?.io || { inputs: [], outputs: [] })
+  const [nodes, setNodes] = useState<Node[]>([])
+  const [edges, setEdges] = useState<Edge[]>([])
+  const [name, setName] = useState('')
+  const [io, setIo] = useState<FlowIO>({ inputs: [], outputs: [] })
   const [serverList, setServerList] = useState<FlowDto[]>([])
-  const [localList, setLocalList] = useState(listFlows())
   const [versions, setVersions] = useState<Array<{ id: string; createdAt: string; name: string }>>([])
   const [showHistory, setShowHistory] = useState(false)
   const [dirty, setDirty] = useState(false)
 
   // Load initial
   useEffect(() => {
-    const r = getFlow(flowId)
-    if (r) {
-      setNodes(r.nodes); setEdges(r.edges); setName(r.name); setIo(r.io || { inputs: [], outputs: [] })
-      setSource('local'); setCurrentId(flowId)
-      setDirty(false)
-    }
+    (async () => {
+      try {
+        const r = await getServerFlow(flowId)
+        const data = (r?.data || {}) as any
+        setNodes(Array.isArray(data.nodes) ? data.nodes : [])
+        setEdges(Array.isArray(data.edges) ? data.edges : [])
+        setName(r?.name || '')
+        setIo({ inputs: [], outputs: [] })
+        setCurrentId(flowId)
+        setDirty(false)
+        try { setVersions(await listFlowVersions(flowId)) } catch { setVersions([]) }
+      } catch {}
+    })()
   }, [flowId])
 
   // Load lists when open
-  useEffect(() => {
-    setLocalList(listFlows())
-    listServerFlows().then(setServerList).catch(()=>setServerList([]))
-  }, [])
+  useEffect(() => { listServerFlows().then(setServerList).catch(()=>setServerList([])) }, [])
 
   useEffect(() => { setDirty(true) }, [nodes, edges, name])
 
@@ -45,17 +46,9 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
   const onConnect = useCallback((c: Connection) => setEdges((eds) => addEdge({ ...c, type: 'smoothstep', animated: true }, eds)), [])
 
   const saveAll = async () => {
-    const v = validateNoCycle(currentId)
-    if (!v.ok) { alert(v.reason || '存在引用环，请先移除环再保存'); return }
-    if (source === 'local') {
-      const saved = saveFlow({ id: currentId, name, nodes, edges, io })
-      setLocalList(listFlows())
-      setCurrentId(saved.id)
-    } else {
-      const saved = await saveServerFlow({ id: currentId, name, nodes, edges })
-      setServerList(await listServerFlows())
-      setCurrentId(saved.id)
-    }
+    const saved = await saveServerFlow({ id: currentId, name, nodes, edges })
+    setServerList(await listServerFlows())
+    setCurrentId(saved.id)
     setDirty(false)
     onClose()
   }
@@ -80,30 +73,20 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
   const removeCurrent = async () => {
     if (!currentId) return
     if (!confirm('确定删除当前工作流吗？')) return
-    if (source === 'local') {
-      deleteLocalFlow(currentId); setLocalList(listFlows())
-    } else {
-      await deleteServerFlow(currentId); setServerList(await listServerFlows())
-    }
+    await deleteServerFlow(currentId); setServerList(await listServerFlows())
     setDirty(false)
     onClose()
   }
 
-  const loadById = async (src: 'local'|'server', id: string) => {
-    setSource(src)
+  const loadById = async (id: string) => {
     setCurrentId(id)
-    if (src === 'local') {
-      const r = getFlow(id)
-      if (r) { setNodes(r.nodes); setEdges(r.edges); setName(r.name); setIo(r.io || { inputs: [], outputs: [] }) }
-    } else {
-      const r = await getServerFlow(id)
-      const data = (r?.data || {}) as any
-      setNodes(Array.isArray(data.nodes) ? data.nodes : [])
-      setEdges(Array.isArray(data.edges) ? data.edges : [])
-      setName(r?.name || '')
-      setIo({ inputs: [], outputs: [] })
-      try { setVersions(await listFlowVersions(id)) } catch { setVersions([]) }
-    }
+    const r = await getServerFlow(id)
+    const data = (r?.data || {}) as any
+    setNodes(Array.isArray(data.nodes) ? data.nodes : [])
+    setEdges(Array.isArray(data.edges) ? data.edges : [])
+    setName(r?.name || '')
+    setIo({ inputs: [], outputs: [] })
+    try { setVersions(await listFlowVersions(id)) } catch { setVersions([]) }
   }
 
   const addPort = (dir: 'inputs'|'outputs') => {
@@ -120,15 +103,10 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
           <div style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Title order={5}>工作流编辑</Title>
             <Group gap="xs">
-              <Select size="xs" data={[{value:'local',label:'本地'},{value:'server',label:'服务端'}]} value={source} onChange={(v)=> setSource((v as any)||'local')} allowDeselect={false} style={{ width: 110 }} />
-              {source === 'local' ? (
-                <Select size="xs" placeholder="选择本地工作流" data={localList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById('local', v)} searchable clearable style={{ width: 220 }} />
-              ) : (
-                <Select size="xs" placeholder="选择服务端工作流" data={serverList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById('server', v)} searchable clearable style={{ width: 220 }} />
-              )}
+              <Select size="xs" placeholder="选择服务端工作流" data={serverList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById(v)} searchable clearable style={{ width: 260 }} />
               <Button size="xs" onClick={saveAll}>保存</Button>
               <Button size="xs" variant="light" onClick={saveAs}>另存为</Button>
-              {source === 'server' && <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentId)) } catch { setVersions([]) } }}>历史</Button>}
+              <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentId)) } catch { setVersions([]) } }}>历史</Button>
               <Button size="xs" variant="light" color="red" onClick={removeCurrent}>删除</Button>
               <Button size="xs" variant="light" onClick={()=>{ if (dirty && !confirm('有未保存更改，确定关闭？')) return; onClose() }}>关闭</Button>
             </Group>
