@@ -53,6 +53,7 @@ type RFState = {
   removeGroupById: (id: string) => void
   findGroupMatchingSelection: () => GroupRec | null
   renameGroup: (id: string, name: string) => void
+  ungroupGroupNode: (id: string) => void
 }
 
 function genId(prefix: string, n: number) {
@@ -300,27 +301,50 @@ export const useRFStore = create<RFState>((set, get) => ({
     edges: s.edges.map(e => ({ ...e, selected: !e.selected })),
   })),
   addGroupForSelection: (name) => set((s) => {
-    const selected = s.nodes.filter(n => n.selected).map(n => n.id)
-    if (selected.length < 2) return {}
-    // block partial overlaps: if any group intersects but is not exactly equal, do nothing
-    const selSet = new Set(selected)
-    for (const g of s.groups) {
-      const interCount = g.nodeIds.filter(id => selSet.has(id)).length
-      if (interCount > 0 && (interCount !== g.nodeIds.length || g.nodeIds.length !== selected.length)) {
-        return {}
-      }
-      // also prevent grouping if selection is a superset of a group's nodes
-      if (g.nodeIds.every(id => selSet.has(id)) && g.nodeIds.length < selected.length) {
-        return {}
-      }
+    const selectedNodes = s.nodes.filter(n => n.selected && n.type !== 'groupNode')
+    if (selectedNodes.length < 2) return {}
+    // ensure all selected share same parent (or no parent)
+    const parents = new Set(selectedNodes.map(n => n.parentNode || ''))
+    if (parents.size > 1) return {}
+    // compute bbox in absolute coordinates (assume current parent is same)
+    const padding = 8
+    const minX = Math.min(...selectedNodes.map(n => n.position.x + (0)))
+    const minY = Math.min(...selectedNodes.map(n => n.position.y + (0)))
+    const defaultW = 180, defaultH = 96
+    const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
+    const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+    const gid = `g${s.nextGroupId}`
+    const groupNode: Node = {
+      id: gid,
+      type: 'groupNode' as any,
+      position: { x: minX - padding, y: minY - padding },
+      data: { label: name || '新建组' },
+      style: { width: (maxX - minX) + padding * 2, height: (maxY - minY) + padding * 2, zIndex: 0, background: 'transparent' },
+      draggable: true,
+      selectable: true,
     }
-    const exists = s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selSet.has(id)))
-    if (exists) return {}
-    const id = `g${s.nextGroupId}`
-    const rec: GroupRec = { id, name: name || '新建组', nodeIds: selected }
-    return { groups: [...s.groups, rec], nextGroupId: s.nextGroupId + 1 }
+    // reparent children to this group; convert positions to relative
+    const members = new Set(selectedNodes.map(n => n.id))
+    const newNodes: Node[] = s.nodes.map((n) => {
+      if (!members.has(n.id)) return n
+      const rel = { x: n.position.x - groupNode.position.x, y: n.position.y - groupNode.position.y }
+      return { ...n, parentNode: gid, position: rel, extent: 'parent' as any, selected: false }
+    })
+    return { nodes: [...newNodes, groupNode].map(n => n.id === gid ? { ...n, selected: true } : n), nextGroupId: s.nextGroupId + 1 }
   }),
-  removeGroupById: (id) => set((s) => ({ groups: s.groups.filter(g => g.id !== id) })),
+  removeGroupById: (id) => set((s) => {
+    // if it's a legacy record, drop it; if there's a group node, ungroup it
+    const hasGroupNode = s.nodes.some(n => n.id === id && n.type === 'groupNode')
+    if (hasGroupNode) {
+      const group = s.nodes.find(n => n.id === id)!
+      const children = s.nodes.filter(n => n.parentNode === id)
+      const restored = s.nodes
+        .filter(n => n.id !== id)
+        .map(n => n.parentNode === id ? { ...n, parentNode: undefined, extent: undefined, position: { x: (group.position as any).x + n.position.x, y: (group.position as any).y + n.position.y } } : n)
+      return { nodes: restored }
+    }
+    return { groups: s.groups.filter(g => g.id !== id) }
+  }),
   findGroupMatchingSelection: () => {
     const s = get()
     const selected = s.nodes.filter(n => n.selected).map(n => n.id)
@@ -328,6 +352,17 @@ export const useRFStore = create<RFState>((set, get) => ({
     return s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selected.includes(id))) || null
   },
   renameGroup: (id, name) => set((s) => ({ groups: s.groups.map(g => g.id === id ? { ...g, name } : g) })),
+  ungroupGroupNode: (id) => set((s) => {
+    const group = s.nodes.find(n => n.id === id && n.type === 'groupNode')
+    if (!group) return {}
+    const children = s.nodes.filter(n => n.parentNode === id)
+    const restored = s.nodes
+      .filter(n => n.id !== id)
+      .map(n => n.parentNode === id ? { ...n, parentNode: undefined, extent: undefined, position: { x: (group.position as any).x + n.position.x, y: (group.position as any).y + n.position.y } } : n)
+    // select children after ungroup
+    const childIds = new Set(children.map(c => c.id))
+    return { nodes: restored.map(n => ({ ...n, selected: childIds.has(n.id) })) }
+  }),
 }))
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {

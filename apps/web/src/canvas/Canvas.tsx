@@ -13,6 +13,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 
 import TaskNode from './nodes/TaskNode'
+import GroupNode from './nodes/GroupNode'
 import { persistToLocalStorage, restoreFromLocalStorage, useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
@@ -22,6 +23,7 @@ import { runFlowDag } from '../runner/dag'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
+  groupNode: GroupNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -261,50 +263,30 @@ function CanvasInner(): JSX.Element {
 
   // Group overlay computation
   const selectedNodes = nodes.filter(n=>n.selected)
-  const groupMatch = useRFStore(s => s.findGroupMatchingSelection())
+  // legacy group match no longer used (compound nodes now)
   const groups = useRFStore(s => s.groups)
   const defaultW = 180, defaultH = 96
-  let groupRect: { sx: number; sy: number; w: number; h: number } | null = null
+  // selection rect in FLOW coordinates
+  let groupRectFlow: { x: number; y: number; w: number; h: number } | null = null
   if (selectedNodes.length > 1) {
     const minX = Math.min(...selectedNodes.map(n => n.position.x))
     const minY = Math.min(...selectedNodes.map(n => n.position.y))
     const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
     const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
-    const tl = flowToScreen({ x: minX, y: minY })
-    const br = flowToScreen({ x: maxX, y: maxY })
     const padding = 8
-    groupRect = { sx: tl.x - padding, sy: tl.y - padding, w: (br.x - tl.x) + padding*2, h: (br.y - tl.y) + padding*2 }
+    groupRectFlow = { x: minX - padding, y: minY - padding, w: (maxX - minX) + padding*2, h: (maxY - minY) + padding*2 }
   }
 
-  // persistent group outlines
-  const groupOutlines = useMemo(() => {
-    return groups.map(g => {
-      const members = nodes.filter(n => g.nodeIds.includes(n.id))
-      if (members.length < 2) return null
-      const minX = Math.min(...members.map(n => n.position.x))
-      const minY = Math.min(...members.map(n => n.position.y))
-      const maxX = Math.max(...members.map(n => n.position.x + (((n as any).width) || defaultW)))
-      const maxY = Math.max(...members.map(n => n.position.y + (((n as any).height) || defaultH)))
-      const tl = flowToScreen({ x: minX, y: minY })
-      const br = flowToScreen({ x: maxX, y: maxY })
-      const padding = 8
-      return { id: g.id, name: g.name, sx: tl.x - padding, sy: tl.y - padding, w: (br.x - tl.x) + padding*2, h: (br.y - tl.y) + padding*2 }
-    }).filter(Boolean) as { id: string; name?: string; sx:number; sy:number; w:number; h:number }[]
-  }, [groups, nodes, flowToScreen])
+  // remove legacy persistent outlines: group is now a node (compound parent)
+  const groupOutlines: any[] = []
 
   // selection partially overlaps existing groups?
   const selectionPartialOverlaps = useMemo(() => {
     if (selectedNodes.length < 2) return false
-    const selSet = new Set(selectedNodes.map(n=>n.id))
-    for (const g of groups) {
-      const interCount = g.nodeIds.filter(id => selSet.has(id)).length
-      if (interCount > 0 && (interCount !== g.nodeIds.length || g.nodeIds.length !== selectedNodes.length)) {
-        return true
-      }
-      if (g.nodeIds.every(id => selSet.has(id)) && g.nodeIds.length < selectedNodes.length) return true
-    }
-    return false
-  }, [groups, selectedNodes])
+    // disallow grouping across different parents
+    const parents = new Set(selectedNodes.map(n => n.parentNode || ''))
+    return parents.size > 1
+  }, [selectedNodes])
 
   // Edge highlight when connected to a selected node
   const selectedIds = new Set(selectedNodes.map(n=>n.id))
@@ -316,43 +298,7 @@ function CanvasInner(): JSX.Element {
     })
   }, [edges, selectedIds])
 
-  // Drag group overlay to move all selected nodes together
-  const groupDragRef = useRef<{ start: { x:number;y:number }; startPositions: Record<string,{x:number;y:number}> }|null>(null)
-  const startGroupDrag = useCallback((evt: React.MouseEvent) => {
-    if (!groupRect || selectedNodes.length < 2) return
-    const start = { x: evt.clientX, y: evt.clientY }
-    const startPositions: Record<string,{x:number;y:number}> = {}
-    selectedNodes.forEach(n => { startPositions[n.id] = { x: n.position.x, y: n.position.y } })
-    groupDragRef.current = { start, startPositions }
-    evt.preventDefault()
-    evt.stopPropagation()
-  }, [groupRect, selectedNodes])
-  const onWindowMouseMove = useCallback((evt: MouseEvent) => {
-    if (!groupDragRef.current) return
-    const dx = evt.clientX - groupDragRef.current.start.x
-    const dy = evt.clientY - groupDragRef.current.start.y
-    // convert screen delta to flow delta via zoom scale
-    const dz = viewport.zoom || 1
-    const fx = dx / dz
-    const fy = dy / dz
-    useRFStore.setState(s => ({
-      nodes: s.nodes.map(n => {
-        if (!groupDragRef.current) return n
-        if (!selectedIds.has(n.id)) return n
-        const sp = groupDragRef.current.startPositions[n.id]
-        return { ...n, position: { x: sp.x + fx, y: sp.y + fy } }
-      })
-    }))
-  }, [viewport.zoom, selectedIds])
-  const onWindowMouseUp = useCallback(() => { groupDragRef.current = null }, [])
-  useEffect(() => {
-    window.addEventListener('mousemove', onWindowMouseMove)
-    window.addEventListener('mouseup', onWindowMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', onWindowMouseMove)
-      window.removeEventListener('mouseup', onWindowMouseUp)
-    }
-  }, [onWindowMouseMove, onWindowMouseUp])
+  // 使用多选拖拽（内置），不自定义组拖拽，避免与画布交互冲突
 
   const layoutGrid = () => {
     if (selectedNodes.length < 2) return
@@ -515,57 +461,17 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
-      {/* Persistent group outlines */}
-      {groupOutlines.map(g => {
-        const active = groupMatch?.id === g.id
-        const grp = groups.find(x => x.id === g.id)
-        const only = new Set(grp?.nodeIds || [])
-        return (
-          <div
-            key={g.id}
-            style={{ position: 'absolute', left: g.sx, top: g.sy, width: g.w, height: g.h, borderRadius: 12, border: '1px solid rgba(148,163,184,0.35)', background: 'rgba(148,163,184,0.08)', boxShadow: '0 6px 18px rgba(0,0,0,0.25)', pointerEvents: 'none' }}
-          >
-            <div
-              style={{ position: 'absolute', left: 8, top: -18, fontSize: 11, color: '#94a3b8', background: 'rgba(15,16,20,.8)', padding: '1px 6px', borderRadius: 999, border: '1px solid rgba(148,163,184,0.35)', pointerEvents: 'auto', cursor: 'pointer' }}
-              onClick={(e)=>{
-                e.stopPropagation();
-                // select this group's members
-                const ids = new Set((groups.find(x=>x.id===g.id)?.nodeIds) || [])
-                useRFStore.setState(s => ({
-                  nodes: s.nodes.map(n => ({ ...n, selected: ids.has(n.id) })),
-                  edges: s.edges.map(e => ({ ...e, selected: false }))
-                }))
-              }}
-            >{g.name || '新建组'}</div>
-            {active && (
-              <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: 0, top: -36, pointerEvents: 'auto' }}>
-                <Group gap={6}>
-                  <Text size="xs" c="dimmed">{grp?.name || '新建组'}</Text>
-                  <Divider orientation="vertical" style={{ height: 16 }} />
-                  <Button size="xs" color="blue" leftSection={<span style={{ fontWeight: 700 }}>▶</span>} onClick={async ()=>{
-                    await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only })
-                  }}>一键执行</Button>
-                  <Button size="xs" variant="subtle" onClick={()=>{ persistToLocalStorage(); toast('已保存到本地','success') }}>保存工作流</Button>
-                  <Button size="xs" variant="subtle" color="red" onClick={()=>{ if (grp) useRFStore.getState().removeGroupById(grp.id) }}>解组</Button>
-                </Group>
-              </Paper>
-            )}
-          </div>
-        )
-      })}
-      {groupRect && (
+      {/* Group visuals moved to a real group node (compound). Legacy overlays removed. */}
+      {groupRectFlow && (
         <>
-          <div onMouseDown={startGroupDrag} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy, width: groupRect.w, height: groupRect.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)', cursor: 'move' }} />
-          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy - 36 }}>
+          <div style={{ position: 'absolute', transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: '0 0', pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', left: groupRectFlow.x, top: groupRectFlow.y, width: groupRectFlow.w, height: groupRectFlow.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)' }} />
+          </div>
+          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto' }}>
             <Group gap={6}>
-              <Text size="xs" c="dimmed">{groupMatch?.name || '新建组'}</Text>
+              <Text size="xs" c="dimmed">新建组</Text>
               <Divider orientation="vertical" style={{ height: 16 }} />
-              {groupMatch && (
-                <Button size="xs" color="blue" leftSection={<span style={{ fontWeight: 700 }}>▶</span>} onClick={async ()=>{
-                  const only = new Set(groupMatch.nodeIds)
-                  await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only })
-                }}>一键执行</Button>
-              )}
+              {/* pre-group state: no run button */}
               <Button size="xs" variant="subtle" onClick={layoutGrid}>宫格布局</Button>
               <Button size="xs" variant="subtle" onClick={layoutHorizontal}>水平布局</Button>
               <Button size="xs" variant="subtle" onClick={()=>{
@@ -577,15 +483,11 @@ function CanvasInner(): JSX.Element {
                 const { saveAsset } = require('../assets/registry') as any
                 saveAsset({ name, nodes: sel, edges: es })
               }}>创建资产</Button>
-              {!groupMatch && !selectionPartialOverlaps && (
+              {!selectionPartialOverlaps && (
                 <Button size="xs" variant="subtle" onClick={()=>{
-                  // 直接打组：不弹框，使用默认或现有名称，并自动整理布局避免重叠
+                  // 直接打组为父节点
                   useRFStore.getState().addGroupForSelection(undefined)
-                  layoutGrid()
                 }}>打组</Button>
-              )}
-              {groupMatch && (
-                <Button size="xs" variant="subtle" color="red" onClick={()=>{ useRFStore.getState().removeGroupById(groupMatch.id) }}>解组</Button>
               )}
             </Group>
           </Paper>
