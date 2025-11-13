@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Tooltip, Avatar, Badge } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconCloudUpload, IconCloudDownload } from '@tabler/icons-react'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
@@ -34,51 +34,13 @@ export default function FloatingNav(): JSX.Element {
             </ActionIcon>
           </Tooltip>
           <div style={{ height: 6 }} />
+          <Item label="项目" icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
           <Item label="工作流" icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
           <Item label="我的资产" icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
           <Item label="历史记录" icon={<IconHistory size={18} />} onHover={() => { /* no panel yet */ }} />
           <Item label="图片编辑" icon={<IconPhotoEdit size={18} />} onHover={() => { /* no panel yet */ }} badge="Beta" />
           <Item label="标尺" icon={<IconRuler size={18} />} onHover={() => { /* no panel yet */ }} />
           <Item label="帮助" icon={<IconHelpCircle size={18} />} onHover={() => { /* no panel yet */ }} />
-          {/* Server quick actions */}
-          <Tooltip label="保存到服务端" position="right" withArrow>
-            <ActionIcon variant="subtle" size={36} radius="xl" aria-label="保存到服务端"
-              onClick={async ()=>{
-                try {
-                  const name = prompt('保存名称：')?.trim(); if (!name) return
-                  const s = useRFStore.getState()
-                  const saved = await saveServerFlow({ name, nodes: s.nodes, edges: s.edges })
-                  notifications.show({ title: '已保存', message: saved.name, color: 'green' })
-                } catch (e:any) {
-                  notifications.show({ title: '保存失败', message: e?.message || 'error', color: 'red' })
-                }
-              }} data-ux-floating>
-              <IconCloudUpload size={18} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="从服务端载入" position="right" withArrow>
-            <ActionIcon variant="subtle" size={36} radius="xl" aria-label="从服务端载入"
-              onClick={async ()=>{
-                try {
-                  const list = await listServerFlows()
-                  if (!list.length) { notifications.show({ title: '暂无远程工作流', message: '', color: 'yellow' }); return }
-                  const pick = prompt('输入要载入的ID：\n' + list.slice(0,8).map(f=>`${f.id}  ${f.name}`).join('\n'))?.trim()
-                  if (!pick) return
-                  const rec = await getServerFlow(pick)
-                  const data = rec?.data as any
-                  if (data?.nodes && data?.edges) {
-                    useRFStore.setState({ nodes: data.nodes, edges: data.edges })
-                    notifications.show({ title: '已载入', message: rec.name, color: 'green' })
-                  } else {
-                    notifications.show({ title: '数据不完整', message: '缺少 nodes/edges', color: 'red' })
-                  }
-                } catch (e:any) {
-                  notifications.show({ title: '载入失败', message: e?.message || 'error', color: 'red' })
-                }
-              }} data-ux-floating>
-              <IconCloudDownload size={18} />
-            </ActionIcon>
-          </Tooltip>
           <div style={{ height: 8 }} />
           {(() => {
             const user = useAuth.getState().user

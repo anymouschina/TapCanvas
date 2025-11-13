@@ -41,7 +41,7 @@ export default function TemplatePanel(): JSX.Element | null {
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
         <Group justify="space-between" mb={8}>
-          <Title order={6}>工作流模板</Title>
+          <Title order={6}>工作流（项目：{currentProject?.name || '全部'}）</Title>
           <Group>
             <Badge color="gray" variant="light">推荐</Badge>
             <Badge color="gray" variant="light">浏览全部</Badge>

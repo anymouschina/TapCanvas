@@ -1,5 +1,5 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, Modal, Stack, Text } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, Modal, Stack, Text, Select } from '@mantine/core'
 import { IconBrandGithub } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
@@ -9,7 +9,7 @@ import KeyboardShortcuts from './KeyboardShortcuts'
 import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNames, saveTemplate, renameTemplate } from './templates'
 import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
-import { saveProjectFlow, listFlowVersions, rollbackFlow, getServerFlow, listProjects, upsertProject, type ProjectDto } from './api/server'
+import { saveProjectFlow, listFlowVersions, rollbackFlow, getServerFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
 import { useAuth } from './auth/store'
 import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
@@ -18,6 +18,7 @@ import FloatingNav from './ui/FloatingNav'
 import AddNodePanel from './ui/AddNodePanel'
 import TemplatePanel from './ui/TemplatePanel'
 import AccountPanel from './ui/AccountPanel'
+import ProjectPanel from './ui/ProjectPanel'
 import AssetPanel from './ui/AssetPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
@@ -56,6 +57,31 @@ export default function App(): JSX.Element {
     if (!useUIStore.getState().currentProject && ps.length) setCurrentProject({ id: ps[0].id, name: ps[0].name })
   }).catch(()=>{}) }, [setCurrentProject])
 
+  // When switching project, sync flow name to project name and clear current flow id (project即工作流)
+  React.useEffect(() => {
+    if (currentProject?.name) setCurrentFlow({ id: null, name: currentProject.name })
+  }, [currentProject?.id])
+
+  // Auto load latest project flow on project switch
+  React.useEffect(() => {
+    const pid = currentProject?.id
+    if (!pid) return
+    listProjectFlows(pid).then((list) => {
+      if (list.length > 0) {
+        const f = list[0]
+        const data: any = f.data || {}
+        useRFStore.setState({ nodes: Array.isArray(data.nodes)?data.nodes:[], edges: Array.isArray(data.edges)?data.edges:[] })
+        setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
+        setDirty(false)
+      } else {
+        // empty project -> clear canvas
+        useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
+        setCurrentFlow({ id: null, name: currentProject?.name || '未命名', source: 'server' })
+        setDirty(false)
+      }
+    }).catch(()=>{})
+  }, [currentProject?.id])
+
   // mark dirty on any node/edge change via polling change (simple and safe)
   React.useEffect(() => { setDirty(true) }, [rfState.nodes, rfState.edges, setDirty])
 
@@ -91,7 +117,7 @@ export default function App(): JSX.Element {
             {isDirty && (<Badge color="red" variant="light">未保存</Badge>)}
           </Group>
           <Group gap="xs">
-            <TextInput size="xs" placeholder="项目名" value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 220 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
+            <TextInput size="xs" placeholder="项目名" value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
             <Button size="xs" onClick={doSave} disabled={!isDirty}>保存</Button>
             {currentFlow.id && (
               <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentFlow.id!)) } catch { setVersions([]) } }}>历史</Button>
@@ -125,6 +151,7 @@ export default function App(): JSX.Element {
       <FloatingNav />
       <AddNodePanel />
       <TemplatePanel />
+      <ProjectPanel />
       <AccountPanel />
       <AssetPanel />
       <ParamModal />

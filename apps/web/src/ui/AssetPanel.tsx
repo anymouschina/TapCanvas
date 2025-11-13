@@ -45,7 +45,7 @@ export default function AssetPanel(): JSX.Element | null {
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
               <Group justify="space-between" mb={8}>
-                <Title order={6}>我的资产</Title>
+                <Title order={6}>我的资产（项目：{currentProject?.name || '未选择'}）</Title>
               </Group>
               {assets.length === 0 && (<Text size="xs" c="dimmed">暂无资产</Text>)}
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
