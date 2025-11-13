@@ -18,6 +18,7 @@ import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
 import { Paper, Stack, Button, Divider, Group, Text } from '@mantine/core'
 import TypedEdge from './edges/TypedEdge'
+import { runFlowDag } from '../runner/dag'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -515,31 +516,56 @@ function CanvasInner(): JSX.Element {
         <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
       </ReactFlow>
       {/* Persistent group outlines */}
-      {groupOutlines.map(g => (
-        <div
-          key={g.id}
-          style={{ position: 'absolute', left: g.sx, top: g.sy, width: g.w, height: g.h, borderRadius: 12, border: '1px dashed rgba(148,163,184,0.35)', background: 'transparent', cursor: 'pointer' }}
-          onMouseDown={(e)=>{ e.stopPropagation(); e.preventDefault() }}
-          onClick={(e)=>{
-            e.stopPropagation();
-            // select this group's members
-            const ids = new Set((groups.find(x=>x.id===g.id)?.nodeIds) || [])
-            useRFStore.setState(s => ({
-              nodes: s.nodes.map(n => ({ ...n, selected: ids.has(n.id) })),
-              edges: s.edges.map(e => ({ ...e, selected: false }))
-            }))
-          }}
-        >
-          <div style={{ position: 'absolute', left: 8, top: -18, fontSize: 11, color: '#94a3b8', background: 'rgba(15,16,20,.8)', padding: '1px 6px', borderRadius: 999, border: '1px solid rgba(148,163,184,0.35)' }}>{g.name || '组'}</div>
-        </div>
-      ))}
+      {groupOutlines.map(g => {
+        const active = groupMatch?.id === g.id
+        const grp = groups.find(x => x.id === g.id)
+        const only = new Set(grp?.nodeIds || [])
+        return (
+          <div
+            key={g.id}
+            style={{ position: 'absolute', left: g.sx, top: g.sy, width: g.w, height: g.h, borderRadius: 12, border: '1px solid rgba(148,163,184,0.35)', background: 'rgba(148,163,184,0.08)', boxShadow: '0 6px 18px rgba(0,0,0,0.25)', pointerEvents: 'none' }}
+          >
+            <div
+              style={{ position: 'absolute', left: 8, top: -18, fontSize: 11, color: '#94a3b8', background: 'rgba(15,16,20,.8)', padding: '1px 6px', borderRadius: 999, border: '1px solid rgba(148,163,184,0.35)', pointerEvents: 'auto', cursor: 'pointer' }}
+              onClick={(e)=>{
+                e.stopPropagation();
+                // select this group's members
+                const ids = new Set((groups.find(x=>x.id===g.id)?.nodeIds) || [])
+                useRFStore.setState(s => ({
+                  nodes: s.nodes.map(n => ({ ...n, selected: ids.has(n.id) })),
+                  edges: s.edges.map(e => ({ ...e, selected: false }))
+                }))
+              }}
+            >{g.name || '新建组'}</div>
+            {active && (
+              <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: 0, top: -36, pointerEvents: 'auto' }}>
+                <Group gap={6}>
+                  <Text size="xs" c="dimmed">{grp?.name || '新建组'}</Text>
+                  <Divider orientation="vertical" style={{ height: 16 }} />
+                  <Button size="xs" color="blue" leftSection={<span style={{ fontWeight: 700 }}>▶</span>} onClick={async ()=>{
+                    await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only })
+                  }}>一键执行</Button>
+                  <Button size="xs" variant="subtle" onClick={()=>{ persistToLocalStorage(); toast('已保存到本地','success') }}>保存工作流</Button>
+                  <Button size="xs" variant="subtle" color="red" onClick={()=>{ if (grp) useRFStore.getState().removeGroupById(grp.id) }}>解组</Button>
+                </Group>
+              </Paper>
+            )}
+          </div>
+        )
+      })}
       {groupRect && (
         <>
           <div onMouseDown={startGroupDrag} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy, width: groupRect.w, height: groupRect.h, borderRadius: 12, background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.35)', cursor: 'move' }} />
           <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: groupRect.sx, top: groupRect.sy - 36 }}>
             <Group gap={6}>
-              <Text size="xs" c="dimmed">{groupMatch?.name || 'Group'}</Text>
+              <Text size="xs" c="dimmed">{groupMatch?.name || '新建组'}</Text>
               <Divider orientation="vertical" style={{ height: 16 }} />
+              {groupMatch && (
+                <Button size="xs" color="blue" leftSection={<span style={{ fontWeight: 700 }}>▶</span>} onClick={async ()=>{
+                  const only = new Set(groupMatch.nodeIds)
+                  await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only })
+                }}>一键执行</Button>
+              )}
               <Button size="xs" variant="subtle" onClick={layoutGrid}>宫格布局</Button>
               <Button size="xs" variant="subtle" onClick={layoutHorizontal}>水平布局</Button>
               <Button size="xs" variant="subtle" onClick={()=>{

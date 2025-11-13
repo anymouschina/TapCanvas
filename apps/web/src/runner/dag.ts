@@ -49,19 +49,37 @@ function hasCycle(g: Graph): boolean {
   return visited !== g.nodes.size
 }
 
-export async function runFlowDag(concurrency: number, get: Getter, set: Setter) {
+export async function runFlowDag(
+  concurrency: number,
+  get: Getter,
+  set: Setter,
+  options?: { only?: Set<string> }
+) {
   const s = get()
-  const graph = buildGraph(s.nodes, s.edges)
+  const only = options?.only
+  const nodes = only ? s.nodes.filter((n: Node) => only.has(n.id)) : s.nodes
+  const edges = only
+    ? s.edges.filter((e: Edge) => e.source && e.target && only.has(e.source) && only.has(e.target))
+    : s.edges
+  const graph = buildGraph(nodes, edges)
 
   // initialize states
   set((state: any) => ({
-    nodes: state.nodes.map((n: Node) => ({ ...n, data: { ...n.data, status: 'queued', progress: 0 } }))
+    nodes: state.nodes.map((n: Node) =>
+      (!only || only.has(n.id))
+        ? ({ ...n, data: { ...n.data, status: 'queued', progress: 0 } })
+        : n
+    )
   }))
 
   if (hasCycle(graph)) {
     // mark all as error due to cycle
     set((state: any) => ({
-      nodes: state.nodes.map((n: Node) => ({ ...n, data: { ...n.data, status: 'error', lastError: 'Cycle detected in graph' } }))
+      nodes: state.nodes.map((n: Node) =>
+        (!only || only.has(n.id))
+          ? ({ ...n, data: { ...n.data, status: 'error', lastError: 'Cycle detected in graph' } })
+          : n
+      )
     }))
     return
   }
@@ -115,4 +133,3 @@ export async function runFlowDag(concurrency: number, get: Getter, set: Setter) 
     await new Promise(r => setTimeout(r, 50))
   }
 }
-
