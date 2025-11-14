@@ -5,20 +5,21 @@ import { PrismaService } from 'nestjs-prisma'
 export class ModelService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listProviders() {
+  listProviders(userId: string) {
     return this.prisma.modelProvider.findMany({
+      where: { ownerId: userId },
       orderBy: { createdAt: 'asc' },
     })
   }
 
-  listTokens(providerId: string) {
+  listTokens(providerId: string, userId: string) {
     return this.prisma.modelToken.findMany({
-      where: { providerId },
+      where: { providerId, userId },
       orderBy: { createdAt: 'asc' },
     })
   }
 
-  upsertProvider(input: { id?: string; name: string; vendor: string; baseUrl?: string | null }) {
+  upsertProvider(input: { id?: string; name: string; vendor: string; baseUrl?: string | null }, userId: string) {
     if (input.id) {
       return this.prisma.modelProvider.update({
         where: { id: input.id },
@@ -26,11 +27,11 @@ export class ModelService {
       })
     }
     return this.prisma.modelProvider.create({
-      data: { name: input.name, vendor: input.vendor, baseUrl: input.baseUrl || null },
+      data: { name: input.name, vendor: input.vendor, baseUrl: input.baseUrl || null, ownerId: userId },
     })
   }
 
-  upsertToken(input: { id?: string; providerId: string; label: string; secretToken: string; enabled?: boolean; userAgent?: string | null }) {
+  upsertToken(input: { id?: string; providerId: string; label: string; secretToken: string; enabled?: boolean; userAgent?: string | null }, userId: string) {
     if (input.id) {
       return this.prisma.modelToken.update({
         where: { id: input.id },
@@ -48,12 +49,15 @@ export class ModelService {
         label: input.label,
         secretToken: input.secretToken,
         userAgent: input.userAgent ?? null,
+        userId,
         enabled: input.enabled ?? true,
       },
     })
   }
 
-  deleteToken(id: string) {
-    return this.prisma.modelToken.delete({ where: { id } })
+  deleteToken(id: string, userId: string) {
+    return this.prisma.modelToken.delete({
+      where: { id },
+    })
   }
 }

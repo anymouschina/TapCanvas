@@ -32,7 +32,9 @@ model User {
   versions  FlowVersion[]
   projects  Project[]
   assets    Asset[]
-   executions FlowExecution[]
+  executions FlowExecution[]
+  modelProviders ModelProvider[]
+  modelTokens    ModelToken[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -76,6 +78,8 @@ model ModelProvider {
   name      String
   vendor    String        // e.g. "sora", "openai", "custom"
   baseUrl   String?       // custom domain / endpoint for this vendor
+   ownerId   String
+   owner     User          @relation(fields: [ownerId], references: [id])
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   tokens    ModelToken[]
@@ -88,6 +92,8 @@ model ModelToken {
   label       String        // human friendly name, e.g. "Sora key #1"
   secretToken String        // API key / token (stored encrypted at rest on real deployment)
   userAgent   String?
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
   enabled     Boolean       @default(true)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
