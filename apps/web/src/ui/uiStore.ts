@@ -13,8 +13,8 @@ type UIState = {
   setAddPanelOpen: (v: boolean) => void
   templatePanelOpen: boolean
   setTemplatePanelOpen: (v: boolean) => void
-  activePanel: 'add' | 'template' | 'assets' | 'account' | 'project' | null
-  setActivePanel: (p: 'add' | 'template' | 'assets' | 'account' | 'project' | null) => void
+  activePanel: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | null
+  setActivePanel: (p: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | null) => void
   panelAnchorY: number | null
   setPanelAnchorY: (y: number | null) => void
   paramNodeId: string | null

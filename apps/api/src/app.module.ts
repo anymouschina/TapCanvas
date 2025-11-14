@@ -7,9 +7,10 @@ import { AuthModule } from './auth/auth.module'
 import { ProjectModule } from './project/project.module'
 import { AssetModule } from './asset/asset.module'
 import { QueueModule } from './queue/queue.module'
+import { ModelModule } from './model/model.module'
 
 @Module({
-  imports: [PrismaModule.forRoot({ isGlobal: true }), QueueModule, AuthModule, ProjectModule, AssetModule, FlowModule],
+  imports: [PrismaModule.forRoot({ isGlobal: true }), QueueModule, AuthModule, ProjectModule, AssetModule, FlowModule, ModelModule],
   controllers: [AppController],
   providers: [AppService],
 })

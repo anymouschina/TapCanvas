@@ -4,11 +4,13 @@ import { getAuthToken } from '../auth/store'
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
 function withAuth(init?: RequestInit): RequestInit {
   const t = getAuthToken()
-  return { ...(init||{}), headers: { ...(init?.headers||{}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } }
+  return { ...(init || {}), headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } }
 }
 
 export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }
 export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string }
+export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null }
+export type ModelTokenDto = { id: string; providerId: string; label: string; secretToken: string; enabled: boolean }
 
 export async function listServerFlows(): Promise<FlowDto[]> {
   const r = await fetch(`${API_BASE}/flows`, withAuth())
@@ -76,6 +78,44 @@ export async function saveProjectFlow(payload: { id?: string; projectId: string;
   const r = await fetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } }) }))
   if (!r.ok) throw new Error(`save flow failed: ${r.status}`)
   return r.json()
+}
+
+// Model provider & token APIs
+export async function listModelProviders(): Promise<ModelProviderDto[]> {
+  const r = await fetch(`${API_BASE}/models/providers`, withAuth())
+  if (!r.ok) throw new Error(`list providers failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelProvider(payload: { id?: string; name: string; vendor: string; baseUrl?: string | null }): Promise<ModelProviderDto> {
+  const r = await fetch(`${API_BASE}/models/providers`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`save provider failed: ${r.status}`)
+  return r.json()
+}
+
+export async function listModelTokens(providerId: string): Promise<ModelTokenDto[]> {
+  const r = await fetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/tokens`, withAuth())
+  if (!r.ok) throw new Error(`list tokens failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelToken(payload: { id?: string; providerId: string; label: string; secretToken: string; enabled?: boolean }): Promise<ModelTokenDto> {
+  const r = await fetch(`${API_BASE}/models/tokens`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`save token failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deleteModelToken(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/models/tokens/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete token failed: ${r.status}`)
 }
 
 // Assets API

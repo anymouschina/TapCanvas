@@ -21,6 +21,7 @@ import TemplatePanel from './ui/TemplatePanel'
 import AccountPanel from './ui/AccountPanel'
 import ProjectPanel from './ui/ProjectPanel'
 import AssetPanel from './ui/AssetPanel'
+import ModelPanel from './ui/ModelPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 
@@ -208,6 +209,7 @@ export default function App(): JSX.Element {
       <ProjectPanel />
       <AccountPanel />
       <AssetPanel />
+      <ModelPanel />
       <ParamModal />
       <PreviewModal />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}
