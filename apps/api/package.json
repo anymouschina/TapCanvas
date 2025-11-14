@@ -31,6 +31,8 @@
     "axios": "^1.13.2",
     "nestjs-prisma": "^0.26.0",
     "prisma": "^6.19.0",
+    "@temporalio/client": "^1.10.5",
+    "@temporalio/worker": "^1.10.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

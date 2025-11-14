@@ -25,6 +25,18 @@ export class FlowController {
   }
 
   @UseGuards(JwtGuard)
+  @Post(':id/execute')
+  execute(@Param('id') id: string, @Req() req: any) {
+    return this.service.execute(id, String(req.user.sub))
+  }
+
+  @UseGuards(JwtGuard)
+  @Get('/executions/:executionId')
+  getExecution(@Param('executionId') executionId: string, @Req() req: any) {
+    return this.service.getExecution(executionId, String(req.user.sub))
+  }
+
+  @UseGuards(JwtGuard)
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: any) {
     return this.service.remove(id, String(req.user.sub))
