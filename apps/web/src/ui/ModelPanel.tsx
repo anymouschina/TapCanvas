@@ -116,6 +116,8 @@ export default function ModelPanel(): JSX.Element | null {
                 content: {
                   height: '100vh',
                   paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
                   paddingBottom: 16,
                 },
                 body: {
