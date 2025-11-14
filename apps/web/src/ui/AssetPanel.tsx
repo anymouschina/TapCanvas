@@ -25,6 +25,8 @@ export default function AssetPanel(): JSX.Element | null {
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
   const addNodes = useRFStore(s => s.load)
+  const addNode = useRFStore(s => s.addNode)
+  const openPreview = useUIStore(s => s.openPreview)
   const mounted = active === 'assets'
   const currentProject = useUIStore(s => s.currentProject)
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
@@ -90,6 +92,18 @@ export default function AssetPanel(): JSX.Element | null {
     } finally {
       setDraftLoading(false)
     }
+  }
+
+  const addDraftToCanvas = (d: any) => {
+    if (!d?.videoUrl) return
+    addNode('taskNode', d.title || 'Sora 草稿', {
+      kind: 'video',
+      source: 'sora',
+      videoUrl: d.videoUrl,
+      thumbnailUrl: d.thumbnailUrl,
+      prompt: d.prompt || '',
+    })
+    setActivePanel(null)
   }
   if (!mounted) return null
 
@@ -192,6 +206,21 @@ export default function AssetPanel(): JSX.Element | null {
                                 {d.prompt}
                               </Text>
                             )}
+                            <Group justify="space-between" mt={4}>
+                              <Button
+                                size="xs"
+                                variant="subtle"
+                                onClick={() => {
+                                  if (!d.videoUrl) return
+                                  openPreview({ url: d.videoUrl, kind: 'video', name: d.title || d.id || `草稿 ${idx + 1}` })
+                                }}
+                              >
+                                预览
+                              </Button>
+                              <Button size="xs" variant="light" onClick={() => addDraftToCanvas(d)}>
+                                添加到画布
+                              </Button>
+                            </Group>
                           </Paper>
                         ))}
                       </SimpleGrid>

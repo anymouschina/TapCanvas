@@ -25,7 +25,7 @@ export default function PreviewModal(): JSX.Element | null {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 2000, display: 'grid', gridTemplateRows: 'auto 1fr', color: '#e5e7eb' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 9000, display: 'grid', gridTemplateRows: 'auto 1fr', color: '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10 }}>
         <Title order={5} style={{ color: '#e5e7eb' }}>{name || '预览'}</Title>
         <Group gap={6}>
@@ -49,4 +49,3 @@ export default function PreviewModal(): JSX.Element | null {
     </div>
   )
 }
-

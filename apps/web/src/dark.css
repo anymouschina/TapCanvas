@@ -49,6 +49,7 @@ button { color: var(--mantine-color-text); }
   -webkit-backdrop-filter: blur(8px) !important;
 }
 
+
 /* 面板小三角指示（指向左侧图标） */
 .panel-arrow {
   position: absolute;
