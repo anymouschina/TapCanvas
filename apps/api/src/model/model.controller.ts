@@ -8,18 +8,18 @@ export class ModelController {
   constructor(private readonly service: ModelService) {}
 
   @Get('providers')
-  listProviders() {
-    return this.service.listProviders()
+  listProviders(@Req() req: any) {
+    return this.service.listProviders(String(req.user.sub))
   }
 
   @Get('providers/:id/tokens')
-  listTokens(@Param('id') id: string) {
-    return this.service.listTokens(id)
+  listTokens(@Param('id') id: string, @Req() req: any) {
+    return this.service.listTokens(id, String(req.user.sub))
   }
 
   @Post('providers')
-  upsertProvider(@Body() body: { id?: string; name: string; vendor: string; baseUrl?: string | null }) {
-    return this.service.upsertProvider(body)
+  upsertProvider(@Body() body: { id?: string; name: string; vendor: string; baseUrl?: string | null }, @Req() req: any) {
+    return this.service.upsertProvider(body, String(req.user.sub))
   }
 
   @Post('tokens')
@@ -34,11 +34,11 @@ export class ModelController {
       userAgent?: string | null
     },
   ) {
-    return this.service.upsertToken(body)
+    return this.service.upsertToken(body, String(req.user.sub))
   }
 
   @Delete('tokens/:id')
-  deleteToken(@Param('id') id: string) {
-    return this.service.deleteToken(id)
+  deleteToken(@Param('id') id: string, @Req() req: any) {
+    return this.service.deleteToken(id, String(req.user.sub))
   }
 }
