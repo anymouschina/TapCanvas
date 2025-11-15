@@ -10,8 +10,23 @@ function withAuth(init?: RequestInit): RequestInit {
 export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }
 export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string }
 export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null }
-export type ModelTokenDto = { id: string; providerId: string; label: string; secretToken: string; userAgent?: string | null; enabled: boolean }
-export type ModelEndpointDto = { id: string; providerId: string; key: string; label: string; baseUrl: string }
+export type ModelTokenDto = {
+  id: string
+  providerId: string
+  label: string
+  secretToken: string
+  userAgent?: string | null
+  enabled: boolean
+  shared?: boolean
+}
+export type ModelEndpointDto = {
+  id: string
+  providerId: string
+  key: string
+  label: string
+  baseUrl: string
+  shared?: boolean
+}
 
 export async function listServerFlows(): Promise<FlowDto[]> {
   const r = await fetch(`${API_BASE}/flows`, withAuth())
@@ -104,7 +119,15 @@ export async function listModelTokens(providerId: string): Promise<ModelTokenDto
   return r.json()
 }
 
-export async function upsertModelToken(payload: { id?: string; providerId: string; label: string; secretToken: string; enabled?: boolean; userAgent?: string | null }): Promise<ModelTokenDto> {
+export async function upsertModelToken(payload: {
+  id?: string
+  providerId: string
+  label: string
+  secretToken: string
+  enabled?: boolean
+  userAgent?: string | null
+  shared?: boolean
+}): Promise<ModelTokenDto> {
   const r = await fetch(`${API_BASE}/models/tokens`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -131,6 +154,7 @@ export async function upsertModelEndpoint(payload: {
   key: string
   label: string
   baseUrl: string
+  shared?: boolean
 }): Promise<ModelEndpointDto> {
   const r = await fetch(`${API_BASE}/models/endpoints`, withAuth({
     method: 'POST',
@@ -157,10 +181,13 @@ export type SoraDraftItemDto = {
 
 export type SoraDraftListDto = { items: SoraDraftItemDto[]; cursor: string | null }
 
-export async function listSoraDrafts(tokenId: string, cursor?: string | null): Promise<SoraDraftListDto> {
-  const qs = new URLSearchParams({ tokenId })
+export async function listSoraDrafts(tokenId?: string | null, cursor?: string | null): Promise<SoraDraftListDto> {
+  const qs = new URLSearchParams()
+  if (tokenId) qs.set('tokenId', tokenId)
   if (cursor) qs.set('cursor', cursor)
-  const r = await fetch(`${API_BASE}/sora/drafts?${qs.toString()}`, withAuth())
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/sora/drafts?${query}` : `${API_BASE}/sora/drafts`
+  const r = await fetch(url, withAuth())
   if (!r.ok) throw new Error(`list drafts failed: ${r.status}`)
   return r.json()
 }

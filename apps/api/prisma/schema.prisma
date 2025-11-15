@@ -98,6 +98,14 @@ model ModelToken {
   userId      String
   user        User          @relation(fields: [userId], references: [id])
   enabled     Boolean       @default(true)
+  /// Whether this token can be used as a shared fallback configuration by other users.
+  shared              Boolean   @default(false)
+  /// Number of consecutive failures when using this token as a shared configuration (within the same day).
+  sharedFailureCount  Int       @default(0)
+  /// The timestamp of the last failure when used as a shared configuration.
+  sharedLastFailureAt DateTime?
+  /// If set and greater than now, this shared configuration is temporarily disabled until that time (e.g. end of day after too many failures).
+  sharedDisabledUntil DateTime?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 }
@@ -109,6 +117,7 @@ model ModelEndpoint {
   key        String        // e.g. "videos" | "video" | "sora"
   label      String
   baseUrl    String
+  shared     Boolean       @default(false)
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
 

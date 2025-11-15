@@ -8,22 +8,14 @@ const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 export class SoraService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDrafts(userId: string, tokenId: string, cursor?: string, limit?: number) {
-    const token = await this.prisma.modelToken.findFirst({
-      where: { id: tokenId, userId },
-      include: {
-        provider: {
-          include: { endpoints: true },
-        },
-      },
-    })
+  async getDrafts(userId: string, tokenId?: string, cursor?: string, limit?: number) {
+    const token = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
     }
 
-    // 优先使用用户配置的自定义 sora 域名；若未配置，再退回官方域名
-    const soraEndpoint = token.provider.endpoints.find((e) => e.key === 'sora')
-    const baseUrl = soraEndpoint?.baseUrl || 'https://sora.chatgpt.com'
+    // 优先使用用户配置 / 共享的自定义 sora 域名；若未配置，再退回官方域名
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
 
     const userAgent = token.userAgent || 'TapCanvas/1.0'
@@ -159,6 +151,14 @@ export class SoraService {
         cursor: data?.cursor ?? null,
       }
     } catch (err: any) {
+      // If this is a shared configuration, register the failure and soft-disable if needed.
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+        throw new HttpException(
+          { message: '当前配置不可用，请稍后再试', upstreamStatus: err?.response?.status ?? null },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        )
+      }
       const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
       const message =
         err?.response?.data?.message ||
@@ -172,20 +172,12 @@ export class SoraService {
   }
 
   async deleteDraft(userId: string, tokenId: string, draftId: string) {
-    const token = await this.prisma.modelToken.findFirst({
-      where: { id: tokenId, userId },
-      include: {
-        provider: {
-          include: { endpoints: true },
-        },
-      },
-    })
+    const token = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
     }
 
-    const soraEndpoint = token.provider.endpoints.find((e) => e.key === 'sora')
-    const baseUrl = soraEndpoint?.baseUrl || 'https://sora.chatgpt.com'
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/profile/drafts/${draftId}`, baseUrl).toString()
 
     const userAgent = token.userAgent || 'TapCanvas/1.0'
@@ -200,6 +192,13 @@ export class SoraService {
       })
       return { ok: true, status: res.status }
     } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+        throw new HttpException(
+          { message: '当前配置不可用，请稍后再试', upstreamStatus: err?.response?.status ?? null },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        )
+      }
       const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
       const message =
         err?.response?.data?.message ||
@@ -210,5 +209,129 @@ export class SoraService {
         status,
       )
     }
+  }
+
+  private async resolveSoraToken(userId: string, tokenId?: string) {
+    const includeConfig = {
+      provider: {
+        include: { endpoints: true },
+      },
+    } as const
+
+    // If tokenId is provided, prefer the caller's own token, but allow falling back to a shared token with the same id.
+    if (tokenId) {
+      let token = await this.prisma.modelToken.findFirst({
+        where: { id: tokenId, userId },
+        include: includeConfig,
+      })
+      if (!token) {
+        token = await this.prisma.modelToken.findFirst({
+          where: { id: tokenId, shared: true },
+          include: includeConfig,
+        })
+      }
+      return token
+    }
+
+    // No tokenId: try a user-owned Sora token first.
+    const owned = await this.prisma.modelToken.findFirst({
+      where: { userId, enabled: true, provider: { vendor: 'sora' } },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+    if (owned) return owned
+
+    // Then fall back to a shared Sora token, if any.
+    const now = new Date()
+    let shared = await this.prisma.modelToken.findFirst({
+      where: {
+        shared: true,
+        enabled: true,
+        provider: { vendor: 'sora' },
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+      },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+    if (!shared) return null
+
+    // If it was disabled until some time in the past, reset its counters for a new day.
+    if (shared.sharedDisabledUntil && shared.sharedDisabledUntil < now) {
+      shared = await this.prisma.modelToken.update({
+        where: { id: shared.id },
+        data: { sharedDisabledUntil: null, sharedFailureCount: 0 },
+        include: includeConfig,
+      })
+    }
+    return shared
+  }
+
+  private async resolveBaseUrl(
+    token: {
+      provider: {
+        id: string
+        vendor: string
+        endpoints: { key: string; baseUrl: string | null | undefined }[]
+      }
+    },
+    key: string,
+    fallback: string,
+  ): Promise<string> {
+    // 1. 优先使用当前 provider 上配置的域名
+    const own = token.provider.endpoints.find((e) => e.key === key && e.baseUrl)
+    if (own?.baseUrl) return own.baseUrl
+
+    // 2. 退回到任意共享的同 key 域名（通常由管理员配置）
+    const shared = await this.prisma.modelEndpoint.findFirst({
+      where: {
+        key,
+        shared: true,
+        provider: { vendor: 'sora' },
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+    if (shared?.baseUrl) return shared.baseUrl
+
+    // 3. 最后使用内置默认
+    return fallback
+  }
+
+  private async registerSharedFailure(tokenId: string) {
+    const existing = await this.prisma.modelToken.findUnique({ where: { id: tokenId } })
+    if (!existing || !existing.shared) return
+
+    const now = new Date()
+    const last = existing.sharedLastFailureAt
+    const isSameDay =
+      last &&
+      last.getFullYear() === now.getFullYear() &&
+      last.getMonth() === now.getMonth() &&
+      last.getDate() === now.getDate()
+
+    let failureCount = existing.sharedFailureCount || 0
+    if (isSameDay) {
+      failureCount += 1
+    } else {
+      failureCount = 1
+    }
+
+    let disabledUntil = existing.sharedDisabledUntil || null
+    if (failureCount >= 3) {
+      const endOfDay = new Date(now)
+      endOfDay.setHours(23, 59, 59, 999)
+      disabledUntil = endOfDay
+    }
+
+    await this.prisma.modelToken.update({
+      where: { id: tokenId },
+      data: {
+        sharedFailureCount: failureCount,
+        sharedLastFailureAt: now,
+        sharedDisabledUntil: disabledUntil,
+      },
+    })
   }
 }

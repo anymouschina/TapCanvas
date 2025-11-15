@@ -37,6 +37,7 @@ export class ModelController {
       secretToken: string
       enabled?: boolean
       userAgent?: string | null
+      shared?: boolean
     },
     @Req() req: any,
   ) {
@@ -57,6 +58,7 @@ export class ModelController {
       key: string
       label: string
       baseUrl: string
+      shared?: boolean
     },
     @Req() req: any,
   ) {
