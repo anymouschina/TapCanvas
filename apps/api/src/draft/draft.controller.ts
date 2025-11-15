@@ -12,11 +12,12 @@ export class DraftController {
     @Query('q') q: string,
     @Query('provider') provider: string | undefined,
     @Query('limit') limit: string | undefined,
+    @Query('mode') mode: string | undefined,
     @Req() req: any,
   ) {
     const userId = String(req.user.sub)
     const parsedLimit = limit ? parseInt(limit, 10) || undefined : undefined
-    return this.service.suggestPrompts(userId, q || '', provider || 'sora', parsedLimit)
+    return this.service.suggestPrompts(userId, q || '', provider || 'sora', parsedLimit, mode)
   }
 
   @Get('mark-used')

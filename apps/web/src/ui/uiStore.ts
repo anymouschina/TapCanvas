@@ -35,6 +35,8 @@ type UIState = {
   setDirty: (v: boolean) => void
   currentProject: { id?: string|null; name: string } | null
   setCurrentProject: (p: { id?: string|null; name: string } | null) => void
+  promptSuggestMode: 'history' | 'semantic'
+  setPromptSuggestMode: (m: 'history' | 'semantic') => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -72,4 +74,6 @@ export const useUIStore = create<UIState>((set) => ({
   setDirty: (v) => set({ isDirty: v }),
   currentProject: null,
   setCurrentProject: (p) => set({ currentProject: p }),
+  promptSuggestMode: 'history',
+  setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
 }))

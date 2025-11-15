@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Group, Title, Transition, Button, Avatar, Text, Stack, Divider } from '@mantine/core'
+import { Paper, Group, Title, Transition, Button, Avatar, Text, Stack, Divider, SegmentedControl } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { useAuth } from '../auth/store'
 
@@ -7,6 +7,8 @@ export default function AccountPanel(): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
+  const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
+  const setPromptSuggestMode = useUIStore(s => s.setPromptSuggestMode)
   const mounted = active === 'account'
   const user = useAuth(s => s.user)
   const clear = useAuth(s => s.clear)
@@ -31,6 +33,19 @@ export default function AccountPanel(): JSX.Element | null {
                   <Button size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
                 )}
                 <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
+                <Divider label="提示词自动补全" labelPosition="left" my={8} />
+                <Stack gap={4}>
+                  <Text size="xs" c="dimmed">补全模式</Text>
+                  <SegmentedControl
+                    size="xs"
+                    value={promptSuggestMode}
+                    onChange={(v) => setPromptSuggestMode(v as 'history' | 'semantic')}
+                    data={[
+                      { label: '历史匹配', value: 'history' },
+                      { label: '语义匹配', value: 'semantic' },
+                    ]}
+                  />
+                </Stack>
               </Stack>
             </Paper>
           </div>

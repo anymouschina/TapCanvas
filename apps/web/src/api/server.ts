@@ -171,9 +171,14 @@ export async function deleteSoraDraft(tokenId: string, draftId: string): Promise
   if (!r.ok) throw new Error(`delete draft failed: ${r.status}`)
 }
 
-export async function suggestDraftPrompts(query: string, provider = 'sora'): Promise<{ prompts: string[] }> {
+export async function suggestDraftPrompts(
+  query: string,
+  provider = 'sora',
+  mode?: 'history' | 'semantic',
+): Promise<{ prompts: string[] }> {
   const qs = new URLSearchParams({ q: query })
   if (provider) qs.set('provider', provider)
+  if (mode === 'semantic') qs.set('mode', 'semantic')
   const r = await fetch(`${API_BASE}/drafts/suggest?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`suggest prompts failed: ${r.status}`)
   return r.json()

@@ -75,6 +75,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [promptSuggestions, setPromptSuggestions] = React.useState<string[]>([])
   const [activeSuggestion, setActiveSuggestion] = React.useState(0)
   const suggestTimeout = React.useRef<number | null>(null)
+  const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
@@ -104,7 +105,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
     suggestTimeout.current = window.setTimeout(async () => {
       try {
-        const res = await suggestDraftPrompts(value, 'sora')
+        const mode = promptSuggestMode === 'semantic' ? 'semantic' : 'history'
+        const res = await suggestDraftPrompts(value, 'sora', mode)
         setPromptSuggestions(res.prompts || [])
         setActiveSuggestion(0)
       } catch {
