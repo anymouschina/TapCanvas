@@ -3,13 +3,14 @@ import { PrismaService } from 'nestjs-prisma'
 import type { AnyTaskRequest, ProviderAdapter, ProviderContext, TaskResult } from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
+import { qwenAdapter } from './adapters/qwen.adapter'
 
 @Injectable()
 export class TaskService {
   private readonly adapters: ProviderAdapter[]
 
   constructor(private readonly prisma: PrismaService) {
-    this.adapters = [soraAdapter, geminiAdapter]
+    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter]
   }
 
   private async buildContextForProvider(
@@ -32,8 +33,8 @@ export class TaskService {
 
     let apiKey = ''
 
-    if (adapter.name === 'gemini') {
-      // 优先使用当前用户自己的 Gemini Token，其次使用共享 Token（若存在）
+    if (adapter.name === 'gemini' || adapter.name === 'qwen') {
+      // 优先使用当前用户自己的 Token，其次使用共享 Token（若存在）
       const owned = await this.prisma.modelToken.findFirst({
         where: {
           providerId,

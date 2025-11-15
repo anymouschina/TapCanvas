@@ -82,7 +82,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       ? String(lastResult.preview.value || '')
       : ''
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
-  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'models/gemini-2.5-flash-image')
+  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
   const { upstreamText, upstreamImageUrl } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
     if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null }
@@ -609,11 +609,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               <Select
                 label="生图模型"
                 data={[
-                  { value: 'models/gemini-2.5-flash-image', label: 'models/gemini-2.5-flash-image' },
-                  { value: 'models/gemini-2.5-flash-lite-preview-09-2025', label: 'models/gemini-2.5-flash-lite-preview-09-2025' },
+                  { value: 'qwen-image-plus', label: 'qwen-image-plus' },
                 ]}
                 value={imageModel}
-                onChange={(v) => setImageModel(v || 'models/gemini-2.5-flash-image')}
+                onChange={(v) => setImageModel(v || 'qwen-image-plus')}
                 comboboxProps={{
                   withinPortal: true,
                   styles: {

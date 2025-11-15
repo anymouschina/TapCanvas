@@ -54,12 +54,13 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     }
 
     setNodeStatus(id, 'running', { progress: 5 })
+    const vendor = taskKind === 'text_to_image' ? 'qwen' : 'gemini'
     appendLog(
       id,
-      `[${nowLabel()}] 调用${kind === 'image' ? '图像' : '文案'}模型 …`,
+      `[${nowLabel()}] 调用${vendor === 'qwen' ? 'Qwen 图像' : 'Gemini 文案'}模型 …`,
     )
 
-    const res = await runTaskByVendor('gemini', {
+    const res = await runTaskByVendor(vendor, {
       kind: taskKind,
       prompt,
       extras: {

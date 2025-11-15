@@ -45,6 +45,13 @@ export default function ModelPanel(): JSX.Element | null {
   const [geminiLabel, setGeminiLabel] = React.useState('')
   const [geminiSecret, setGeminiSecret] = React.useState('')
   const [geminiShared, setGeminiShared] = React.useState(false)
+  const [qwenProvider, setQwenProvider] = React.useState<ModelProviderDto | null>(null)
+  const [qwenTokens, setQwenTokens] = React.useState<ModelTokenDto[]>([])
+  const [qwenModalOpen, setQwenModalOpen] = React.useState(false)
+  const [qwenEditingToken, setQwenEditingToken] = React.useState<ModelTokenDto | null>(null)
+  const [qwenLabel, setQwenLabel] = React.useState('')
+  const [qwenSecret, setQwenSecret] = React.useState('')
+  const [qwenShared, setQwenShared] = React.useState(false)
 
   React.useEffect(() => {
     if (!mounted) return
@@ -84,6 +91,16 @@ export default function ModelPanel(): JSX.Element | null {
         setGeminiBaseUrl(gemini.baseUrl || '')
         const gTokens = await listModelTokens(gemini.id)
         setGeminiTokens(gTokens)
+
+        // 初始化 Qwen 提供方
+        let qwen = ps.find((p) => p.vendor === 'qwen')
+        if (!qwen) {
+          qwen = await upsertModelProvider({ name: 'Qwen', vendor: 'qwen' })
+          setProviders((prev) => [...prev, qwen!])
+        }
+        setQwenProvider(qwen)
+        const qTokens = await listModelTokens(qwen.id)
+        setQwenTokens(qTokens)
       })
       .catch(() => {})
   }, [mounted])
@@ -165,6 +182,43 @@ export default function ModelPanel(): JSX.Element | null {
     setGeminiTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
+  const openQwenModalForNew = () => {
+    setQwenEditingToken(null)
+    setQwenLabel('')
+    setQwenSecret('')
+    setQwenShared(false)
+    setQwenModalOpen(true)
+  }
+
+  const handleSaveQwenToken = async () => {
+    if (!qwenProvider) return
+    const existingSecret = qwenEditingToken?.secretToken ?? ''
+    const finalSecret = qwenSecret || existingSecret
+    if (!finalSecret.trim()) {
+      alert('请填写 DashScope API Key')
+      return
+    }
+    const saved = await upsertModelToken({
+      id: qwenEditingToken?.id,
+      providerId: qwenProvider.id,
+      label: qwenLabel || '未命名密钥',
+      secretToken: finalSecret,
+      userAgent: null,
+      shared: qwenShared,
+    })
+    const next = qwenEditingToken
+      ? qwenTokens.map((t) => (t.id === saved.id ? saved : t))
+      : [...qwenTokens, saved]
+    setQwenTokens(next)
+    setQwenModalOpen(false)
+  }
+
+  const handleDeleteQwenToken = async (id: string) => {
+    if (!confirm('确定删除该密钥吗？')) return
+    await deleteModelToken(id)
+    setQwenTokens((prev) => prev.filter((t) => t.id !== id))
+  }
+
   const handleShareAllTokens = async (sharedFlag: boolean) => {
     if (!soraProvider || tokens.length === 0) return
     const updated: ModelTokenDto[] = []
@@ -244,6 +298,27 @@ export default function ModelPanel(): JSX.Element | null {
                       已配置密钥：{geminiTokens.length}
                     </Text>
                   </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" mb={4}>
+                      <div>
+                        <Group gap={6}>
+                          <Title order={6}>Qwen</Title>
+                          <Badge color="teal" size="xs">
+                            Beta
+                          </Badge>
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          配置 DashScope API Key（qwen-image-plus 等）
+                        </Text>
+                      </div>
+                      <Button size="xs" onClick={openQwenModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{qwenTokens.length}
+                    </Text>
+                  </Paper>
                 </Stack>
               </div>
             </Paper>
@@ -294,7 +369,170 @@ export default function ModelPanel(): JSX.Element | null {
                           })
                           setVideosEndpoint(saved)
                         }}
+            />
+            <Modal
+              opened={geminiModalOpen}
+              onClose={() => setGeminiModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Gemini 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text size="sm" c="dimmed">
+                    在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
+                  </Text>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="Base URL（可选，一般保持默认）"
+                        placeholder="例如：https://generativelanguage.googleapis.com"
+                        value={geminiBaseUrl}
+                        onChange={(e) => setGeminiBaseUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!geminiProvider) return
+                          await upsertModelProvider({
+                            id: geminiProvider.id,
+                            name: geminiProvider.name,
+                            vendor: geminiProvider.vendor,
+                            baseUrl: geminiBaseUrl.trim() || undefined,
+                          })
+                        }}
                       />
+                    </div>
+                  </Stack>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 Gemini Key</Title>
+                    <Button size="xs" onClick={openGeminiModalForNew}>
+                      新增 Key
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    {geminiTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Text size="sm">{t.label}</Text>
+                          <Text size="xs" c="dimmed">
+                            {t.shared ? '共享' : '仅自己可见'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => {
+                              setGeminiEditingToken(t)
+                              setGeminiLabel(t.label)
+                              setGeminiSecret('')
+                              setGeminiShared(!!t.shared)
+                              setGeminiModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                    {geminiTokens.length === 0 && (
+                      <Text size="xs" c="dimmed">
+                        暂无已保存的 Gemini Key。
+                      </Text>
+                    )}
+                  </Stack>
+                </Stack>
+              </div>
+            </Modal>
+            <Modal
+              opened={qwenModalOpen}
+              onClose={() => setQwenModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Qwen 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text size="sm" c="dimmed">
+                    在这里配置 DashScope API Key，用于调用 Qwen 图片模型（如 qwen-image-plus）。
+                  </Text>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 Qwen Key</Title>
+                    <Button size="xs" onClick={openQwenModalForNew}>
+                      新增 Key
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    {qwenTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Text size="sm">{t.label}</Text>
+                          <Text size="xs" c="dimmed">
+                            {t.shared ? '共享' : '仅自己可见'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => {
+                              setQwenEditingToken(t)
+                              setQwenLabel(t.label)
+                              setQwenSecret('')
+                              setQwenShared(!!t.shared)
+                              setQwenModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteQwenToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                    {qwenTokens.length === 0 && (
+                      <Text size="xs" c="dimmed">
+                        暂无已保存的 Qwen Key。
+                      </Text>
+                    )}
+                  </Stack>
+                </Stack>
+              </div>
+            </Modal>
                       <Switch
                         size="xs"
                         mt={4}
@@ -450,6 +688,104 @@ export default function ModelPanel(): JSX.Element | null {
                         取消
                       </Button>
                       <Button onClick={handleSaveToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+            <Modal
+              opened={qwenModalOpen}
+              onClose={() => setQwenModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Qwen 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text size="sm" c="dimmed">
+                    在此配置 DashScope API Key。将用于调用 Qwen 文生图（qwen-image-plus）。
+                  </Text>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的密钥</Title>
+                    <Button size="xs" variant="light" onClick={openQwenModalForNew}>
+                      新增密钥
+                    </Button>
+                  </Group>
+                  {qwenTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack gap="xs">
+                    {qwenTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setQwenEditingToken(t)
+                              setQwenLabel(t.label)
+                              setQwenSecret('')
+                              setQwenShared(!!t.shared)
+                              setQwenModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteQwenToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{qwenEditingToken ? '编辑密钥' : '新增密钥'}</Title>
+                    <TextInput label="名称" placeholder="例如：主账号 DashScope Key" value={qwenLabel} onChange={(e) => setQwenLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={qwenEditingToken ? '留空则不修改已有密钥' : '粘贴你的 DashScope API Key'}
+                      value={qwenSecret}
+                      onChange={(e) => setQwenSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={qwenShared}
+                      onChange={(e) => setQwenShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setQwenModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveQwenToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>

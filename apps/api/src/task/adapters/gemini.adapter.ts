@@ -126,17 +126,17 @@ async function callGenerateImage(
   }
 
   const baseUrl = normalizeBaseUrl(ctx.baseUrl)
-  // 默认对外暴露 gemini-2.5-flash-image，但底层按需映射到实际图片模型
-  let model = 'models/gemini-2.5-flash-image'
+  // 默认对外暴露 gemini-2.5-flash-image-preview，但底层按需映射到实际图片模型
+  let model = 'models/gemini-2.5-flash-image-preview'
   const override = modelKeyOverride && modelKeyOverride.trim()
   if (override) {
     const key = override.trim()
     model = key.startsWith('models/') ? key : `models/${key}`
   }
   // 当前 Gemini 图片生成实际使用 imagegeneration 模型；保持对外 modelKey 不变
-  const apiModel = model === 'models/gemini-2.5-flash-image' ? 'models/imagegeneration' : model
+  const apiModel = model === 'models/gemini-2.5-flash-image-preview' ? 'models/gemini-2.5-flash-image-preview' : model
 
-  const url = `${baseUrl}/v1beta/${apiModel}:generateImages?key=${encodeURIComponent(ctx.apiKey)}`
+  const url = `${baseUrl}/v1beta/${apiModel}:generateContent?key=${encodeURIComponent(ctx.apiKey)}`
   const body = {
     contents: [
       {
@@ -157,7 +157,7 @@ async function callGenerateImage(
   if (res.status < 200 || res.status >= 300) {
     const msg =
       (res.data && (res.data.error?.message || res.data.message)) ||
-      `Gemini generateImages failed with status ${res.status}`
+      `Gemini generateImages failed with status ${res.status}，${url}`
     const err = new Error(msg)
     ;(err as any).status = res.status
     throw err
