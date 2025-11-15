@@ -10,6 +10,7 @@ import {
   listModelProviders,
   listModelTokens,
   listSoraDrafts,
+  deleteSoraDraft,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
@@ -217,9 +218,28 @@ export default function AssetPanel(): JSX.Element | null {
                               >
                                 预览
                               </Button>
-                              <Button size="xs" variant="light" onClick={() => addDraftToCanvas(d)}>
-                                添加到画布
-                              </Button>
+                              <Group gap={4}>
+                                <Button size="xs" variant="light" onClick={() => addDraftToCanvas(d)}>
+                                  添加到画布
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="subtle"
+                                  color="red"
+                                  onClick={async () => {
+                                    if (!selectedTokenId || !d.id) return
+                                    if (!confirm('确定删除该草稿吗？此操作不可恢复')) return
+                                    try {
+                                      await deleteSoraDraft(selectedTokenId, d.id)
+                                      setDrafts(prev => prev.filter(x => x.id !== d.id))
+                                    } catch {
+                                      // ignore for now
+                                    }
+                                  }}
+                                >
+                                  删除
+                                </Button>
+                              </Group>
                             </Group>
                           </Paper>
                         ))}

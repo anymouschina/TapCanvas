@@ -17,4 +17,13 @@ export class SoraController {
     const parsedLimit = limit ? parseInt(limit, 10) || undefined : undefined
     return this.service.getDrafts(String(req.user.sub), tokenId, cursor, parsedLimit)
   }
+
+  @Get('drafts/delete')
+  deleteDraft(
+    @Query('tokenId') tokenId: string,
+    @Query('draftId') draftId: string,
+    @Req() req: any,
+  ) {
+    return this.service.deleteDraft(String(req.user.sub), tokenId, draftId)
+  }
 }

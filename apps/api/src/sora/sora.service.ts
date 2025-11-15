@@ -84,4 +84,45 @@ export class SoraService {
       )
     }
   }
+
+  async deleteDraft(userId: string, tokenId: string, draftId: string) {
+    const token = await this.prisma.modelToken.findFirst({
+      where: { id: tokenId, userId },
+      include: {
+        provider: {
+          include: { endpoints: true },
+        },
+      },
+    })
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const soraEndpoint = token.provider.endpoints.find((e) => e.key === 'sora')
+    const baseUrl = soraEndpoint?.baseUrl || 'https://sora.chatgpt.com'
+    const url = new URL(`/backend/project_y/profile/drafts/${draftId}`, baseUrl).toString()
+
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.delete(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: '*/*',
+        },
+      })
+      return { ok: true, status: res.status }
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        'Sora delete draft request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
 }

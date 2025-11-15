@@ -203,47 +203,73 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       {kind === 'image' && (
         <div style={{ position: 'relative', marginTop: 6 }}>
           {!imageUrl ? (
-            <div style={{ width: 296, height: 180, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
-              {[
-                { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
-                { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
-                { label: '首帧图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
-              ].map((row, idx) => {
-                const active = hovered === idx
-                const dimOthers = hovered !== null && hovered !== idx
-                return (
-                  <div key={row.label}
-                    onMouseEnter={()=>setHovered(idx)}
-                    onClick={row.onClick}
-                    style={{
-                      cursor: 'pointer',
-                      padding: '10px 10px', borderRadius: 6,
-                      background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
-                      transition: 'background .12s ease, opacity .12s ease',
-                      opacity: dimOthers ? 0.8 : 1,
-                    }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ color: active ? '#ffffff' : '#cbd5e1' }}>{row.icon}</div>
-                      <div style={{ flex: 1, color: '#e5e7eb', fontSize: 13 }}>{row.label}</div>
-                      <div style={{ color: active ? '#ffffff' : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
-                        <IconArrowRight size={14} />
+            <>
+              {/* 占位图区域，引导上传 */}
+              <div
+                style={{
+                  width: 296,
+                  height: 180,
+                  borderRadius: 10,
+                  border: '1px dashed rgba(148,163,184,0.6)',
+                  background: 'rgba(15,23,42,0.85)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                }}
+                onClick={() => fileRef.current?.click()}
+              >
+                <div style={{ width: 40, height: 40, borderRadius: 999, background: 'rgba(15,23,42,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(148,163,184,0.65)' }}>
+                  <IconPhotoEdit size={20} color="#e5e7eb" />
+                </div>
+                <div style={{ color: '#e5e7eb', fontSize: 13 }}>点击上传图片</div>
+                <div style={{ color: '#9ca3af', fontSize: 11 }}>支持 PNG / JPG，最大 30MB</div>
+              </div>
+              {/* 快捷操作列表，增强引导 */}
+              <div style={{ width: 296, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
+                {[
+                  { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
+                  { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
+                  { label: '首帧图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
+                ].map((row, idx) => {
+                  const active = hovered === idx
+                  const dimOthers = hovered !== null && hovered !== idx
+                  return (
+                    <div key={row.label}
+                      onMouseEnter={()=>setHovered(idx)}
+                      onClick={row.onClick}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '8px 10px', borderRadius: 6,
+                        background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                        transition: 'background .12s ease, opacity .12s ease',
+                        opacity: dimOthers ? 0.8 : 1,
+                      }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ color: active ? '#ffffff' : '#cbd5e1' }}>{row.icon}</div>
+                        <div style={{ flex: 1, color: '#e5e7eb', fontSize: 13 }}>{row.label}</div>
+                        <div style={{ color: active ? '#ffffff' : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
+                          <IconArrowRight size={14} />
+                        </div>
                       </div>
+                      {active && idx === 0 && (
+                        <div style={{ marginLeft: 36, marginTop: 4, color: '#9ca3af', fontSize: 11 }}>
+                          图片大小不能超过30MB
+                        </div>
+                      )}
                     </div>
-                    {active && idx === 0 && (
-                      <div style={{ marginLeft: 36, marginTop: 4, color: '#9ca3af', fontSize: 11 }}>
-                        图片大小不能超过30MB
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
-                const f = e.currentTarget.files?.[0]
-                if (!f) return
-                const url = URL.createObjectURL(f)
-                updateNodeData(id, { imageUrl: url })
-              }} />
-            </div>
+                  )
+                })}
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
+                  const f = e.currentTarget.files?.[0]
+                  if (!f) return
+                  const url = URL.createObjectURL(f)
+                  updateNodeData(id, { imageUrl: url })
+                }} />
+              </div>
+            </>
           ) : (
             <div style={{ position: 'relative' }}>
               <img src={imageUrl} alt="uploaded" style={{ width: 296, maxWidth: '100%', height: 'auto', borderRadius: 10, display: 'block', border: '1px solid rgba(127,127,127,.35)' }} />

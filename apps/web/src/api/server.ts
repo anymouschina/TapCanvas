@@ -165,6 +165,12 @@ export async function listSoraDrafts(tokenId: string, cursor?: string | null): P
   return r.json()
 }
 
+export async function deleteSoraDraft(tokenId: string, draftId: string): Promise<void> {
+  const qs = new URLSearchParams({ tokenId, draftId })
+  const r = await fetch(`${API_BASE}/sora/drafts/delete?${qs.toString()}`, withAuth())
+  if (!r.ok) throw new Error(`delete draft failed: ${r.status}`)
+}
+
 // Assets API
 export type ServerAssetDto = { id: string; name: string; data: any; createdAt: string; updatedAt: string; projectId?: string|null }
 
