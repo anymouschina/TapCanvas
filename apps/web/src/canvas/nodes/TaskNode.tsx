@@ -246,29 +246,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         <div style={{ position: 'relative', marginTop: 6 }}>
           {!imageUrl ? (
             <>
-              {/* 占位图区域，引导上传 */}
-              <div
-                style={{
-                  width: 296,
-                  height: 180,
-                  borderRadius: 10,
-                  border: '1px dashed rgba(148,163,184,0.6)',
-                  background: 'rgba(15,23,42,0.85)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                  cursor: 'pointer',
-                }}
-                onClick={() => fileRef.current?.click()}
-              >
-                <div style={{ width: 40, height: 40, borderRadius: 999, background: 'rgba(15,23,42,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(148,163,184,0.65)' }}>
-                  <IconPhotoEdit size={20} color="#e5e7eb" />
-                </div>
-                <div style={{ color: '#e5e7eb', fontSize: 13 }}>点击上传图片</div>
-                <div style={{ color: '#9ca3af', fontSize: 11 }}>支持 PNG / JPG，最大 30MB</div>
-              </div>
               {/* 快捷操作列表，增强引导 */}
               <div style={{ width: 296, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
                 {[

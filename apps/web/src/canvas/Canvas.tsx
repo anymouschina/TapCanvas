@@ -23,6 +23,7 @@ import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
+import { useInsertMenuStore } from './insertMenuStore'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -53,12 +54,15 @@ function CanvasInner(): JSX.Element {
   const cancelNode = useRFStore(s => s.cancelNode)
   const rf = useReactFlow()
   const [connectingType, setConnectingType] = useState<string | null>(null)
+  const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
   const [guides, setGuides] = useState<{ vx?: number; hy?: number } | null>(null)
   const [longSelect, setLongSelect] = useState(false)
   const downPos = useRef<{x:number;y:number}|null>(null)
   const timerRef = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
+  const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
+  const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
 
   useEffect(() => {
     // initial: no local restore, rely on explicit load from server via UI
@@ -147,6 +151,7 @@ function CanvasInner(): JSX.Element {
   }, [nodes, edges])
 
   const onConnectStart = useCallback((_evt: any, params: { nodeId?: string|null; handleId?: string|null; handleType?: 'source'|'target' }) => {
+    didConnectRef.current = false
     const h = params.handleId || ''
     // if source handle like out-image -> type=image
     if (params.handleType === 'source' && h.startsWith('out-')) {
@@ -156,20 +161,40 @@ function CanvasInner(): JSX.Element {
     } else {
       setConnectingType(null)
     }
-  }, [])
 
-  const onConnectStop = useCallback((_evt: any) => {
-    // user released on invalid target
-    if (connectingType) {
-      toast(lastReason.current || '连接无效：类型不兼容、重复或形成环', 'error')
+    // 记录从哪个 text 节点的哪个端口开始连接，用于松手后弹出插入菜单
+    if (params.handleType === 'source' && params.nodeId) {
+      const n = nodes.find((nn) => nn.id === params.nodeId)
+      const k = (n?.data as any)?.kind
+      if (k === 'textToImage') {
+        connectFromRef.current = { nodeId: params.nodeId, handleId: params.handleId || null }
+      } else {
+        connectFromRef.current = null
+      }
+    } else {
+      connectFromRef.current = null
+    }
+  }, [nodes])
+
+  const onConnectEnd = useCallback((_evt: any) => {
+    const from = connectFromRef.current
+    if (connectingType && !didConnectRef.current && !lastReason.current && from) {
+      // 从 text 节点拖出并松手在空白处：打开插入菜单
+      useInsertMenuStore.getState().openMenu({
+        x: mouse.x,
+        y: mouse.y,
+        fromNodeId: from.nodeId,
+        fromHandle: from.handleId || 'out-any',
+      })
+    } else if (connectingType && lastReason.current) {
+      const msg = lastReason.current || '连接无效：类型不兼容、重复或形成环'
+      toast(msg, 'error')
     }
     setConnectingType(null)
     lastReason.current = null
-  }, [connectingType])
-
-  const onConnectEnd = useCallback((_evt: any) => {
-    setConnectingType(null)
-  }, [])
+    connectFromRef.current = null
+    didConnectRef.current = false
+  }, [connectingType, mouse.x, mouse.y])
 
   // removed pane mouse handlers (not supported by current reactflow typings). Root listeners are used instead.
 
@@ -251,13 +276,14 @@ function CanvasInner(): JSX.Element {
   }, [nodes, onNodesChange])
 
   const lastReason = React.useRef<string | null>(null)
+  const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+  const didConnectRef = useRef(false)
 
   const handleConnect = useCallback((c: any) => {
     lastReason.current = null
+    didConnectRef.current = true
     onConnect(c)
   }, [onConnect])
-
-  const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   // MiniMap drag-to-pan
   const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect }|null>(null)
 
@@ -383,6 +409,55 @@ function CanvasInner(): JSX.Element {
     }))
   }
 
+  const handleInsertNodeAt = (
+    kind: 'text' | 'image' | 'video',
+    menuState: { x: number; y: number; fromNodeId?: string; fromHandle?: string | null },
+  ) => {
+    const posFlow = screenToFlow({ x: menuState.x, y: menuState.y })
+    const upstreamNode = menuState.fromNodeId
+      ? useRFStore.getState().nodes.find(n => n.id === menuState.fromNodeId)
+      : undefined
+    const upstreamPrompt = upstreamNode ? ((upstreamNode.data as any)?.prompt as string | undefined) : undefined
+
+    useRFStore.setState(s => {
+      const before = s.nextId
+      const id = `n${before}`
+      let label = 'Text'
+      let nodeKind: string = 'textToImage'
+      if (kind === 'image') {
+        label = 'Image'
+        nodeKind = 'image'
+      } else if (kind === 'video') {
+        label = 'Video'
+        nodeKind = 'composeVideo'
+      }
+      const data: any = { label, kind: nodeKind }
+      if (upstreamPrompt) data.prompt = upstreamPrompt
+
+      const node = { id, type: 'taskNode' as const, position: posFlow, data }
+
+      let edgesNext = s.edges
+      if (menuState.fromNodeId) {
+        const edgeId = `e-${menuState.fromNodeId}-${id}-${Date.now().toString(36)}`
+        const targetHandle = kind === 'image' || kind === 'video' ? 'in-image' : 'in-any'
+        const edge: any = {
+          id: edgeId,
+          source: menuState.fromNodeId,
+          target: id,
+          sourceHandle: menuState.fromHandle || 'out-any',
+          targetHandle,
+          type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+          animated: true,
+        }
+        edgesNext = [...edgesNext, edge]
+      }
+
+      return { nodes: [...s.nodes, node], edges: edgesNext, nextId: before + 1 }
+    })
+
+    closeInsertMenu()
+  }
+
   const handleRootClick = useCallback((e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
     if (!el) return
@@ -465,7 +540,6 @@ function CanvasInner(): JSX.Element {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectStart={onConnectStart}
-        onConnectStop={onConnectStop}
         onConnectEnd={onConnectEnd}
         onNodeDragStart={onNodeDragStart}
         onPaneContextMenu={onPaneContextMenu}
@@ -671,6 +745,54 @@ function CanvasInner(): JSX.Element {
             {menu.type === 'edge' && menu.id && (
               <Button variant="subtle" color="red" onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</Button>
             )}
+          </Stack>
+        </Paper>
+      )}
+      {insertMenu.open && (
+        <Paper
+          withBorder
+          shadow="md"
+          style={{
+            position: 'fixed',
+            left: insertMenu.x,
+            top: insertMenu.y,
+            zIndex: 70,
+            minWidth: 180,
+          }}
+          onMouseLeave={closeInsertMenu}
+        >
+          <Stack gap={4} p="xs">
+            <Text size="xs" c="dimmed">
+              Continue from text
+            </Text>
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() =>
+                handleInsertNodeAt('image', {
+                  x: insertMenu.x,
+                  y: insertMenu.y,
+                  fromNodeId: insertMenu.fromNodeId,
+                  fromHandle: insertMenu.fromHandle,
+                })
+              }
+            >
+              Text → Image
+            </Button>
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() =>
+                handleInsertNodeAt('video', {
+                  x: insertMenu.x,
+                  y: insertMenu.y,
+                  fromNodeId: insertMenu.fromNodeId,
+                  fromHandle: insertMenu.fromHandle,
+                })
+              }
+            >
+              Text → Video
+            </Button>
           </Stack>
         </Paper>
       )}
