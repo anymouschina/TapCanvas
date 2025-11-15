@@ -286,3 +286,13 @@ export async function runTask(profileId: string, request: TaskRequestDto): Promi
   if (!r.ok) throw new Error(`run task failed: ${r.status}`)
   return r.json()
 }
+
+export async function runTaskByVendor(vendor: string, request: TaskRequestDto): Promise<TaskResultDto> {
+  const r = await fetch(`${API_BASE}/tasks`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vendor, request }),
+  }))
+  if (!r.ok) throw new Error(`run task failed: ${r.status}`)
+  return r.json()
+}

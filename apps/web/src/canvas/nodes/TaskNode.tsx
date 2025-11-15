@@ -76,6 +76,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [activeSuggestion, setActiveSuggestion] = React.useState(0)
   const suggestTimeout = React.useRef<number | null>(null)
   const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
+  const lastResult = (data as any)?.lastResult as { preview?: { type?: string; value?: string } } | undefined
+  const lastText =
+    lastResult && lastResult.preview && lastResult.preview.type === 'text'
+      ? String(lastResult.preview.value || '')
+      : ''
+  const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
@@ -344,7 +350,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       {/* Bottom detail panel near node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center">
         <Paper withBorder shadow="md" radius="md" className="glass" p="sm" style={{ width: 420, transformOrigin: 'top center' }}>
-          <Text size="xs" c="dimmed" mb={6}>详情</Text>
+          <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : '详情'}</Text>
           <div style={{ position: 'relative' }}>
             <Textarea
               autosize
@@ -414,12 +420,60 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               </Paper>
             )}
           </div>
+          {kind === 'textToImage' && lastText && (
+            <Paper
+              withBorder
+              radius="md"
+              p="xs"
+              mt="xs"
+              style={{ maxHeight: 160, overflowY: 'auto', background: 'rgba(15,23,42,0.9)' }}
+            >
+              <Group justify="space-between" mb={4}>
+                <Text size="xs" c="dimmed">
+                  Gemini 输出（文生文）
+                </Text>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => {
+                    setPrompt(lastText)
+                  }}
+                >
+                  应用到提示词
+                </Button>
+              </Group>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {lastText}
+              </Text>
+            </Paper>
+          )}
           <Group grow mt={6}>
+            {kind === 'textToImage' && (
+              <Select
+                label="Gemini 模型"
+                data={[
+                  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+                  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
+                  { value: 'gemini-1.5-flash-8b', label: 'gemini-1.5-flash-8b' },
+                ]}
+                value={modelKey}
+                onChange={(v) => setModelKey(v || 'gemini-2.5-flash')}
+              />
+            )}
             <Select label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={aspect} onChange={(v)=>setAspect(v||'16:9')} />
             <NumberInput label="倍率" min={0.5} max={4} step={0.5} value={scale} onChange={(v)=>setScale(Number(v)||1)} />
           </Group>
           <Group justify="flex-end" mt={8}>
-            <Button size="xs" onClick={()=>{ updateNodeData(id, { prompt, aspect, scale }); runSelected() }}>一键执行</Button>
+            <Button
+              size="xs"
+              loading={status === 'running' || status === 'queued'}
+              onClick={() => {
+                updateNodeData(id, { prompt, aspect, scale, geminiModel: modelKey })
+                runSelected()
+              }}
+            >
+              {kind === 'textToImage' ? '用 Gemini 优化' : '一键执行'}
+            </Button>
           </Group>
         </Paper>
       </NodeToolbar>

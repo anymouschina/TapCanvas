@@ -11,14 +11,24 @@ export class TaskController {
   @Post()
   runTask(
     @Body()
-    body: {
-      profileId: string
-      request: AnyTaskRequest
-    },
+    body:
+      | {
+          profileId: string
+          request: AnyTaskRequest
+        }
+      | {
+          vendor: string
+          request: AnyTaskRequest
+        },
     @Req() req: any,
   ) {
     const userId = String(req.user.sub)
-    return this.service.execute(userId, body.profileId, body.request)
+    if ('profileId' in body && body.profileId) {
+      return this.service.execute(userId, body.profileId, body.request)
+    }
+    if ('vendor' in body && body.vendor) {
+      return this.service.executeWithVendor(userId, body.vendor, body.request)
+    }
+    throw new Error('either profileId or vendor must be provided')
   }
 }
-

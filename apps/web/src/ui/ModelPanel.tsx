@@ -37,6 +37,14 @@ export default function ModelPanel(): JSX.Element | null {
   const [videosShared, setVideosShared] = React.useState(false)
   const [videoShared, setVideoShared] = React.useState(false)
   const [soraShared, setSoraShared] = React.useState(false)
+  const [geminiProvider, setGeminiProvider] = React.useState<ModelProviderDto | null>(null)
+  const [geminiBaseUrl, setGeminiBaseUrl] = React.useState('')
+  const [geminiTokens, setGeminiTokens] = React.useState<ModelTokenDto[]>([])
+  const [geminiModalOpen, setGeminiModalOpen] = React.useState(false)
+  const [geminiEditingToken, setGeminiEditingToken] = React.useState<ModelTokenDto | null>(null)
+  const [geminiLabel, setGeminiLabel] = React.useState('')
+  const [geminiSecret, setGeminiSecret] = React.useState('')
+  const [geminiShared, setGeminiShared] = React.useState(false)
 
   React.useEffect(() => {
     if (!mounted) return
@@ -65,6 +73,17 @@ export default function ModelPanel(): JSX.Element | null {
         setSoraShared(!!byKey.sora?.shared)
         const ts = await listModelTokens(sora.id)
         setTokens(ts)
+
+        // 初始化 Gemini 提供方（如不存在则创建）
+        let gemini = ps.find((p) => p.vendor === 'gemini')
+        if (!gemini) {
+          gemini = await upsertModelProvider({ name: 'Gemini', vendor: 'gemini' })
+          setProviders((prev) => [...prev, gemini!])
+        }
+        setGeminiProvider(gemini)
+        setGeminiBaseUrl(gemini.baseUrl || '')
+        const gTokens = await listModelTokens(gemini.id)
+        setGeminiTokens(gTokens)
       })
       .catch(() => {})
   }, [mounted])
@@ -107,6 +126,43 @@ export default function ModelPanel(): JSX.Element | null {
     if (!confirm('确定删除该密钥吗？')) return
     await deleteModelToken(id)
     setTokens((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  const openGeminiModalForNew = () => {
+    setGeminiEditingToken(null)
+    setGeminiLabel('')
+    setGeminiSecret('')
+    setGeminiShared(false)
+    setGeminiModalOpen(true)
+  }
+
+  const handleSaveGeminiToken = async () => {
+    if (!geminiProvider) return
+    const existingSecret = geminiEditingToken?.secretToken ?? ''
+    const finalSecret = geminiSecret || existingSecret
+    if (!finalSecret.trim()) {
+      alert('请填写 API Key')
+      return
+    }
+    const saved = await upsertModelToken({
+      id: geminiEditingToken?.id,
+      providerId: geminiProvider.id,
+      label: geminiLabel || '未命名密钥',
+      secretToken: finalSecret,
+      userAgent: null,
+      shared: geminiShared,
+    })
+    const next = geminiEditingToken
+      ? geminiTokens.map((t) => (t.id === saved.id ? saved : t))
+      : [...geminiTokens, saved]
+    setGeminiTokens(next)
+    setGeminiModalOpen(false)
+  }
+
+  const handleDeleteGeminiToken = async (id: string) => {
+    if (!confirm('确定删除该密钥吗？')) return
+    await deleteModelToken(id)
+    setGeminiTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
   const handleShareAllTokens = async (sharedFlag: boolean) => {
@@ -165,6 +221,27 @@ export default function ModelPanel(): JSX.Element | null {
                     </Group>
                     <Text size="xs" c="dimmed">
                       已配置密钥：{tokens.length}
+                    </Text>
+                  </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" mb={4}>
+                      <div>
+                        <Group gap={6}>
+                          <Title order={6}>Gemini</Title>
+                          <Badge color="grape" size="xs">
+                            Beta
+                          </Badge>
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          配置 Gemini API Key（Google AI Studio / Vertex AI）
+                        </Text>
+                      </div>
+                      <Button size="xs" onClick={openGeminiModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{geminiTokens.length}
                     </Text>
                   </Paper>
                 </Stack>
@@ -373,6 +450,121 @@ export default function ModelPanel(): JSX.Element | null {
                         取消
                       </Button>
                       <Button onClick={handleSaveToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+            <Modal
+              opened={geminiModalOpen}
+              onClose={() => setGeminiModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Gemini 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text size="sm" c="dimmed">
+                    在此配置 Gemini API Key。后续可以为文本/视频节点选择使用 Gemini 作为底层模型。
+                  </Text>
+                  <TextInput
+                    label="Gemini 代理 Base URL"
+                    placeholder="例如：https://your-proxy.example.com"
+                    value={geminiBaseUrl}
+                    onChange={(e) => setGeminiBaseUrl(e.currentTarget.value)}
+                    onBlur={async () => {
+                      if (!geminiProvider) return
+                      const saved = await upsertModelProvider({
+                        id: geminiProvider.id,
+                        name: geminiProvider.name,
+                        vendor: geminiProvider.vendor,
+                        baseUrl: geminiBaseUrl.trim() || null,
+                      })
+                      setGeminiProvider(saved)
+                      setGeminiBaseUrl(saved.baseUrl || '')
+                    }}
+                  />
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的密钥</Title>
+                    <Button size="xs" variant="light" onClick={openGeminiModalForNew}>
+                      新增密钥
+                    </Button>
+                  </Group>
+                  {geminiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack gap="xs">
+                    {geminiTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setGeminiEditingToken(t)
+                              setGeminiLabel(t.label)
+                              setGeminiSecret('')
+                              setGeminiShared(!!t.shared)
+                              setGeminiModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{geminiEditingToken ? '编辑密钥' : '新增密钥'}</Title>
+                    <TextInput label="名称" placeholder="例如：Gemini 主账号 Key" value={geminiLabel} onChange={(e) => setGeminiLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={geminiEditingToken ? '留空则不修改已有密钥' : '粘贴你的 Gemini API Key'}
+                      value={geminiSecret}
+                      onChange={(e) => setGeminiSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={geminiShared}
+                      onChange={(e) => setGeminiShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setGeminiModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveGeminiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>

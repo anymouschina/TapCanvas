@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from 'reactflow'
 import { addEdge, applyEdgeChanges, applyNodeChanges } from 'reactflow'
 import { runNodeMock } from '../runner/mockRunner'
+import { runNodeRemote } from '../runner/remoteRunner'
 import { runFlowDag } from '../runner/dag'
 
 type GroupRec = { id: string; name: string; nodeIds: string[] }
@@ -164,7 +165,12 @@ export const useRFStore = create<RFState>((set, get) => ({
     const s = get()
     const selected = s.nodes.find((n) => n.selected)
     if (!selected) return
-    await runNodeMock(selected.id, get, set)
+    const kind = (selected.data as any)?.kind as string | undefined
+    if (kind === 'textToImage' || kind === 'composeVideo' || kind === 'tts' || kind === 'subtitleAlign') {
+      await runNodeRemote(selected.id, get, set)
+    } else {
+      await runNodeMock(selected.id, get, set)
+    }
   },
   runAll: async () => {
     const s = get()
