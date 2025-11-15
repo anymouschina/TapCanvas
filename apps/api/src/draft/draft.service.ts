@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
-import { InferenceClient } from '@huggingface/inference'
+import axios from 'axios'
 
-const hfClient = process.env.HF_TOKEN ? new InferenceClient(process.env.HF_TOKEN) : null
+const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 
 @Injectable()
 export class DraftService {
@@ -15,7 +15,7 @@ export class DraftService {
     }
 
     // Lexical / history-first mode (default or fallback)
-    if (!hfClient || mode !== 'semantic') {
+    if (!SILICONFLOW_API_KEY || mode !== 'semantic') {
       const rows = await this.prisma.externalDraft.findMany({
         where: {
           userId,
@@ -45,60 +45,90 @@ export class DraftService {
       return { prompts }
     }
 
-    // Semantic mode using BGE-M3 via HF Inference
-    const candidates = await this.prisma.externalDraft.findMany({
-      where: {
-        userId,
-        provider,
-        prompt: { not: null },
-      },
-      orderBy: { lastSeenAt: 'desc' },
-      select: {
-        prompt: true,
-        useCount: true,
-      },
-      take: 50,
-    })
+    // Semantic mode using BGE-M3 via SiliconFlow embeddings + pgvector
+    try {
+      // 1) embed current query once
+      const embRes = await axios.post(
+        'https://api.siliconflow.cn/v1/embeddings',
+        {
+          model: 'BAAI/bge-m3',
+          input: [trimmed],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${SILICONFLOW_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        },
+      )
 
-    const byPrompt = new Map<string, { prompt: string; useCount: number }>()
-    for (const row of candidates) {
-      const p = (row.prompt || '').trim()
-      if (!p) continue
-      const existing = byPrompt.get(p)
-      if (existing) {
-        existing.useCount += row.useCount
-      } else {
-        byPrompt.set(p, { prompt: p, useCount: row.useCount })
+      const vec: number[] | undefined = embRes.data?.data?.[0]?.embedding
+      if (!Array.isArray(vec) || !vec.length) {
+        throw new Error('Invalid embedding for query')
       }
-    }
+      const literal = '[' + vec.join(',') + ']'
 
-    const items = Array.from(byPrompt.values())
-    if (!items.length) {
-      return { prompts: [] }
-    }
+      // 2) use pgvector to retrieve nearest prompts
+      const rows = await this.prisma.$queryRawUnsafe<
+        { prompt: string | null; useCount: number | null; dist: number | null }[]
+      >(
+        `
+        SELECT "prompt",
+               "useCount",
+               ("embedding" <-> '${literal}') AS dist
+        FROM "ExternalDraft"
+        WHERE "userId" = '${userId}'
+          AND "provider" = '${provider}'
+          AND "embedding" IS NOT NULL
+        ORDER BY "embedding" <-> '${literal}'
+        LIMIT ${limit};
+        `,
+      )
 
-    const sentences = items.map((it) => it.prompt)
+      const ranked = (rows || [])
+        .map((r) => {
+          const dist = typeof r.dist === 'number' ? r.dist : 1
+          const sim = 1 - dist
+          const use = r.useCount ?? 0
+          const useBoost = Math.log(1 + use)
+          const score = sim + 0.1 * useBoost
+          return { prompt: (r.prompt || '').trim(), score }
+        })
+        .filter((r) => r.prompt.length > 0)
+        .sort((a, b) => b.score - a.score)
 
-    const scores = await hfClient.sentenceSimilarity({
-      model: 'BAAI/bge-m3',
-      inputs: {
-        source_sentence: trimmed,
-        sentences,
-      },
-      provider: 'hf-inference',
-    })
-
-    const ranked = items
-      .map((it, i) => {
-        const sim = scores[i] ?? 0
-        const useBoost = Math.log(1 + (it.useCount || 0))
-        const score = sim + 0.1 * useBoost
-        return { prompt: it.prompt, score }
+      return { prompts: ranked.map((r) => r.prompt) }
+    } catch {
+      // On any error, gracefully fall back to history-based suggestions
+      const rows = await this.prisma.externalDraft.findMany({
+        where: {
+          userId,
+          provider,
+          prompt: {
+            contains: trimmed,
+            mode: 'insensitive',
+          },
+        },
+        orderBy: {
+          lastSeenAt: 'desc',
+        },
+        select: {
+          prompt: true,
+        },
+        take: limit,
       })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
 
-    return { prompts: ranked.map((r) => r.prompt) }
+      const prompts = Array.from(
+        new Set(
+          rows
+            .map((r) => (r.prompt || '').trim())
+            .filter((p) => p && p.length > 0),
+        ),
+      )
+
+      return { prompts }
+    }
   }
 
   async markPromptUsed(userId: string, provider: string, prompt: string) {

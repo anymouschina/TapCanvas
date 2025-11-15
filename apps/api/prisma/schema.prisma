@@ -2,6 +2,7 @@
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 generator client {
@@ -129,6 +130,7 @@ model ExternalDraft {
   updatedAt    DateTime @updatedAt
   lastSeenAt   DateTime @default(now())
   useCount     Int      @default(0)
+  embedding    Unsupported("vector")?
 
   @@unique([userId, provider, remoteId])
 }
