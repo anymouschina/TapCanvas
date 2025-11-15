@@ -11,6 +11,7 @@ import type {
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
 // 默认使用 2.5-flash；可通过 extras.modelKey 或 ModelProfile.modelKey 覆盖
 const DEFAULT_TEXT_MODEL = 'models/gemini-2.5-flash'
+const CHAT_SUPPORTED_MODELS = new Set(['models/gemini-2.5-flash', 'models/gemini-2.5-pro'])
 
 function normalizeBaseUrl(baseUrl?: string): string {
   const url = (baseUrl || DEFAULT_GEMINI_BASE_URL).trim()
@@ -51,6 +52,10 @@ async function callGenerateContent(
     model = key.startsWith('models/') ? key : `models/${key}`
   } else {
     model = resolveModelKey(ctx, DEFAULT_TEXT_MODEL)
+  }
+  // chat / prompt_refine 仅允许官方支持的 chat 模型，避免 404
+  if ((kind === 'chat' || kind === 'prompt_refine') && !CHAT_SUPPORTED_MODELS.has(model)) {
+    model = DEFAULT_TEXT_MODEL
   }
   // Gemini 官方路径形如：/v1beta/models/gemini-1.5-flash-latest:generateContent
   const url = `${baseUrl}/v1beta/${model}:generateContent?key=${encodeURIComponent(ctx.apiKey)}`

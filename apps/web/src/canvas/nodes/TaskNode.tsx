@@ -349,12 +349,25 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
       {/* Bottom detail panel near node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center">
-        <Paper withBorder shadow="md" radius="md" className="glass" p="sm" style={{ width: 420, transformOrigin: 'top center' }}>
+        <Paper
+          withBorder
+          shadow="md"
+          radius="md"
+          className="glass"
+          p="sm"
+          style={{
+            width: 420,
+            maxHeight: 360,
+            overflowY: 'auto',
+            transformOrigin: 'top center',
+          }}
+        >
           <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : '详情'}</Text>
           <div style={{ position: 'relative' }}>
             <Textarea
               autosize
               minRows={2}
+              maxRows={6}
               placeholder="在这里输入提示词..."
               value={prompt}
               onChange={(e)=>setPrompt(e.currentTarget.value)}
@@ -437,6 +450,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   variant="subtle"
                   onClick={() => {
                     setPrompt(lastText)
+                    updateNodeData(id, { prompt: lastText })
                   }}
                 >
                   应用到提示词
@@ -453,8 +467,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 label="文案模型"
                 data={[
                   { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
-                  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
-                  { value: 'gemini-1.5-flash-8b', label: 'gemini-1.5-flash-8b' },
+                  { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
                 ]}
                 value={modelKey}
                 onChange={(v) => setModelKey(v || 'gemini-2.5-flash')}
