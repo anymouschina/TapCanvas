@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import {
   deleteModelToken,
@@ -27,12 +27,16 @@ export default function ModelPanel(): JSX.Element | null {
   const [label, setLabel] = React.useState('')
   const [secret, setSecret] = React.useState('')
   const [userAgent, setUserAgent] = React.useState('')
+  const [shared, setShared] = React.useState(false)
   const [videosEndpoint, setVideosEndpoint] = React.useState<ModelEndpointDto | null>(null)
   const [videoEndpoint, setVideoEndpoint] = React.useState<ModelEndpointDto | null>(null)
   const [soraEndpoint, setSoraEndpoint] = React.useState<ModelEndpointDto | null>(null)
   const [videosUrl, setVideosUrl] = React.useState('')
   const [videoUrl, setVideoUrl] = React.useState('')
   const [soraUrl, setSoraUrl] = React.useState('')
+  const [videosShared, setVideosShared] = React.useState(false)
+  const [videoShared, setVideoShared] = React.useState(false)
+  const [soraShared, setSoraShared] = React.useState(false)
 
   React.useEffect(() => {
     if (!mounted) return
@@ -56,6 +60,9 @@ export default function ModelPanel(): JSX.Element | null {
         setVideosUrl(byKey.videos?.baseUrl || '')
         setVideoUrl(byKey.video?.baseUrl || '')
         setSoraUrl(byKey.sora?.baseUrl || '')
+        setVideosShared(!!byKey.videos?.shared)
+        setVideoShared(!!byKey.video?.shared)
+        setSoraShared(!!byKey.sora?.shared)
         const ts = await listModelTokens(sora.id)
         setTokens(ts)
       })
@@ -69,6 +76,7 @@ export default function ModelPanel(): JSX.Element | null {
     setLabel('')
     setSecret('')
     setUserAgent('')
+    setShared(false)
     setModalOpen(true)
   }
 
@@ -86,6 +94,7 @@ export default function ModelPanel(): JSX.Element | null {
       label: label || '未命名密钥',
       secretToken: finalSecret,
       userAgent: userAgent || null,
+      shared,
     })
     const next = editingToken
       ? tokens.map((t) => (t.id === saved.id ? saved : t))
@@ -98,6 +107,28 @@ export default function ModelPanel(): JSX.Element | null {
     if (!confirm('确定删除该密钥吗？')) return
     await deleteModelToken(id)
     setTokens((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  const handleShareAllTokens = async (sharedFlag: boolean) => {
+    if (!soraProvider || tokens.length === 0) return
+    const updated: ModelTokenDto[] = []
+    for (const t of tokens) {
+      try {
+        const saved = await upsertModelToken({
+          id: t.id,
+          providerId: soraProvider.id,
+          label: t.label,
+          secretToken: t.secretToken,
+          userAgent: t.userAgent ?? null,
+          enabled: t.enabled,
+          shared: sharedFlag,
+        })
+        updated.push(saved)
+      } catch {
+        updated.push(t)
+      }
+    }
+    setTokens(updated)
   }
 
   return (
@@ -168,70 +199,127 @@ export default function ModelPanel(): JSX.Element | null {
                     你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
                   </Text>
                   <Stack gap="xs">
-                    <TextInput
-                      label="videos 域名（例如长视频 API）"
-                      placeholder="例如：https://videos.sora.example.com"
-                      value={videosUrl}
-                      onChange={(e) => setVideosUrl(e.currentTarget.value)}
-                      onBlur={async () => {
-                        if (!soraProvider || !videosUrl.trim()) return
-                        const saved = await upsertModelEndpoint({
-                          id: videosEndpoint?.id,
-                          providerId: soraProvider.id,
-                          key: 'videos',
-                          label: 'videos 域名',
-                          baseUrl: videosUrl.trim(),
-                        })
-                        setVideosEndpoint(saved)
-                      }}
-                    />
-                    <TextInput
-                      label="video 域名（例如任务接口）"
-                      placeholder="例如：https://video.sora.example.com"
-                      value={videoUrl}
-                      onChange={(e) => setVideoUrl(e.currentTarget.value)}
-                      onBlur={async () => {
-                        if (!soraProvider || !videoUrl.trim()) return
-                        const saved = await upsertModelEndpoint({
-                          id: videoEndpoint?.id,
-                          providerId: soraProvider.id,
-                          key: 'video',
-                          label: 'video 域名',
-                          baseUrl: videoUrl.trim(),
-                        })
-                        setVideoEndpoint(saved)
-                      }}
-                    />
-                    <TextInput
-                      label="sora 域名（通用控制 API）"
-                      placeholder="例如：https://sora.sora.example.com"
-                      value={soraUrl}
-                      onChange={(e) => setSoraUrl(e.currentTarget.value)}
-                      onBlur={async () => {
-                        if (!soraProvider || !soraUrl.trim()) return
-                        const saved = await upsertModelEndpoint({
-                          id: soraEndpoint?.id,
-                          providerId: soraProvider.id,
-                          key: 'sora',
-                          label: 'sora 域名',
-                          baseUrl: soraUrl.trim(),
-                        })
-                        setSoraEndpoint(saved)
-                      }}
-                    />
+                    <div>
+                      <TextInput
+                        label="videos 域名（例如长视频 API）"
+                        placeholder="例如：https://videos.sora.example.com"
+                        value={videosUrl}
+                        onChange={(e) => setVideosUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!soraProvider || !videosUrl.trim()) return
+                          const saved = await upsertModelEndpoint({
+                            id: videosEndpoint?.id,
+                            providerId: soraProvider.id,
+                            key: 'videos',
+                            label: 'videos 域名',
+                            baseUrl: videosUrl.trim(),
+                            shared: videosShared,
+                          })
+                          setVideosEndpoint(saved)
+                        }}
+                      />
+                      <Switch
+                        size="xs"
+                        mt={4}
+                        label="将 videos 域名作为共享配置"
+                        checked={videosShared}
+                        onChange={(e) => setVideosShared(e.currentTarget.checked)}
+                      />
+                    </div>
+                    <div>
+                      <TextInput
+                        label="video 域名（例如任务接口）"
+                        placeholder="例如：https://video.sora.example.com"
+                        value={videoUrl}
+                        onChange={(e) => setVideoUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!soraProvider || !videoUrl.trim()) return
+                          const saved = await upsertModelEndpoint({
+                            id: videoEndpoint?.id,
+                            providerId: soraProvider.id,
+                            key: 'video',
+                            label: 'video 域名',
+                            baseUrl: videoUrl.trim(),
+                            shared: videoShared,
+                          })
+                          setVideoEndpoint(saved)
+                        }}
+                      />
+                      <Switch
+                        size="xs"
+                        mt={4}
+                        label="将 video 域名作为共享配置"
+                        checked={videoShared}
+                        onChange={(e) => setVideoShared(e.currentTarget.checked)}
+                      />
+                    </div>
+                    <div>
+                      <TextInput
+                        label="sora 域名（通用控制 API）"
+                        placeholder="例如：https://sora.sora.example.com"
+                        value={soraUrl}
+                        onChange={(e) => setSoraUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!soraProvider || !soraUrl.trim()) return
+                          const saved = await upsertModelEndpoint({
+                            id: soraEndpoint?.id,
+                            providerId: soraProvider.id,
+                            key: 'sora',
+                            label: 'sora 域名',
+                            baseUrl: soraUrl.trim(),
+                            shared: soraShared,
+                          })
+                          setSoraEndpoint(saved)
+                        }}
+                      />
+                      <Switch
+                        size="xs"
+                        mt={4}
+                        label="将 sora 域名作为共享配置"
+                        checked={soraShared}
+                        onChange={(e) => setSoraShared(e.currentTarget.checked)}
+                      />
+                    </div>
                   </Stack>
                   <Group justify="space-between">
                     <Title order={5}>已保存的密钥</Title>
-                    <Button size="xs" variant="light" onClick={openModalForNew}>
-                      新增密钥
-                    </Button>
+                    <Group gap="xs">
+                      {tokens.length > 0 && (
+                        <>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => handleShareAllTokens(true)}
+                          >
+                            全部共享
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => handleShareAllTokens(false)}
+                          >
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" variant="light" onClick={openModalForNew}>
+                        新增密钥
+                      </Button>
+                    </Group>
                   </Group>
                   {tokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
                   <Stack gap="xs">
                     {tokens.map((t) => (
                       <Group key={t.id} justify="space-between">
                         <div>
-                          <Text size="sm">{t.label}</Text>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
                           <Text size="xs" c="dimmed">
                             {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
                           </Text>
@@ -245,6 +333,7 @@ export default function ModelPanel(): JSX.Element | null {
                               setLabel(t.label)
                               setSecret('')
                               setUserAgent(t.userAgent || '')
+                              setShared(!!t.shared)
                               setModalOpen(true)
                             }}
                           >
@@ -273,6 +362,11 @@ export default function ModelPanel(): JSX.Element | null {
                       placeholder="例如：TapCanvas/1.0 (user@example.com)"
                       value={userAgent}
                       onChange={(e) => setUserAgent(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={shared}
+                      onChange={(e) => setShared(e.currentTarget.checked)}
                     />
                     <Group justify="flex-end" mt="sm">
                       <Button variant="default" onClick={() => setModalOpen(false)}>

@@ -9,7 +9,7 @@ export class SoraController {
 
   @Get('drafts')
   getDrafts(
-    @Query('tokenId') tokenId: string,
+    @Query('tokenId') tokenId: string | undefined,
     @Query('cursor') cursor: string | undefined,
     @Query('limit') limit: string | undefined,
     @Req() req: any,

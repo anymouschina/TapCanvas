@@ -40,6 +40,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [drafts, setDrafts] = React.useState<any[]>([])
   const [draftCursor, setDraftCursor] = React.useState<string | null>(null)
   const [draftLoading, setDraftLoading] = React.useState(false)
+  const [soraUsingShared, setSoraUsingShared] = React.useState(false)
   React.useEffect(() => {
     const loader = currentProject?.id ? listServerAssets(currentProject.id) : Promise.resolve([])
     loader.then(setAssets).catch(() => setAssets([]))
@@ -64,13 +65,31 @@ export default function AssetPanel(): JSX.Element | null {
         setSoraTokens(tokens)
         if (tokens.length > 0) {
           setSelectedTokenId(tokens[0].id)
+          setSoraUsingShared(false)
           try {
             const data = await listSoraDrafts(tokens[0].id)
             setDrafts(data.items || [])
             setDraftCursor(data.cursor || null)
-          } catch {
+          } catch (err: any) {
+            console.error(err)
+            alert('当前配置不可用，请稍后再试')
             setDrafts([])
             setDraftCursor(null)
+          }
+        } else {
+          // 没有用户自己的 Token，尝试使用共享配置
+          setSelectedTokenId(null)
+          try {
+            const data = await listSoraDrafts()
+            setDrafts(data.items || [])
+            setDraftCursor(data.cursor || null)
+            setSoraUsingShared(true)
+          } catch (err: any) {
+            console.error(err)
+            // 没有共享配置或共享配置不可用时静默失败
+            setDrafts([])
+            setDraftCursor(null)
+            setSoraUsingShared(false)
           }
         }
       })
@@ -90,8 +109,9 @@ export default function AssetPanel(): JSX.Element | null {
       const data = await listSoraDrafts(selectedTokenId, draftCursor)
       setDrafts(prev => [...prev, ...(data.items || [])])
       setDraftCursor(data.cursor || null)
-    } catch {
-      // ignore, keep existing drafts
+    } catch (err: any) {
+      console.error(err)
+      alert('当前配置不可用，请稍后再试')
     } finally {
       setDraftLoading(false)
     }
@@ -173,12 +193,15 @@ export default function AssetPanel(): JSX.Element | null {
                         value={selectedTokenId}
                         onChange={async (value) => {
                           setSelectedTokenId(value)
+                          setSoraUsingShared(false)
                           if (value) {
                             try {
                               const data = await listSoraDrafts(value)
                               setDrafts(data.items || [])
                               setDraftCursor(data.cursor || null)
-                            } catch {
+                            } catch (err: any) {
+                              console.error(err)
+                              alert('当前配置不可用，请稍后再试')
                               setDrafts([])
                               setDraftCursor(null)
                             }
@@ -189,6 +212,11 @@ export default function AssetPanel(): JSX.Element | null {
                         }}
                       />
                     </Group>
+                    {soraUsingShared && (
+                      <Text size="xs" c="dimmed">
+                        正在使用共享的 Sora 配置
+                      </Text>
+                    )}
                     <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
                       {drafts.length === 0 && <Text size="xs" c="dimmed">暂无草稿或未选择 Token</Text>}
                       <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="xs">
@@ -247,8 +275,9 @@ export default function AssetPanel(): JSX.Element | null {
                                     try {
                                       await deleteSoraDraft(selectedTokenId, d.id)
                                       setDrafts(prev => prev.filter(x => x.id !== d.id))
-                                    } catch {
-                                      // ignore for now
+                                    } catch (err: any) {
+                                      console.error(err)
+                                      alert('当前配置不可用，请稍后再试')
                                     }
                                   }}
                                 >

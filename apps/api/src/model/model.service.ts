@@ -31,7 +31,18 @@ export class ModelService {
     })
   }
 
-  upsertToken(input: { id?: string; providerId: string; label: string; secretToken: string; enabled?: boolean; userAgent?: string | null }, userId: string) {
+  upsertToken(
+    input: {
+      id?: string
+      providerId: string
+      label: string
+      secretToken: string
+      enabled?: boolean
+      userAgent?: string | null
+      shared?: boolean
+    },
+    userId: string,
+  ) {
     if (input.id) {
       return this.prisma.modelToken.update({
         where: { id: input.id },
@@ -40,6 +51,7 @@ export class ModelService {
           secretToken: input.secretToken,
           userAgent: input.userAgent ?? null,
           enabled: input.enabled ?? true,
+          shared: input.shared ?? false,
         },
       })
     }
@@ -51,6 +63,7 @@ export class ModelService {
         userAgent: input.userAgent ?? null,
         userId,
         enabled: input.enabled ?? true,
+        shared: input.shared ?? false,
       },
     })
   }
@@ -72,7 +85,7 @@ export class ModelService {
   }
 
   upsertEndpoint(
-    input: { id?: string; providerId: string; key: string; label: string; baseUrl: string },
+    input: { id?: string; providerId: string; key: string; label: string; baseUrl: string; shared?: boolean },
     userId: string,
   ) {
     // Ensure the provider belongs to current user
@@ -81,12 +94,14 @@ export class ModelService {
       update: {
         label: input.label,
         baseUrl: input.baseUrl,
+        shared: input.shared ?? false,
       },
       create: {
         providerId: input.providerId,
         key: input.key,
         label: input.label,
         baseUrl: input.baseUrl,
+        shared: input.shared ?? false,
       },
     })
   }
