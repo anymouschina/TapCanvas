@@ -5,7 +5,7 @@ import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text } from '@mantine/core'
 import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight, IconScissors, IconPhotoEdit } from '@tabler/icons-react'
-import { suggestDraftPrompts } from '../../api/server'
+import { markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
 
 type Data = {
   label: string
@@ -364,6 +364,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   if (suggestion) {
                     setPrompt(suggestion)
                     setPromptSuggestions([])
+                    markDraftPromptUsed(suggestion, 'sora').catch(() => {})
                   }
                 } else if (e.key === 'Escape') {
                   setPromptSuggestions([])
@@ -394,6 +395,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                       e.preventDefault()
                       setPrompt(s)
                       setPromptSuggestions([])
+                      markDraftPromptUsed(s, 'sora').catch(() => {})
                     }}
                     onMouseEnter={() => setActiveSuggestion(idx)}
                     style={{

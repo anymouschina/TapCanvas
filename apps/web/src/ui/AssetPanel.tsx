@@ -11,6 +11,7 @@ import {
   listModelTokens,
   listSoraDrafts,
   deleteSoraDraft,
+  markDraftPromptUsed,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
@@ -105,6 +106,9 @@ export default function AssetPanel(): JSX.Element | null {
       thumbnailUrl: d.thumbnailUrl,
       prompt: d.prompt || '',
     })
+    if (d.prompt) {
+      markDraftPromptUsed(d.prompt, 'sora').catch(() => {})
+    }
     setActivePanel(null)
   }
   if (!mounted) return null

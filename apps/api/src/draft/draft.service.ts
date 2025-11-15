@@ -25,6 +25,7 @@ export class DraftService {
       },
       select: {
         prompt: true,
+        useCount: true,
       },
       take: limit,
     })
@@ -39,5 +40,23 @@ export class DraftService {
 
     return { prompts }
   }
-}
 
+  async markPromptUsed(userId: string, provider: string, prompt: string) {
+    const trimmed = prompt.trim()
+    if (!trimmed) return { ok: true }
+    await this.prisma.externalDraft.updateMany({
+      where: {
+        userId,
+        provider,
+        prompt: trimmed,
+      },
+      data: {
+        useCount: {
+          increment: 1,
+        },
+        lastSeenAt: new Date(),
+      },
+    })
+    return { ok: true }
+  }
+}
