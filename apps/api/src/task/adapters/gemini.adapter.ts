@@ -109,6 +109,94 @@ async function callGenerateContent(
   return result
 }
 
+async function callGenerateImage(
+  prompt: string,
+  ctx: ProviderContext,
+  modelKeyOverride?: string,
+): Promise<TaskResult> {
+  if (!ctx.apiKey || !ctx.apiKey.trim()) {
+    throw new Error('Gemini API key not configured for current provider/user')
+  }
+
+  const baseUrl = normalizeBaseUrl(ctx.baseUrl)
+  let model = 'models/gemini-2.5-flash-image'
+  const override = modelKeyOverride && modelKeyOverride.trim()
+  if (override) {
+    const key = override.trim()
+    model = key.startsWith('models/') ? key : `models/${key}`
+  }
+
+  const url = `${baseUrl}/v1beta/${model}:generateImages?key=${encodeURIComponent(ctx.apiKey)}`
+  const body = {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }],
+      },
+    ],
+  }
+
+  const res = await axios.post(url, body, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    timeout: 60000,
+    validateStatus: () => true,
+  })
+
+  if (res.status < 200 || res.status >= 300) {
+    const msg =
+      (res.data && (res.data.error?.message || res.data.message)) ||
+      `Gemini generateImages failed with status ${res.status}`
+    const err = new Error(msg)
+    ;(err as any).status = res.status
+    throw err
+  }
+
+  const raw = res.data as any
+  const imgs: any[] = Array.isArray(raw?.generatedImages)
+    ? raw.generatedImages
+    : Array.isArray(raw?.images)
+      ? raw.images
+      : []
+
+  const assets =
+    imgs
+      .map((img: any) => {
+        const url =
+          img.uri ||
+          img.url ||
+          img.imageUri ||
+          (img.media && img.media.url) ||
+          ''
+        if (!url) return null
+        const thumb =
+          img.thumbnailUri ||
+          img.thumbnailUrl ||
+          (img.thumbnail && img.thumbnail.url) ||
+          null
+        return {
+          type: 'image' as const,
+          url,
+          thumbnailUrl: thumb,
+        }
+      })
+      .filter((a: any) => a) || []
+
+  const id = `gemini-img-${Date.now().toString(36)}`
+  const result: TaskResult = {
+    id,
+    kind: 'text_to_image',
+    status: 'succeeded',
+    assets,
+    raw: {
+      provider: 'gemini',
+      response: raw,
+    },
+  }
+  return result
+}
+
 export const geminiAdapter: ProviderAdapter = {
   name: 'gemini',
   supports: ['chat', 'prompt_refine', 'text_to_image', 'text_to_video'],
@@ -122,10 +210,8 @@ export const geminiAdapter: ProviderAdapter = {
   },
 
   async textToImage(_req: TextToImageRequest, _ctx: ProviderContext): Promise<TaskResult> {
-    const sys =
-      '你是一个图像提示词设计助手。请根据用户输入输出一段详细的英文图像描述，用于调用下游图像生成模型。只输出描述文本本身，不要解释。'
     const modelKeyOverride = (_req.extras as any)?.modelKey as string | undefined
-    return callGenerateContent('text_to_image', _req.prompt, _ctx, sys, modelKeyOverride)
+    return callGenerateImage(_req.prompt, _ctx, modelKeyOverride)
   },
 
   async textToVideo(_req: TextToVideoRequest, _ctx: ProviderContext): Promise<TaskResult> {

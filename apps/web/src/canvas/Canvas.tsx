@@ -628,14 +628,14 @@ function CanvasInner(): JSX.Element {
             <Stack gap={8}>
               <Text c="dimmed">快速开始</Text>
               <Group gap={8} style={{ flexWrap: 'nowrap' }}>
-                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', '文本转图像', { kind: 'textToImage' }) }}>新建 文本转图像</Button>
+                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }) }}>新建 text</Button>
                 <Button size="sm" variant="light" onClick={() => {
                   // create a small sample flow in center
                   const center = rf.project?.({ x: window.innerWidth/2, y: window.innerHeight/2 }) || { x: 200, y: 200 }
                   useRFStore.setState((s) => {
-                    const n1 = { id: `n${s.nextId}`, type: 'taskNode' as const, position: { x: center.x - 240, y: center.y - 60 }, data: { label: '文本转图像', kind: 'textToImage' } }
+                    const n1 = { id: `n${s.nextId}`, type: 'taskNode' as const, position: { x: center.x - 240, y: center.y - 60 }, data: { label: 'text', kind: 'textToImage' } }
                     const n2 = { id: `n${s.nextId+1}`, type: 'taskNode' as const, position: { x: center.x, y: center.y - 60 }, data: { label: '图像', kind: 'image' } }
-                    const n3 = { id: `n${s.nextId+2}`, type: 'taskNode' as const, position: { x: center.x + 260, y: center.y - 60 }, data: { label: '视频合成', kind: 'composeVideo' } }
+                    const n3 = { id: `n${s.nextId+2}`, type: 'taskNode' as const, position: { x: center.x + 260, y: center.y - 60 }, data: { label: 'video', kind: 'composeVideo' } }
                     const e1 = { id: `e-${n1.id}-${n2.id}`, source: n1.id, target: n2.id, type: 'typed' as const, animated: true } as any
                     const e2 = { id: `e-${n2.id}-${n3.id}`, source: n2.id, target: n3.id, type: 'typed' as const, animated: true } as any
                     return { nodes: [n1, n2, n3], edges: [e1, e2], nextId: s.nextId + 3 }
@@ -711,8 +711,8 @@ function CanvasInner(): JSX.Element {
                 {focusGroupId && <Button variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
                 {focusGroupId && <Button variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
                 <Divider my={2} />
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '文本转图像', { kind: 'textToImage' }); setMenu(null) }}>新建 文本转图像</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '视频合成', { kind: 'composeVideo' }); setMenu(null) }}>新建 视频合成</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }); setMenu(null) }}>新建 text</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'video', { kind: 'composeVideo' }); setMenu(null) }}>新建 video</Button>
               </>
             )}
             {menu.type === 'node' && menu.id && (() => {
@@ -763,7 +763,7 @@ function CanvasInner(): JSX.Element {
         >
           <Stack gap={4} p="xs">
             <Text size="xs" c="dimmed">
-              Continue from text
+              从文本继续
             </Text>
             <Button
               variant="subtle"
@@ -777,7 +777,7 @@ function CanvasInner(): JSX.Element {
                 })
               }
             >
-              Text → Image
+              文生图
             </Button>
             <Button
               variant="subtle"
@@ -791,7 +791,7 @@ function CanvasInner(): JSX.Element {
                 })
               }
             >
-              Text → Video
+              文生视频
             </Button>
           </Stack>
         </Paper>

@@ -23,14 +23,14 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
   const modelKey = (data.geminiModel as string | undefined) || (data.modelKey as string | undefined)
 
   let taskKind: TaskKind
-  if (kind === 'textToImage') {
-    // 文生图：先通过 Gemini 生成/优化文案
+  if (kind === 'image') {
+    // 文生图：使用生图模型
     taskKind = 'text_to_image'
   } else if (kind === 'composeVideo') {
-    // 文生视频：通过 Gemini 生成分镜描述
+    // 文生视频：通过模型生成分镜描述
     taskKind = 'text_to_video'
   } else {
-    // 默认按文生文处理
+    // 文生文：提示词优化
     taskKind = 'prompt_refine'
   }
 
@@ -72,10 +72,13 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     }
 
     const text = (res.raw && (res.raw.text as string)) || ''
+    const firstImage = res.assets && res.assets.find((a) => a.type === 'image')
     const preview =
-      text.trim().length > 0
-        ? { type: 'text', value: text }
-        : { type: 'text', value: 'Gemini 返回成功' }
+      kind === 'image' && firstImage
+        ? { type: 'image', src: firstImage.url }
+        : text.trim().length > 0
+          ? { type: 'text', value: text }
+          : { type: 'text', value: 'AI 调用成功' }
 
     setNodeStatus(id, 'success', {
       progress: 100,
@@ -85,6 +88,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         kind,
         preview,
       },
+      ...(kind === 'image' && firstImage ? { imageUrl: firstImage.url } : {}),
     })
 
     if (text.trim()) {

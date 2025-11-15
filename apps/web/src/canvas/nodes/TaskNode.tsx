@@ -82,6 +82,25 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       ? String(lastResult.preview.value || '')
       : ''
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
+  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'models/gemini-2.5-flash-image')
+  const { upstreamText, upstreamImageUrl } = useRFStore((s) => {
+    const edgesToThis = s.edges.filter((e) => e.target === id)
+    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null }
+    const last = edgesToThis[edgesToThis.length - 1]
+    const src = s.nodes.find((n) => n.id === last.source)
+    if (!src) return { upstreamText: null, upstreamImageUrl: null }
+    const sd: any = src.data || {}
+    const skind: string | undefined = sd.kind
+    const uText =
+      skind === 'textToImage'
+        ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
+        : null
+    const uImg =
+      skind === 'image' || skind === 'textToImage'
+        ? ((sd.imageUrl as string | undefined) || null)
+        : null
+    return { upstreamText: uText, upstreamImageUrl: uImg }
+  })
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
@@ -176,7 +195,40 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     addEdge({ source: id, target: newId, sourceHandle: 'out-image', targetHandle: targetKind==='video' ? 'in-image' : 'in-image' } as any)
   }
 
-  const fixedWidth = kind === 'image' ? 320 : undefined
+  const fixedWidth = (kind === 'image' || kind === 'textToImage') ? 320 : undefined
+  const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
+  const hasAiText = lastText.trim().length > 0
+
+  const edgeRoute = useUIStore(s => s.edgeRoute)
+
+  const connectFromText = (targetKind: 'image' | 'video') => {
+    const all = useRFStore.getState().nodes
+    const self = all.find((n: any) => n.id === id)
+    if (!self) return
+    const pos = { x: self.position.x + 260, y: self.position.y }
+    const before = useRFStore.getState().nextId
+    useRFStore.setState((s: any) => {
+      const newId = `n${s.nextId}`
+      const label = targetKind === 'image' ? 'Image' : 'Video'
+      const newKind = targetKind === 'image' ? 'image' : 'composeVideo'
+      const basePrompt = (self.data as any)?.prompt as string | undefined
+      const nodeData: any = { label, kind: newKind }
+      if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt
+      const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
+      const edgeId = `e-${id}-${newId}-${Date.now().toString(36)}`
+      const targetHandle = 'in-image'
+      const edge: any = {
+        id: edgeId,
+        source: id,
+        target: newId,
+        sourceHandle: 'out-any',
+        targetHandle,
+        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+        animated: true,
+      }
+      return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
+    })
+  }
   return (
     <div style={{
       border: '1px solid rgba(127,127,127,.35)',
@@ -186,7 +238,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       width: fixedWidth
     }}>
       {/* Title */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>{data?.label ?? (kind==='image' ? 'Image' : 'Task')}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>
+        {data?.label ?? (kind === 'image' ? 'Image' : kind === 'textToImage' ? 'Text' : 'Task')}
+      </div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
         <div ref={moreRef} style={{ position: 'relative', display: 'inline-block' }} data-more-root>
@@ -241,10 +295,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           title={`输入: ${h.type}`}
         />
       ))}
-      {/* Content Area for Image/Video kinds */}
+      {/* Content Area for Image/Video/Text kinds */}
       {kind === 'image' && (
         <div style={{ position: 'relative', marginTop: 6 }}>
-          {!imageUrl ? (
+          {!(imageUrl || upstreamImageUrl) ? (
             <>
               {/* 快捷操作列表，增强引导 */}
               <div style={{ width: 296, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
@@ -291,7 +345,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             </>
           ) : (
             <div style={{ position: 'relative' }}>
-              <img src={imageUrl} alt="uploaded" style={{ width: 296, maxWidth: '100%', height: 'auto', borderRadius: 10, display: 'block', border: '1px solid rgba(127,127,127,.35)' }} />
+              <img src={imageUrl || upstreamImageUrl || ''} alt="uploaded" style={{ width: 296, maxWidth: '100%', height: 'auto', borderRadius: 10, display: 'block', border: '1px solid rgba(127,127,127,.35)' }} />
               <ActionIcon size={28} variant="light" style={{ position: 'absolute', right: 8, top: 8 }} title="替换图片" onClick={()=>fileRef.current?.click()}>
                 <IconUpload size={14} />
               </ActionIcon>
@@ -301,6 +355,95 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 const url = URL.createObjectURL(f)
                 updateNodeData(id, { imageUrl: url })
               }} />
+            </div>
+          )}
+          {!imageUrl && upstreamText && (
+            <div
+              style={{
+                marginTop: 6,
+                width: 296,
+                maxHeight: 80,
+                borderRadius: 8,
+                border: '1px dashed rgba(148,163,184,0.6)',
+                background: 'rgba(15,23,42,0.6)',
+                padding: '6px 8px',
+                color: '#e5e7eb',
+                fontSize: 12,
+                whiteSpace: 'pre-wrap',
+                overflowY: 'auto',
+              }}
+            >
+              {upstreamText}
+            </div>
+          )}
+        </div>
+      )}
+      {kind === 'textToImage' && (
+        <div style={{ marginTop: 6 }}>
+          {!(hasPrompt || hasAiText) ? (
+            <div
+              style={{
+                width: 296,
+                borderRadius: 10,
+                border: '1px solid rgba(148,163,184,0.6)',
+                background: 'rgba(15,23,42,0.85)',
+                padding: '8px 10px',
+                color: '#e5e7eb',
+                fontSize: 13,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              <Text size="xs" c="dimmed">
+                选择要生成的内容
+              </Text>
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => {
+                  updateNodeData(id, { prompt })
+                  runSelected()
+                }}
+              >
+                文生文（AI 优化）
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => connectFromText('image')}
+              >
+                文生图
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => connectFromText('video')}
+              >
+                文生视频
+              </Button>
+            </div>
+          ) : (
+            <div
+              style={{
+                width: 296,
+                minHeight: 80,
+                maxHeight: 140,
+                borderRadius: 10,
+                border: '1px solid rgba(148,163,184,0.6)',
+                background: 'rgba(15,23,42,0.85)',
+                padding: '8px 10px',
+                color: '#e5e7eb',
+                fontSize: 13,
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'flex-start',
+                whiteSpace: 'pre-wrap',
+                overflowY: 'auto',
+                overflowX: 'hidden',
+              }}
+            >
+              {(prompt || (data as any)?.prompt) || lastText}
             </div>
           )}
         </div>
@@ -459,6 +602,25 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 }}
               />
             )}
+            {kind === 'image' && (
+              <Select
+                label="生图模型"
+                data={[
+                  { value: 'models/gemini-2.5-flash-image', label: 'models/gemini-2.5-flash-image' },
+                ]}
+                value={imageModel}
+                onChange={(v) => setImageModel(v || 'models/gemini-2.5-flash-image')}
+                comboboxProps={{
+                  withinPortal: true,
+                  styles: {
+                    dropdown: {
+                      minWidth: 260,
+                      whiteSpace: 'nowrap',
+                    },
+                  },
+                }}
+              />
+            )}
             <Select label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={aspect} onChange={(v)=>setAspect(v||'16:9')} />
             <NumberInput label="倍率" min={0.5} max={4} step={0.5} value={scale} onChange={(v)=>setScale(Number(v)||1)} />
           </Group>
@@ -467,7 +629,28 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               size="xs"
               loading={status === 'running' || status === 'queued'}
               onClick={() => {
-                updateNodeData(id, { prompt, aspect, scale, geminiModel: modelKey })
+                let nextPrompt = prompt
+                // 图片节点：如果有上游文本，将其拼接进提示词
+                if (kind === 'image') {
+                  const base = (prompt || (data as any)?.prompt || '').trim()
+                  const up = (upstreamText || '').trim()
+                  if (up) {
+                    nextPrompt = base ? `${base}\n\n${up}` : up
+                  } else {
+                    nextPrompt = base
+                  }
+                }
+
+                const patch: any = { prompt: nextPrompt, aspect, scale }
+                if (kind === 'textToImage') patch.geminiModel = modelKey
+                if (kind === 'image') patch.imageModel = imageModel
+
+                // 同步本地状态，便于预览区展示最新提示词
+                if (kind === 'image') {
+                  setPrompt(nextPrompt)
+                }
+
+                updateNodeData(id, patch)
                 runSelected()
               }}
             >
