@@ -37,6 +37,7 @@ model User {
   modelProviders ModelProvider[]
   modelTokens    ModelToken[]
   externalDrafts ExternalDraft[]
+  modelProfiles  ModelProfile[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -86,6 +87,7 @@ model ModelProvider {
   updatedAt DateTime      @updatedAt
   tokens    ModelToken[]
   endpoints ModelEndpoint[]
+  profiles  ModelProfile[]
 }
 
 model ModelToken {
@@ -166,6 +168,31 @@ model FlowExecutionLog {
   level       String
   message     String
   createdAt   DateTime      @default(now())
+}
+
+model ModelProfile {
+  id         String        @id @default(uuid())
+  ownerId    String
+  owner      User          @relation(fields: [ownerId], references: [id])
+  name       String
+  kind       ProfileKind   // capability, e.g. text_to_image, text_to_video
+  providerId String
+  provider   ModelProvider @relation(fields: [providerId], references: [id])
+  modelKey   String?       // provider-specific model identifier, e.g. "qwen-vl-plus"
+  settings   Json?         // provider-specific default settings/overrides
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([ownerId, kind])
+}
+
+enum ProfileKind {
+  chat
+  prompt_refine
+  text_to_image
+  image_to_video
+  text_to_video
+  image_edit
 }
 
 enum FlowExecutionStatus {

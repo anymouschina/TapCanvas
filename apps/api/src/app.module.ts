@@ -10,9 +10,10 @@ import { QueueModule } from './queue/queue.module'
 import { ModelModule } from './model/model.module'
 import { SoraModule } from './sora/sora.module'
 import { DraftModule } from './draft/draft.module'
+import { TaskModule } from './task/task.module'
 
 @Module({
-  imports: [PrismaModule.forRoot({ isGlobal: true }), QueueModule, AuthModule, ProjectModule, AssetModule, FlowModule, ModelModule, SoraModule, DraftModule],
+  imports: [PrismaModule.forRoot({ isGlobal: true }), QueueModule, AuthModule, ProjectModule, AssetModule, FlowModule, ModelModule, SoraModule, DraftModule, TaskModule],
   controllers: [AppController],
   providers: [AppService],
 })

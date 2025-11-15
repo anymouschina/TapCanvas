@@ -243,3 +243,46 @@ export async function deleteServerAsset(id: string): Promise<void> {
   const r = await fetch(`${API_BASE}/assets/${id}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete asset failed: ${r.status}`)
 }
+
+// Unified task API
+export type TaskKind =
+  | 'chat'
+  | 'prompt_refine'
+  | 'text_to_image'
+  | 'image_to_video'
+  | 'text_to_video'
+  | 'image_edit'
+
+export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export type TaskAssetDto = { type: 'image' | 'video'; url: string; thumbnailUrl?: string | null }
+
+export type TaskResultDto = {
+  id: string
+  kind: TaskKind
+  status: TaskStatus
+  assets: TaskAssetDto[]
+  raw: any
+}
+
+export type TaskRequestDto = {
+  kind: TaskKind
+  prompt: string
+  negativePrompt?: string
+  seed?: number
+  width?: number
+  height?: number
+  steps?: number
+  cfgScale?: number
+  extras?: Record<string, any>
+}
+
+export async function runTask(profileId: string, request: TaskRequestDto): Promise<TaskResultDto> {
+  const r = await fetch(`${API_BASE}/tasks`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profileId, request }),
+  }))
+  if (!r.ok) throw new Error(`run task failed: ${r.status}`)
+  return r.json()
+}
