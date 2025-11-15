@@ -179,6 +179,13 @@ export async function suggestDraftPrompts(query: string, provider = 'sora'): Pro
   return r.json()
 }
 
+export async function markDraftPromptUsed(prompt: string, provider = 'sora'): Promise<void> {
+  const qs = new URLSearchParams({ prompt })
+  if (provider) qs.set('provider', provider)
+  const r = await fetch(`${API_BASE}/drafts/mark-used?${qs.toString()}`, withAuth())
+  if (!r.ok) throw new Error(`mark prompt used failed: ${r.status}`)
+}
+
 // Assets API
 export type ServerAssetDto = { id: string; name: string; data: any; createdAt: string; updatedAt: string; projectId?: string|null }
 

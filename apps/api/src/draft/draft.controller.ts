@@ -18,5 +18,14 @@ export class DraftController {
     const parsedLimit = limit ? parseInt(limit, 10) || undefined : undefined
     return this.service.suggestPrompts(userId, q || '', provider || 'sora', parsedLimit)
   }
-}
 
+  @Get('mark-used')
+  markUsed(
+    @Query('prompt') prompt: string,
+    @Query('provider') provider: string | undefined,
+    @Req() req: any,
+  ) {
+    const userId = String(req.user.sub)
+    return this.service.markPromptUsed(userId, provider || 'sora', prompt || '')
+  }
+}
