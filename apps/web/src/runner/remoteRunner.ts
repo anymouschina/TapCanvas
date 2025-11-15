@@ -20,7 +20,9 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
   const beginToken = get().beginRunToken as (id: string) => void
   const endRunToken = get().endRunToken as (id: string) => void
   const isCanceled = get().isCanceled as (id: string) => boolean
-  const modelKey = (data.geminiModel as string | undefined) || (data.modelKey as string | undefined)
+  const textModelKey = (data.geminiModel as string | undefined) || (data.modelKey as string | undefined)
+  const imageModelKey = (data.imageModel as string | undefined)
+  const modelKey = (kind === 'image' ? imageModelKey : textModelKey) || undefined
 
   let taskKind: TaskKind
   if (kind === 'image') {
@@ -52,7 +54,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     }
 
     setNodeStatus(id, 'running', { progress: 5 })
-    appendLog(id, `[${nowLabel()}] 调用文案模型 …`)
+    appendLog(
+      id,
+      `[${nowLabel()}] 调用${kind === 'image' ? '图像' : '文案'}模型 …`,
+    )
 
     const res = await runTaskByVendor('gemini', {
       kind: taskKind,
@@ -60,7 +65,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       extras: {
         nodeKind: kind,
         nodeId: id,
-        modelKey: modelKey || undefined,
+        modelKey,
       },
     })
 

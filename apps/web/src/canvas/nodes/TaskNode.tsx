@@ -478,7 +478,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           style={{
             width: 420,
             maxHeight: 360,
-            overflowY: 'auto',
+            overflow: 'visible',
             transformOrigin: 'top center',
           }}
         >
@@ -491,6 +491,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               placeholder="在这里输入提示词..."
               value={prompt}
               onChange={(e)=>setPrompt(e.currentTarget.value)}
+              onBlur={() => {
+                setPromptSuggestions([])
+              }}
               onKeyDown={(e) => {
                 if (!promptSuggestions.length) return
                 if (e.key === 'ArrowDown') {
@@ -522,8 +525,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   position: 'absolute',
                   left: 0,
                   right: 0,
-                  top: '100%',
-                  marginTop: 4,
+                  bottom: '100%',
+                  marginBottom: 4,
                   zIndex: 10,
                   maxHeight: 180,
                   overflowY: 'auto',
@@ -607,6 +610,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 label="生图模型"
                 data={[
                   { value: 'models/gemini-2.5-flash-image', label: 'models/gemini-2.5-flash-image' },
+                  { value: 'models/gemini-2.5-flash-lite-preview-09-2025', label: 'models/gemini-2.5-flash-lite-preview-09-2025' },
                 ]}
                 value={imageModel}
                 onChange={(v) => setImageModel(v || 'models/gemini-2.5-flash-image')}

@@ -6,16 +6,23 @@ import type {
   TaskResult,
   TextToImageRequest,
   TextToVideoRequest,
+  TaskAsset,
 } from '../task.types'
 
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
 // 默认使用 2.5-flash；可通过 extras.modelKey 或 ModelProfile.modelKey 覆盖
 const DEFAULT_TEXT_MODEL = 'models/gemini-2.5-flash'
-const CHAT_SUPPORTED_MODELS = new Set(['models/gemini-2.5-flash', 'models/gemini-2.5-pro'])
+const CHAT_SUPPORTED_MODELS = new Set([
+  'models/gemini-2.5-flash',
+  'models/gemini-2.5-pro',
+])
 
 function normalizeBaseUrl(baseUrl?: string): string {
-  const url = (baseUrl || DEFAULT_GEMINI_BASE_URL).trim()
-  return url.replace(/\/+$/, '')
+  const raw = (baseUrl || DEFAULT_GEMINI_BASE_URL).trim()
+  // 去掉末尾多余 / 和版本段，避免出现 /v1beta/v1beta 这种路径
+  let url = raw.replace(/\/+$/, '')
+  url = url.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '')
+  return url
 }
 
 function resolveModelKey(ctx: ProviderContext, fallback: string): string {
@@ -119,14 +126,17 @@ async function callGenerateImage(
   }
 
   const baseUrl = normalizeBaseUrl(ctx.baseUrl)
+  // 默认对外暴露 gemini-2.5-flash-image，但底层按需映射到实际图片模型
   let model = 'models/gemini-2.5-flash-image'
   const override = modelKeyOverride && modelKeyOverride.trim()
   if (override) {
     const key = override.trim()
     model = key.startsWith('models/') ? key : `models/${key}`
   }
+  // 当前 Gemini 图片生成实际使用 imagegeneration 模型；保持对外 modelKey 不变
+  const apiModel = model === 'models/gemini-2.5-flash-image' ? 'models/imagegeneration' : model
 
-  const url = `${baseUrl}/v1beta/${model}:generateImages?key=${encodeURIComponent(ctx.apiKey)}`
+  const url = `${baseUrl}/v1beta/${apiModel}:generateImages?key=${encodeURIComponent(ctx.apiKey)}`
   const body = {
     contents: [
       {
@@ -160,9 +170,9 @@ async function callGenerateImage(
       ? raw.images
       : []
 
-  const assets =
+  const assets: TaskAsset[] =
     imgs
-      .map((img: any) => {
+      .map((img: any): TaskAsset | null => {
         const url =
           img.uri ||
           img.url ||
@@ -181,7 +191,7 @@ async function callGenerateImage(
           thumbnailUrl: thumb,
         }
       })
-      .filter((a: any) => a) || []
+      .filter((a): a is TaskAsset => a !== null)
 
   const id = `gemini-img-${Date.now().toString(36)}`
   const result: TaskResult = {
