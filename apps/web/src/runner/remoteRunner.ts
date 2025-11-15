@@ -42,7 +42,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
   beginToken(id)
   setNodeStatus(id, 'queued', { progress: 0 })
-  appendLog(id, `[${nowLabel()}] queued (Gemini, ${taskKind})`)
+  appendLog(id, `[${nowLabel()}] queued (AI, ${taskKind})`)
 
   try {
     if (isCanceled(id)) {
@@ -52,7 +52,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     }
 
     setNodeStatus(id, 'running', { progress: 5 })
-    appendLog(id, `[${nowLabel()}] 调用 Gemini …`)
+    appendLog(id, `[${nowLabel()}] 调用文案模型 …`)
 
     const res = await runTaskByVendor('gemini', {
       kind: taskKind,
@@ -88,12 +88,12 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     })
 
     if (text.trim()) {
-      appendLog(id, `[${nowLabel()}] Gemini: ${text.slice(0, 120)}`)
+      appendLog(id, `[${nowLabel()}] AI: ${text.slice(0, 120)}`)
     } else {
-      appendLog(id, `[${nowLabel()}] Gemini 调用成功`)
+      appendLog(id, `[${nowLabel()}] 文案模型调用成功`)
     }
   } catch (err: any) {
-    const msg = err?.message || 'Gemini 调用失败'
+    const msg = err?.message || '文案模型调用失败'
     setNodeStatus(id, 'error', { progress: 0, lastError: msg })
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
   } finally {

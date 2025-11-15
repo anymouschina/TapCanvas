@@ -430,7 +430,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             >
               <Group justify="space-between" mb={4}>
                 <Text size="xs" c="dimmed">
-                  Gemini 输出（文生文）
+                  AI 输出（文生文）
                 </Text>
                 <Button
                   size="xs"
@@ -450,7 +450,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           <Group grow mt={6}>
             {kind === 'textToImage' && (
               <Select
-                label="Gemini 模型"
+                label="文案模型"
                 data={[
                   { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
                   { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
@@ -458,6 +458,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 ]}
                 value={modelKey}
                 onChange={(v) => setModelKey(v || 'gemini-2.5-flash')}
+                comboboxProps={{
+                  withinPortal: true,
+                  styles: {
+                    dropdown: {
+                      minWidth: 260,
+                      whiteSpace: 'nowrap',
+                    },
+                  },
+                }}
               />
             )}
             <Select label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={aspect} onChange={(v)=>setAspect(v||'16:9')} />
@@ -472,7 +481,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 runSelected()
               }}
             >
-              {kind === 'textToImage' ? '用 Gemini 优化' : '一键执行'}
+              {kind === 'textToImage' ? 'AI 优化文案' : '一键执行'}
             </Button>
           </Group>
         </Paper>
