@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip } from '@mantine/core'
+import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center } from '@mantine/core'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import {
@@ -47,7 +47,8 @@ export default function AssetPanel(): JSX.Element | null {
   }, [currentProject?.id, mounted])
 
   React.useEffect(() => {
-    if (!mounted) return
+    if (!mounted || tab !== 'sora') return
+    setDraftLoading(true)
     listModelProviders()
       .then((ps) => {
         const soras = ps.filter((p) => p.vendor === 'sora')
@@ -99,6 +100,9 @@ export default function AssetPanel(): JSX.Element | null {
         setDrafts([])
         setSelectedTokenId(null)
         setDraftCursor(null)
+      })
+      .finally(() => {
+        setDraftLoading(false)
       })
   }, [mounted])
 
@@ -191,10 +195,15 @@ export default function AssetPanel(): JSX.Element | null {
                         placeholder={soraTokens.length === 0 ? '暂无 Sora 密钥' : '选择 Token'}
                         data={soraTokens.map((t) => ({ value: t.id, label: t.label }))}
                         value={selectedTokenId}
+                        comboboxProps={{ zIndex: 8005 }}
                         onChange={async (value) => {
                           setSelectedTokenId(value)
                           setSoraUsingShared(false)
+                          // 切换身份时先清空当前列表并展示加载态，过渡更自然
+                          setDrafts([])
+                          setDraftCursor(null)
                           if (value) {
+                            setDraftLoading(true)
                             try {
                               const data = await listSoraDrafts(value)
                               setDrafts(data.items || [])
@@ -204,6 +213,8 @@ export default function AssetPanel(): JSX.Element | null {
                               alert('当前配置不可用，请稍后再试')
                               setDrafts([])
                               setDraftCursor(null)
+                            } finally {
+                              setDraftLoading(false)
                             }
                           } else {
                             setDrafts([])
@@ -218,7 +229,19 @@ export default function AssetPanel(): JSX.Element | null {
                       </Text>
                     )}
                     <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
-                      {drafts.length === 0 && <Text size="xs" c="dimmed">暂无草稿或未选择 Token</Text>}
+                      {draftLoading && drafts.length === 0 && (
+                        <Center py="sm">
+                          <Group gap="xs">
+                            <Loader size="xs" />
+                            <Text size="xs" c="dimmed">
+                              正在加载 Sora 草稿…
+                            </Text>
+                          </Group>
+                        </Center>
+                      )}
+                      {!draftLoading && drafts.length === 0 && (
+                        <Text size="xs" c="dimmed">暂无草稿或未选择 Token</Text>
+                      )}
                       <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="xs">
                         {drafts.map((d, idx) => (
                           <Paper key={d.id ?? idx} withBorder radius="md" p="xs">
