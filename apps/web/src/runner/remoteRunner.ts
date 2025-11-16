@@ -185,6 +185,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       const aspect = (data as any)?.aspect as string | undefined
       const orientation: 'portrait' | 'landscape' | 'square' =
         aspect === '9:16' ? 'portrait' : aspect === '1:1' ? 'square' : 'landscape'
+      const remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
 
       setNodeStatus(id, 'running', { progress: 5 })
       appendLog(
@@ -195,25 +196,28 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       // 尝试从上游图像节点获取 Sora file_id / imageUrl（图生视频）
       let inpaintFileId: string | null = null
       let imageUrlForUpload: string | null = null
-      try {
-        const edges = (state.edges || []) as any[]
-        const inbound = edges.filter((e) => e.target === id)
-        if (inbound.length) {
-          const lastEdge = inbound[inbound.length - 1]
-          const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
-          if (src) {
-            const sd: any = src.data || {}
-            inpaintFileId =
-              (sd.soraFileId as string | undefined) ||
-              (sd.file_id as string | undefined) ||
-              null
-            imageUrlForUpload =
-              (sd.imageUrl as string | undefined) || null
+      // 若当前节点配置了 remix 目标，则优先走 remix，不再尝试图生
+      if (!remixTargetId) {
+        try {
+          const edges = (state.edges || []) as any[]
+          const inbound = edges.filter((e) => e.target === id)
+          if (inbound.length) {
+            const lastEdge = inbound[inbound.length - 1]
+            const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
+            if (src) {
+              const sd: any = src.data || {}
+              inpaintFileId =
+                (sd.soraFileId as string | undefined) ||
+                (sd.file_id as string | undefined) ||
+                null
+              imageUrlForUpload =
+                (sd.imageUrl as string | undefined) || null
+            }
           }
+        } catch {
+          inpaintFileId = null
+          imageUrlForUpload = null
         }
-      } catch {
-        inpaintFileId = null
-        imageUrlForUpload = null
       }
 
       const res = await createSoraVideo({
@@ -223,6 +227,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         n_frames: 300,
         inpaintFileId,
         imageUrl: imageUrlForUpload,
+        remixTargetId,
       })
 
       const taskId = res?.id as string | undefined

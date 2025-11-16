@@ -133,6 +133,13 @@ export default function NodeInspector(): JSX.Element {
               <NumberInput label="FPS" min={1} max={60} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
             )} />
           </Group>
+          <TextInput
+            label="Remix 目标 ID（可选）"
+            placeholder="例如：gen_01ka5v1x58e5ksd0s62qr1exyb"
+            {...form.register('remixTargetId')}
+            error={form.formState.errors.remixTargetId?.message as any}
+            mt={8}
+          />
           <Button type="submit" mt={10}>应用</Button>
         </form>
       )}
