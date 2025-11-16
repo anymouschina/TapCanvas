@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
+import FormData from 'form-data'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 
@@ -347,6 +348,266 @@ export class SoraService {
         err?.response?.data?.message ||
         err?.response?.statusText ||
         'Sora delete character request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async uploadCharacterVideo(
+    userId: string,
+    tokenId: string | undefined,
+    file: any,
+    range: [number, number],
+  ) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/characters/upload', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+    const [start, end] = range
+
+    const form = new FormData()
+    form.append('file', file.buffer, {
+      filename: file.originalname || 'character.mp4',
+      contentType: file.mimetype || 'video/mp4',
+    })
+    form.append('timestamps', `${start},${end}`)
+
+    try {
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        maxBodyLength: Infinity,
+      })
+      return res.data
+    } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora upload character video request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async uploadProfileAsset(
+    userId: string,
+    tokenId: string | undefined,
+    file: any,
+  ) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(
+      token,
+      'sora',
+      'https://sora.chatgpt.com',
+    )
+    const url = new URL('/backend/project_y/file/upload', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    const form = new FormData()
+    form.append('file', file.buffer, {
+      filename: file.originalname || 'cover.png',
+      contentType: file.mimetype || 'image/png',
+    })
+    form.append('use_case', 'profile')
+
+    try {
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        maxBodyLength: Infinity,
+      })
+      return res.data
+    } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora upload profile asset request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async getCameoStatus(userId: string, tokenId: string | undefined, cameoId: string) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL(`/backend/project_y/cameos/in_progress/${cameoId}`, baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        validateStatus: () => true,
+      })
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora cameo status failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status },
+          res.status,
+        )
+      }
+      return res.data
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora cameo status request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async finalizeCharacter(
+    userId: string,
+    tokenId: string,
+    payload: {
+      cameo_id: string
+      username: string
+      display_name: string
+      profile_asset_pointer: any
+    },
+  ) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/characters/finalize', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    const body = {
+      cameo_id: payload.cameo_id,
+      username: payload.username,
+      display_name: payload.display_name,
+      profile_asset_pointer: payload.profile_asset_pointer,
+      instruction_set: null,
+      safety_instruction_set: null,
+    }
+
+    try {
+      const res = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        validateStatus: () => true,
+      })
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora finalize character failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status },
+          res.status,
+        )
+      }
+      return res.data
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora finalize character request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async setCameoPublic(userId: string, tokenId: string, cameoId: string) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL(
+      `/backend/project_y/cameos/by_id/${cameoId}/update_v2`,
+      baseUrl,
+    ).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.post(
+        url,
+        { visibility: 'public' },
+        {
+          headers: {
+            Authorization: `Bearer ${token.secretToken}`,
+            'User-Agent': userAgent,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          validateStatus: () => true,
+        },
+      )
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora set cameo public failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status },
+          res.status,
+        )
+      }
+      return res.data
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora set cameo public request failed'
       throw new HttpException(
         { message, upstreamStatus: err?.response?.status ?? null },
         status,
