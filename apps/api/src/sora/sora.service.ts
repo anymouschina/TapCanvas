@@ -175,7 +175,7 @@ export class SoraService {
 
   private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any): Promise<string | null> {
     const generationId = matched.generation_id || matched.id
-    if (!generationId) return
+    if (!generationId) return null
 
     const text = matched.prompt || matched.creation_config?.prompt || ''
     const url = new URL('/backend/project_y/post', baseUrl).toString()
