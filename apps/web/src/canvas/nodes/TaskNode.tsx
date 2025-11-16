@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text, Modal, Stack } from '@mantine/core'
 import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight, IconScissors, IconPhotoEdit, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
 
@@ -65,6 +65,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [prompt, setPrompt] = React.useState<string>((data as any)?.prompt || '')
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
+  const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
   const selectedCount = useRFStore(s => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
   const fileRef = React.useRef<HTMLInputElement|null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
@@ -90,6 +91,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     lastResult && lastResult.preview && lastResult.preview.type === 'text'
       ? String(lastResult.preview.value || '')
       : ''
+  const rawTextResults =
+    ((data as any)?.textResults as { text: string }[] | undefined) || []
+  const textResults =
+    rawTextResults.length > 0
+      ? rawTextResults
+      : lastText
+        ? [{ text: lastText }]
+        : []
+  const [compareOpen, setCompareOpen] = React.useState(false)
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
   const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
   const { upstreamText, upstreamImageUrl } = useRFStore((s) => {
@@ -245,7 +255,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       const label = targetKind === 'image' ? 'Image' : 'Video'
       const newKind = targetKind === 'image' ? 'image' : 'composeVideo'
       const basePrompt = (self.data as any)?.prompt as string | undefined
-      const nodeData: any = { label, kind: newKind }
+      const nodeData: any = {
+        label,
+        kind: newKind,
+        // 继承文本节点的生成次数配置，用于多次生成图像/视频
+        sampleCount: (self.data as any)?.sampleCount,
+      }
       if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt
       const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
       const edgeId = `e-${id}-${newId}-${Date.now().toString(36)}`
@@ -681,19 +696,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 gap: 6,
               }}
             >
-              <Text size="xs" c="dimmed">
-                继续
-              </Text>
-              <Button
-                size="xs"
-                variant="subtle"
-                onClick={() => {
-                  updateNodeData(id, { prompt })
-                  runSelected()
-                }}
-              >
-                文生文（AI 优化）
-              </Button>
               <Button
                 size="xs"
                 variant="subtle"
@@ -879,76 +881,172 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               </Paper>
             )}
           </div>
-          {kind === 'textToImage' && lastText && (
+          {kind === 'textToImage' && textResults.length > 0 && (
             <Paper
               withBorder
               radius="md"
               p="xs"
               mt="xs"
-              style={{ maxHeight: 160, overflowY: 'auto', background: 'rgba(15,23,42,0.9)' }}
+              style={{
+                maxHeight: 160,
+                overflowY: 'auto',
+                background: 'rgba(15,23,42,0.9)',
+              }}
             >
               <Group justify="space-between" mb={4}>
                 <Text size="xs" c="dimmed">
                   AI 输出（文生文）
                 </Text>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  onClick={() => {
-                    setPrompt(lastText)
-                    updateNodeData(id, { prompt: lastText })
-                  }}
-                >
-                  应用到提示词
-                </Button>
+                {textResults.length > 1 && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => setCompareOpen(true)}
+                  >
+                    对比
+                  </Button>
+                )}
               </Group>
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                {lastText}
-              </Text>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {textResults.map((r, idx) => (
+                  <div
+                    key={`${idx}-${r.text.slice(0, 16)}`}
+                    style={{
+                      borderRadius: 6,
+                      border: '1px solid rgba(148,163,184,0.5)',
+                      padding: '4px 6px',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 6,
+                      background: 'rgba(15,23,42,0.9)',
+                    }}
+                  >
+                    <Text
+                      size="xs"
+                      style={{
+                        whiteSpace: 'pre-wrap',
+                        flex: 1,
+                      }}
+                    >
+                      {r.text}
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => {
+                        const t = r.text
+                        setPrompt(t)
+                        updateNodeData(id, { prompt: t })
+                      }}
+                    >
+                      应用
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </Paper>
           )}
           <Group grow mt={6}>
             {kind === 'textToImage' && (
-              <Select
-                label="文案模型"
-                data={[
-                  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
-                  { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
-                ]}
-                value={modelKey}
-                onChange={(v) => setModelKey(v || 'gemini-2.5-flash')}
-                comboboxProps={{
-                  withinPortal: true,
-                  styles: {
-                    dropdown: {
-                      minWidth: 260,
-                      whiteSpace: 'nowrap',
+              <>
+                <Select
+                  label="文案模型"
+                  data={[
+                    { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+                    { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
+                  ]}
+                  value={modelKey}
+                  onChange={(v) => setModelKey(v || 'gemini-2.5-flash')}
+                  comboboxProps={{
+                    withinPortal: true,
+                    styles: {
+                      dropdown: {
+                        minWidth: 260,
+                        whiteSpace: 'nowrap',
+                      },
                     },
-                  },
-                }}
-              />
+                  }}
+                />
+                <NumberInput
+                  label="生成次数"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={sampleCount}
+                  onChange={(v) => setSampleCount(Number(v) || 1)}
+                  onWheel={(e) => e.stopPropagation()}
+                />
+              </>
             )}
             {kind === 'image' && (
-              <Select
-                label="生图模型"
-                data={[
-                  { value: 'qwen-image-plus', label: 'qwen-image-plus' },
-                ]}
-                value={imageModel}
-                onChange={(v) => setImageModel(v || 'qwen-image-plus')}
-                comboboxProps={{
-                  withinPortal: true,
-                  styles: {
-                    dropdown: {
-                      minWidth: 260,
-                      whiteSpace: 'nowrap',
+              <>
+                <Select
+                  label="生图模型"
+                  data={[
+                    { value: 'qwen-image-plus', label: 'qwen-image-plus' },
+                  ]}
+                  value={imageModel}
+                  onChange={(v) => setImageModel(v || 'qwen-image-plus')}
+                  comboboxProps={{
+                    withinPortal: true,
+                    styles: {
+                      dropdown: {
+                        minWidth: 260,
+                        whiteSpace: 'nowrap',
+                      },
                     },
-                  },
-                }}
-              />
+                  }}
+                />
+                <Select
+                  label="比例"
+                  data={[
+                    { value: '16:9', label: '16:9' },
+                    { value: '1:1', label: '1:1' },
+                    { value: '9:16', label: '9:16' },
+                  ]}
+                  value={aspect}
+                  onChange={(v) => setAspect(v || '16:9')}
+                />
+                <NumberInput
+                  label="生成次数"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={sampleCount}
+                  onChange={(v) => setSampleCount(Number(v) || 1)}
+                  onWheel={(e) => e.stopPropagation()}
+                />
+              </>
             )}
-            <Select label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={aspect} onChange={(v)=>setAspect(v||'16:9')} />
-            <NumberInput label="倍率" min={0.5} max={4} step={0.5} value={scale} onChange={(v)=>setScale(Number(v)||1)} />
+            {kind === 'composeVideo' && (
+              <>
+                <Select
+                  label="画面比例"
+                  data={[
+                    { value: '16:9', label: '16:9' },
+                    { value: '1:1', label: '1:1' },
+                    { value: '9:16', label: '9:16' },
+                  ]}
+                  value={aspect}
+                  onChange={(v) => setAspect(v || '16:9')}
+                />
+                <NumberInput
+                  label="生成次数"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={sampleCount}
+                  onChange={(v) => setSampleCount(Number(v) || 1)}
+                  onWheel={(e) => e.stopPropagation()}
+                />
+              </>
+            )}
           </Group>
           <Group justify="flex-end" mt={8}>
             <Button
@@ -957,9 +1055,21 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               onClick={() => {
                 const nextPrompt = (prompt || (data as any)?.prompt || '').trim()
 
-                const patch: any = { prompt: nextPrompt, aspect, scale }
-                if (kind === 'textToImage') patch.geminiModel = modelKey
-                if (kind === 'image') patch.imageModel = imageModel
+                const patch: any = { prompt: nextPrompt }
+                if (kind === 'image' || kind === 'composeVideo') {
+                  patch.aspect = aspect
+                }
+                if (kind === 'textToImage') {
+                  patch.geminiModel = modelKey
+                  patch.sampleCount = sampleCount
+                }
+                if (kind === 'image') {
+                  patch.imageModel = imageModel
+                  patch.sampleCount = sampleCount
+                }
+                if (kind === 'composeVideo') {
+                  patch.sampleCount = sampleCount
+                }
 
                 // 同步本地状态，便于预览区展示最新提示词
                 if (kind === 'image') {
@@ -975,6 +1085,72 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           </Group>
         </Paper>
       </NodeToolbar>
+
+      {/* 文案对比弹窗 */}
+      {kind === 'textToImage' && (
+        <Modal
+          opened={compareOpen}
+          onClose={() => setCompareOpen(false)}
+          title="对比生成的提示词"
+          centered
+          size="lg"
+          withinPortal
+          zIndex={8000}
+        >
+          <Stack gap="sm">
+            <Text size="xs" c="dimmed">
+              点击「应用为当前提示词」可以将该版本填入上方输入框。
+            </Text>
+            <div
+              style={{
+                maxHeight: '50vh',
+                overflowY: 'auto',
+              }}
+            >
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: 12,
+                }}
+              >
+                {textResults.map((r, idx) => (
+                  <Paper
+                    key={`${idx}-${r.text.slice(0, 16)}`}
+                    withBorder
+                    radius="md"
+                    p="xs"
+                    style={{
+                      background: 'rgba(15,23,42,0.95)',
+                    }}
+                  >
+                    <Group justify="space-between" mb={4}>
+                      <Text size="xs" c="dimmed">
+                        版本 {idx + 1}
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => {
+                          const t = r.text
+                          setPrompt(t)
+                          updateNodeData(id, { prompt: t })
+                          setCompareOpen(false)
+                        }}
+                      >
+                        应用为当前提示词
+                      </Button>
+                    </Group>
+                    <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                      {r.text}
+                    </Text>
+                  </Paper>
+                ))}
+              </div>
+            </div>
+          </Stack>
+        </Modal>
+      )}
 
       {/* More panel rendered directly under the top toolbar with 4px gap */}
     </div>
