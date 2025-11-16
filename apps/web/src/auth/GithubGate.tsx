@@ -6,6 +6,7 @@ import { exchangeGithub } from '../api/server'
 const CLIENT_ID =
   (import.meta as any).env?.VITE_GITHUB_CLIENT_ID ||
   'Ov23liMBjR33FzIBNbmD'
+  // 加点注释
 const REDIRECT_URI =
   (import.meta as any).env?.VITE_GITHUB_REDIRECT_URI ||
   'http://localhost:5173/oauth/github'
