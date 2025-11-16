@@ -171,4 +171,12 @@ export class SoraController {
       parsedLimit,
     )
   }
+
+  @Get('video/pending')
+  getPendingVideos(
+    @Query('tokenId') tokenId: string | undefined,
+    @Req() req: any,
+  ) {
+    return this.service.getPendingVideos(String(req.user.sub), tokenId)
+  }
 }

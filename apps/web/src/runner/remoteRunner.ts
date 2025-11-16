@@ -1,6 +1,6 @@
 import type { Node } from 'reactflow'
 import type { TaskKind } from '../api/server'
-import { runTaskByVendor, createSoraVideo } from '../api/server'
+import { runTaskByVendor, createSoraVideo, listSoraPendingVideos } from '../api/server'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -192,44 +192,160 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         `[${nowLabel()}] 调用 Sora-2 生成视频任务…`,
       )
 
+      // 尝试从上游图像节点获取 Sora file_id（图生视频）
+      let inpaintFileId: string | null = null
+      try {
+        const edges = (state.edges || []) as any[]
+        const inbound = edges.filter((e) => e.target === id)
+        if (inbound.length) {
+          const lastEdge = inbound[inbound.length - 1]
+          const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
+          if (src) {
+            const sd: any = src.data || {}
+            inpaintFileId =
+              (sd.soraFileId as string | undefined) ||
+              (sd.file_id as string | undefined) ||
+              null
+          }
+        }
+      } catch {
+        inpaintFileId = null
+      }
+
       const res = await createSoraVideo({
         prompt,
         orientation,
         size: 'small',
         n_frames: 300,
+        inpaintFileId,
       })
 
+      const taskId = res?.id as string | undefined
       const preview = {
         type: 'text',
-        value: res?.id
-          ? `已创建 Sora 视频任务（ID: ${res.id}）`
+        value: taskId
+          ? `已创建 Sora 视频任务（ID: ${taskId}）`
           : '已创建 Sora 视频任务',
       }
 
-      setNodeStatus(id, 'success', {
-        progress: 100,
+      setNodeStatus(id, 'running', {
+        progress: 10,
         lastResult: {
-          id: res?.id || '',
+          id: taskId || '',
           at: Date.now(),
           kind,
           preview,
         },
-        // 暂存完整返回，后续可用于轮询进度或展示链接
         soraVideoTask: res,
       })
 
       appendLog(
         id,
-        `[${nowLabel()}] Sora 视频任务创建完成${res?.id ? `（ID: ${res.id}）` : ''}`,
+        `[${nowLabel()}] Sora 视频任务创建完成${taskId ? `（ID: ${taskId}）` : ''}，开始轮询进度…`,
       )
+
+      // 无任务 ID 时无法跟踪队列，直接标记为成功。
+      if (!taskId) {
+        setNodeStatus(id, 'success', {
+          progress: 100,
+          lastResult: {
+            id: '',
+            at: Date.now(),
+            kind,
+            preview,
+          },
+          soraVideoTask: res,
+        })
+        appendLog(
+          id,
+          `[${nowLabel()}] 未返回任务 ID，已结束跟踪，请在 Sora 中查看生成结果。`,
+        )
+        endRunToken(id)
+        return
+      }
+
+      // 轮询 nf/pending，最多轮询一段时间（例如 ~90s）
+      let progress = 10
+      const maxRounds = 30
+      for (let round = 0; round < maxRounds; round++) {
+        if (isCanceled(id)) {
+          setNodeStatus(id, 'canceled', { progress: 0 })
+          appendLog(id, `[${nowLabel()}] 已取消 Sora 视频任务`)
+          endRunToken(id)
+          return
+        }
+
+        try {
+          const pending = await listSoraPendingVideos(null)
+          const found = pending.find((t: any) => t.id === taskId)
+
+          // 不在 pending 列表中：认为已完成或移出队列
+          if (!found) {
+            setNodeStatus(id, 'success', {
+              progress: 100,
+              lastResult: {
+                id: taskId,
+                at: Date.now(),
+                kind,
+                preview,
+              },
+              soraVideoTask: res,
+            })
+            appendLog(
+              id,
+              `[${nowLabel()}] Sora 视频任务已从队列移除，预计生成完成，请稍后在 Sora 草稿 / 作品中查看视频。`,
+            )
+            endRunToken(id)
+            return
+          }
+
+          const pct =
+            typeof found.progress_pct === 'number'
+              ? Math.max(0, Math.min(0.99, found.progress_pct))
+              : null
+          if (pct !== null) {
+            const next = Math.max(progress, Math.round(pct * 100))
+            progress = next
+          }
+
+          setNodeStatus(id, 'running', {
+            progress,
+            soraVideoTask: found,
+          })
+
+          // 简单间隔 3s
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+        } catch {
+          // 忽略单次轮询失败，稍后重试
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+        }
+      }
+
+      // 轮询结束但任务仍未完成，给出提示
+      setNodeStatus(id, 'success', {
+        progress,
+        lastResult: {
+          id: taskId,
+          at: Date.now(),
+          kind,
+          preview,
+        },
+        soraVideoTask: res,
+      })
+
+      appendLog(
+        id,
+        `[${nowLabel()}] 已停止轮询 Sora 视频任务进度，请在 Sora 控制台继续查看后续状态。`,
+      )
+      endRunToken(id)
+      return
     } catch (err: any) {
       const msg = err?.message || 'Sora 视频任务创建失败'
       setNodeStatus(id, 'error', { progress: 0, lastError: msg })
       appendLog(id, `[${nowLabel()}] error: ${msg}`)
-    } finally {
       endRunToken(id)
+      return
     }
-    return
   }
 
   try {

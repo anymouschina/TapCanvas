@@ -287,6 +287,32 @@ export async function listSoraMentions(
   return body
 }
 
+export async function listSoraPendingVideos(
+  tokenId?: string | null,
+): Promise<any[]> {
+  const qs = new URLSearchParams()
+  if (tokenId) qs.set('tokenId', tokenId)
+  const url = qs.toString()
+    ? `${API_BASE}/sora/video/pending?${qs.toString()}`
+    : `${API_BASE}/sora/video/pending`
+  const r = await fetch(url, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `list sora pending videos failed: ${r.status}`
+    throw new Error(msg)
+  }
+  if (Array.isArray(body)) return body
+  if (Array.isArray(body?.items)) return body.items
+  return []
+}
+
 export async function uploadSoraCharacterVideo(
   tokenId: string,
   file: File,
@@ -420,6 +446,7 @@ export async function createSoraVideo(payload: {
   orientation: 'portrait' | 'landscape' | 'square'
   size?: string
   n_frames?: number
+  inpaintFileId?: string | null
 }): Promise<any> {
   const body: any = {
     prompt: payload.prompt,
@@ -429,6 +456,9 @@ export async function createSoraVideo(payload: {
   }
   if (payload.tokenId) {
     body.tokenId = payload.tokenId
+  }
+  if (payload.inpaintFileId) {
+    body.inpaintFileId = payload.inpaintFileId
   }
 
   const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({
