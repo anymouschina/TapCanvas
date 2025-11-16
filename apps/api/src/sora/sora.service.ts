@@ -173,6 +173,42 @@ export class SoraService {
     }
   }
 
+  private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any) {
+    const generationId = matched.generation_id || matched.id
+    if (!generationId) return
+
+    const text = matched.prompt || matched.creation_config?.prompt || ''
+    const url = new URL('/backend/project_y/post', baseUrl).toString()
+    const body = {
+      attachments_to_create: [{ generation_id: generationId, kind: 'sora' }],
+      post_text: text,
+    }
+
+    try {
+      const res = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': token.userAgent || 'TapCanvas/1.0',
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        validateStatus: () => true,
+      })
+      if (res.status >= 200 && res.status < 300) {
+        this.logger.debug('publishVideoPost succeeded', { generationId, status: res.status })
+      } else {
+        this.logger.warn('publishVideoPost failed', { generationId, status: res.status, data: res.data })
+      }
+    } catch (err: any) {
+      this.logger.error('publishVideoPost exception', {
+        generationId,
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      })
+    }
+  }
+
   async getCharacters(userId: string, tokenId?: string, cursor?: string, limit?: number) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
@@ -1039,76 +1075,116 @@ export class SoraService {
     this.logger.debug('getDraftByTaskId request', { userId, tokenId, taskId, url })
 
     try {
-      const res = await axios.get(url, {
-        headers: {
-          Authorization: `Bearer ${token.secretToken}`,
-          'User-Agent': userAgent,
-          Accept: 'application/json',
-        },
-        params: { limit: 15 },
-        validateStatus: () => true,
-      })
+      const maxAttempts = 3
+      const retryDelayMs = 5000
 
-      if (res.status < 200 || res.status >= 300) {
-        const msg =
-          (res.data && (res.data.message || res.data.error)) ||
-          `Sora drafts lookup failed with status ${res.status}`
-        throw new HttpException(
-          { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
-          res.status,
-        )
-      }
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const res = await axios.get(url, {
+          headers: {
+            Authorization: `Bearer ${token.secretToken}`,
+            'User-Agent': userAgent,
+            Accept: 'application/json',
+          },
+          params: { limit: 15 },
+          validateStatus: () => true,
+        })
 
-      const data = res.data as any
-      const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
-
-      // 启发式：从原始草稿对象中搜索包含 taskId 的条目
-      const needle = String(taskId)
-      const matched = items.find((item) => {
-        try {
-          const text = JSON.stringify(item)
-          return text.includes(needle)
-        } catch {
-          return false
+        if (res.status < 200 || res.status >= 300) {
+          const msg =
+            (res.data && (res.data.message || res.data.error)) ||
+            `Sora drafts lookup failed with status ${res.status}`
+          this.logger.error('getDraftByTaskId upstream error', {
+            taskId,
+            tokenId,
+            status: res.status,
+            data: res.data,
+          })
+          throw new HttpException(
+            { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
+            res.status,
+          )
         }
-      })
 
-      if (!matched) {
-        this.logger.warn('getDraftByTaskId no match', { taskId, tokenId, itemsCount: items.length })
+        const data = res.data as any
+        const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+
+        this.logger.debug('getDraftByTaskId response', {
+          attempt,
+          taskId,
+          tokenId,
+          raw: data,
+          itemsCount: items.length,
+        })
+
+        const needle = String(taskId)
+        const matched = items.find((item) => {
+          try {
+            const text = JSON.stringify(item)
+            return text.includes(needle)
+          } catch {
+            return false
+          }
+        })
+
+        if (matched) {
+          const enc = matched.encodings || {}
+          const thumbnail =
+            enc.thumbnail?.path ||
+            matched.preview_image_url ||
+            matched.thumbnail_url ||
+            null
+          const videoUrl =
+            matched.downloadable_url ||
+            matched.url ||
+            enc.source?.path ||
+            null
+
+          this.logger.debug('getDraftByTaskId success', {
+            taskId,
+            tokenId,
+            matchedId: matched.id,
+            videoUrl,
+            thumbnail,
+          })
+
+          await this.publishVideoPostIfNeeded(token, baseUrl, matched)
+
+          return {
+            id: matched.id,
+            title: matched.title ?? null,
+            prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
+            thumbnailUrl: thumbnail,
+            videoUrl,
+            raw: matched,
+          }
+        }
+
+        if (attempt < maxAttempts) {
+          this.logger.warn('getDraftByTaskId retrying', {
+            taskId,
+            tokenId,
+            attempt,
+            itemsCount: items.length,
+          })
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+          continue
+        }
+
+        this.logger.warn('getDraftByTaskId no match', {
+          taskId,
+          tokenId,
+          itemsCount: items.length,
+        })
         throw new HttpException(
           { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
           HttpStatus.NOT_FOUND,
         )
       }
 
-      const enc = matched.encodings || {}
-      const thumbnail =
-        enc.thumbnail?.path ||
-        matched.preview_image_url ||
-        matched.thumbnail_url ||
-        null
-      const videoUrl =
-        matched.downloadable_url ||
-        matched.url ||
-        enc.source?.path ||
-        null
-
-      this.logger.debug('getDraftByTaskId success', {
-        taskId,
-        tokenId,
-        matchedId: matched.id,
-        videoUrl,
-        thumbnail,
-      })
-
-      return {
-        id: matched.id,
-        title: matched.title ?? null,
-        prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
-        thumbnailUrl: thumbnail,
-        videoUrl,
-        raw: matched,
-      }
+      throw new HttpException(
+        { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
+        HttpStatus.NOT_FOUND,
+      )
     } catch (err: any) {
       if (err instanceof HttpException) {
         throw err
