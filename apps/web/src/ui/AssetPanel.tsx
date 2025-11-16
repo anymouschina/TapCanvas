@@ -55,6 +55,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [renameCharError, setRenameCharError] = React.useState<string | null>(null)
   const [renameCharChecking, setRenameCharChecking] = React.useState(false)
   const renameDebounceRef = React.useRef<number | null>(null)
+  const [deletingCharId, setDeletingCharId] = React.useState<string | null>(null)
   React.useEffect(() => {
     const loader = currentProject?.id ? listServerAssets(currentProject.id) : Promise.resolve([])
     loader.then(setAssets).catch(() => setAssets([]))
@@ -500,19 +501,22 @@ export default function AssetPanel(): JSX.Element | null {
                                     size="sm"
                                     variant="subtle"
                                     color="red"
-                                    disabled={!selectedTokenId || !charId}
+                                    disabled={!selectedTokenId || !charId || deletingCharId === charId}
                                     onClick={async () => {
                                       if (!selectedTokenId || !charId) return
                                       if (!confirm('确定删除该 Sora 角色吗？此操作不可恢复')) return
                                       try {
+                                        setDeletingCharId(charId)
                                         await deleteSoraCharacter(selectedTokenId, charId)
                                         setCharacters((prev) => prev.filter((x) => x.user_id !== charId))
                                       } catch (err: any) {
                                         alert(err?.message || '删除角色失败，请稍后重试')
+                                      } finally {
+                                        setDeletingCharId((prev) => (prev === charId ? null : prev))
                                       }
                                     }}
                                   >
-                                    <IconTrash size={14} />
+                                    {deletingCharId === charId ? <Loader size="xs" /> : <IconTrash size={14} />}
                                   </ActionIcon>
                                 </Tooltip>
                               </Group>
