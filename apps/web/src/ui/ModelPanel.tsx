@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import {
   deleteModelToken,
@@ -37,6 +37,9 @@ export default function ModelPanel(): JSX.Element | null {
   const [videosShared, setVideosShared] = React.useState(false)
   const [videoShared, setVideoShared] = React.useState(false)
   const [soraShared, setSoraShared] = React.useState(false)
+  const [sessionModalOpen, setSessionModalOpen] = React.useState(false)
+  const [sessionJson, setSessionJson] = React.useState('')
+  const [sessionError, setSessionError] = React.useState('')
   const [geminiProvider, setGeminiProvider] = React.useState<ModelProviderDto | null>(null)
   const [geminiBaseUrl, setGeminiBaseUrl] = React.useState('')
   const [geminiTokens, setGeminiTokens] = React.useState<ModelTokenDto[]>([])
@@ -264,9 +267,20 @@ export default function ModelPanel(): JSX.Element | null {
                           Beta
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openModalForNew}>
-                        管理密钥
-                      </Button>
+                      <Group spacing="xs">
+                        <Button size="xs" onClick={openModalForNew}>
+                          管理密钥
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() =>
+                            window.open('https://sora.chatgpt.com/api/auth/session', '_blank', 'noopener')
+                          }
+                        >
+                          获取 session
+                        </Button>
+                      </Group>
                     </Group>
                     <Text size="xs" c="dimmed" mb={2}>
                       配置多个 Sora API Token，共享同一厂商额度
@@ -344,6 +358,20 @@ export default function ModelPanel(): JSX.Element | null {
                   <Text size="sm" c="dimmed">
                     你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
                   </Text>
+                  <Group spacing="xs">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://sora.chatgpt.com/api/auth/session', '_blank', 'noopener')
+                      }
+                    >
+                      获取 session
+                    </Button>
+                    <Button size="xs" variant="light" onClick={() => setSessionModalOpen(true)}>
+                      导入 session
+                    </Button>
+                  </Group>
                   <Stack gap="xs">
                     <div>
                       <TextInput
@@ -389,9 +417,20 @@ export default function ModelPanel(): JSX.Element | null {
             >
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
-                    在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
-                  </Text>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://aistudio.google.com/api-keys', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
+                  </Group>
                   <Stack gap="xs">
                     <div>
                       <TextInput
@@ -454,6 +493,63 @@ export default function ModelPanel(): JSX.Element | null {
                   </Stack>
                 </Stack>
               </div>
+            </Modal>
+            <Modal
+              opened={sessionModalOpen}
+              onClose={() => {
+                setSessionModalOpen(false)
+                setSessionError('')
+              }}
+              title="导入 Sora session"
+              centered
+              withinPortal
+              zIndex={8200}
+            >
+              <Stack>
+                <Text size="sm" c="dimmed">
+                  将 https://sora.chatgpt.com/api/auth/session 返回的 JSON 粘贴到下方，系统会自动提取 accessToken 作为新的 Sora Token。
+                </Text>
+                <Textarea
+                  minRows={6}
+                  value={sessionJson}
+                  onChange={(e) => setSessionJson(e.currentTarget.value)}
+                  placeholder='{"user": {...}, "accessToken":"..."}'
+                />
+                {sessionError && (
+                  <Text size="xs" c="red">
+                    {sessionError}
+                  </Text>
+                )}
+                <Group position="right" spacing="sm">
+                  <Button variant="subtle" size="xs" onClick={() => setSessionModalOpen(false)}>
+                    取消
+                  </Button>
+                  <Button
+                    size="xs"
+                    onClick={() => {
+                      try {
+                        const payload = JSON.parse(sessionJson)
+                        const token = payload?.accessToken
+                        if (!token) throw new Error('未包含 accessToken')
+                        const userLabel = payload?.user?.name
+                          ? `Sora ${payload.user.name}`
+                          : 'Sora Session'
+                        setLabel(userLabel)
+                        setSecret(token)
+                        setUserAgent(navigator.userAgent || '')
+                        setModalOpen(true)
+                        setSessionModalOpen(false)
+                        setSessionJson('')
+                        setSessionError('')
+                      } catch (err: any) {
+                        setSessionError(err?.message || 'JSON 解析失败')
+                      }
+                    }}
+                  >
+                    导入密钥
+                  </Button>
+                </Group>
+              </Stack>
             </Modal>
             <Modal
               opened={qwenModalOpen}
@@ -712,9 +808,20 @@ export default function ModelPanel(): JSX.Element | null {
             >
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
-                    在此配置 DashScope API Key。将用于调用 Qwen 文生图（qwen-image-plus）。
-                  </Text>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      在此配置 DashScope API Key。将用于调用 Qwen 文生图（qwen-image-plus）。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://bailian.console.aliyun.com/?tab=model#/api-key', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
+                  </Group>
                   <Group justify="space-between">
                     <Title order={5}>已保存的密钥</Title>
                     <Button size="xs" variant="light" onClick={openQwenModalForNew}>
