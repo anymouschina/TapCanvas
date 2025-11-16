@@ -21,6 +21,7 @@ import {
   IconPhotoEdit,
   IconDeviceTv,
   IconClock,
+  IconChevronDown,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
 
