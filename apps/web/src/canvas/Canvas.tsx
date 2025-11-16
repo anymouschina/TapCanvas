@@ -116,9 +116,9 @@ function CanvasInner(): JSX.Element {
 
   const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
     if (!sourceKind || !targetKind) return true
-    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image'].includes(sourceKind)
+    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image','video'].includes(sourceKind)
     if (targetKind === 'image') return ['image','textToImage'].includes(sourceKind)
-    if (targetKind === 'video') return ['image','composeVideo'].includes(sourceKind)
+    if (targetKind === 'video') return ['image','composeVideo','video'].includes(sourceKind)
     return true
   }, [])
 
@@ -582,7 +582,13 @@ function CanvasInner(): JSX.Element {
           if (sHandle && tHandle) {
             const sType = sHandle.toString().startsWith('out-') ? sHandle.toString().slice(4).split('-')[0] : undefined
             const tType = tHandle.toString().startsWith('in-') ? tHandle.toString().slice(3).split('-')[0] : undefined
-            if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) { lastReason.current = `类型不兼容：${sType} → ${tType}`; return false }
+            if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) {
+              const crossAllowed = sType === 'video' && tType === 'subtitle'
+              if (!crossAllowed) {
+                lastReason.current = `类型不兼容：${sType} → ${tType}`
+                return false
+              }
+            }
           }
           const ok = isValidEdgeByType(sKind, tKind)
           if (!ok) lastReason.current = '不允许的连接方向'
