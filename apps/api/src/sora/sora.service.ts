@@ -625,6 +625,19 @@ export class SoraService {
         validateStatus: () => true,
       })
 
+      const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+      const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+      const dataWithUrls = res.data as any
+      if (dataWithUrls?.downloadable_url) dataWithUrls.downloadable_url = rewrite(dataWithUrls.downloadable_url)
+      if (dataWithUrls?.url) dataWithUrls.url = rewrite(dataWithUrls.url)
+      const dataEnc = dataWithUrls?.encodings
+      if (dataEnc) {
+        if (dataEnc.source?.path) dataEnc.source.path = rewrite(dataEnc.source.path)
+        if (dataEnc.thumbnail?.path) dataEnc.thumbnail.path = rewrite(dataEnc.thumbnail.path)
+        if (dataEnc.md?.path) dataEnc.md.path = rewrite(dataEnc.md.path)
+        if (dataEnc.gif?.path) dataEnc.gif.path = rewrite(dataEnc.gif.path)
+      }
+
       if (res.status < 200 || res.status >= 300) {
         const upstreamError =
           res.data?.error ||
