@@ -262,19 +262,20 @@ export async function checkSoraCharacterUsername(
 }
 
 export async function uploadSoraCharacterVideo(
+  tokenId: string,
   file: File,
   timestamps: [number, number],
 ): Promise<any> {
   const [start, end] = timestamps
   const form = new FormData()
+  form.append('tokenId', tokenId)
   form.append('file', file)
   form.append('timestamps', `${start},${end}`)
 
-  const r = await fetch('https://sora.chatgpt.com/backend/characters/upload', {
+  const r = await fetch(`${API_BASE}/sora/characters/upload`, withAuth({
     method: 'POST',
     body: form,
-    credentials: 'include',
-  })
+  }))
 
   let body: any = null
   try {
@@ -293,13 +294,14 @@ export async function uploadSoraCharacterVideo(
   return body
 }
 
-export async function isSoraCameoInProgress(id: string): Promise<boolean> {
+export async function isSoraCameoInProgress(
+  tokenId: string,
+  id: string,
+): Promise<boolean> {
+  const qs = new URLSearchParams({ tokenId, id })
   const r = await fetch(
-    `https://sora.chatgpt.com/backend/project_y/cameos/in_progress/${id}`,
-    {
-      method: 'GET',
-      credentials: 'include',
-    },
+    `${API_BASE}/sora/cameos/in-progress?${qs.toString()}`,
+    withAuth(),
   )
   if (!r.ok) return false
 
@@ -331,26 +333,17 @@ export async function isSoraCameoInProgress(id: string): Promise<boolean> {
 }
 
 export async function finalizeSoraCharacter(payload: {
+  tokenId: string
   cameo_id: string
   username: string
   display_name: string
   profile_asset_pointer: any
 }): Promise<any> {
-  const bodyPayload = {
-    cameo_id: payload.cameo_id,
-    username: payload.username,
-    display_name: payload.display_name,
-    profile_asset_pointer: payload.profile_asset_pointer,
-    instruction_set: null,
-    safety_instruction_set: null,
-  }
-
-  const r = await fetch('https://sora.chatgpt.com/backend/characters/finalize', {
+  const r = await fetch(`${API_BASE}/sora/characters/finalize`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(bodyPayload),
-  })
+    body: JSON.stringify(payload),
+  }))
 
   let body: any = null
   try {
@@ -369,16 +362,15 @@ export async function finalizeSoraCharacter(payload: {
   return body
 }
 
-export async function setSoraCameoPublic(id: string): Promise<void> {
-  const r = await fetch(
-    `https://sora.chatgpt.com/backend/project_y/cameos/by_id/${id}/update_v2`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ visibility: 'public' }),
-    },
-  )
+export async function setSoraCameoPublic(
+  tokenId: string,
+  cameoId: string,
+): Promise<void> {
+  const r = await fetch(`${API_BASE}/sora/cameos/set-public`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokenId, cameoId }),
+  }))
 
   if (!r.ok) {
     let body: any = null
@@ -392,6 +384,36 @@ export async function setSoraCameoPublic(id: string): Promise<void> {
       `set sora cameo public failed: ${r.status}`
     throw new Error(msg)
   }
+}
+
+export async function uploadSoraProfileAsset(
+  tokenId: string,
+  file: File,
+): Promise<any> {
+  const form = new FormData()
+  form.append('tokenId', tokenId)
+  form.append('file', file)
+
+  const r = await fetch(`${API_BASE}/sora/profile/upload`, withAuth({
+    method: 'POST',
+    body: form,
+  }))
+
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `upload sora profile asset failed: ${r.status}`
+    throw new Error(msg)
+  }
+
+  return body
 }
 
 export async function updateSoraCharacter(payload: {

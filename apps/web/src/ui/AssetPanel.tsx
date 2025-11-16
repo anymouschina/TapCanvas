@@ -20,6 +20,7 @@ import {
   isSoraCameoInProgress,
   finalizeSoraCharacter,
   setSoraCameoPublic,
+  uploadSoraProfileAsset,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
@@ -76,6 +77,9 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharUsernameChecking, setCreateCharUsernameChecking] = React.useState(false)
   const [createCharSubmitting, setCreateCharSubmitting] = React.useState(false)
   const createCharUsernameDebounceRef = React.useRef<number | null>(null)
+  const [createCharCoverPreview, setCreateCharCoverPreview] = React.useState<string | null>(null)
+  const [createCharCoverUploading, setCreateCharCoverUploading] = React.useState(false)
+  const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
     const usedDuration = Math.min(createCharDuration, 2)
@@ -279,6 +283,45 @@ export default function AssetPanel(): JSX.Element | null {
     setCreateCharFile(null)
   }
 
+  const handlePickCover = () => {
+    if (!selectedTokenId) return
+    if (createCharCoverInputRef.current) {
+      createCharCoverInputRef.current.value = ''
+      createCharCoverInputRef.current.click()
+    }
+  }
+
+  const handleCoverFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.currentTarget.files?.[0]
+    if (!file || !selectedTokenId) return
+    if (!file.type.startsWith('image/')) {
+      alert('请选择图片文件作为封面')
+      return
+    }
+    setCreateCharCoverUploading(true)
+    try {
+      const res = await uploadSoraProfileAsset(selectedTokenId, file)
+      const pointer =
+        res?.asset_pointer ??
+        res?.azure_asset_pointer ??
+        res?.file_id ??
+        null
+      setCreateCharAssetPointer(pointer)
+      if (createCharCoverPreview) {
+        URL.revokeObjectURL(createCharCoverPreview)
+      }
+      const url = URL.createObjectURL(file)
+      setCreateCharCoverPreview(url)
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message || '上传封面失败，请稍后重试')
+    } finally {
+      setCreateCharCoverUploading(false)
+    }
+  }
+
   const handleTrimConfirm = async (range: { start: number; end: number }) => {
     if (!createCharFile || !selectedTokenId) return
     if (createCharUploading) return
@@ -286,10 +329,11 @@ export default function AssetPanel(): JSX.Element | null {
     try {
       const start = Math.max(0, range.start)
       const end = Math.max(start, Math.min(range.end, start + 2))
-      const uploadResult = await uploadSoraCharacterVideo(createCharFile, [
-        start,
-        end,
-      ])
+      const uploadResult = await uploadSoraCharacterVideo(
+        selectedTokenId,
+        createCharFile,
+        [start, end],
+      )
 
       const taskId: string | undefined =
         (uploadResult && (uploadResult.lastTask?.id || uploadResult.id)) ||
@@ -299,7 +343,7 @@ export default function AssetPanel(): JSX.Element | null {
         try {
           // 轮询任务进度，直到不再处于 in_progress 或超时
           for (let i = 0; i < 20; i++) {
-            const inProgress = await isSoraCameoInProgress(taskId)
+            const inProgress = await isSoraCameoInProgress(selectedTokenId, taskId)
             if (!inProgress) break
             // 约 1.5s 轮询一次
             // eslint-disable-next-line no-await-in-loop
@@ -317,8 +361,10 @@ export default function AssetPanel(): JSX.Element | null {
       setCreateCharVideoUrl(null)
       setCreateCharDuration(0)
       setCreateCharFile(null)
-      setCreateCharCameoId(uploadResult?.id || null)
-      setCreateCharAssetPointer(uploadResult?.asset_pointer ?? null)
+      const cameoId =
+        (uploadResult && (uploadResult.cameo?.id || uploadResult.id)) || null
+      setCreateCharCameoId(cameoId)
+      setCreateCharAssetPointer(null)
       setCreateCharUsername('')
       setCreateCharDisplayName('')
       setCreateCharUsernameError(null)
@@ -352,6 +398,13 @@ export default function AssetPanel(): JSX.Element | null {
           <div style={styles}>
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
+              <input
+                ref={createCharCoverInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleCoverFileChange}
+              />
               <input
                 ref={createCharInputRef}
                 type="file"
@@ -569,6 +622,14 @@ export default function AssetPanel(): JSX.Element | null {
                         创建角色
                       </Button>
                     </Group>
+                    {createCharUploading && (
+                      <Group gap="xs">
+                        <Loader size="xs" />
+                        <Text size="xs" c="dimmed">
+                          正在创建 Sora 角色，请稍候…
+                        </Text>
+                      </Group>
+                    )}
                     {soraCharUsingShared && (
                       <Text size="xs" c="dimmed">
                         正在使用共享的 Sora 配置
@@ -803,6 +864,10 @@ export default function AssetPanel(): JSX.Element | null {
                 setCreateCharFinalizeOpen(false)
                 setCreateCharCameoId(null)
                 setCreateCharAssetPointer(null)
+                if (createCharCoverPreview) {
+                  URL.revokeObjectURL(createCharCoverPreview)
+                }
+                setCreateCharCoverPreview(null)
                 setCreateCharUsername('')
                 setCreateCharDisplayName('')
                 setCreateCharUsernameError(null)
@@ -821,6 +886,30 @@ export default function AssetPanel(): JSX.Element | null {
                 <Text size="xs" c="dimmed">
                   填写角色的用户名和显示名称。用户名只允许英文，长度不超过 20。
                 </Text>
+                <Group align="flex-start" gap="sm">
+                  <div style={{ width: 72, height: 72, borderRadius: 8, overflow: 'hidden', background: 'rgba(15,23,42,.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {createCharCoverPreview ? (
+                      <img
+                        src={createCharCoverPreview}
+                        alt="封面预览"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        无封面
+                      </Text>
+                    )}
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    loading={createCharCoverUploading}
+                    onClick={handlePickCover}
+                    disabled={!selectedTokenId}
+                  >
+                    选择封面图片
+                  </Button>
+                </Group>
                 <TextInput
                   label="用户名"
                   placeholder="例如：my.character.name"
@@ -865,6 +954,10 @@ export default function AssetPanel(): JSX.Element | null {
                       setCreateCharFinalizeOpen(false)
                       setCreateCharCameoId(null)
                       setCreateCharAssetPointer(null)
+                      if (createCharCoverPreview) {
+                        URL.revokeObjectURL(createCharCoverPreview)
+                      }
+                      setCreateCharCoverPreview(null)
                       setCreateCharUsername('')
                       setCreateCharDisplayName('')
                       setCreateCharUsernameError(null)
@@ -880,7 +973,6 @@ export default function AssetPanel(): JSX.Element | null {
                   <Button
                     disabled={
                       !createCharCameoId ||
-                      !createCharAssetPointer ||
                       !selectedTokenId ||
                       !createCharUsername ||
                       !!createCharUsernameError ||
@@ -891,7 +983,6 @@ export default function AssetPanel(): JSX.Element | null {
                     onClick={async () => {
                       if (
                         !createCharCameoId ||
-                        !createCharAssetPointer ||
                         !selectedTokenId ||
                         !createCharUsername ||
                         createCharUsernameChecking ||
@@ -902,16 +993,22 @@ export default function AssetPanel(): JSX.Element | null {
                       setCreateCharSubmitting(true)
                       try {
                         const finalizeResult = await finalizeSoraCharacter({
+                          tokenId: selectedTokenId,
                           cameo_id: createCharCameoId,
                           username: createCharUsername,
-                          display_name: createCharDisplayName || createCharUsername,
-                          profile_asset_pointer: createCharAssetPointer,
+                          display_name:
+                            createCharDisplayName || createCharUsername,
+                          profile_asset_pointer:
+                            createCharAssetPointer ?? null,
                         })
                         const cameoIdForVisibility =
                           finalizeResult?.cameo?.id || createCharCameoId
                         if (cameoIdForVisibility) {
                           try {
-                            await setSoraCameoPublic(cameoIdForVisibility)
+                            await setSoraCameoPublic(
+                              selectedTokenId,
+                              cameoIdForVisibility,
+                            )
                           } catch (err) {
                             console.warn('设置角色为公共访问失败：', err)
                           }
@@ -919,6 +1016,10 @@ export default function AssetPanel(): JSX.Element | null {
                         setCreateCharFinalizeOpen(false)
                         setCreateCharCameoId(null)
                         setCreateCharAssetPointer(null)
+                        if (createCharCoverPreview) {
+                          URL.revokeObjectURL(createCharCoverPreview)
+                        }
+                        setCreateCharCoverPreview(null)
                         setCreateCharUsername('')
                         setCreateCharDisplayName('')
                         setCreateCharUsernameError(null)
