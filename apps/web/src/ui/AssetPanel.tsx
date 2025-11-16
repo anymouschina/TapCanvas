@@ -12,6 +12,7 @@ import {
   listSoraDrafts,
   deleteSoraDraft,
   markDraftPromptUsed,
+  listSoraCharacters,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
@@ -33,7 +34,7 @@ export default function AssetPanel(): JSX.Element | null {
   const mounted = active === 'assets'
   const currentProject = useUIStore(s => s.currentProject)
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
-  const [tab, setTab] = React.useState<'local' | 'sora'>('local')
+  const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-characters'>('local')
   const [soraProviders, setSoraProviders] = React.useState<ModelProviderDto[]>([])
   const [soraTokens, setSoraTokens] = React.useState<ModelTokenDto[]>([])
   const [selectedTokenId, setSelectedTokenId] = React.useState<string | null>(null)
@@ -41,13 +42,17 @@ export default function AssetPanel(): JSX.Element | null {
   const [draftCursor, setDraftCursor] = React.useState<string | null>(null)
   const [draftLoading, setDraftLoading] = React.useState(false)
   const [soraUsingShared, setSoraUsingShared] = React.useState(false)
+  const [characters, setCharacters] = React.useState<any[]>([])
+  const [charCursor, setCharCursor] = React.useState<string | null>(null)
+  const [charLoading, setCharLoading] = React.useState(false)
+  const [soraCharUsingShared, setSoraCharUsingShared] = React.useState(false)
   React.useEffect(() => {
     const loader = currentProject?.id ? listServerAssets(currentProject.id) : Promise.resolve([])
     loader.then(setAssets).catch(() => setAssets([]))
   }, [currentProject?.id, mounted])
 
   React.useEffect(() => {
-    if (!mounted || tab !== 'sora') return
+    if (!mounted || (tab !== 'sora' && tab !== 'sora-characters')) return
     setDraftLoading(true)
     listModelProviders()
       .then((ps) => {
@@ -59,38 +64,66 @@ export default function AssetPanel(): JSX.Element | null {
         if (!sora) {
           setSoraTokens([])
           setDrafts([])
+          setCharacters([])
           setSelectedTokenId(null)
           return
         }
         const tokens = await listModelTokens(sora.id)
         setSoraTokens(tokens)
-        if (tokens.length > 0) {
+
+        // 当进入 Sora 草稿或角色 Tab 时，如果还没有选择 Token，则默认选第一个
+        if (!selectedTokenId && tokens.length > 0) {
           setSelectedTokenId(tokens[0].id)
-          setSoraUsingShared(false)
-          try {
-            const data = await listSoraDrafts(tokens[0].id)
-            setDrafts(data.items || [])
-            setDraftCursor(data.cursor || null)
-          } catch (err: any) {
-            console.error(err)
-            alert('当前配置不可用，请稍后再试')
-            setDrafts([])
-            setDraftCursor(null)
-          }
-        } else {
-          // 没有用户自己的 Token，尝试使用共享配置
-          setSelectedTokenId(null)
-          try {
-            const data = await listSoraDrafts()
-            setDrafts(data.items || [])
-            setDraftCursor(data.cursor || null)
-            setSoraUsingShared(true)
-          } catch (err: any) {
-            console.error(err)
-            // 没有共享配置或共享配置不可用时静默失败
-            setDrafts([])
-            setDraftCursor(null)
+        }
+
+        // 根据当前 Tab 加载对应的数据
+        const activeTokenId = selectedTokenId || (tokens[0]?.id ?? null)
+
+        if (tab === 'sora') {
+          if (activeTokenId) {
             setSoraUsingShared(false)
+            try {
+              const data = await listSoraDrafts(activeTokenId)
+              setDrafts(data.items || [])
+              setDraftCursor(data.cursor || null)
+            } catch (err: any) {
+              console.error(err)
+              alert('当前配置不可用，请稍后再试')
+              setDrafts([])
+              setDraftCursor(null)
+            }
+          } else {
+            // 没有用户自己的 Token，尝试使用共享配置
+            setSelectedTokenId(null)
+            try {
+              const data = await listSoraDrafts()
+              setDrafts(data.items || [])
+              setDraftCursor(data.cursor || null)
+              setSoraUsingShared(true)
+            } catch (err: any) {
+              console.error(err)
+              setDrafts([])
+              setDraftCursor(null)
+              setSoraUsingShared(false)
+            }
+          }
+        } else if (tab === 'sora-characters') {
+          if (activeTokenId) {
+            setSoraCharUsingShared(false)
+            try {
+              const data = await listSoraCharacters(activeTokenId)
+              setCharacters(data.items || [])
+              setCharCursor(data.cursor || null)
+            } catch (err: any) {
+              console.error(err)
+              alert('当前配置不可用，请稍后再试')
+              setCharacters([])
+              setCharCursor(null)
+            }
+          } else {
+            setCharacters([])
+            setCharCursor(null)
+            setSoraCharUsingShared(false)
           }
         }
       })
@@ -98,13 +131,16 @@ export default function AssetPanel(): JSX.Element | null {
         setSoraProviders([])
         setSoraTokens([])
         setDrafts([])
+        setCharacters([])
         setSelectedTokenId(null)
         setDraftCursor(null)
+        setCharCursor(null)
       })
       .finally(() => {
         setDraftLoading(false)
+        setCharLoading(false)
       })
-  }, [mounted])
+  }, [mounted, tab, selectedTokenId])
 
   const loadMoreDrafts = async () => {
     if (!selectedTokenId || !draftCursor) return
@@ -115,9 +151,24 @@ export default function AssetPanel(): JSX.Element | null {
       setDraftCursor(data.cursor || null)
     } catch (err: any) {
       console.error(err)
-      alert('当前配置不可用，请稍后再试')
+      alert(err?.message || '当前配置不可用，请稍后再试')
     } finally {
       setDraftLoading(false)
+    }
+  }
+
+  const loadMoreCharacters = async () => {
+    if (!selectedTokenId || !charCursor) return
+    setCharLoading(true)
+    try {
+      const data = await listSoraCharacters(selectedTokenId, charCursor)
+      setCharacters(prev => [...prev, ...(data.items || [])])
+      setCharCursor(data.cursor || null)
+    } catch (err: any) {
+      console.error(err)
+      alert('当前配置不可用，请稍后再试')
+    } finally {
+      setCharLoading(false)
     }
   }
 
@@ -165,6 +216,7 @@ export default function AssetPanel(): JSX.Element | null {
                 <Tabs.List>
                   <Tabs.Tab value="local">项目资产</Tabs.Tab>
                   <Tabs.Tab value="sora">Sora 草稿</Tabs.Tab>
+                  <Tabs.Tab value="sora-characters">Sora 角色</Tabs.Tab>
                 </Tabs.List>
                 <Tabs.Panel value="local" pt="xs">
                   <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
@@ -314,6 +366,98 @@ export default function AssetPanel(): JSX.Element | null {
                       {draftCursor && (
                         <Group justify="center" mt="sm">
                           <Button size="xs" variant="light" loading={draftLoading} onClick={loadMoreDrafts}>
+                            加载更多
+                          </Button>
+                        </Group>
+                      )}
+                    </div>
+                  </Stack>
+                </Tabs.Panel>
+                <Tabs.Panel value="sora-characters" pt="xs">
+                  <Stack gap="sm">
+                    <Group justify="space-between">
+                      <Text size="sm">Sora Token 身份</Text>
+                      <Select
+                        size="xs"
+                        placeholder={soraTokens.length === 0 ? '暂无 Sora 密钥' : '选择 Token'}
+                        data={soraTokens.map((t) => ({ value: t.id, label: t.label }))}
+                        value={selectedTokenId}
+                        comboboxProps={{ zIndex: 8005 }}
+                        onChange={async (value) => {
+                          setSelectedTokenId(value)
+                          setSoraCharUsingShared(false)
+                          setCharacters([])
+                          setCharCursor(null)
+                          if (value) {
+                            setCharLoading(true)
+                            try {
+                              const data = await listSoraCharacters(value)
+                              setCharacters(data.items || [])
+                              setCharCursor(data.cursor || null)
+                            } catch (err: any) {
+                              console.error(err)
+                              alert('当前配置不可用，请稍后再试')
+                              setCharacters([])
+                              setCharCursor(null)
+                            } finally {
+                              setCharLoading(false)
+                            }
+                          } else {
+                            setCharacters([])
+                            setCharCursor(null)
+                          }
+                        }}
+                      />
+                    </Group>
+                    {soraCharUsingShared && (
+                      <Text size="xs" c="dimmed">
+                        正在使用共享的 Sora 配置
+                      </Text>
+                    )}
+                    <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
+                      {charLoading && characters.length === 0 && (
+                        <Center py="sm">
+                          <Group gap="xs">
+                            <Loader size="xs" />
+                            <Text size="xs" c="dimmed">
+                              正在加载 Sora 角色…
+                            </Text>
+                          </Group>
+                        </Center>
+                      )}
+                      {!charLoading && characters.length === 0 && (
+                        <Text size="xs" c="dimmed">暂无角色或未选择 Token</Text>
+                      )}
+                      <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="xs">
+                        {characters.map((c, idx) => (
+                          <Paper key={c.id ?? idx} withBorder radius="md" p="xs">
+                            {c.avatarUrl && (
+                              <Image
+                                src={c.avatarUrl}
+                                alt={c.name || c.id || `角色 ${idx + 1}`}
+                                radius="sm"
+                                mb={4}
+                                height={100}
+                                fit="cover"
+                              />
+                            )}
+                            <Text size="xs" fw={500} lineClamp={1}>
+                              {c.name || `角色 ${idx + 1}`}
+                            </Text>
+                            <div style={{ minHeight: 34, marginTop: 2 }}>
+                              {c.description && (
+                                <Text size="xs" c="dimmed" lineClamp={2}>
+                                  {c.description}
+                                </Text>
+                              )}
+                            </div>
+                            {/* 暂时不自动添加到画布，仅展示角色信息；后续可扩展为拉起对应的 Sora 节点 */}
+                          </Paper>
+                        ))}
+                      </SimpleGrid>
+                      {charCursor && (
+                        <Group justify="center" mt="sm">
+                          <Button size="xs" variant="light" loading={charLoading} onClick={loadMoreCharacters}>
                             加载更多
                           </Button>
                         </Group>

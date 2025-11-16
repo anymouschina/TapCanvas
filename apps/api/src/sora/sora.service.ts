@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common'
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
 
@@ -6,6 +6,7 @@ const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 
 @Injectable()
 export class SoraService {
+  private readonly logger = new Logger(SoraService.name)
   constructor(private readonly prisma: PrismaService) {}
 
   async getDrafts(userId: string, tokenId?: string, cursor?: string, limit?: number) {
@@ -164,6 +165,108 @@ export class SoraService {
         err?.response?.data?.message ||
         err?.response?.statusText ||
         'Sora drafts request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async getCharacters(userId: string, tokenId?: string, cursor?: string, limit?: number) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      // 先调用 /api/auth/session 获取当前登录用户的 profile id（如 user-xxxx）
+      const sessionUrl = new URL('/api/auth/session', baseUrl).toString()
+      const sessionRes = await axios.get(sessionUrl, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        validateStatus: () => true,
+      })
+      
+      if (sessionRes.status < 200 || sessionRes.status >= 300) {
+        const msg =
+          (sessionRes.data && (sessionRes.data.message || sessionRes.data.error)) ||
+          `Sora session request failed with status ${sessionRes.status}`
+        throw new Error(msg)
+      }
+      const sess = sessionRes.data as any
+      const profileId: string | undefined =
+        sess?.user?.user_id ||
+        sess?.user?.id ||
+        sess?.user_id ||
+        undefined
+      if (!profileId) {
+        throw new Error('Sora session missing profile user id')
+      }
+
+      // 角色列表接口：需要带上 profile user 标识
+      const url = new URL(`/backend/project_y/profile/${profileId}/characters`, baseUrl).toString()
+
+      const params: Record<string, any> = {}
+      if (cursor) params.cursor = cursor
+      if (typeof limit === 'number' && !Number.isNaN(limit)) params.limit = limit
+
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        params,
+      })
+
+      const data = res.data as any
+      const rawItems: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+
+      const items = rawItems.map((item) => {
+        const avatar =
+          item.avatar_url ||
+          item.preview_image_url ||
+          item.thumbnail_url ||
+          (item.poster_image && item.poster_image.url) ||
+          null
+        const prompt =
+          item.system_prompt ||
+          item.character_prompt ||
+          item.prompt ||
+          null
+        return {
+          id: item.id,
+          name: item.name ?? item.display_name ?? item.title ?? null,
+          description: item.description ?? item.short_description ?? null,
+          avatarUrl: avatar,
+          prompt,
+          platform: 'sora' as const,
+        }
+      })
+
+      return {
+        items,
+        cursor: data?.cursor ?? null,
+      }
+    } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+        throw new HttpException(
+          { message: '当前配置不可用，请稍后再试', upstreamStatus: err?.response?.status ?? null },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        )
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        'Sora characters request failed'
       throw new HttpException(
         { message, upstreamStatus: err?.response?.status ?? null },
         status,

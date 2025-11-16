@@ -162,11 +162,12 @@ function CanvasInner(): JSX.Element {
       setConnectingType(null)
     }
 
-    // 记录从哪个 text 节点的哪个端口开始连接，用于松手后弹出插入菜单
+    // 记录从哪个节点的哪个端口开始连接，用于松手后弹出插入菜单
     if (params.handleType === 'source' && params.nodeId) {
       const n = nodes.find((nn) => nn.id === params.nodeId)
       const k = (n?.data as any)?.kind
-      if (k === 'textToImage') {
+      // 支持从文本节点和图片节点右侧拖出时唤起辅助连接浮层
+      if (k === 'textToImage' || k === 'image') {
         connectFromRef.current = { nodeId: params.nodeId, handleId: params.handleId || null }
       } else {
         connectFromRef.current = null

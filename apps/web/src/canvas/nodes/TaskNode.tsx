@@ -201,6 +201,30 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const edgeRoute = useUIStore(s => s.edgeRoute)
 
+  const connectImageToText = () => {
+    const all = useRFStore.getState().nodes
+    const self = all.find((n: any) => n.id === id)
+    if (!self) return
+    const pos = { x: self.position.x + 260, y: self.position.y }
+    const basePrompt = ((self.data as any)?.prompt as string | undefined) || lastText || ''
+    useRFStore.setState((s: any) => {
+      const newId = `n${s.nextId}`
+      const nodeData: any = { label: '继续', kind: 'textToImage' }
+      if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt.trim()
+      const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
+      const edgeId = `e-${id}-${newId}-${Date.now().toString(36)}`
+      const edge: any = {
+        id: edgeId,
+        source: id,
+        target: newId,
+        sourceHandle: 'out-image',
+        targetHandle: 'in-any',
+        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+        animated: true,
+      }
+      return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
+    })
+  }
   const connectFromText = (targetKind: 'image' | 'video') => {
     const all = useRFStore.getState().nodes
     const self = all.find((n: any) => n.id === id)
@@ -305,7 +329,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 {[
                   { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
                   { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
-                  { label: '首帧图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
+                  { label: '图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
+                  { label: '反推提示词', icon: <IconAdjustments size={16} />, onClick: () => connectImageToText() },
                 ].map((row, idx) => {
                   const active = hovered === idx
                   const dimOthers = hovered !== null && hovered !== idx
@@ -396,7 +421,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               }}
             >
               <Text size="xs" c="dimmed">
-                选择要生成的内容
+                继续
               </Text>
               <Button
                 size="xs"
