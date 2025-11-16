@@ -11,7 +11,7 @@
     "tap": "node packages/cli/bin/tapcanvas.js",
     "dev:web": "pnpm --filter @tapcanvas/web dev",
     "dev:api": "pnpm --filter api start:dev",
-    "build": "pnpm -w -r run build",
+    "build": "pnpm --filter @tapcanvas/web build",
     "build:api": "pnpm --filter api build",
     "test": "pnpm -w -r run test",
     "compose:up": "cd infra/activepieces && docker compose up -d",
