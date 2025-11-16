@@ -460,10 +460,10 @@ export default function AssetPanel(): JSX.Element | null {
                             c.owner_profile?.profile_picture_url ||
                             null
                           const name =
-                            c.display_name ||
                             c.username ||
-                            c.owner_profile?.display_name ||
                             c.owner_profile?.username ||
+                            c.display_name ||
+                            c.owner_profile?.display_name ||
                             `角色 ${idx + 1}`
                           const desc =
                             c.description ||

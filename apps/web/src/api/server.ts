@@ -246,10 +246,17 @@ export async function checkSoraCharacterUsername(
   } catch {
     body = null
   }
+  // 接口会返回 200 且 body.available=false 表示用户名不合法或不可用
   if (!r.ok) {
     const msg =
       (body && (body.message || body.error)) ||
       `check sora username failed: ${r.status}`
+    throw new Error(msg)
+  }
+  if (body && body.available === false) {
+    const msg =
+      body.message ||
+      '角色名只允许英文，长度不能超过20，且可能已被注册'
     throw new Error(msg)
   }
 }
