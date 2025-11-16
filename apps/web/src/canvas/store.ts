@@ -187,7 +187,15 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (!selNodes.length) return { clipboard: null }
     const selIds = new Set(selNodes.map((n) => n.id))
     const selEdges = s.edges.filter((e) => selIds.has(e.source) && selIds.has(e.target) && e.selected)
-    return { clipboard: { nodes: selNodes, edges: selEdges } }
+    const graph = { nodes: selNodes, edges: selEdges }
+    // 尝试同时复制到系统剪贴板，便于粘贴到外部文档
+    try {
+      const text = JSON.stringify(graph, null, 2)
+      void navigator.clipboard?.writeText(text)
+    } catch {
+      // ignore clipboard errors
+    }
+    return { clipboard: graph }
   }),
   pasteFromClipboard: () => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}

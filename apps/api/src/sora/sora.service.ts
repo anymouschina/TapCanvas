@@ -418,6 +418,7 @@ export class SoraService {
       size?: string
       n_frames?: number
       inpaintFileId?: string | null
+      imageUrl?: string | null
     },
   ) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
@@ -426,8 +427,50 @@ export class SoraService {
     }
 
     const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
-    const url = new URL('/backend/nf/create', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    // 若未显式提供 file_id，但有图片 URL，则尝试先上传图片到 Sora 获取 file_id
+    let inpaintFileId = payload.inpaintFileId ?? null
+    if (!inpaintFileId && payload.imageUrl) {
+      try {
+        const imgRes = await axios.get(payload.imageUrl, {
+          responseType: 'arraybuffer',
+          timeout: 15000,
+        })
+        const contentType =
+          (imgRes.headers && (imgRes.headers['content-type'] as string | undefined)) ||
+          'image/png'
+
+        const form = new FormData()
+        form.append('file', imgRes.data, {
+          filename: 'image',
+          contentType,
+        })
+        form.append('use_case', 'profile')
+
+        const uploadUrl = new URL('/backend/project_y/file/upload', baseUrl).toString()
+        const uploadRes = await axios.post(uploadUrl, form, {
+          headers: {
+            ...form.getHeaders(),
+            Authorization: `Bearer ${token.secretToken}`,
+            'User-Agent': userAgent,
+            Accept: 'application/json',
+          },
+          maxBodyLength: Infinity,
+          validateStatus: () => true,
+        })
+
+        if (uploadRes.status >= 200 && uploadRes.status < 300) {
+          const up = uploadRes.data as any
+          inpaintFileId = (up && (up.file_id as string | undefined)) || null
+        }
+      } catch {
+        // 上传失败时忽略，退回纯文本生视频
+        inpaintFileId = null
+      }
+    }
+
+    const url = new URL('/backend/nf/create', baseUrl).toString()
 
     const body: any = {
       kind: 'video',
@@ -436,8 +479,8 @@ export class SoraService {
       orientation: payload.orientation || 'portrait',
       size: payload.size || 'small',
       n_frames: typeof payload.n_frames === 'number' ? payload.n_frames : 300,
-      inpaint_items: payload.inpaintFileId
-        ? [{ kind: 'file', file_id: payload.inpaintFileId }]
+      inpaint_items: inpaintFileId
+        ? [{ kind: 'file', file_id: inpaintFileId }]
         : [],
       remix_target_id: null,
       metadata: null,

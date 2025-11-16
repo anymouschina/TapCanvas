@@ -192,8 +192,9 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         `[${nowLabel()}] 调用 Sora-2 生成视频任务…`,
       )
 
-      // 尝试从上游图像节点获取 Sora file_id（图生视频）
+      // 尝试从上游图像节点获取 Sora file_id / imageUrl（图生视频）
       let inpaintFileId: string | null = null
+      let imageUrlForUpload: string | null = null
       try {
         const edges = (state.edges || []) as any[]
         const inbound = edges.filter((e) => e.target === id)
@@ -206,10 +207,13 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
               (sd.soraFileId as string | undefined) ||
               (sd.file_id as string | undefined) ||
               null
+            imageUrlForUpload =
+              (sd.imageUrl as string | undefined) || null
           }
         }
       } catch {
         inpaintFileId = null
+        imageUrlForUpload = null
       }
 
       const res = await createSoraVideo({
@@ -218,6 +222,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         size: 'small',
         n_frames: 300,
         inpaintFileId,
+        imageUrl: imageUrlForUpload,
       })
 
       const taskId = res?.id as string | undefined
@@ -237,6 +242,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           preview,
         },
         soraVideoTask: res,
+        videoTaskId: taskId || null,
+        videoInpaintFileId: inpaintFileId || null,
+        videoOrientation: orientation,
+        videoPrompt: prompt,
       })
 
       appendLog(
@@ -255,6 +264,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
             preview,
           },
           soraVideoTask: res,
+          videoTaskId: null,
+          videoInpaintFileId: inpaintFileId || null,
+          videoOrientation: orientation,
+          videoPrompt: prompt,
         })
         appendLog(
           id,
@@ -290,6 +303,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
                 preview,
               },
               soraVideoTask: res,
+              videoTaskId: taskId,
+              videoInpaintFileId: inpaintFileId || null,
+              videoOrientation: orientation,
+              videoPrompt: prompt,
             })
             appendLog(
               id,
@@ -331,6 +348,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           preview,
         },
         soraVideoTask: res,
+        videoTaskId: taskId,
+        videoInpaintFileId: inpaintFileId || null,
+        videoOrientation: orientation,
+        videoPrompt: prompt,
       })
 
       appendLog(

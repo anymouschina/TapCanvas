@@ -447,6 +447,7 @@ export async function createSoraVideo(payload: {
   size?: string
   n_frames?: number
   inpaintFileId?: string | null
+  imageUrl?: string | null
 }): Promise<any> {
   const body: any = {
     prompt: payload.prompt,
@@ -459,6 +460,9 @@ export async function createSoraVideo(payload: {
   }
   if (payload.inpaintFileId) {
     body.inpaintFileId = payload.inpaintFileId
+  }
+  if (payload.imageUrl) {
+    body.imageUrl = payload.imageUrl
   }
 
   const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({
