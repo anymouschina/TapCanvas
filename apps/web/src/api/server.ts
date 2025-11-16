@@ -261,6 +261,32 @@ export async function checkSoraCharacterUsername(
   }
 }
 
+export async function listSoraMentions(
+  username: string,
+  tokenId?: string | null,
+  limit: number = 10,
+): Promise<any> {
+  const qs = new URLSearchParams()
+  qs.set('username', username)
+  qs.set('intent', 'cameo')
+  qs.set('limit', String(limit))
+  if (tokenId) qs.set('tokenId', tokenId)
+  const r = await fetch(`${API_BASE}/sora/mentions?${qs.toString()}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `list sora mentions failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return body
+}
+
 export async function uploadSoraCharacterVideo(
   tokenId: string,
   file: File,
@@ -386,6 +412,54 @@ export async function finalizeSoraCharacter(payload: {
   }
 
   return body
+}
+
+export async function createSoraVideo(payload: {
+  tokenId?: string | null
+  prompt: string
+  orientation: 'portrait' | 'landscape' | 'square'
+  size?: string
+  n_frames?: number
+}): Promise<any> {
+  const body: any = {
+    prompt: payload.prompt,
+    orientation: payload.orientation,
+    size: payload.size,
+    n_frames: payload.n_frames,
+  }
+  if (payload.tokenId) {
+    body.tokenId = payload.tokenId
+  }
+
+  const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+
+  let resBody: any = null
+  try {
+    resBody = await r.json()
+  } catch {
+    resBody = null
+  }
+
+  if (!r.ok) {
+    const upstreamError =
+      resBody?.upstreamData?.error ||
+      resBody?.error ||
+      (typeof resBody?.message === 'object' ? resBody.message : null)
+
+    const msg =
+      (upstreamError && typeof upstreamError.message === 'string' && upstreamError.message) ||
+      (typeof resBody?.message === 'string' && resBody.message) ||
+      (typeof resBody?.error === 'string' && resBody.error) ||
+      `create sora video failed: ${r.status}`
+
+    throw new Error(msg)
+  }
+
+  return resBody
 }
 
 export async function setSoraCameoPublic(

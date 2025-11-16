@@ -5,7 +5,7 @@ import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Textarea, Select, NumberInput, Button, Text, Modal, Stack } from '@mantine/core'
 import { IconMaximize, IconDownload, IconArrowsDiagonal2, IconBrush, IconPhotoUp, IconDots, IconAdjustments, IconUpload, IconPlayerPlay, IconTexture, IconVideo, IconArrowRight, IconScissors, IconPhotoEdit, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
-import { markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
 
 type Data = {
   label: string
@@ -102,6 +102,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [compareOpen, setCompareOpen] = React.useState(false)
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
   const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
+  const [mentionOpen, setMentionOpen] = React.useState(false)
+  const [mentionFilter, setMentionFilter] = React.useState('')
+  const [mentionItems, setMentionItems] = React.useState<any[]>([])
+  const [mentionLoading, setMentionLoading] = React.useState(false)
+  const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
   const { upstreamText, upstreamImageUrl } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
     if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null }
@@ -166,14 +171,35 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
   }, [prompt])
 
+  // 输入 @ 时，通过后端转发 Sora search_mentions 接口获取可引用角色（Sora2）
+  React.useEffect(() => {
+    if (!mentionOpen) return
+    const q = (mentionFilter || '').trim()
+    let canceled = false
+    const timer = window.setTimeout(async () => {
+      try {
+        setMentionLoading(true)
+        const res = await listSoraMentions(q, null, 10)
+        if (canceled) return
+        const items = Array.isArray(res?.items) ? res.items : Array.isArray(res) ? res : []
+        setMentionItems(items)
+      } catch {
+        if (!canceled) setMentionItems([])
+      } finally {
+        if (!canceled) setMentionLoading(false)
+      }
+    }, 200)
+    return () => {
+      canceled = true
+      window.clearTimeout(timer)
+    }
+  }, [mentionOpen, mentionFilter])
+
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
     if (kind === 'image') {
       return [
-        { key: 'extend', label: '扩图', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
-        { key: 'cutout', label: '抠图', icon: <IconScissors size={16} />, onClick: () => {} },
-        { key: 'upscale', label: 'HD 增强', icon: <IconPhotoUp size={16} />, onClick: () => {} },
-        { key: 'inpaint', label: '局部重绘', icon: <IconBrush size={16} />, onClick: () => {} },
+        // image 节点顶部工具条：只保留节点级的「图片编辑器」操作，避免和结果区工具条重复
         { key: 'editor', label: '图片编辑器', icon: <IconPhotoEdit size={16} />, onClick: () => {} },
       ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
     }
@@ -393,269 +419,92 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               </div>
             </>
           ) : (
-            <div style={{ position: 'relative' }}>
-              {/* 展开时的顶部悬浮工具条，针对当前选中图片生效 */}
-              {imageExpanded && imageResults.length > 0 && (
+            <div style={{ position: 'relative', width: 296 }}>
+              {/* 背后影子卡片，暗示多图 */}
+              {imageResults.length > 1 && (
                 <div
                   style={{
                     position: 'absolute',
-                    top: -36,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    zIndex: 5,
+                    left: 8,
+                    top: 8,
+                    width: '100%',
+                    borderRadius: 10,
+                    height: '100%',
+                    background: 'rgba(15,23,42,0.9)',
+                    border: '1px solid rgba(55,65,81,0.7)',
+                    transform: 'translate(4px, 4px)',
+                    zIndex: 0,
                   }}
+                />
+              )}
+              <div
+                style={{
+                  position: 'relative',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  boxShadow: '0 10px 25px rgba(0,0,0,.55)',
+                  border: '1px solid rgba(148,163,184,0.8)',
+                  background: 'black',
+                }}
+              >
+                <img
+                  src={imageResults[imagePrimaryIndex]?.url}
+                  alt="主图"
+                  style={{
+                    width: '100%',
+                    height: 'auto',
+                    display: 'block',
+                    objectFit: 'cover',
+                  }}
+                />
+                {/* 主图替换按钮 */}
+                <ActionIcon
+                  size={28}
+                  variant="light"
+                  style={{ position: 'absolute', right: 8, top: 8 }}
+                  title="替换图片"
+                  onClick={() => fileRef.current?.click()}
                 >
-                  <Paper
-                    withBorder
-                    shadow="sm"
-                    radius="xl"
-                    className="glass"
-                    p={4}
-                    style={{ backdropFilter: 'blur(12px)' }}
-                  >
-                    <Group gap={6}>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconDownload size={14} />}
-                        onClick={() => {
-                          const img = imageResults[imageSelectedIndex] || imageResults[0]
-                          if (!img?.url) return
-                          const a = document.createElement('a')
-                          a.href = img.url
-                          a.download = `image-${Date.now()}`
-                          document.body.appendChild(a)
-                          a.click()
-                          a.remove()
-                        }}
-                      >
-                        下载
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconArrowsDiagonal2 size={14} />}
-                        onClick={() => {
-                          // TODO: 接入扩图能力
-                          console.log('extend image at', imageSelectedIndex)
-                        }}
-                      >
-                        扩图
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconBrush size={14} />}
-                        onClick={() => {
-                          // TODO: 接入描图/局部重绘
-                          console.log('inpaint image at', imageSelectedIndex)
-                        }}
-                      >
-                        描图
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconPhotoUp size={14} />}
-                        onClick={() => {
-                          // TODO: 接入高清增强
-                          console.log('enhance image at', imageSelectedIndex)
-                        }}
-                      >
-                        增强
-                      </Button>
-                      <ActionIcon
-                        size="sm"
-                        variant="subtle"
-                        title="更多操作"
-                        onClick={() => {
-                          // 预留更多操作入口
-                          console.log('more actions for image at', imageSelectedIndex)
-                        }}
-                      >
-                        <IconDots size={14} />
-                      </ActionIcon>
-                    </Group>
-                  </Paper>
-                </div>
-              )}
-              {/* 结果组：折叠 / 展开 */}
-              {!imageExpanded || imageResults.length <= 1 ? (
-                <div style={{ position: 'relative', width: 296 }}>
-                  {/* 背后影子卡片，暗示多图 */}
-                  {imageResults.length > 1 && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 8,
-                        top: 8,
-                        width: '100%',
-                        borderRadius: 10,
-                        height: '100%',
-                        background: 'rgba(15,23,42,0.9)',
-                        border: '1px solid rgba(55,65,81,0.7)',
-                        transform: 'translate(4px, 4px)',
-                        zIndex: 0,
-                      }}
-                    />
-                  )}
-                  <div
+                  <IconUpload size={14} />
+                </ActionIcon>
+                {/* 数量 + 展开标签 */}
+                {imageResults.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setImageExpanded(true)}
                     style={{
-                      position: 'relative',
-                      borderRadius: 10,
-                      overflow: 'hidden',
-                      boxShadow: '0 10px 25px rgba(0,0,0,.55)',
-                      border: '1px solid rgba(148,163,184,0.8)',
-                      background: 'black',
+                      position: 'absolute',
+                      right: 8,
+                      bottom: 8,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: 'rgba(15,23,42,0.85)',
+                      color: '#e5e7eb',
+                      fontSize: 11,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      cursor: 'pointer',
                     }}
                   >
-                    <img
-                      src={imageResults[imagePrimaryIndex]?.url}
-                      alt="主图"
-                      style={{
-                        width: '100%',
-                        height: 'auto',
-                        display: 'block',
-                        objectFit: 'cover',
-                      }}
-                    />
-                    {/* 主图替换按钮 */}
-                    <ActionIcon
-                      size={28}
-                      variant="light"
-                      style={{ position: 'absolute', right: 8, top: 8 }}
-                      title="替换图片"
-                      onClick={() => fileRef.current?.click()}
-                    >
-                      <IconUpload size={14} />
-                    </ActionIcon>
-                    {/* 数量 + 展开标签 */}
-                    {imageResults.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setImageExpanded(true)}
-                        style={{
-                          position: 'absolute',
-                          right: 8,
-                          bottom: 8,
-                          padding: '2px 8px',
-                          borderRadius: 999,
-                          border: 'none',
-                          background: 'rgba(15,23,42,0.85)',
-                          color: '#e5e7eb',
-                          fontSize: 11,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <span>{imageResults.length}</span>
-                        <IconChevronDown size={12} />
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    onChange={async (e) => {
-                      const f = e.currentTarget.files?.[0]
-                      if (!f) return
-                      const url = URL.createObjectURL(f)
-                      updateNodeData(id, { imageUrl: url })
-                    }}
-                  />
-                </div>
-              ) : (
-                <div style={{ width: 296, overflow: 'hidden' }}>
-                  {/* 展开画廊 */}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {imageResults.map((img, idx) => {
-                      const isPrimary = idx === imagePrimaryIndex
-                      const isSelected = idx === imageSelectedIndex
-                      return (
-                        <div
-                          key={`${idx}-${img.url}`}
-                          style={{
-                            position: 'relative',
-                            flex: idx === 0 ? '0 0 60%' : '0 0 40%',
-                            borderRadius: 10,
-                            overflow: 'hidden',
-                            border: isSelected
-                              ? '2px solid rgba(96,165,250,0.9)'
-                              : '1px solid rgba(55,65,81,0.7)',
-                            boxShadow: isSelected
-                              ? '0 10px 25px rgba(37,99,235,.55)'
-                              : '0 6px 18px rgba(0,0,0,.45)',
-                            cursor: 'pointer',
-                            background: 'black',
-                          }}
-                          onClick={() => {
-                            setImageSelectedIndex(idx)
-                          }}
-                        >
-                          <img
-                            src={img.url}
-                            alt={`结果 ${idx + 1}`}
-                            style={{
-                              width: '100%',
-                              height: 140,
-                              objectFit: 'cover',
-                              display: 'block',
-                            }}
-                          />
-                          {/* 非主图 hover 操作 */}
-                          {!isPrimary && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                justifyContent: 'flex-end',
-                                padding: 6,
-                                background:
-                                  'linear-gradient(to bottom, rgba(15,23,42,0.85), transparent)',
-                                opacity: 0,
-                                transition: 'opacity .15s ease',
-                              }}
-                              className="image-card-hover"
-                            >
-                              <Button
-                                size="xs"
-                                variant="white"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setImagePrimaryIndex(idx)
-                                  setImageSelectedIndex(idx)
-                                }}
-                              >
-                                设为主图
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {/* 折叠/展开标签 */}
-                  <Group justify="space-between" mt={4}>
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      leftSection={<IconChevronUp size={12} />}
-                      onClick={() => setImageExpanded(false)}
-                    >
-                      收起
-                    </Button>
-                    <Text size="xs" c="dimmed">
-                      共 {imageResults.length} 张
-                    </Text>
-                  </Group>
-                </div>
-              )}
+                    <span>{imageResults.length}</span>
+                    <IconChevronDown size={12} />
+                  </button>
+                )}
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={async (e) => {
+                  const f = e.currentTarget.files?.[0]
+                  if (!f) return
+                  const url = URL.createObjectURL(f)
+                  updateNodeData(id, { imageUrl: url })
+                }}
+              />
             </div>
           )}
           {!imageUrl && upstreamText && (
@@ -765,8 +614,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           p="sm"
           style={{
             width: 420,
-            maxHeight: 360,
-            overflow: 'visible',
+            maxHeight: '60vh',
+            overflowY: 'auto',
+            overflowX: 'visible',
             transformOrigin: 'top center',
           }}
         >
@@ -777,7 +627,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 <div
                   style={{
                     width: '100%',
-                    maxHeight: 140,
+                    maxHeight: 180,
                     borderRadius: 8,
                     overflow: 'hidden',
                     marginBottom: upstreamText ? 4 : 0,
@@ -788,7 +638,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   <img
                     src={upstreamImageUrl}
                     alt="上游图片素材"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    style={{
+                      width: '100%',
+                      height: 'auto',
+                      maxHeight: 180,
+                      objectFit: 'contain',
+                      display: 'block',
+                      backgroundColor: 'black',
+                    }}
                   />
                 </div>
               )}
@@ -812,14 +669,41 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               placeholder="在这里输入提示词..."
               value={prompt}
               onChange={(e)=>{
-                const v = e.currentTarget.value
+                const el = e.currentTarget
+                const v = el.value
                 setPrompt(v)
                 updateNodeData(id, { prompt: v })
+
+                const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
+                const before = v.slice(0, caret)
+                const lastAt = before.lastIndexOf('@')
+                const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
+                if (lastAt >= 0 && lastAt >= lastSpace) {
+                  const filter = before.slice(lastAt + 1)
+                  setMentionFilter(filter)
+                  setMentionOpen(true)
+                  mentionMetaRef.current = { at: lastAt, caret }
+                } else {
+                  setMentionOpen(false)
+                  setMentionFilter('')
+                  mentionMetaRef.current = null
+                }
               }}
               onBlur={() => {
                 setPromptSuggestions([])
+                setMentionOpen(false)
+                setMentionFilter('')
               }}
               onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  if (mentionOpen) {
+                    e.stopPropagation()
+                    setMentionOpen(false)
+                    setMentionFilter('')
+                    mentionMetaRef.current = null
+                    return
+                  }
+                }
                 if (!promptSuggestions.length) return
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
@@ -840,7 +724,115 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 }
               }}
             />
-            {promptSuggestions.length > 0 && (
+            {/* Sora 角色提及选择 */}
+            {mentionOpen && (
+              <Paper
+                withBorder
+                shadow="sm"
+                radius="md"
+                className="glass"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: '100%',
+                  marginTop: 4,
+                  zIndex: 11,
+                  maxHeight: 220,
+                  overflowY: 'auto',
+                }}
+              >
+                <Text size="xs" c="dimmed" px={8} py={4}>
+                  引用角色（仅 Sora2 支持）：输入 @ 后选择
+                </Text>
+                {mentionLoading && (
+                  <Text size="xs" c="dimmed" px={8} py={4}>
+                    正在加载角色列表…
+                  </Text>
+                )}
+                {!mentionLoading && mentionItems.length === 0 && (
+                  <Text size="xs" c="dimmed" px={8} py={4}>
+                    暂无可引用角色
+                  </Text>
+                )}
+                {!mentionLoading &&
+                  mentionItems
+                    .filter((it) => {
+                      const p = (it && (it.profile as any)) || {}
+                      if (!p.can_cameo) return false
+                      const u = String(p.username || '').toLowerCase()
+                      const f = mentionFilter.trim().toLowerCase()
+                      if (!f) return true
+                      return u.includes(f)
+                    })
+                    .map((it) => {
+                      const p = (it && (it.profile as any)) || {}
+                      const username = String(p.username || '').trim()
+                      const displayName = String(p.display_name || p.displayName || '').trim()
+                      const label = username ? `@${username}` : ''
+                      const key = p.user_id || username || it.token || Math.random().toString(36).slice(2)
+                      const avatar = String(p.profile_picture_url || '')
+                      return (
+                        <div
+                          key={key}
+                          onMouseDown={(ev) => {
+                            ev.preventDefault()
+                            if (!username) return
+                            const value = prompt
+                            const meta = mentionMetaRef.current
+                            let next = value
+                            if (meta) {
+                              const { at, caret } = meta
+                              const beforeAt = value.slice(0, at)
+                              const afterCaret = value.slice(caret)
+                              next = `${beforeAt}@${username}${afterCaret}`
+                            } else {
+                              next = `${value}${value.endsWith(' ') || !value ? '' : ' '}@${username} `
+                            }
+                            setPrompt(next)
+                            updateNodeData(id, { prompt: next })
+                            setMentionOpen(false)
+                            setMentionFilter('')
+                            mentionMetaRef.current = null
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          {avatar && (
+                            <img
+                              src={avatar}
+                              alt={username}
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: '50%',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ color: '#e5e7eb' }}>{label}</span>
+                            {displayName && (
+                              <span style={{ color: 'rgba(156,163,175,0.9)', fontSize: 11 }}>
+                                {displayName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+              </Paper>
+            )}
+
+            {/* 历史提示词 / 语义提示词建议（与 @ 角色提及互斥展示） */}
+            {!mentionOpen && promptSuggestions.length > 0 && (
               <Paper
                 withBorder
                 shadow="sm"
@@ -1146,6 +1138,115 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                     </Text>
                   </Paper>
                 ))}
+              </div>
+            </div>
+          </Stack>
+        </Modal>
+      )}
+
+      {/* 图片结果弹窗：选择主图 + 全屏预览 */}
+      {kind === 'image' && imageResults.length > 1 && (
+        <Modal
+          opened={imageExpanded}
+          onClose={() => setImageExpanded(false)}
+          title="选择主图"
+          centered
+          size="xl"
+          withinPortal
+          zIndex={8000}
+        >
+          <Stack gap="sm">
+            <Text size="xs" c="dimmed">
+              当前共有 {imageResults.length} 张图片。点击「设为主图」可更新本节点主图，点击「全屏预览」可放大查看。
+            </Text>
+            <div
+              style={{
+                maxHeight: '60vh',
+                overflowY: 'auto',
+              }}
+            >
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: 12,
+                }}
+              >
+                {imageResults.map((img, idx) => {
+                  const isPrimary = idx === imagePrimaryIndex
+                  return (
+                    <Paper
+                      key={`${idx}-${img.url}`}
+                      withBorder
+                      radius="md"
+                      p="xs"
+                      style={{
+                        background: 'rgba(15,23,42,0.95)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: isPrimary
+                            ? '2px solid rgba(96,165,250,0.9)'
+                            : '1px solid rgba(55,65,81,0.7)',
+                          marginBottom: 6,
+                          background: 'black',
+                        }}
+                      >
+                        <img
+                          src={img.url}
+                          alt={`结果 ${idx + 1}`}
+                          style={{
+                            width: '100%',
+                            height: 180,
+                            objectFit: 'cover',
+                            display: 'block',
+                          }}
+                        />
+                      </div>
+                      <Group justify="space-between">
+                        <Text size="xs" c="dimmed">
+                          {isPrimary ? `主图 · 第 ${idx + 1} 张` : `第 ${idx + 1} 张`}
+                        </Text>
+                        <Group gap={4}>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              const url = img.url
+                              if (!url) return
+                              const openPreview = useUIStore
+                                .getState()
+                                .openPreview
+                              openPreview({
+                                url,
+                                kind: 'image',
+                                name: data?.label || 'Image',
+                              })
+                            }}
+                          >
+                            全屏预览
+                          </Button>
+                          {!isPrimary && (
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              onClick={() => {
+                                setImagePrimaryIndex(idx)
+                                updateNodeData(id, { imageUrl: img.url })
+                                setImageExpanded(false)
+                              }}
+                            >
+                              设为主图
+                            </Button>
+                          )}
+                        </Group>
+                      </Group>
+                    </Paper>
+                  )
+                })}
               </div>
             </div>
           </Stack>

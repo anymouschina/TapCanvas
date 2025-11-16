@@ -1,6 +1,6 @@
 import type { Node } from 'reactflow'
 import type { TaskKind } from '../api/server'
-import { runTaskByVendor } from '../api/server'
+import { runTaskByVendor, createSoraVideo } from '../api/server'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -10,7 +10,8 @@ function nowLabel() {
 }
 
 export async function runNodeRemote(id: string, get: Getter, set: Setter) {
-  const node: Node | undefined = get().nodes.find((n: Node) => n.id === id)
+  const state = get()
+  const node: Node | undefined = state.nodes.find((n: Node) => n.id === id)
   if (!node) return
 
   const data: any = node.data || {}
@@ -38,7 +39,33 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
     taskKind = 'prompt_refine'
   }
 
-  const prompt: string = (data.prompt as string) || data.label || ''
+  // 组合提示词：上游文本作为“首轮对话”，当前节点 prompt 作为补充
+  let prompt: string
+  if (kind === 'image' || kind === 'composeVideo') {
+    const edges = (state.edges || []) as any[]
+    const inbound = edges.filter((e) => e.target === id)
+    let upstreamPrompt = ''
+    if (inbound.length) {
+      const lastEdge = inbound[inbound.length - 1]
+      const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
+      const sd: any = src?.data || {}
+      const skind: string | undefined = sd.kind
+      if (skind === 'textToImage' || skind === 'image') {
+        upstreamPrompt =
+          (sd.prompt as string | undefined) ||
+          (sd.label as string | undefined) ||
+          ''
+      }
+    }
+    const own = (data.prompt as string) || ''
+    if (upstreamPrompt && own) {
+      prompt = `${upstreamPrompt}\n${own}`
+    } else {
+      prompt = upstreamPrompt || own || (data.label as string) || ''
+    }
+  } else {
+    prompt = (data.prompt as string) || (data.label as string) || ''
+  }
   if (!prompt.trim()) {
     appendLog(id, `[${nowLabel()}] 缺少提示词，已跳过`)
     return
@@ -144,6 +171,59 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       )
     } catch (err: any) {
       const msg = err?.message || '文案模型调用失败'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    } finally {
+      endRunToken(id)
+    }
+    return
+  }
+
+  // 视频节点：走 Sora-2 nf/create 后端封装
+  if (isVideoTask) {
+    try {
+      const aspect = (data as any)?.aspect as string | undefined
+      const orientation: 'portrait' | 'landscape' | 'square' =
+        aspect === '9:16' ? 'portrait' : aspect === '1:1' ? 'square' : 'landscape'
+
+      setNodeStatus(id, 'running', { progress: 5 })
+      appendLog(
+        id,
+        `[${nowLabel()}] 调用 Sora-2 生成视频任务…`,
+      )
+
+      const res = await createSoraVideo({
+        prompt,
+        orientation,
+        size: 'small',
+        n_frames: 300,
+      })
+
+      const preview = {
+        type: 'text',
+        value: res?.id
+          ? `已创建 Sora 视频任务（ID: ${res.id}）`
+          : '已创建 Sora 视频任务',
+      }
+
+      setNodeStatus(id, 'success', {
+        progress: 100,
+        lastResult: {
+          id: res?.id || '',
+          at: Date.now(),
+          kind,
+          preview,
+        },
+        // 暂存完整返回，后续可用于轮询进度或展示链接
+        soraVideoTask: res,
+      })
+
+      appendLog(
+        id,
+        `[${nowLabel()}] Sora 视频任务创建完成${res?.id ? `（ID: ${res.id}）` : ''}`,
+      )
+    } catch (err: any) {
+      const msg = err?.message || 'Sora 视频任务创建失败'
       setNodeStatus(id, 'error', { progress: 0, lastError: msg })
       appendLog(id, `[${nowLabel()}] error: ${msg}`)
     } finally {

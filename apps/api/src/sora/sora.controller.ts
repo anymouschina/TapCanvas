@@ -137,4 +137,38 @@ export class SoraController {
     }
     return this.service.uploadProfileAsset(String(req.user.sub), tokenId, file)
   }
+
+  @Post('video/create')
+  createVideo(
+    @Body()
+    body: {
+      tokenId?: string
+      prompt: string
+      orientation?: 'portrait' | 'landscape' | 'square'
+      size?: string
+      n_frames?: number
+    },
+    @Req() req: any,
+  ) {
+    const { tokenId, ...rest } = body
+    return this.service.createVideoTask(String(req.user.sub), tokenId, rest)
+  }
+
+  @Get('mentions')
+  searchMentions(
+    @Query('tokenId') tokenId: string | undefined,
+    @Query('username') username: string | undefined,
+    @Query('intent') intent: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Req() req: any,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) || 10 : 10
+    return this.service.searchMentions(
+      String(req.user.sub),
+      tokenId,
+      username || '',
+      intent || 'cameo',
+      parsedLimit,
+    )
+  }
 }

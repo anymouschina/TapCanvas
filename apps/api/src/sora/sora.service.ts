@@ -406,6 +406,108 @@ export class SoraService {
     }
   }
 
+  /**
+   * 使用 Sora-2 nf/create 创建视频任务（纯文生视频，后续可扩展图生视频）
+   */
+  async createVideoTask(
+    userId: string,
+    tokenId: string | undefined,
+    payload: {
+      prompt: string
+      orientation?: 'portrait' | 'landscape' | 'square'
+      size?: string
+      n_frames?: number
+    },
+  ) {
+    const token: any = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/nf/create', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    const body: any = {
+      kind: 'video',
+      prompt: payload.prompt,
+      title: null,
+      orientation: payload.orientation || 'portrait',
+      size: payload.size || 'small',
+      n_frames: typeof payload.n_frames === 'number' ? payload.n_frames : 300,
+      inpaint_items: [],
+      remix_target_id: null,
+      metadata: null,
+      cameo_ids: null,
+      cameo_replacements: null,
+      model: 'sy_8',
+      style_id: null,
+      audio_caption: null,
+      audio_transcript: null,
+      video_caption: null,
+      storyboard_id: null,
+    }
+
+    try {
+      const res = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: '*/*',
+          'Content-Type': 'application/json',
+        },
+        validateStatus: () => true,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const upstreamError =
+          res.data?.error ||
+          (typeof res.data?.message === 'object' ? res.data.message : null)
+        const msg =
+          (upstreamError && upstreamError.message) ||
+          res.data?.message ||
+          res.data?.error ||
+          `Sora video create failed with status ${res.status}`
+
+        // 共享 Token 失败计数
+        if (token.shared) {
+          await this.registerSharedFailure(token.id)
+        }
+
+        throw new HttpException(
+          {
+            message: msg,
+            upstreamStatus: res.status,
+            upstreamData: res.data ?? null,
+          },
+          res.status,
+        )
+      }
+
+      return res.data
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora video create request failed'
+
+      throw new HttpException(
+        {
+          message,
+          upstreamStatus: err?.response?.status ?? null,
+          upstreamData: err?.response?.data ?? null,
+        },
+        status,
+      )
+    }
+  }
+
   async uploadProfileAsset(
     userId: string,
     tokenId: string | undefined,
@@ -683,6 +785,65 @@ export class SoraService {
         'Sora username check request failed'
       throw new HttpException(
         { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
+  async searchMentions(
+    userId: string,
+    tokenId: string | undefined,
+    username: string,
+    intent: string = 'cameo',
+    limit: number = 10,
+  ) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/project_y/profile/search_mentions', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: '*/*',
+        },
+        params: {
+          username,
+          intent,
+          limit,
+        },
+        validateStatus: () => true,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora search mentions failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
+          res.status,
+        )
+      }
+
+      return res.data
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora search mentions request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
         status,
       )
     }
