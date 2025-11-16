@@ -232,6 +232,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         imageUrl: imageUrlForUpload,
         remixTargetId,
       })
+      const generatedModel = (res?.model as string | undefined) || 'sy_8'
 
       const taskId = res?.id as string | undefined
       const preview = {
@@ -255,6 +256,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         videoOrientation: orientation,
         videoPrompt: prompt,
         videoDurationSeconds,
+        videoModel: generatedModel,
       })
 
       appendLog(
@@ -297,6 +299,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
             prompt: string | null
             thumbnailUrl: string | null
             videoUrl: string | null
+            postId?: string | null
           }
         | null = null
 
@@ -306,17 +309,21 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         try {
           const draft = await getSoraVideoDraftByTask(taskId, tokenId || null)
           lastDraft = draft
+          const patch: any = {
+            videoDraftId: draft.id,
+            videoPostId: draft.postId || null,
+          }
           if (draft.videoUrl) {
-            const patch: any = {
-              videoUrl: draft.videoUrl,
-            }
-            if (draft.thumbnailUrl) {
-              patch.videoThumbnailUrl = draft.thumbnailUrl
-            }
-            if (draft.title) {
-              patch.videoTitle = draft.title
-            }
-            setNodeStatus(id, 'running', patch)
+            patch.videoUrl = draft.videoUrl
+          }
+          if (draft.thumbnailUrl) {
+            patch.videoThumbnailUrl = draft.thumbnailUrl
+          }
+          if (draft.title) {
+            patch.videoTitle = draft.title
+          }
+          setNodeStatus(id, 'running', patch)
+          if (draft.videoUrl) {
             appendLog(
               id,
               `[${nowLabel()}] 已从草稿同步生成的视频（task_id=${taskId}），可预览。`,
@@ -404,7 +411,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           videoOrientation: orientation,
           videoPrompt: prompt,
           videoDurationSeconds,
-            videoUrl: videoUrl,
+          videoUrl: videoUrl,
+          videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
+          videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
+          videoModel: generatedModel,
         })
 
         if (videoUrl) {
@@ -424,6 +434,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       await syncDraftVideo(true)
+      const finalDraft = lastDraft
       setNodeStatus(id, 'success', {
         progress,
         lastResult: {
@@ -438,6 +449,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         videoOrientation: orientation,
         videoPrompt: prompt,
         videoDurationSeconds,
+        videoUrl: finalDraft?.videoUrl || (data as any)?.videoUrl || null,
+        videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
+        videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
+        videoModel: generatedModel,
       })
 
       appendLog(

@@ -173,7 +173,7 @@ export class SoraService {
     }
   }
 
-  private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any) {
+  private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any): Promise<string | null> {
     const generationId = matched.generation_id || matched.id
     if (!generationId) return
 
@@ -195,10 +195,16 @@ export class SoraService {
         validateStatus: () => true,
       })
       if (res.status >= 200 && res.status < 300) {
-        this.logger.debug('publishVideoPost succeeded', { generationId, status: res.status })
-      } else {
-        this.logger.warn('publishVideoPost failed', { generationId, status: res.status, data: res.data })
+        const postId =
+          (typeof res.data?.id === 'string' && res.data.id) ||
+          (typeof res.data?.post?.id === 'string' && res.data.post.id) ||
+          (typeof res.data?.post_id === 'string' && res.data.post_id) ||
+          null
+        this.logger.debug('publishVideoPost succeeded', { generationId, status: res.status, postId })
+        return postId
       }
+      this.logger.warn('publishVideoPost failed', { generationId, status: res.status, data: res.data })
+      return null
     } catch (err: any) {
       this.logger.error('publishVideoPost exception', {
         generationId,
@@ -206,6 +212,7 @@ export class SoraService {
         status: err?.response?.status,
         data: err?.response?.data,
       })
+      return null
     }
   }
 
@@ -1147,7 +1154,7 @@ export class SoraService {
             thumbnail,
           })
 
-          await this.publishVideoPostIfNeeded(token, baseUrl, matched)
+          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched)
 
           return {
             id: matched.id,
@@ -1155,6 +1162,7 @@ export class SoraService {
             prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
             thumbnailUrl: thumbnail,
             videoUrl,
+            postId,
             raw: matched,
           }
         }

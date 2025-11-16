@@ -80,6 +80,25 @@ function cloneGraph(nodes: Node[], edges: Edge[]) {
   return JSON.parse(JSON.stringify({ nodes, edges })) as { nodes: Node[]; edges: Edge[] }
 }
 
+function getRemixTargetIdFromNode(node?: Node) {
+  const data = node?.data as any
+  if (!data) return null
+  const model = String(data.videoModel || '').toLowerCase()
+  const normalized = model.replace('_', '-')
+  if (normalized && !['sora-2', 'sy-8', 'sy_8'].includes(model) && !['sora-2', 'sy-8', 'sy_8'].includes(normalized)) return null
+  const candidates = [
+    data.videoPostId,
+    data.videoDraftId,
+    data.videoTaskId,
+    data.soraVideoTask?.generation_id,
+    data.soraVideoTask?.id,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return null
+}
+
 export const useRFStore = create<RFState>((set, get) => ({
   nodes: [],
   edges: [],
@@ -106,9 +125,41 @@ export const useRFStore = create<RFState>((set, get) => ({
       e.sourceHandle === connection.sourceHandle &&
       e.targetHandle === connection.targetHandle
     )
-    const next = exists ? s.edges : addEdge({ ...connection, animated: true, type: 'smoothstep' }, s.edges)
+    const nextEdges = exists ? s.edges : addEdge({ ...connection, animated: true, type: 'smoothstep' }, s.edges)
     const past = exists ? s.historyPast : [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return exists ? { edges: next } : { edges: next, historyPast: past, historyFuture: [] }
+    if (exists) {
+      return { edges: nextEdges }
+    }
+
+    let updatedNodes = s.nodes
+    if (
+      connection.target &&
+      connection.source &&
+      connection.targetHandle === 'in-video'
+    ) {
+      const targetNode = s.nodes.find((n) => n.id === connection.target)
+      const sourceNode = s.nodes.find((n) => n.id === connection.source)
+      if (
+        targetNode &&
+        ['composeVideo', 'video'].includes(String((targetNode.data as any)?.kind))
+      ) {
+        const remixId = getRemixTargetIdFromNode(sourceNode)
+        if (remixId) {
+          updatedNodes = s.nodes.map((n) =>
+            n.id === connection.target
+              ? { ...n, data: { ...n.data, remixTargetId: remixId } }
+              : n,
+          )
+        }
+      }
+    }
+
+    return {
+      nodes: updatedNodes,
+      edges: nextEdges,
+      historyPast: past,
+      historyFuture: [],
+    }
   }),
   addNode: (type, label, extra) => set((s) => {
     const id = genNodeId()

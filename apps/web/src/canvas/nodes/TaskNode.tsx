@@ -29,6 +29,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   if (kind === 'composeVideo') {
     targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
+    targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
     targets.push({ id: 'in-audio', type: 'audio', pos: Position.Left })
     targets.push({ id: 'in-subtitle', type: 'subtitle', pos: Position.Left })
     sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
@@ -37,6 +38,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     sources.push({ id: 'out-image', type: 'image', pos: Position.Right })
   } else if (kind === 'video') {
     targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
+    targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
     sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
   } else if (kind === 'subflow') {
     const io = (data as any)?.io as { inputs?: { id: string; type: string; label?: string }[]; outputs?: { id: string; type: string; label?: string }[] } | undefined
