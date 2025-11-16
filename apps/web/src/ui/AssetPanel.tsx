@@ -16,11 +16,16 @@ import {
   deleteSoraCharacter,
   checkSoraCharacterUsername,
   updateSoraCharacter,
+  uploadSoraCharacterVideo,
+  isSoraCameoInProgress,
+  finalizeSoraCharacter,
+  setSoraCameoPublic,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
 } from '../api/server'
 import { IconPlayerPlay, IconPlus, IconTrash, IconPencil } from '@tabler/icons-react'
+import { VideoTrimModal } from './VideoTrimModal'
 
 function PlaceholderImage({ label }: { label: string }) {
   const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='#1f2937'/><stop offset='100%' stop-color='#0b0b0d'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='#e5e7eb' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`) 
@@ -56,6 +61,27 @@ export default function AssetPanel(): JSX.Element | null {
   const [renameCharChecking, setRenameCharChecking] = React.useState(false)
   const renameDebounceRef = React.useRef<number | null>(null)
   const [deletingCharId, setDeletingCharId] = React.useState<string | null>(null)
+  const createCharInputRef = React.useRef<HTMLInputElement | null>(null)
+  const [createCharFile, setCreateCharFile] = React.useState<File | null>(null)
+  const [createCharVideoUrl, setCreateCharVideoUrl] = React.useState<string | null>(null)
+  const [createCharDuration, setCreateCharDuration] = React.useState(0)
+  const [createCharTrimOpen, setCreateCharTrimOpen] = React.useState(false)
+  const [createCharUploading, setCreateCharUploading] = React.useState(false)
+  const [createCharFinalizeOpen, setCreateCharFinalizeOpen] = React.useState(false)
+  const [createCharCameoId, setCreateCharCameoId] = React.useState<string | null>(null)
+  const [createCharAssetPointer, setCreateCharAssetPointer] = React.useState<any | null>(null)
+  const [createCharUsername, setCreateCharUsername] = React.useState('')
+  const [createCharDisplayName, setCreateCharDisplayName] = React.useState('')
+  const [createCharUsernameError, setCreateCharUsernameError] = React.useState<string | null>(null)
+  const [createCharUsernameChecking, setCreateCharUsernameChecking] = React.useState(false)
+  const [createCharSubmitting, setCreateCharSubmitting] = React.useState(false)
+  const createCharUsernameDebounceRef = React.useRef<number | null>(null)
+  const createCharThumbs = React.useMemo(() => {
+    if (!createCharVideoUrl || !createCharDuration) return []
+    const usedDuration = Math.min(createCharDuration, 2)
+    const count = Math.max(10, Math.round(usedDuration))
+    return Array.from({ length: count }, () => createCharVideoUrl)
+  }, [createCharVideoUrl, createCharDuration])
   React.useEffect(() => {
     const loader = currentProject?.id ? listServerAssets(currentProject.id) : Promise.resolve([])
     loader.then(setAssets).catch(() => setAssets([]))
@@ -199,6 +225,112 @@ export default function AssetPanel(): JSX.Element | null {
   }
   if (!mounted) return null
 
+  const handlePickCharacterVideo = () => {
+    if (!selectedTokenId) return
+    if (createCharInputRef.current) {
+      createCharInputRef.current.value = ''
+      createCharInputRef.current.click()
+    }
+  }
+
+  const handleCharacterFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.currentTarget.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('video/')) {
+      alert('请选择视频文件')
+      return
+    }
+    const url = URL.createObjectURL(file)
+    try {
+      const duration = await new Promise<number>((resolve, reject) => {
+        const v = document.createElement('video')
+        v.preload = 'metadata'
+        v.onloadedmetadata = () => {
+          resolve(v.duration || 0)
+        }
+        v.onerror = () => {
+          reject(new Error('无法读取视频时长'))
+        }
+        v.src = url
+      })
+      setCreateCharFile(file)
+      setCreateCharVideoUrl(url)
+      setCreateCharDuration(duration || 0)
+      setCreateCharTrimOpen(true)
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message || '无法读取视频时长，请稍后重试')
+      URL.revokeObjectURL(url)
+      setCreateCharVideoUrl(null)
+      setCreateCharDuration(0)
+      setCreateCharFile(null)
+    }
+  }
+
+  const handleTrimClose = () => {
+    setCreateCharTrimOpen(false)
+    if (createCharVideoUrl) {
+      URL.revokeObjectURL(createCharVideoUrl)
+    }
+    setCreateCharVideoUrl(null)
+    setCreateCharDuration(0)
+    setCreateCharFile(null)
+  }
+
+  const handleTrimConfirm = async (range: { start: number; end: number }) => {
+    if (!createCharFile || !selectedTokenId) return
+    if (createCharUploading) return
+    setCreateCharUploading(true)
+    try {
+      const start = Math.max(0, range.start)
+      const end = Math.max(start, Math.min(range.end, start + 2))
+      const uploadResult = await uploadSoraCharacterVideo(createCharFile, [
+        start,
+        end,
+      ])
+
+      const taskId: string | undefined =
+        (uploadResult && (uploadResult.lastTask?.id || uploadResult.id)) ||
+        undefined
+
+      if (taskId) {
+        try {
+          // 轮询任务进度，直到不再处于 in_progress 或超时
+          for (let i = 0; i < 20; i++) {
+            const inProgress = await isSoraCameoInProgress(taskId)
+            if (!inProgress) break
+            // 约 1.5s 轮询一次
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise(resolve => setTimeout(resolve, 1500))
+          }
+        } catch (err) {
+          console.warn('轮询 Sora 角色创建进度失败：', err)
+        }
+      }
+
+      setCreateCharTrimOpen(false)
+      if (createCharVideoUrl) {
+        URL.revokeObjectURL(createCharVideoUrl)
+      }
+      setCreateCharVideoUrl(null)
+      setCreateCharDuration(0)
+      setCreateCharFile(null)
+      setCreateCharCameoId(uploadResult?.id || null)
+      setCreateCharAssetPointer(uploadResult?.asset_pointer ?? null)
+      setCreateCharUsername('')
+      setCreateCharDisplayName('')
+      setCreateCharUsernameError(null)
+      setCreateCharFinalizeOpen(true)
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message || '上传角色视频失败，请稍后重试')
+    } finally {
+      setCreateCharUploading(false)
+    }
+  }
+
   const applyAssetAt = (assetId: string, pos: { x: number; y: number }) => {
     const rec = assets.find(a => a.id === assetId)
     if (!rec) return
@@ -220,6 +352,13 @@ export default function AssetPanel(): JSX.Element | null {
           <div style={styles}>
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
+              <input
+                ref={createCharInputRef}
+                type="file"
+                accept="video/*"
+                style={{ display: 'none' }}
+                onChange={handleCharacterFileChange}
+              />
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
                 <Title order={6}>我的资产（项目：{currentProject?.name || '未选择'}）</Title>
               </Group>
@@ -425,11 +564,7 @@ export default function AssetPanel(): JSX.Element | null {
                         size="xs"
                         variant="light"
                         disabled={!selectedTokenId}
-                        onClick={() => {
-                          if (!selectedTokenId) return
-                          // 这里仅预留入口，后续可以接入创建角色表单
-                          alert('创建角色功能暂未实现（需要接入 Sora 角色创建接口）')
-                        }}
+                        onClick={handlePickCharacterVideo}
                       >
                         创建角色
                       </Button>
@@ -662,6 +797,169 @@ export default function AssetPanel(): JSX.Element | null {
                 </Group>
               </Stack>
             </Modal>
+            <Modal
+              opened={createCharFinalizeOpen}
+              onClose={() => {
+                setCreateCharFinalizeOpen(false)
+                setCreateCharCameoId(null)
+                setCreateCharAssetPointer(null)
+                setCreateCharUsername('')
+                setCreateCharDisplayName('')
+                setCreateCharUsernameError(null)
+                setCreateCharUsernameChecking(false)
+                if (createCharUsernameDebounceRef.current) {
+                  window.clearTimeout(createCharUsernameDebounceRef.current)
+                  createCharUsernameDebounceRef.current = null
+                }
+              }}
+              title="创建 Sora 角色"
+              centered
+              withinPortal
+              zIndex={8006}
+            >
+              <Stack gap="sm">
+                <Text size="xs" c="dimmed">
+                  填写角色的用户名和显示名称。用户名只允许英文，长度不超过 20。
+                </Text>
+                <TextInput
+                  label="用户名"
+                  placeholder="例如：my.character.name"
+                  value={createCharUsername}
+                  error={createCharUsernameError || undefined}
+                  onChange={async (e) => {
+                    const v = e.currentTarget.value.trim()
+                    setCreateCharUsername(v)
+                    setCreateCharUsernameError(null)
+                    if (!selectedTokenId) return
+                    if (!v) {
+                      setCreateCharUsernameChecking(false)
+                      return
+                    }
+                    if (createCharUsernameDebounceRef.current) {
+                      window.clearTimeout(createCharUsernameDebounceRef.current)
+                      createCharUsernameDebounceRef.current = null
+                    }
+                    setCreateCharUsernameChecking(true)
+                    createCharUsernameDebounceRef.current = window.setTimeout(async () => {
+                      try {
+                        await checkSoraCharacterUsername(selectedTokenId, v)
+                        setCreateCharUsernameError(null)
+                      } catch (err: any) {
+                        setCreateCharUsernameError(err?.message || '用户名不合法或已被占用')
+                      } finally {
+                        setCreateCharUsernameChecking(false)
+                      }
+                    }, 500)
+                  }}
+                />
+                <TextInput
+                  label="显示名称"
+                  placeholder="例如：My Cameo Character"
+                  value={createCharDisplayName}
+                  onChange={(e) => setCreateCharDisplayName(e.currentTarget.value)}
+                />
+                <Group justify="flex-end" mt="sm">
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      setCreateCharFinalizeOpen(false)
+                      setCreateCharCameoId(null)
+                      setCreateCharAssetPointer(null)
+                      setCreateCharUsername('')
+                      setCreateCharDisplayName('')
+                      setCreateCharUsernameError(null)
+                      setCreateCharUsernameChecking(false)
+                      if (createCharUsernameDebounceRef.current) {
+                        window.clearTimeout(createCharUsernameDebounceRef.current)
+                        createCharUsernameDebounceRef.current = null
+                      }
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    disabled={
+                      !createCharCameoId ||
+                      !createCharAssetPointer ||
+                      !selectedTokenId ||
+                      !createCharUsername ||
+                      !!createCharUsernameError ||
+                      createCharUsernameChecking ||
+                      createCharSubmitting
+                    }
+                    loading={createCharSubmitting}
+                    onClick={async () => {
+                      if (
+                        !createCharCameoId ||
+                        !createCharAssetPointer ||
+                        !selectedTokenId ||
+                        !createCharUsername ||
+                        createCharUsernameChecking ||
+                        createCharUsernameError
+                      ) {
+                        return
+                      }
+                      setCreateCharSubmitting(true)
+                      try {
+                        const finalizeResult = await finalizeSoraCharacter({
+                          cameo_id: createCharCameoId,
+                          username: createCharUsername,
+                          display_name: createCharDisplayName || createCharUsername,
+                          profile_asset_pointer: createCharAssetPointer,
+                        })
+                        const cameoIdForVisibility =
+                          finalizeResult?.cameo?.id || createCharCameoId
+                        if (cameoIdForVisibility) {
+                          try {
+                            await setSoraCameoPublic(cameoIdForVisibility)
+                          } catch (err) {
+                            console.warn('设置角色为公共访问失败：', err)
+                          }
+                        }
+                        setCreateCharFinalizeOpen(false)
+                        setCreateCharCameoId(null)
+                        setCreateCharAssetPointer(null)
+                        setCreateCharUsername('')
+                        setCreateCharDisplayName('')
+                        setCreateCharUsernameError(null)
+                        setCreateCharUsernameChecking(false)
+                        if (createCharUsernameDebounceRef.current) {
+                          window.clearTimeout(createCharUsernameDebounceRef.current)
+                          createCharUsernameDebounceRef.current = null
+                        }
+
+                        setCharLoading(true)
+                        try {
+                          const data = await listSoraCharacters(selectedTokenId)
+                          setCharacters(data.items || [])
+                          setCharCursor(data.cursor || null)
+                        } catch (err: any) {
+                          console.error(err)
+                          alert('角色创建成功，但刷新角色列表失败，请稍后手动刷新')
+                        } finally {
+                          setCharLoading(false)
+                        }
+                      } catch (err: any) {
+                        console.error(err)
+                        alert(err?.message || '创建角色失败，请稍后重试')
+                      } finally {
+                        setCreateCharSubmitting(false)
+                      }
+                    }}
+                  >
+                    创建
+                  </Button>
+                </Group>
+              </Stack>
+            </Modal>
+            <VideoTrimModal
+              opened={createCharTrimOpen}
+              videoUrl={createCharVideoUrl || ''}
+              originalDuration={createCharDuration || 0}
+              thumbnails={createCharThumbs}
+              onClose={handleTrimClose}
+              onConfirm={handleTrimConfirm}
+            />
           </div>
         )}
       </Transition>

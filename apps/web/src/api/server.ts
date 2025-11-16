@@ -261,6 +261,139 @@ export async function checkSoraCharacterUsername(
   }
 }
 
+export async function uploadSoraCharacterVideo(
+  file: File,
+  timestamps: [number, number],
+): Promise<any> {
+  const [start, end] = timestamps
+  const form = new FormData()
+  form.append('file', file)
+  form.append('timestamps', `${start},${end}`)
+
+  const r = await fetch('https://sora.chatgpt.com/backend/characters/upload', {
+    method: 'POST',
+    body: form,
+    credentials: 'include',
+  })
+
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `upload sora character failed: ${r.status}`
+    throw new Error(msg)
+  }
+
+  return body
+}
+
+export async function isSoraCameoInProgress(id: string): Promise<boolean> {
+  const r = await fetch(
+    `https://sora.chatgpt.com/backend/project_y/cameos/in_progress/${id}`,
+    {
+      method: 'GET',
+      credentials: 'include',
+    },
+  )
+  if (!r.ok) return false
+
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+
+  const status: string | null =
+    body && typeof body.status === 'string'
+      ? body.status
+      : body && body.status === null
+        ? null
+        : null
+  const progressPct: number | null =
+    body && typeof body.progress_pct === 'number' ? body.progress_pct : null
+
+  // 业务规则：
+  // - status 不为 processing 且不为 null → 认为已完成（成功或失败）
+  // - 或 progress_pct > 0.95 → 认为已完成
+  // 其它情况视为仍在 processing
+  if ((status !== null && status !== 'processing') || (progressPct !== null && progressPct > 0.95)) {
+    return false
+  }
+
+  return true
+}
+
+export async function finalizeSoraCharacter(payload: {
+  cameo_id: string
+  username: string
+  display_name: string
+  profile_asset_pointer: any
+}): Promise<any> {
+  const bodyPayload = {
+    cameo_id: payload.cameo_id,
+    username: payload.username,
+    display_name: payload.display_name,
+    profile_asset_pointer: payload.profile_asset_pointer,
+    instruction_set: null,
+    safety_instruction_set: null,
+  }
+
+  const r = await fetch('https://sora.chatgpt.com/backend/characters/finalize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(bodyPayload),
+  })
+
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `finalize sora character failed: ${r.status}`
+    throw new Error(msg)
+  }
+
+  return body
+}
+
+export async function setSoraCameoPublic(id: string): Promise<void> {
+  const r = await fetch(
+    `https://sora.chatgpt.com/backend/project_y/cameos/by_id/${id}/update_v2`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ visibility: 'public' }),
+    },
+  )
+
+  if (!r.ok) {
+    let body: any = null
+    try {
+      body = await r.json()
+    } catch {
+      body = null
+    }
+    const msg =
+      (body && (body.message || body.error)) ||
+      `set sora cameo public failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
 export async function updateSoraCharacter(payload: {
   tokenId: string
   characterId: string
