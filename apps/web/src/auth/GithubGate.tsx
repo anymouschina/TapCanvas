@@ -3,8 +3,12 @@ import { Button, Paper, Group, Title, Text } from '@mantine/core'
 import { useAuth } from './store'
 import { exchangeGithub } from '../api/server'
 
-const CLIENT_ID = 'Ov23liMBjR33FzIBNbmD'
-const REDIRECT_URI = 'http://localhost:5173/oauth/github'
+const CLIENT_ID =
+  (import.meta as any).env?.VITE_GITHUB_CLIENT_ID ||
+  'Ov23liMBjR33FzIBNbmD'
+const REDIRECT_URI =
+  (import.meta as any).env?.VITE_GITHUB_REDIRECT_URI ||
+  'http://localhost:5173/oauth/github'
 
 function buildAuthUrl() {
   const params = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, scope: 'read:user user:email' })
@@ -40,4 +44,3 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
     </div>
   )
 }
-
