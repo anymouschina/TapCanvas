@@ -64,8 +64,16 @@ type RFState = {
   autoLayoutForParent: (parentId: string|null) => void
 }
 
-function genId(prefix: string, n: number) {
-  return `${prefix}${n}`
+// 生成节点唯一 ID，优先使用浏览器原生 UUID
+function genNodeId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return (crypto as any).randomUUID() as string
+  }
+  return `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function genGroupId(n: number) {
+  return `g${n}`
 }
 
 function cloneGraph(nodes: Node[], edges: Edge[]) {
@@ -103,7 +111,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     return exists ? { edges: next } : { edges: next, historyPast: past, historyFuture: [] }
   }),
   addNode: (type, label, extra) => set((s) => {
-    const id = genId('n', s.nextId)
+    const id = genNodeId()
     const node: Node = {
       id,
       type: type as any,
@@ -201,10 +209,8 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
     const offset = { x: 24, y: 24 }
     const idMap = new Map<string, string>()
-    const baseNext = s.nextId
-    let counter = 0
     const newNodes: Node[] = s.clipboard.nodes.map((n) => {
-      const newId = genId('n', baseNext + counter++)
+      const newId = genNodeId()
       idMap.set(n.id, newId)
       return {
         ...n,
@@ -226,7 +232,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     return {
       nodes: [...s.nodes, ...newNodes],
       edges: [...s.edges, ...newEdges],
-      nextId: baseNext + counter,
+      nextId: s.nextId + newNodes.length,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
@@ -272,7 +278,7 @@ export const useRFStore = create<RFState>((set, get) => ({
   duplicateNode: (id) => set((s) => {
     const n = s.nodes.find(n => n.id === id)
     if (!n) return {}
-    const newId = genId('n', s.nextId)
+    const newId = genNodeId()
     const dup: Node = {
       ...n,
       id: newId,
@@ -287,10 +293,8 @@ export const useRFStore = create<RFState>((set, get) => ({
     const minY = Math.min(...s.clipboard.nodes.map(n => n.position.y))
     const shift = { x: pos.x - minX, y: pos.y - minY }
     const idMap = new Map<string, string>()
-    const baseNext = s.nextId
-    let counter = 0
     const newNodes: Node[] = s.clipboard.nodes.map((n) => {
-      const newId = genId('n', baseNext + counter++)
+      const newId = genNodeId()
       idMap.set(n.id, newId)
       return { ...n, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } }
     })
@@ -304,7 +308,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     return {
       nodes: [...s.nodes, ...newNodes],
       edges: [...s.edges, ...newEdges],
-      nextId: baseNext + counter,
+      nextId: s.nextId + newNodes.length,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
@@ -334,7 +338,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const defaultW = 180, defaultH = 96
     const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
     const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
-    const gid = `g${s.nextGroupId}`
+    const gid = genGroupId(s.nextGroupId)
     const groupNode: Node = {
       id: gid,
       type: 'groupNode' as any,

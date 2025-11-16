@@ -1,6 +1,6 @@
 import type { Node } from 'reactflow'
 import type { TaskKind } from '../api/server'
-import { runTaskByVendor, createSoraVideo, listSoraPendingVideos } from '../api/server'
+import { runTaskByVendor, createSoraVideo, listSoraPendingVideos, getSoraVideoDraftByTask } from '../api/server'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -302,15 +302,32 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           const pending = await listSoraPendingVideos(null)
           const found = pending.find((t: any) => t.id === taskId)
 
-          // 不在 pending 列表中：认为已完成或移出队列
-          if (!found) {
+          // pending 列表为空：认为全局无任务，尝试按 task_id 从草稿里获取最终结果
+          if (!pending.length) {
+            // 任务已不在队列中，尝试通过 task_id 反查草稿并填充最终视频 URL
+            let videoUrl: string | null = null
+            try {
+              const draft = await getSoraVideoDraftByTask(taskId)
+              videoUrl = draft.videoUrl || null
+            } catch {
+              videoUrl = null
+            }
+
+            const successPreview =
+              videoUrl
+                ? { type: 'text' as const, value: 'Sora 视频已生成，可在节点中预览。' }
+                : {
+                    type: 'text' as const,
+                    value: `Sora 视频已生成（任务 ID: ${taskId}），已写入 Sora 草稿列表。`,
+                  }
+
             setNodeStatus(id, 'success', {
               progress: 100,
               lastResult: {
                 id: taskId,
                 at: Date.now(),
                 kind,
-                preview,
+                preview: successPreview,
               },
               soraVideoTask: res,
               videoTaskId: taskId,
@@ -318,13 +335,30 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
               videoOrientation: orientation,
               videoPrompt: prompt,
               videoDurationSeconds,
+              videoUrl: videoUrl || (data as any)?.videoUrl || null,
             })
-            appendLog(
-              id,
-              `[${nowLabel()}] Sora 视频任务已从队列移除，预计生成完成，请稍后在 Sora 草稿 / 作品中查看视频。`,
-            )
+
+            if (videoUrl) {
+              appendLog(
+                id,
+                `[${nowLabel()}] Sora 视频已生成并同步到节点，可直接预览（task_id=${taskId}）。`,
+              )
+            } else {
+              appendLog(
+                id,
+                `[${nowLabel()}] Sora 视频已生成并写入草稿（task_id=${taskId}），可在 Sora 草稿 / 作品中查看。`,
+              )
+            }
+
             endRunToken(id)
             return
+          }
+
+          // 列表非空但未找到当前 task：说明还有其它任务在跑，当前任务可能刚刚完成或列表尚未同步
+          // 为了保险，这种情况下继续轮询一段时间，而不是立即去查草稿。
+          if (!found) {
+            await new Promise((resolve) => setTimeout(resolve, 3000))
+            continue
           }
 
           const pct =
@@ -349,7 +383,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         }
       }
 
-      // 轮询结束但任务仍未完成，给出提示
+      // 轮询结束但任务仍在 pending 列表中：停止轮询，提示去 Sora 查看后续状态
       setNodeStatus(id, 'success', {
         progress,
         lastResult: {

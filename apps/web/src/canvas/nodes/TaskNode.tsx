@@ -231,18 +231,36 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [kind, imageUrl, data])
 
   const connectToRight = (targetKind: string, targetLabel: string) => {
-    // create a node to the right and connect
     const all = useRFStore.getState().nodes
-    const self = all.find(n => n.id === id)
+    const self = all.find((n) => n.id === id)
     if (!self) return
     const pos = { x: self.position.x + 260, y: self.position.y }
-    const before = useRFStore.getState().nextId
-    addNode('taskNode', targetLabel, { kind: targetKind })
-    const after = useRFStore.getState().nextId
-    const newId = `n${after-1}`
-    useRFStore.setState(s => ({ nodes: s.nodes.map(n => n.id === newId ? { ...n, position: pos } : n) }))
-    // best-effort connection
-    addEdge({ source: id, target: newId, sourceHandle: 'out-image', targetHandle: targetKind==='video' ? 'in-image' : 'in-image' } as any)
+    const newId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? (crypto as any).randomUUID()
+        : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    useRFStore.setState((s: any) => {
+      const node = {
+        id: newId,
+        type: 'taskNode' as const,
+        position: pos,
+        data: { label: targetLabel, kind: targetKind },
+      }
+      const edge: any = {
+        id: `e-${id}-${newId}-${Date.now().toString(36)}`,
+        source: id,
+        target: newId,
+        sourceHandle: 'out-image',
+        targetHandle: 'in-image',
+        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+        animated: true,
+      }
+      return {
+        nodes: [...s.nodes, node],
+        edges: [...s.edges, edge],
+        nextId: s.nextId + 1,
+      }
+    })
   }
 
   const fixedWidth = (kind === 'image' || kind === 'textToImage') ? 320 : undefined

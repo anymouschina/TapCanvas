@@ -50,6 +50,9 @@ importers:
       bull:
         specifier: ^4.16.0
         version: 4.16.5
+      form-data:
+        specifier: ^4.0.0
+        version: 4.0.4
       nestjs-prisma:
         specifier: ^0.26.0
         version: 0.26.0(@nestjs/common@11.1.8(reflect-metadata@0.2.2)(rxjs@7.8.1))(@prisma/client@6.19.0(prisma@6.19.0(typescript@5.9.3))(typescript@5.9.3))(chokidar@4.0.3)(prisma@6.19.0(typescript@5.9.3))

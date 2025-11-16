@@ -1023,6 +1023,99 @@ export class SoraService {
     }
   }
 
+  /**
+   * 根据 task_id 反查对应的草稿信息（用于获取最终视频 URL）
+   * 由于 Sora 草稿结构未完全公开，这里采用启发式匹配：在草稿原始对象中搜索 taskId。
+   */
+  async getDraftByTaskId(userId: string, tokenId: string | undefined, taskId: string) {
+    const token: any = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        params: { limit: 15 },
+        validateStatus: () => true,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora drafts lookup failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
+          res.status,
+        )
+      }
+
+      const data = res.data as any
+      const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+
+      // 启发式：从原始草稿对象中搜索包含 taskId 的条目
+      const needle = String(taskId)
+      const matched = items.find((item) => {
+        try {
+          const text = JSON.stringify(item)
+          return text.includes(needle)
+        } catch {
+          return false
+        }
+      })
+
+      if (!matched) {
+        throw new HttpException(
+          { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
+          HttpStatus.NOT_FOUND,
+        )
+      }
+
+      const enc = matched.encodings || {}
+      const thumbnail =
+        enc.thumbnail?.path ||
+        matched.preview_image_url ||
+        matched.thumbnail_url ||
+        null
+      const videoUrl =
+        matched.downloadable_url ||
+        matched.url ||
+        enc.source?.path ||
+        null
+
+      return {
+        id: matched.id,
+        title: matched.title ?? null,
+        prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
+        thumbnailUrl: thumbnail,
+        videoUrl,
+        raw: matched,
+      }
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora drafts lookup request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
   async updateCharacter(
     userId: string,
     tokenId: string,

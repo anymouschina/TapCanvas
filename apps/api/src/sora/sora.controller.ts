@@ -179,4 +179,13 @@ export class SoraController {
   ) {
     return this.service.getPendingVideos(String(req.user.sub), tokenId)
   }
+
+  @Get('video/draft-by-task')
+  getVideoDraftByTask(
+    @Query('tokenId') tokenId: string | undefined,
+    @Query('taskId') taskId: string,
+    @Req() req: any,
+  ) {
+    return this.service.getDraftByTaskId(String(req.user.sub), tokenId, taskId)
+  }
 }

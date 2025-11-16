@@ -313,6 +313,34 @@ export async function listSoraPendingVideos(
   return []
 }
 
+export async function getSoraVideoDraftByTask(
+  taskId: string,
+  tokenId?: string | null,
+): Promise<{ id: string; title: string | null; prompt: string | null; thumbnailUrl: string | null; videoUrl: string | null }> {
+  const qs = new URLSearchParams({ taskId })
+  if (tokenId) qs.set('tokenId', tokenId)
+  const r = await fetch(`${API_BASE}/sora/video/draft-by-task?${qs.toString()}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `get sora video draft failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    id: body.id,
+    title: body.title ?? null,
+    prompt: body.prompt ?? null,
+    thumbnailUrl: body.thumbnailUrl ?? null,
+    videoUrl: body.videoUrl ?? null,
+  }
+}
+
 export async function uploadSoraCharacterVideo(
   tokenId: string,
   file: File,
