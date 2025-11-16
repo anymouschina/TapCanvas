@@ -102,6 +102,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [compareOpen, setCompareOpen] = React.useState(false)
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
   const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
+   // 视频模型，目前仅支持 Sora2，占个位便于后续扩展
+  const [videoModel, setVideoModel] = React.useState<string>((data as any)?.videoModel || 'sora-2')
   const [mentionOpen, setMentionOpen] = React.useState(false)
   const [mentionFilter, setMentionFilter] = React.useState('')
   const [mentionItems, setMentionItems] = React.useState<any[]>([])
@@ -1019,6 +1021,23 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             {kind === 'composeVideo' && (
               <>
                 <Select
+                  label="视频模型"
+                  data={[
+                    { value: 'sora-2', label: 'Sora 2' },
+                  ]}
+                  value={videoModel}
+                  onChange={(v) => setVideoModel(v || 'sora-2')}
+                  comboboxProps={{
+                    withinPortal: true,
+                    styles: {
+                      dropdown: {
+                        minWidth: 260,
+                        whiteSpace: 'nowrap',
+                      },
+                    },
+                  }}
+                />
+                <Select
                   label="画面比例"
                   data={[
                     { value: '16:9', label: '16:9' },
@@ -1061,6 +1080,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 }
                 if (kind === 'composeVideo') {
                   patch.sampleCount = sampleCount
+                  patch.videoModel = videoModel
                 }
 
                 // 同步本地状态，便于预览区展示最新提示词

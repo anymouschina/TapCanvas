@@ -417,6 +417,7 @@ export class SoraService {
       orientation?: 'portrait' | 'landscape' | 'square'
       size?: string
       n_frames?: number
+      inpaintFileId?: string | null
     },
   ) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
@@ -435,7 +436,9 @@ export class SoraService {
       orientation: payload.orientation || 'portrait',
       size: payload.size || 'small',
       n_frames: typeof payload.n_frames === 'number' ? payload.n_frames : 300,
-      inpaint_items: [],
+      inpaint_items: payload.inpaintFileId
+        ? [{ kind: 'file', file_id: payload.inpaintFileId }]
+        : [],
       remix_target_id: null,
       metadata: null,
       cameo_ids: null,
@@ -842,6 +845,57 @@ export class SoraService {
         err?.response?.statusText ||
         err?.message ||
         'Sora search mentions request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
+  /**
+   * 查询当前账号下 Sora 视频生成的排队 / 运行中任务列表（nf/pending）
+   */
+  async getPendingVideos(userId: string, tokenId?: string) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/nf/pending', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: '*/*',
+        },
+        validateStatus: () => true,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg =
+          (res.data && (res.data.message || res.data.error)) ||
+          `Sora pending videos request failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
+          res.status,
+        )
+      }
+
+      return res.data
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora pending videos request failed'
       throw new HttpException(
         { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
         status,
