@@ -80,6 +80,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharCoverPreview, setCreateCharCoverPreview] = React.useState<string | null>(null)
   const [createCharCoverUploading, setCreateCharCoverUploading] = React.useState(false)
   const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
+  const [createCharProgress, setCreateCharProgress] = React.useState<number | null>(null)
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
     const usedDuration = Math.min(createCharDuration, 2)
@@ -259,6 +260,14 @@ export default function AssetPanel(): JSX.Element | null {
         }
         v.src = url
       })
+      if (!duration || !Number.isFinite(duration)) {
+        throw new Error('无法识别视频时长')
+      }
+      if (duration > 15) {
+        alert('仅支持时长不超过 15 秒的视频')
+        URL.revokeObjectURL(url)
+        return
+      }
       setCreateCharFile(file)
       setCreateCharVideoUrl(url)
       setCreateCharDuration(duration || 0)
@@ -326,6 +335,7 @@ export default function AssetPanel(): JSX.Element | null {
     if (!createCharFile || !selectedTokenId) return
     if (createCharUploading) return
     setCreateCharUploading(true)
+    setCreateCharProgress(0)
     try {
       const start = Math.max(0, range.start)
       const end = Math.max(start, Math.min(range.end, start + 2))
@@ -343,7 +353,13 @@ export default function AssetPanel(): JSX.Element | null {
         try {
           // 轮询任务进度，直到不再处于 in_progress 或超时
           for (let i = 0; i < 20; i++) {
-            const inProgress = await isSoraCameoInProgress(selectedTokenId, taskId)
+            const { inProgress, progressPct } = await isSoraCameoInProgress(
+              selectedTokenId,
+              taskId,
+            )
+            if (progressPct !== null) {
+              setCreateCharProgress(progressPct)
+            }
             if (!inProgress) break
             // 约 1.5s 轮询一次
             // eslint-disable-next-line no-await-in-loop
@@ -374,6 +390,7 @@ export default function AssetPanel(): JSX.Element | null {
       alert(err?.message || '上传角色视频失败，请稍后重试')
     } finally {
       setCreateCharUploading(false)
+      setCreateCharProgress(null)
     }
   }
 
@@ -626,7 +643,10 @@ export default function AssetPanel(): JSX.Element | null {
                       <Group gap="xs">
                         <Loader size="xs" />
                         <Text size="xs" c="dimmed">
-                          正在创建 Sora 角色，请稍候…
+                          正在创建 Sora 角色
+                          {typeof createCharProgress === 'number'
+                            ? `（${Math.round(createCharProgress * 100)}%）`
+                            : '，请稍候…'}
                         </Text>
                       </Group>
                     )}
@@ -1058,6 +1078,8 @@ export default function AssetPanel(): JSX.Element | null {
               videoUrl={createCharVideoUrl || ''}
               originalDuration={createCharDuration || 0}
               thumbnails={createCharThumbs}
+              loading={createCharUploading}
+              progressPct={createCharProgress}
               onClose={handleTrimClose}
               onConfirm={handleTrimConfirm}
             />

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { ActionIcon, Button, Group, Stack, Text } from '@mantine/core'
+import { ActionIcon, Button, Group, Loader, Stack, Text } from '@mantine/core'
 import { IconPlayerPause, IconPlayerPlay, IconX, IconArrowRight } from '@tabler/icons-react'
 
 type VideoTrimModalProps = {
@@ -7,6 +7,8 @@ type VideoTrimModalProps = {
   videoUrl: string
   originalDuration: number
   thumbnails: string[]
+  loading?: boolean
+  progressPct?: number | null
   onClose: () => void
   onConfirm: (range: { start: number; end: number }) => void
 }
@@ -17,7 +19,16 @@ const TIMELINE_HEIGHT = 72
 const THUMB_WIDTH = 64
 
 export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
-  const { opened, videoUrl, originalDuration, thumbnails, onClose, onConfirm } = props
+  const {
+    opened,
+    videoUrl,
+    originalDuration,
+    thumbnails,
+    loading = false,
+    progressPct = null,
+    onClose,
+    onConfirm,
+  } = props
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(
     Math.min(originalDuration || 0, MAX_TRIM_DURATION),
@@ -29,9 +40,10 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const dragStateRef = useRef<null | {
-    type: 'start' | 'end' | 'playhead'
+    type: 'start' | 'end' | 'playhead' | 'range'
     startX: number
     startValue: number
+    rangeLength?: number
   }>(null)
 
   const timelineWidth = useMemo(() => {
@@ -161,6 +173,24 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       ne = Math.min(ne, trimStart + MAX_TRIM_DURATION)
       setTrimEnd(ne)
       if (currentTime > ne) seekTo(ne)
+    } else if (dragStateRef.current.type === 'range') {
+      const rangeLength =
+        typeof dragStateRef.current.rangeLength === 'number'
+          ? dragStateRef.current.rangeLength
+          : trimEnd - trimStart
+      // 根据拖动的像素偏移计算新的起点
+      const baseX = timeToX(dragStateRef.current.startValue)
+      const newXStart = baseX + dx
+      let ns = xToTime(newXStart)
+      const maxStart = Math.max(0, originalDuration - Math.max(rangeLength, MIN_TRIM_DURATION))
+      if (!Number.isFinite(ns)) ns = 0
+      ns = Math.max(0, Math.min(ns, maxStart))
+      const ne = ns + rangeLength
+      setTrimStart(ns)
+      setTrimEnd(ne)
+      if (currentTime < ns || currentTime > ne) {
+        seekTo(Math.min(ne, Math.max(ns, currentTime)))
+      }
     } else if (dragStateRef.current.type === 'playhead') {
       let nt = Math.min(trimEnd, Math.max(trimStart, nextTime))
       seekTo(nt)
@@ -226,8 +256,11 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       >
         <div
           style={{
-            maxWidth: '86vw',
-            maxHeight: '60vh',
+            width: '86vw',
+            maxWidth: 960,
+            height: '48vh',
+            maxHeight: 420,
+            minHeight: 260,
             background: 'black',
             display: 'flex',
             alignItems: 'center',
@@ -358,6 +391,32 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 }}
               />
             </div>
+            {/* 可拖动选区块（保持长度，整体平移） */}
+            <div
+              style={{
+                position: 'absolute',
+                left: startX,
+                width: endX - startX,
+                top: 0,
+                bottom: 0,
+                cursor: 'grab',
+              }}
+              onMouseDown={(e) => {
+                if (!timelineRef.current) return
+                e.stopPropagation()
+                const rect = timelineRef.current.getBoundingClientRect()
+                const startXLocal = e.clientX - rect.left
+                const rangeLength = trimEnd - trimStart
+                dragStateRef.current = {
+                  type: 'range',
+                  startX: startXLocal,
+                  startValue: trimStart,
+                  rangeLength,
+                }
+                window.addEventListener('mousemove', onDrag)
+                window.addEventListener('mouseup', endDrag)
+              }}
+            />
             <div
               style={{
                 position: 'absolute',
@@ -432,17 +491,42 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           size={48}
           variant="white"
           onClick={() => {
+            if (loading) return
             const len = trimEnd - trimStart
             if (len <= 0) return
             const maxEnd = Math.min(trimStart + MAX_TRIM_DURATION, trimEnd, originalDuration)
             if (maxEnd <= trimStart) return
             onConfirm({ start: trimStart, end: maxEnd })
           }}
+          disabled={loading}
           title="确认裁剪"
         >
-          <IconArrowRight size={24} />
+          {loading ? <Loader size="sm" /> : <IconArrowRight size={24} />}
         </ActionIcon>
       </div>
+      {loading && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,.35)',
+            pointerEvents: 'none',
+          }}
+        >
+          <Group gap="xs">
+            <Loader size="sm" />
+            <Text size="sm" c="dimmed">
+              正在上传并创建角色
+              {typeof progressPct === 'number'
+                ? `（${Math.round(progressPct * 100)}%）`
+                : '…'}
+            </Text>
+          </Group>
+        </div>
+      )}
     </div>
   )
 }

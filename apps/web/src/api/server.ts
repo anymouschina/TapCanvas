@@ -297,13 +297,13 @@ export async function uploadSoraCharacterVideo(
 export async function isSoraCameoInProgress(
   tokenId: string,
   id: string,
-): Promise<boolean> {
+): Promise<{ inProgress: boolean; progressPct: number | null }> {
   const qs = new URLSearchParams({ tokenId, id })
   const r = await fetch(
     `${API_BASE}/sora/cameos/in-progress?${qs.toString()}`,
     withAuth(),
   )
-  if (!r.ok) return false
+  if (!r.ok) return { inProgress: false, progressPct: null }
 
   let body: any = null
   try {
@@ -325,11 +325,12 @@ export async function isSoraCameoInProgress(
   // - status 不为 processing 且不为 null → 认为已完成（成功或失败）
   // - 或 progress_pct > 0.95 → 认为已完成
   // 其它情况视为仍在 processing
-  if ((status !== null && status !== 'processing') || (progressPct !== null && progressPct > 0.95)) {
-    return false
-  }
+  const inProgress =
+    status === null || status === 'processing'
+      ? !(progressPct !== null && progressPct > 0.95)
+      : false
 
-  return true
+  return { inProgress, progressPct }
 }
 
 export async function finalizeSoraCharacter(payload: {
