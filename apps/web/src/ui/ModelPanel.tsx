@@ -576,9 +576,20 @@ export default function ModelPanel(): JSX.Element | null {
             >
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
-                    在这里配置 DashScope API Key，用于调用 Qwen 图片模型（如 qwen-image-plus）。
-                  </Text>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      在这里配置 DashScope API Key，用于调用 Qwen 图片模型（如 qwen-image-plus）。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://bailian.console.aliyun.com/?tab=model#/api-key', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
+                  </Group>
                   <Group justify="space-between">
                     <Title order={5}>已保存的 Qwen Key</Title>
                     <Button size="xs" onClick={openQwenModalForNew}>
@@ -920,6 +931,15 @@ export default function ModelPanel(): JSX.Element | null {
                   <Text size="sm" c="dimmed">
                     在此配置 Gemini API Key。后续可以为文本/视频节点选择使用 Gemini 作为底层模型。
                   </Text>
+                      <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://aistudio.google.com/api-keys', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
                   <TextInput
                     label="Gemini 代理 Base URL"
                     placeholder="例如：https://your-proxy.example.com"
