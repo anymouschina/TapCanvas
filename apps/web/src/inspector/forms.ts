@@ -12,7 +12,8 @@ export type TextToImage = z.infer<typeof textToImageSchema>
 export const composeVideoSchema = z.object({
   storyboard: z.string().min(1, '请输入分镜/脚本'),
   duration: z.number().min(1).max(600).default(30),
-  fps: z.number().int().min(1).max(60).default(24)
+  fps: z.number().int().min(1).max(60).default(24),
+  remixTargetId: z.string().optional(),
 })
 export type ComposeVideo = z.infer<typeof composeVideoSchema>
 
@@ -34,7 +35,7 @@ export function defaultsFor(kind?: string) {
     case 'textToImage':
       return { prompt: '', steps: 30, seed: undefined, aspect: '16:9' }
     case 'composeVideo':
-      return { storyboard: '', duration: 30, fps: 24 }
+      return { storyboard: '', duration: 30, fps: 24, remixTargetId: undefined }
     case 'tts':
       return { text: '', voice: 'female', speed: 1 }
     case 'subtitleAlign':
@@ -43,4 +44,3 @@ export function defaultsFor(kind?: string) {
       return {}
   }
 }
-

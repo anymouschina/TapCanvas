@@ -419,6 +419,7 @@ export class SoraService {
       n_frames?: number
       inpaintFileId?: string | null
       imageUrl?: string | null
+      remixTargetId?: string | null
     },
   ) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
@@ -429,9 +430,12 @@ export class SoraService {
     const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
-    // 若未显式提供 file_id，但有图片 URL，则尝试先上传图片到 Sora 获取 file_id
+    // 若指定了 remix 目标，则优先走 remix 模式（不再尝试图生）
     let inpaintFileId = payload.inpaintFileId ?? null
-    if (!inpaintFileId && payload.imageUrl) {
+    const remixTargetId = payload.remixTargetId || null
+
+    // 若无 remix，且未显式提供 file_id，但有图片 URL，则尝试先上传图片到 Sora 获取 file_id
+    if (!remixTargetId && !inpaintFileId && payload.imageUrl) {
       try {
         const imgRes = await axios.get(payload.imageUrl, {
           responseType: 'arraybuffer',
@@ -470,6 +474,48 @@ export class SoraService {
       }
     }
 
+    // 三种模式互斥：
+    // - 图生视频：仅图片，不带角色、不带 remix
+    // - 角色引用：仅文本+角色，不带图片、不带 remix
+    // - Remix：仅视频衍生视频，不带图片、不带角色
+
+    const hasImage = !!inpaintFileId
+    const hasRemix = !!remixTargetId
+    const hasRole = /@\S+/.test(payload.prompt || '')
+
+    // 同时存在 remix + 图生：不允许
+    if (hasImage && hasRemix) {
+      throw new HttpException(
+        {
+          message: 'Remix 模式与图生视频不能同时使用，请仅保留其中一种（移除图片或 Remix 目标）。',
+          upstreamStatus: 400,
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    // Remix 模式下不允许角色 / 图片
+    if (hasRemix && (hasImage || hasRole)) {
+      throw new HttpException(
+        {
+          message: '视频 Remix 模式暂不支持图片或角色引用，请移除图片和 @角色，仅基于原视频进行提示词修改。',
+          upstreamStatus: 400,
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    // 图生视频模式下（有有效 inpaintFileId）不允许携带角色引用（@xxx）
+    if (hasImage && !hasRemix && hasRole) {
+      throw new HttpException(
+        {
+          message: '图生视频模式暂不支持角色引用，请移除 @角色 或改用纯文生视频',
+          upstreamStatus: 400,
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
     const url = new URL('/backend/nf/create', baseUrl).toString()
 
     const body: any = {
@@ -482,7 +528,7 @@ export class SoraService {
       inpaint_items: inpaintFileId
         ? [{ kind: 'file', file_id: inpaintFileId }]
         : [],
-      remix_target_id: null,
+      remix_target_id: remixTargetId,
       metadata: null,
       cameo_ids: null,
       cameo_replacements: null,
