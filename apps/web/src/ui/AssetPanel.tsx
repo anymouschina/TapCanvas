@@ -428,15 +428,28 @@ export default function AssetPanel(): JSX.Element | null {
 
     if (!data.nodes || data.nodes.length === 0) return
 
-    const minX = Math.min(...data.nodes.map((n: any) => n.position.x))
-    const minY = Math.min(...data.nodes.map((n: any) => n.position.y))
+    // 数据验证和清理
+    const validNodes = data.nodes.filter((n: any) => {
+      return n && n.id && n.type && n.position && typeof n.position.x === 'number' && typeof n.position.y === 'number'
+    })
+
+    const validEdges = (data.edges || []).filter((e: any) => {
+      return e && e.id && e.source && e.target &&
+             validNodes.some((n: any) => n.id === e.source) &&
+             validNodes.some((n: any) => n.id === e.target)
+    })
+
+    if (validNodes.length === 0) return
+
+    const minX = Math.min(...validNodes.map((n: any) => n.position.x))
+    const minY = Math.min(...validNodes.map((n: any) => n.position.y))
     const dx = pos.x - minX
     const dy = pos.y - minY
 
     // 创建节点ID映射，用于更新边的引用
     const idMap: { [oldId: string]: string } = {}
 
-    const nodes = data.nodes.map((n: any) => {
+    const nodes = validNodes.map((n: any) => {
       // 确保每次都生成完全唯一的新ID
       const timestamp = Date.now()
       const random = Math.random().toString(36).slice(2, 10)
@@ -468,6 +481,8 @@ export default function AssetPanel(): JSX.Element | null {
           // 确保所有异步状态被清除
           lastError: undefined,
           progress: undefined,
+          // 清除可能导致问题的父节点引用
+          parentId: undefined,
           // 保留基本的配置数据
           label: n.data?.label,
           prompt: n.data?.prompt,
@@ -493,7 +508,7 @@ export default function AssetPanel(): JSX.Element | null {
       }
     })
 
-    const edges = (data.edges || []).map((e: any) => {
+    const edges = validEdges.map((e: any) => {
       const timestamp = Date.now()
       const random = Math.random().toString(36).slice(2, 10)
       const newEdgeId = `e${timestamp}_${random}`
@@ -517,43 +532,43 @@ export default function AssetPanel(): JSX.Element | null {
       }
     })
 
-    // 使用 useRFStore 的 load 方法来安全地添加节点和边
-    const load = useRFStore.getState().load
-    if (load) {
-      // 先获取当前状态
-      const currentNodes = useRFStore.getState().nodes
-      const currentEdges = useRFStore.getState().edges
+    // 安全地添加节点和边，避免父节点引用问题
+    const currentNodes = useRFStore.getState().nodes
+    const currentEdges = useRFStore.getState().edges
 
-      // 计算新的 nextId
-      const maxId = Math.max(
-        ...currentNodes.map((n: any) => {
-          const match = n.id.match(/\d+/)
-          return match ? parseInt(match[0], 10) : 0
-        }),
-        ...nodes.map((n: any) => {
-          const match = n.id.match(/\d+/)
-          return match ? parseInt(match[0], 10) : 0
-        })
-      )
+    // 验证当前节点状态，确保没有无效的parentNode引用
+    const validCurrentNodes = currentNodes.filter((n: any) => {
+      // 如果节点有parentNode，确保父节点存在
+      if (n.parentNode) {
+        return currentNodes.some((parent: any) => parent.id === n.parentNode)
+      }
+      return true
+    })
 
-      // 合并节点和边
-      const newNodes = [...currentNodes, ...nodes]
-      const newEdges = [...currentEdges, ...edges]
+    // 验证当前边状态
+    const validCurrentEdges = currentEdges.filter((e: any) => {
+      return currentNodes.some((n: any) => n.id === e.source) &&
+             currentNodes.some((n: any) => n.id === e.target)
+    })
 
-      // 更新状态
-      useRFStore.setState({
-        nodes: newNodes,
-        edges: newEdges,
-        nextId: maxId + 1
+    // 合并节点和边
+    const newNodes = [...validCurrentNodes, ...nodes]
+    const newEdges = [...validCurrentEdges, ...edges]
+
+    // 计算新的 nextId
+    const maxId = Math.max(
+      ...newNodes.map((n: any) => {
+        const match = n.id.match(/\d+/)
+        return match ? parseInt(match[0], 10) : 0
       })
-    } else {
-      // 备用方案：直接更新状态
-      useRFStore.setState(s => ({
-        nodes: [...s.nodes, ...nodes],
-        edges: [...s.edges, ...edges],
-        nextId: s.nextId + nodes.length
-      }))
-    }
+    )
+
+    // 更新状态
+    useRFStore.setState({
+      nodes: newNodes,
+      edges: newEdges,
+      nextId: maxId + 1
+    })
   }
 
   return (

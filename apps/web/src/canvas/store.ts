@@ -187,12 +187,51 @@ export const useRFStore = create<RFState>((set, get) => ({
       historyFuture: [],
     }))
   },
-  removeSelected: () => set((s) => ({
-    nodes: s.nodes.filter((n) => !n.selected),
-    edges: s.edges.filter((e) => !e.selected),
-    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
-    historyFuture: [],
-  })),
+  removeSelected: () => set((s) => {
+    const selectedNodes = s.nodes.filter(n => n.selected)
+    const selectedIds = new Set(selectedNodes.map(n => n.id))
+
+    // 收集所有需要删除的节点ID：包括选中的节点和它们的子节点
+    const idsToDelete = new Set<string>()
+    selectedIds.forEach(id => {
+      idsToDelete.add(id)
+
+      // 如果选中的是组节点，添加所有子节点
+      const node = selectedNodes.find(n => n.id === id)
+      if (node?.type === 'groupNode') {
+        const childNodes = s.nodes.filter(n => n.parentNode === id)
+        childNodes.forEach(child => idsToDelete.add(child.id))
+      }
+    })
+
+    // 如果选中的是子节点，也检查是否需要删除父节点（如果父节点的所有子节点都被选中）
+    const selectedChildNodes = selectedNodes.filter(n => n.parentNode && selectedIds.has(n.parentNode))
+    selectedChildNodes.forEach(child => {
+      const parentNode = s.nodes.find(n => n.id === child.parentNode)
+      if (parentNode && parentNode.type === 'groupNode') {
+        const allChildren = s.nodes.filter(n => n.parentNode === parentNode.id)
+        const allChildrenSelected = allChildren.every(child => selectedIds.has(child.id))
+
+        // 如果所有子节点都被选中，也删除父节点
+        if (allChildrenSelected) {
+          idsToDelete.add(parentNode.id)
+        }
+      }
+    })
+
+    // 删除节点和相关边
+    const remainingNodes = s.nodes.filter(n => !idsToDelete.has(n.id))
+    const remainingEdges = s.edges.filter(e =>
+      !idsToDelete.has(e.source) && !idsToDelete.has(e.target)
+    )
+
+    return {
+      nodes: remainingNodes,
+      edges: remainingEdges,
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
   updateNodeLabel: (id, label) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n)),
     historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),

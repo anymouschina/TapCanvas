@@ -534,6 +534,14 @@ function CanvasInner(): JSX.Element {
           setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
         }
       }}
+      onKeyDown={(e) => {
+        // 处理键盘删除事件
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault()
+          useRFStore.getState().removeSelected()
+        }
+      }}
+      tabIndex={0} // 使div可以接收键盘事件
     >
       <ReactFlow
         nodes={focusFiltered.nodes}
