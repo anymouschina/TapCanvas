@@ -254,23 +254,39 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [mentionItems, setMentionItems] = React.useState<any[]>([])
   const [mentionLoading, setMentionLoading] = React.useState(false)
   const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
-  const { upstreamText, upstreamImageUrl } = useRFStore((s) => {
+  const { upstreamText, upstreamImageUrl, upstreamVideoUrl } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
-    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null }
+    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null, upstreamVideoUrl: null as string | null }
     const last = edgesToThis[edgesToThis.length - 1]
     const src = s.nodes.find((n) => n.id === last.source)
-    if (!src) return { upstreamText: null, upstreamImageUrl: null }
+    if (!src) return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null }
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
     const uText =
       skind === 'textToImage' || skind === 'image'
         ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
         : null
-    const uImg =
-      skind === 'image' || skind === 'textToImage'
-        ? ((sd.imageUrl as string | undefined) || null)
-        : null
-    return { upstreamText: uText, upstreamImageUrl: uImg }
+
+    // 获取最新的主图片 URL
+    let uImg = null
+    if (skind === 'image' || skind === 'textToImage') {
+      uImg = (sd.imageUrl as string | undefined) || null
+    } else if ((skind === 'video' || skind === 'composeVideo') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+      // 对于video节点，优先获取主视频的缩略图作为上游图片
+      uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
+    }
+
+    // 获取最新的主视频 URL
+    let uVideo = null
+    if (skind === 'video' || skind === 'composeVideo') {
+      if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+        uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
+      } else {
+        uVideo = (sd.videoUrl as string | undefined) || null
+      }
+    }
+
+    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo }
   })
 
   React.useEffect(() => {

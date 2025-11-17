@@ -161,6 +161,7 @@ export class SoraController {
       orientation?: 'portrait' | 'landscape' | 'square'
       size?: string
       n_frames?: number
+      remixTargetId?: string
     },
     @Req() req: any,
   ) {
@@ -201,5 +202,23 @@ export class SoraController {
     @Req() req: any,
   ) {
     return this.service.getDraftByTaskId(String(req.user.sub), tokenId, taskId)
+  }
+
+  @Get('video/draft-details')
+  getDraftDetails(
+    @Query('tokenId') tokenId: string | undefined,
+    @Query('generationId') generationId: string,
+    @Req() req: any,
+  ) {
+    return this.service.getDraftDetailsById(String(req.user.sub), tokenId, generationId)
+  }
+
+  @Get('video/post-details')
+  getPostDetails(
+    @Query('tokenId') tokenId: string | undefined,
+    @Query('postId') postId: string,
+    @Req() req: any,
+  ) {
+    return this.service.getPostDetailsById(String(req.user.sub), tokenId, postId)
   }
 }

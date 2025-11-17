@@ -258,6 +258,7 @@ model VideoGenerationHistory {
   // 生成结果
   taskId      String   // 任务ID (task_ 开头)
   generationId String? // 生成ID (gen_ 开头) - 用于remix
+  postId      String?  // 发布ID (s_ 开头) - 用于Sora remix
   status      String   // pending, running, success, error
   videoUrl    String?  // 生成的视频URL
   thumbnailUrl String? // 缩略图URL

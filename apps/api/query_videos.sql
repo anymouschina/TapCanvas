@@ -1,0 +1,1 @@
+SELECT "id", "remoteId", "provider", "title", "prompt", "videoUrl", "createdAt" FROM "ExternalDraft" ORDER BY "createdAt" DESC LIMIT 5;
