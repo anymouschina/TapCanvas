@@ -443,6 +443,12 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
             return null
           }
 
+          // 如果是404错误，表示任务可能失败或被删除，应该停止轮询
+          if (err?.upstreamStatus === 404 || err?.status === 404) {
+            appendLog(id, `[${nowLabel()}] 草稿同步：任务未找到（可能已失败），停止轮询`)
+            throw new Error('任务未找到或已失败')
+          }
+
           const msg = err?.message || '同步 Sora 草稿失败'
           appendLog(id, `[${nowLabel()}] error: ${msg}`)
           return null
@@ -453,7 +459,6 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       const pollIntervalMs = 3000
       // 移除最大超时时间限制，让任务持续轮询直到完成
       let finishedFromPending = false
-      let noPendingCount = 0 // 连续几次检查pending都为空
 
       while (true) {
         if (isCanceled(id)) {
@@ -466,45 +471,45 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         try {
           const pending = await listSoraPendingVideos(null)
 
-          // 如果pending列表为空，更积极地尝试同步草稿
+          // 如果pending列表为空，直接尝试同步草稿
           if (!pending.length) {
-            noPendingCount++
+            appendLog(id, `[${nowLabel()}] pending列表为空，尝试同步草稿检查任务状态...`)
+            try {
+              const draftResult = await syncDraftVideo(true)
+              if (draftResult && draftResult.videoUrl) {
+                finishedFromPending = true
+                appendLog(id, `[${nowLabel()}] 草稿同步成功，任务已完成！`)
+                break
+              }
 
-            // 重置draftSynced标志，允许每次都尝试同步
-            draftSynced = false
-
-            // 先尝试直接同步草稿，如果能获取到说明任务已完成
-            const draftResult = await syncDraftVideo(true)
-            if (draftResult && draftResult.videoUrl) {
-              finishedFromPending = true
-              appendLog(id, `[${nowLabel()}] pending列表为空，但草稿同步成功，任务完成！`)
+              appendLog(id, `[${nowLabel()}] pending为空且草稿未就绪，继续等待...`)
+              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+              continue
+            } catch (syncError: any) {
+              appendLog(id, `[${nowLabel()}] 草稿同步失败，任务可能已结束: ${syncError.message}`)
+              // 草稿同步失败，可能任务已失败，停止轮询
               break
             }
-
-            // 如果连续3次检查pending都为空且草稿还没准备好，延长轮询时间但继续尝试
-            if (noPendingCount >= 3) {
-              appendLog(id, `[${nowLabel()}] pending列表为空，草稿未就绪，延长轮询间隔继续等待...`)
-              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs * 2)) // 延长等待时间
-              continue
-            }
-
-            appendLog(id, `[${nowLabel()}] pending列表为空，${noPendingCount}/3次检查草稿未就绪，继续等待...`)
-            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-            continue
           }
 
-          // 重置计数器
-          noPendingCount = 0
-
+          
           const found = pending.find((t: any) => t.id === taskId)
           if (!found) {
             // 如果在pending中找不到taskId，可能任务已完成，尝试同步草稿
-            const draftResult = await syncDraftVideo(true)
-            if (draftResult && draftResult.videoUrl) {
-              finishedFromPending = true
+            try {
+              const draftResult = await syncDraftVideo(true)
+              if (draftResult && draftResult.videoUrl) {
+                finishedFromPending = true
+                appendLog(id, `[${nowLabel()}] 任务不在pending中，但草稿同步成功，任务已完成！`)
+                break
+              }
+            } catch (syncError: any) {
+              appendLog(id, `[${nowLabel()}] 任务不在pending中且草稿同步失败: ${syncError.message}`)
+              // 草稿同步失败，任务可能已失败，停止轮询
               break
             }
 
+            appendLog(id, `[${nowLabel()}] 任务不在pending中且草稿未就绪，继续等待...`)
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
             continue
           }
@@ -530,7 +535,15 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       if (finishedFromPending) {
-        const finalDraft: typeof lastDraft = lastDraft
+        const finalDraft = lastDraft as {
+          id: string
+          title: string | null
+          prompt: string | null
+          thumbnailUrl: string | null
+          videoUrl: string | null
+          postId?: string | null
+          duration?: number
+        } | null
         const videoUrl = rewriteSoraVideoResourceUrl(
           finalDraft?.videoUrl || (data as any)?.videoUrl || null,
         )
@@ -601,7 +614,15 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       await syncDraftVideo(true)
-      const finalDraft: typeof lastDraft = lastDraft
+      const finalDraft = lastDraft as {
+        id: string
+        title: string | null
+        prompt: string | null
+        thumbnailUrl: string | null
+        videoUrl: string | null
+        postId?: string | null
+        duration?: number
+      } | null
       const videoUrl = rewriteSoraVideoResourceUrl(
         finalDraft?.videoUrl || (data as any)?.videoUrl || null,
       )
