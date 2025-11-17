@@ -198,6 +198,17 @@ export async function deleteSoraDraft(tokenId: string, draftId: string): Promise
   if (!r.ok) throw new Error(`delete draft failed: ${r.status}`)
 }
 
+export async function listSoraPublishedVideos(tokenId?: string | null, limit?: number): Promise<SoraDraftListDto> {
+  const qs = new URLSearchParams()
+  if (tokenId) qs.set('tokenId', tokenId)
+  if (typeof limit === 'number' && !Number.isNaN(limit)) qs.set('limit', String(limit))
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/sora/published/me?${query}` : `${API_BASE}/sora/published/me`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) throw new Error(`list published videos failed: ${r.status}`)
+  return r.json()
+}
+
 export async function listSoraCharacters(
   tokenId?: string | null,
   cursor?: string | null,

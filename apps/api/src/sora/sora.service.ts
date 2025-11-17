@@ -2083,6 +2083,124 @@ export class SoraService {
   }
 
   /**
+   * 获取已发布的Sora视频（用户自己的发布）
+   */
+  async getMyPublishedVideos(userId: string, tokenId: string | undefined, limit: number = 8) {
+    const token: any = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL('/backend/project_y/profile_feed/me', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    this.logger.log('getPublishedVideos: Fetching user published videos', { userId, tokenId, limit })
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        params: {
+          limit: limit.toString(),
+          cut: 'nf2'
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      })
+
+      const data = res.data as any
+      const items: any[] = Array.isArray(data?.items) ? data.items : []
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg = (data && (data.message || data.error)) || `Published videos fetch failed with status ${res.status}`
+        this.logger.error('getPublishedVideos upstream error', { tokenId, status: res.status, data: res.data })
+        throw new HttpException({ message: msg, upstreamStatus: res.status }, res.status)
+      }
+
+      // 获取视频代理域名配置并重写URL
+      const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+      const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+
+      const processedItems = items.map((item) => {
+        const post = item.post
+        const attachments = post.attachments || []
+        const soraAttachment = attachments.find((att: any) => att.kind === 'sora')
+
+        if (!soraAttachment) {
+          return {
+            id: post.id,
+            kind: 'sora_published',
+            title: post.text || null,
+            prompt: soraAttachment?.prompt || post.text || null,
+            width: soraAttachment?.width || null,
+            height: soraAttachment?.height || null,
+            createdAt: post.posted_at ? new Date(post.posted_at * 1000).toISOString() : null,
+            thumbnailUrl: rewrite(soraAttachment?.encodings?.thumbnail?.path || post.preview_image_url),
+            videoUrl: rewrite(soraAttachment?.encodings?.source?.path || soraAttachment?.url),
+            postId: post.id,
+            profile: item.profile,
+            raw: item,
+            likeCount: post.like_count || 0,
+            viewCount: post.view_count || 0,
+            remixCount: post.remix_count || 0,
+            postedAt: post.posted_at ? new Date(post.posted_at * 1000).toISOString() : null,
+            permalink: post.permalink || null,
+          }
+        }
+
+        const enc = soraAttachment.encodings || {}
+
+        return {
+          id: post.id,
+          kind: 'sora_published',
+          title: post.text || null,
+          prompt: soraAttachment.prompt || post.text || null,
+          width: soraAttachment.width || null,
+          height: soraAttachment.height || null,
+          createdAt: post.posted_at ? new Date(post.posted_at * 1000).toISOString() : null,
+          thumbnailUrl: rewrite(enc.thumbnail?.path || post.preview_image_url),
+          videoUrl: rewrite(enc.source?.path || soraAttachment.url || soraAttachment.downloadable_url),
+          postId: post.id,
+          profile: item.profile,
+          raw: item,
+          likeCount: post.like_count || 0,
+          viewCount: post.view_count || 0,
+          remixCount: post.remix_count || 0,
+          postedAt: post.posted_at ? new Date(post.posted_at * 1000).toISOString() : null,
+          permalink: post.permalink || null,
+        }
+      })
+
+      this.logger.log('getPublishedVideos: Success', { userId, tokenId, itemsCount: processedItems.length })
+
+      return {
+        items: processedItems,
+        cursor: data?.cursor ?? null,
+      }
+    } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+        throw new HttpException(
+          { message: '当前配置不可用，请稍后再试', upstreamStatus: err?.response?.status ?? null },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        )
+      }
+
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message = err?.response?.data?.message || err?.response?.statusText || err?.message || 'Published videos fetch failed'
+      this.logger.error('getPublishedVideos exception', { userId, tokenId, status, message })
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
+  /**
    * 根据 task_id 反查对应的草稿信息（用于获取最终视频 URL）
    * 更新：优先使用直接 API 调用，避免列表匹配
    */
@@ -2301,8 +2419,6 @@ export class SoraService {
         baseUrl,
       })
 
-      let lastError: any = null
-
       try {
         const maxAttempts = 3
         const retryDelayMs = 3000 // 稍微减少重试延迟，因为我们有多个token要搜索
@@ -2486,7 +2602,6 @@ export class SoraService {
         // 如果当前token的所有尝试都失败，继续尝试下一个token
         // 这个逻辑会在循环结束后自然执行
       } catch (err: any) {
-        lastError = err
         this.logger.error('Error searching token', {
           taskId,
           tokenId: token.id,
