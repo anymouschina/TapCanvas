@@ -815,6 +815,22 @@ export class SoraService {
     },
     triedTokenIds: string[] = [],
   ): Promise<any> {
+    // 详细记录请求参数，便于调试
+    this.logger.log('createVideoTask: Received request', {
+      userId,
+      tokenId,
+      triedTokenIds,
+      payload: {
+        prompt: payload.prompt,
+        orientation: payload.orientation,
+        size: payload.size,
+        n_frames: payload.n_frames,
+        inpaintFileId: payload.inpaintFileId,
+        imageUrl: payload.imageUrl ? 'PROVIDED' : null,
+        remixTargetId: payload.remixTargetId,
+      }
+    })
+
     let token: any
 
     // 如果指定了 remixTargetId，需要先解析原视频使用的Token
@@ -1253,8 +1269,8 @@ export class SoraService {
       kind: 'video',
       prompt: payload.prompt,
       title: null,
-      // Sora 当前稳定支持 portrait，先固定为 portrait，避免 landscape/square 异常
-      orientation: 'portrait',
+      // 使用用户请求的orientation，但如果有问题会回退到portrait
+      orientation: payload.orientation || 'portrait',
       size: payload.size || 'small',
       n_frames: typeof payload.n_frames === 'number' ? payload.n_frames : 300,
       inpaint_items: inpaintFileId
@@ -1271,6 +1287,22 @@ export class SoraService {
       video_caption: null,
       storyboard_id: null,
     }
+
+    // 详细记录最终发送给Sora的请求体
+    this.logger.log('createVideoTask: Sending request to Sora API', {
+      url: baseUrl + '/backend/nf/create',
+      body: {
+        kind: body.kind,
+        prompt: body.prompt,
+        title: body.title,
+        orientation: body.orientation,
+        size: body.size,
+        n_frames: body.n_frames,
+        inpaint_items: body.inpaint_items,
+        remix_target_id: body.remix_target_id,
+        model: body.model,
+      }
+    })
 
     try {
       // eslint-disable-next-line no-console

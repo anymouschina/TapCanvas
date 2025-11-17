@@ -245,8 +245,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
   if (isVideoTask) {
     try {
       const aspect = (data as any)?.aspect as string | undefined
-      const orientation: 'portrait' | 'landscape' | 'square' =
-        aspect === '9:16' ? 'portrait' : aspect === '1:1' ? 'square' : 'landscape'
+      const orientation: 'portrait' | 'landscape' | 'square' = 'portrait';
       let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
       const videoDurationSeconds: number =
         (data as any)?.videoDurationSeconds === 15 ? 15 : 10

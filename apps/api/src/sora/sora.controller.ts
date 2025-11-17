@@ -166,6 +166,20 @@ export class SoraController {
     @Req() req: any,
   ) {
     const { tokenId, ...rest } = body
+
+    // 记录控制器层收到的请求
+    console.log('SoraController.createVideo: Received request', {
+      userId: req.user?.sub,
+      tokenId,
+      body: {
+        prompt: body.prompt,
+        orientation: body.orientation,
+        size: body.size,
+        n_frames: body.n_frames,
+        remixTargetId: body.remixTargetId,
+      }
+    })
+
     return this.service.createVideoTask(String(req.user.sub), tokenId, rest)
   }
 
