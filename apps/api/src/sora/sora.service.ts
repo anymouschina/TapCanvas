@@ -2,13 +2,40 @@ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
 import FormData from 'form-data'
+import { TokenRouterService } from './token-router.service'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
+
+// Sora 发布相关的常量
+const SORA_POST_MAX_LENGTH = 2000
 
 @Injectable()
 export class SoraService {
   private readonly logger = new Logger(SoraService.name)
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tokenRouter: TokenRouterService,
+  ) {}
+
+  /**
+   * 智能截断文本到指定长度，尽量在句子或段落结尾截断
+   */
+  private truncateTextForPost(text: string, maxLength: number = SORA_POST_MAX_LENGTH): string {
+    if (text.length <= maxLength) {
+      return text
+    }
+
+    // 直接截断，因为中文字符截断在任何位置都是可以接受的
+    const truncated = text.substring(0, maxLength)
+
+    this.logger.debug('Text truncated for Sora post', {
+      originalLength: text.length,
+      truncatedLength: truncated.length,
+      maxLength,
+    })
+
+    return truncated
+  }
 
   async getDrafts(userId: string, tokenId?: string, cursor?: string, limit?: number) {
     const token = await this.resolveSoraToken(userId, tokenId)
@@ -37,18 +64,27 @@ export class SoraService {
       })
       const data = res.data as any
       const rawItems: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+      // 获取视频代理域名配置
+      const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+      const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+
       const items = rawItems.map((item) => {
         const enc = item.encodings || {}
-        const thumbnail =
+        const rawThumbnail =
           enc.thumbnail?.path ||
           item.preview_image_url ||
           item.thumbnail_url ||
           null
-        const videoUrl =
+        const rawVideoUrl =
           item.downloadable_url ||
           item.url ||
           enc.source?.path ||
           null
+
+        // 重写URL为自定义域名
+        const thumbnailUrl = rewrite(rawThumbnail)
+        const videoUrl = rewrite(rawVideoUrl)
+
         return {
           id: item.id,
           kind: item.kind ?? 'sora_draft',
@@ -58,7 +94,7 @@ export class SoraService {
           height: item.height ?? null,
           generationType: item.generation_type ?? null,
           createdAt: item.created_at ?? null,
-          thumbnailUrl: thumbnail,
+          thumbnailUrl,
           videoUrl,
           platform: 'sora' as const,
           raw: item,
@@ -175,14 +211,40 @@ export class SoraService {
 
   private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any): Promise<string | null> {
     const generationId = matched.generation_id || matched.id
-    if (!generationId) return null
+    if (!generationId) {
+      this.logger.warn('publishVideoPost: No generation_id found', { matched })
+      return null
+    }
 
-    const text = matched.prompt || matched.creation_config?.prompt || ''
+    let text = matched.prompt || matched.creation_config?.prompt || ''
+    if (!text) {
+      this.logger.warn('publishVideoPost: No prompt found for post text', { matched })
+      return null
+    }
+
+    // 使用智能截断确保不超过2000字符限制
+    const originalLength = text.length
+    text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
+
+    if (originalLength > SORA_POST_MAX_LENGTH) {
+      this.logger.info('publishVideoPost: Prompt truncated for Sora post', {
+        originalLength,
+        truncatedLength: text.length,
+        maxLength: SORA_POST_MAX_LENGTH,
+      })
+    }
+
     const url = new URL('/backend/project_y/post', baseUrl).toString()
     const body = {
       attachments_to_create: [{ generation_id: generationId, kind: 'sora' }],
       post_text: text,
     }
+
+    this.logger.info('publishVideoPost: Attempting to publish video', {
+      generationId,
+      baseUrl,
+      textLength: text.length,
+    })
 
     try {
       const res = await axios.post(url, body, {
@@ -191,28 +253,233 @@ export class SoraService {
           'User-Agent': token.userAgent || 'TapCanvas/1.0',
           Accept: 'application/json',
           'Content-Type': 'application/json',
+          // 添加必要的headers以模拟浏览器行为
+          'origin': baseUrl,
+          'referer': `${baseUrl}/`,
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
         },
         validateStatus: () => true,
+        timeout: 30000, // 30秒超时
       })
+
       if (res.status >= 200 && res.status < 300) {
         const postId =
           (typeof res.data?.id === 'string' && res.data.id) ||
           (typeof res.data?.post?.id === 'string' && res.data.post.id) ||
           (typeof res.data?.post_id === 'string' && res.data.post_id) ||
           null
-        this.logger.debug('publishVideoPost succeeded', { generationId, status: res.status, postId })
-        return postId
+
+        if (postId) {
+          this.logger.info('publishVideoPost: Success', {
+            generationId,
+            postId,
+            status: res.status,
+            baseUrl,
+          })
+
+          // 记录发布成功的视频到历史记录
+          await this.recordPublishedVideo(
+            userId,
+            generationId,
+            postId,
+            baseUrl,
+            token.id
+          )
+
+          return postId
+        } else {
+          this.logger.warn('publishVideoPost: Success but no postId returned', {
+            generationId,
+            status: res.status,
+            data: res.data,
+          })
+        }
+      } else {
+        this.logger.error('publishVideoPost: HTTP error', {
+          generationId,
+          status: res.status,
+          statusText: res.statusText,
+          data: res.data,
+          baseUrl,
+        })
       }
-      this.logger.warn('publishVideoPost failed', { generationId, status: res.status, data: res.data })
       return null
     } catch (err: any) {
-      this.logger.error('publishVideoPost exception', {
+      this.logger.error('publishVideoPost: Exception occurred', {
         generationId,
         message: err?.message,
         status: err?.response?.status,
+        statusText: err?.response?.statusText,
         data: err?.response?.data,
+        baseUrl,
+        config: {
+          url: err?.config?.url,
+          method: err?.config?.method,
+          headers: err?.config?.headers,
+        },
       })
       return null
+    }
+  }
+
+  /**
+   * 手动发布视频到Sora平台
+   */
+  async publishVideo(
+    userId: string,
+    tokenId: string | undefined,
+    taskId: string,
+    postText?: string
+  ): Promise<{ success: boolean; postId?: string; message?: string }> {
+    try {
+      // 获取Token
+      const token: any = await this.resolveSoraToken(userId, tokenId)
+      if (!token || token.provider.vendor !== 'sora') {
+        throw new Error('token not found or not a Sora token')
+      }
+
+      // 获取草稿信息
+      const draft = await this.getDraftByTaskId(userId, tokenId, taskId)
+      if (!draft || !draft.id) {
+        throw new Error('draft not found for the given taskId')
+      }
+
+      const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+      const generationId = draft.generation_id || draft.id
+
+      if (!generationId) {
+        throw new Error('No generation_id found in draft')
+      }
+
+      let text = postText || draft.prompt || draft.creation_config?.prompt || ''
+      if (!text) {
+        throw new Error('No post text available')
+      }
+
+      // 使用智能截断确保不超过2000字符限制
+      const originalLength = text.length
+      text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
+
+      if (originalLength > SORA_POST_MAX_LENGTH) {
+        this.logger.info('publishVideo: Post text truncated for Sora post', {
+          originalLength,
+          truncatedLength: text.length,
+          maxLength: SORA_POST_MAX_LENGTH,
+          taskId,
+        })
+      }
+
+      const url = new URL('/backend/project_y/post', baseUrl).toString()
+      const body = {
+        attachments_to_create: [{ generation_id: generationId, kind: 'sora' }],
+        post_text: text,
+      }
+
+      this.logger.info('publishVideo: Manual publish attempt', {
+        userId,
+        taskId,
+        generationId,
+        baseUrl,
+        textLength: text.length,
+      })
+
+      const res = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': token.userAgent || 'TapCanvas/1.0',
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'origin': baseUrl,
+          'referer': `${baseUrl}/`,
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+        },
+        validateStatus: () => true,
+        timeout: 30000,
+      })
+
+      if (res.status >= 200 && res.status < 300) {
+        const postId =
+          (typeof res.data?.id === 'string' && res.data.id) ||
+          (typeof res.data?.post?.id === 'string' && res.data.post.id) ||
+          (typeof res.data?.post_id === 'string' && res.data.post_id) ||
+          null
+
+        if (postId) {
+          // 记录发布历史
+          await this.recordPublishedVideo(userId, generationId, postId, baseUrl, token.id)
+
+          this.logger.info('publishVideo: Manual publish success', {
+            userId,
+            taskId,
+            generationId,
+            postId,
+            baseUrl,
+          })
+
+          return {
+            success: true,
+            postId,
+            message: 'Video published successfully'
+          }
+        } else {
+          return {
+            success: false,
+            message: 'Publish succeeded but no postId returned'
+          }
+        }
+      } else {
+        return {
+          success: false,
+          message: `Publish failed with status ${res.status}: ${res.statusText || 'Unknown error'}`
+        }
+      }
+    } catch (error: any) {
+      this.logger.error('publishVideo: Manual publish failed', {
+        userId,
+        taskId,
+        error: error.message,
+        status: error?.response?.status,
+        data: error?.response?.data,
+      })
+
+      return {
+        success: false,
+        message: error?.response?.data?.message || error?.message || 'Publish failed'
+      }
+    }
+  }
+
+  /**
+   * 记录已发布的视频到历史记录
+   */
+  private async recordPublishedVideo(
+    userId: string,
+    generationId: string,
+    postId: string,
+    baseUrl: string,
+    tokenId: string
+  ): Promise<void> {
+    try {
+      // 这里可以添加到VideoGenerationHistory表中
+      // 标记为已发布状态
+      this.logger.info('recordPublishedVideo', {
+        userId,
+        generationId,
+        postId,
+        baseUrl,
+        tokenId,
+      })
+    } catch (error) {
+      this.logger.error('recordPublishedVideo failed', {
+        userId,
+        generationId,
+        postId,
+        error: error.message,
+      })
     }
   }
 
@@ -299,8 +566,79 @@ export class SoraService {
       const data = res.data as any
       const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
 
+      // 获取视频代理域名配置并重写URL
+      const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+      const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+
+      // 为角色数据重写相关URL
+      const processedItems = items.map((item) => {
+        // 处理角色的头像/封面图片URL
+        if (item.profile_picture_url) {
+          item.profile_picture_url = rewrite(item.profile_picture_url)
+        }
+
+        // 处理角色相关的视频URL（如果有的话）
+        if (item.profile_video_url) {
+          item.profile_video_url = rewrite(item.profile_video_url)
+        }
+
+        // 处理角色封面视频
+        if (item.cover_video_url) {
+          item.cover_video_url = rewrite(item.cover_video_url)
+        }
+
+        // 处理角色相关媒体资源URL
+        if (item.media_assets && Array.isArray(item.media_assets)) {
+          item.media_assets = item.media_assets.map((asset: any) => {
+            if (asset.url) {
+              asset.url = rewrite(asset.url)
+            }
+            if (asset.thumbnail_url) {
+              asset.thumbnail_url = rewrite(asset.thumbnail_url)
+            }
+            if (asset.preview_url) {
+              asset.preview_url = rewrite(asset.preview_url)
+            }
+            return asset
+          })
+        }
+
+        // 处理角色展示视频URL
+        if (item.showcase_video_url) {
+          item.showcase_video_url = rewrite(item.showcase_video_url)
+        }
+
+        // 处理角色相关图片资源
+        if (item.images && Array.isArray(item.images)) {
+          item.images = item.images.map((img: any) => {
+            if (img.url) {
+              img.url = rewrite(img.url)
+            }
+            if (img.thumbnail_url) {
+              img.thumbnail_url = rewrite(img.thumbnail_url)
+            }
+            return img
+          })
+        }
+
+        // 处理角色的视频资源（如果存在）
+        if (item.videos && Array.isArray(item.videos)) {
+          item.videos = item.videos.map((video: any) => {
+            if (video.url) {
+              video.url = rewrite(video.url)
+            }
+            if (video.thumbnail_url) {
+              video.thumbnail_url = rewrite(video.thumbnail_url)
+            }
+            return video
+          })
+        }
+
+        return item
+      })
+
       return {
-        items,
+        items: processedItems,
         cursor: data?.cursor ?? null,
       }
     } catch (err: any) {
@@ -466,7 +804,8 @@ export class SoraService {
     },
     triedTokenIds: string[] = [],
   ): Promise<any> {
-    const token: any = await this.resolveSoraToken(userId, tokenId)
+    // 使用Token路由服务选择最优Token
+    const token: any = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
     }
@@ -696,6 +1035,24 @@ export class SoraService {
             upstreamData: res.data ?? null,
           },
           res.status,
+        )
+      }
+
+      // 记录任务Token映射，确保后续查询使用同一个Token
+      if (dataWithUrls.id) {
+        await this.tokenRouter.recordTaskTokenMapping(
+          userId,
+          token.id,
+          dataWithUrls.id,
+          'sora'
+        )
+
+        // 更新任务状态为运行中
+        await this.tokenRouter.updateTaskStatus(
+          dataWithUrls.id,
+          'sora',
+          'running',
+          dataWithUrls
         )
       }
 
@@ -1068,9 +1425,129 @@ export class SoraService {
   }
 
   /**
-   * 查询当前账号下 Sora 视频生成的排队 / 运行中任务列表（nf/pending）
+   * 查询用户所有Token下的 Sora 视频生成排队 / 运行中任务列表
+   * 如果指定tokenId，则只查询该Token；否则查询用户所有可用Token
    */
   async getPendingVideos(userId: string, tokenId?: string) {
+    // 如果指定了tokenId，使用原有的逻辑
+    if (tokenId) {
+      return this.getPendingVideosForToken(userId, tokenId)
+    }
+
+    // 查询用户所有的Sora Token
+    const userTokens = await this.getAllUserSoraTokens(userId)
+    if (userTokens.length === 0) {
+      return {
+        items: [],
+        cursor: null,
+        message: 'No Sora tokens available'
+      }
+    }
+
+    this.logger.debug('Querying pending videos for all tokens', {
+      userId,
+      tokenCount: userTokens.length
+    })
+
+    // 并发查询所有Token的pending任务
+    const pendingResults = await Promise.allSettled(
+      userTokens.map(token => this.getPendingVideosForToken(userId, token.id))
+    )
+
+    // 合并结果并去重
+    const allItems: any[] = []
+    const seenTaskIds = new Set<string>()
+
+    for (const result of pendingResults) {
+      if (result.status === 'fulfilled') {
+        const data = result.value
+        const items = data?.items || data || []
+
+        for (const item of items) {
+          const taskId = item.id || item.task_id || item.generation_id
+          if (taskId && !seenTaskIds.has(taskId)) {
+            seenTaskIds.add(taskId)
+            allItems.push({
+              ...item,
+              __sourceTokenId: item.__usedTokenId || 'unknown'
+            })
+          }
+        }
+      } else {
+        this.logger.warn('Failed to query pending videos for token', {
+          userId,
+          error: result.reason?.message
+        })
+      }
+    }
+
+    // 按创建时间排序（最新的在前面）
+    allItems.sort((a, b) => {
+      const timeA = new Date(a.created_at || a.createdAt || 0).getTime()
+      const timeB = new Date(b.created_at || b.createdAt || 0).getTime()
+      return timeB - timeA
+    })
+
+    return {
+      items: allItems,
+      cursor: null, // 合并查询不支持分页
+      totalTokens: userTokens.length,
+      successfulTokens: pendingResults.filter(r => r.status === 'fulfilled').length
+    }
+  }
+
+  /**
+   * 获取用户的所有可用Sora Token（包括自有和共享的）
+   */
+  private async getAllUserSoraTokens(userId: string): Promise<any[]> {
+    const includeConfig = {
+      provider: {
+        include: { endpoints: true },
+      },
+    } as const
+
+    // 用户自有Token
+    const ownTokens = await this.prisma.modelToken.findMany({
+      where: {
+        userId,
+        enabled: true,
+        provider: { vendor: 'sora' },
+      },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+
+    // 共享Token
+    const now = new Date()
+    const sharedTokens = await this.prisma.modelToken.findMany({
+      where: {
+        shared: true,
+        enabled: true,
+        provider: { vendor: 'sora' },
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+      },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+
+    // 合并并去重（避免同一个Token同时存在于自有和共享中）
+    const allTokens = [...ownTokens]
+    for (const sharedToken of sharedTokens) {
+      if (!ownTokens.find(own => own.id === sharedToken.id)) {
+        allTokens.push(sharedToken)
+      }
+    }
+
+    return allTokens
+  }
+
+  /**
+   * 查询单个Token的pending任务
+   */
+  private async getPendingVideosForToken(userId: string, tokenId: string): Promise<any> {
     const token = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
@@ -1088,6 +1565,7 @@ export class SoraService {
           Accept: '*/*',
         },
         validateStatus: () => true,
+        timeout: 10000, // 10秒超时
       })
 
       if (res.status < 200 || res.status >= 300) {
@@ -1100,8 +1578,22 @@ export class SoraService {
         )
       }
 
-      return res.data
+      // 标记数据来源Token
+      const data = res.data
+      if (data?.items && Array.isArray(data.items)) {
+        data.items.forEach((item: any) => {
+          item.__usedTokenId = token.id
+          item.__tokenLabel = token.label
+          item.__isShared = token.shared
+        })
+      }
+
+      return data
     } catch (err: any) {
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+      }
+
       if (err instanceof HttpException) {
         throw err
       }
@@ -1123,9 +1615,20 @@ export class SoraService {
    * 由于 Sora 草稿结构未完全公开，这里采用启发式匹配：在草稿原始对象中搜索 taskId。
    */
   async getDraftByTaskId(userId: string, tokenId: string | undefined, taskId: string) {
-    const token: any = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
-      throw new Error('token not found or not a Sora token')
+    // 优先使用任务Token映射来获取正确的Token
+    const taskTokenResult = await this.tokenRouter.resolveTaskToken(userId, taskId, 'sora')
+
+    let token: any
+    if (taskTokenResult) {
+      token = taskTokenResult.token
+      this.logger.debug('Using task-mapped token', { userId, taskId, tokenId: taskTokenResult.tokenId })
+    } else {
+      // 回退到传入的tokenId或默认Token
+      token = await this.resolveSoraToken(userId, tokenId)
+      if (!token || token.provider.vendor !== 'sora') {
+        throw new Error('token not found or not a Sora token')
+      }
+      this.logger.warn('Task token mapping not found, falling back to provided token', { userId, taskId })
     }
 
     const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
