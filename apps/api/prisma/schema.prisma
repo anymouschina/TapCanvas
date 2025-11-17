@@ -71,8 +71,8 @@ model Asset {
   id        String   @id @default(uuid())
   name      String
   data      Json
-  ownerId   String?
-  owner     User?    @relation(fields: [ownerId], references: [id])
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id])
   createdAt DateTime @default(now())

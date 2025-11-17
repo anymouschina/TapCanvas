@@ -647,16 +647,16 @@ export async function markDraftPromptUsed(prompt: string, provider = 'sora'): Pr
   if (!r.ok) throw new Error(`mark prompt used failed: ${r.status}`)
 }
 
-// Assets API
-export type ServerAssetDto = { id: string; name: string; data: any; createdAt: string; updatedAt: string; projectId?: string|null }
+// Assets API - 用户级别资产
+export type ServerAssetDto = { id: string; name: string; data: any; createdAt: string; updatedAt: string; userId: string; projectId?: string|null }
 
-export async function listServerAssets(projectId: string): Promise<ServerAssetDto[]> {
-  const r = await fetch(`${API_BASE}/assets?projectId=${encodeURIComponent(projectId)}`, withAuth())
+export async function listServerAssets(): Promise<ServerAssetDto[]> {
+  const r = await fetch(`${API_BASE}/assets`, withAuth())
   if (!r.ok) throw new Error(`list assets failed: ${r.status}`)
   return r.json()
 }
 
-export async function createServerAsset(payload: { projectId: string; name: string; data: any }): Promise<ServerAssetDto> {
+export async function createServerAsset(payload: { name: string; data: any }): Promise<ServerAssetDto> {
   const r = await fetch(`${API_BASE}/assets`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
   if (!r.ok) throw new Error(`create asset failed: ${r.status}`)
   return r.json()
