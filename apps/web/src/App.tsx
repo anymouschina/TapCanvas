@@ -10,7 +10,7 @@ import KeyboardShortcuts from './KeyboardShortcuts'
 import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNames, saveTemplate, renameTemplate } from './templates'
 import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
-import { saveProjectFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
+import { listModelProviders, listModelEndpoints, upsertModelProvider, saveProjectFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
 import { useAuth } from './auth/store'
 import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
@@ -52,6 +52,33 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [])
+
+  React.useEffect(() => {
+    let canceled = false
+    const loadVideoEndpoint = async () => {
+      try {
+        const providers = await listModelProviders()
+        let sora = providers.find((p) => p.vendor === 'sora')
+        if (!sora) {
+          sora = await upsertModelProvider({ name: 'Sora', vendor: 'sora' })
+        }
+        if (!sora) return
+        const endpoints = await listModelEndpoints(sora.id)
+        const videos = endpoints.find((e) => e.key === 'videos')
+        if (!canceled) {
+          useUIStore.getState().setSoraVideoBaseUrl(videos?.baseUrl || null)
+        }
+      } catch {
+        if (!canceled) {
+          useUIStore.getState().setSoraVideoBaseUrl(null)
+        }
+      }
+    }
+    loadVideoEndpoint()
+    return () => {
+      canceled = true
+    }
   }, [])
 
   // 初始化时：根据 URL 中的 projectId 选择项目；否则默认第一个项目

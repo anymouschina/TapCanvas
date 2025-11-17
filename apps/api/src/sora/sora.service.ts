@@ -464,6 +464,7 @@ export class SoraService {
       imageUrl?: string | null
       remixTargetId?: string | null
     },
+    triedTokenIds: string[] = [],
   ) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
@@ -638,6 +639,25 @@ export class SoraService {
         if (dataEnc.gif?.path) dataEnc.gif.path = rewrite(dataEnc.gif.path)
       }
 
+      const isRateLimited =
+        res.status === 429 &&
+        (res.data?.type === 'rate_limit_exhausted' ||
+          res.data?.rate_limit_and_credit_balance?.rate_limit_reached === true)
+      if (isRateLimited) {
+        const exclusionIds = Array.from(new Set([...triedTokenIds, token.id]))
+        const altToken = await this.findAlternateSoraToken(userId, exclusionIds)
+        if (altToken) {
+          if (token.shared) {
+            await this.registerSharedFailure(token.id)
+          }
+          return this.createVideoTask(
+            userId,
+            altToken.id,
+            payload,
+            exclusionIds,
+          )
+        }
+      }
       if (res.status < 200 || res.status >= 300) {
         const upstreamError =
           res.data?.error ||
@@ -663,7 +683,10 @@ export class SoraService {
         )
       }
 
-      return res.data
+      dataWithUrls.__usedTokenId = token.id
+      dataWithUrls.__switchedFromTokenIds = triedTokenIds
+      dataWithUrls.__tokenSwitched = triedTokenIds.length > 0
+      return dataWithUrls
     } catch (err: any) {
       if (err instanceof HttpException) {
         throw err
@@ -1148,6 +1171,7 @@ export class SoraService {
 
         if (matched) {
           const enc = matched.encodings || {}
+
           const thumbnail =
             enc.thumbnail?.path ||
             matched.preview_image_url ||
@@ -1159,20 +1183,11 @@ export class SoraService {
             enc.source?.path ||
             null
 
-          this.logger.debug('getDraftByTaskId success', {
-            taskId,
-            tokenId,
-            matchedId: matched.id,
-            videoUrl,
-            thumbnail,
-          })
-
-          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched)
-
           const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
           const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
           const thumbnailUrl = rewrite(thumbnail)
           const finalVideoUrl = rewrite(videoUrl)
+
           if (thumbnailUrl) {
             matched.thumbnail_url = thumbnailUrl
             if (enc.thumbnail) enc.thumbnail.path = thumbnailUrl
@@ -1183,12 +1198,22 @@ export class SoraService {
             if (enc.source) enc.source.path = finalVideoUrl
           }
 
+          this.logger.debug('getDraftByTaskId success', {
+            taskId,
+            tokenId,
+            matchedId: matched.id,
+            videoUrl: finalVideoUrl || videoUrl,
+            thumbnail: thumbnailUrl || thumbnail,
+          })
+
+          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched)
+
           return {
             id: matched.id,
             title: matched.title ?? null,
             prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
-            thumbnailUrl: thumbnail,
-            videoUrl,
+            thumbnailUrl: thumbnailUrl || thumbnail,
+            videoUrl: finalVideoUrl || videoUrl,
             postId,
             raw: matched,
           }
@@ -1370,6 +1395,44 @@ export class SoraService {
       })
     }
     return shared
+  }
+
+  private async findAlternateSoraToken(userId: string, excludeIds: string[]): Promise<any | null> {
+    const includeConfig = {
+      provider: {
+        include: { endpoints: true },
+      },
+    } as const
+    const filtered = (excludeIds || []).filter(Boolean)
+
+    const owned = await this.prisma.modelToken.findFirst({
+      where: {
+        userId,
+        enabled: true,
+        provider: { vendor: 'sora' },
+        NOT: filtered.length ? { id: { in: filtered } } : undefined,
+      },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+    if (owned) return owned
+
+    const now = new Date()
+    const shared = await this.prisma.modelToken.findFirst({
+      where: {
+        shared: true,
+        enabled: true,
+        provider: { vendor: 'sora' },
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+        NOT: filtered.length ? { id: { in: filtered } } : undefined,
+      },
+      include: includeConfig,
+      orderBy: { createdAt: 'asc' },
+    })
+    return shared || null
   }
 
   private async resolveBaseUrl(

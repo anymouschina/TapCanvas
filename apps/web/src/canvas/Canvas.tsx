@@ -583,7 +583,12 @@ function CanvasInner(): JSX.Element {
             const sType = sHandle.toString().startsWith('out-') ? sHandle.toString().slice(4).split('-')[0] : undefined
             const tType = tHandle.toString().startsWith('in-') ? tHandle.toString().slice(3).split('-')[0] : undefined
             if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) {
-              const crossAllowed = sType === 'video' && tType === 'subtitle'
+              let crossAllowed = sType === 'video' && tType === 'subtitle'
+              const sourceIsVideoKind = ['video', 'composeVideo'].includes(sKind || '')
+              const targetIsVideoKind = ['video', 'composeVideo'].includes(tKind || '')
+              if (!crossAllowed && sType === 'video' && sourceIsVideoKind && targetIsVideoKind) {
+                crossAllowed = true
+              }
               if (!crossAllowed) {
                 lastReason.current = `类型不兼容：${sType} → ${tType}`
                 return false

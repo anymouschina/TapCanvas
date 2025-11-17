@@ -37,6 +37,8 @@ type UIState = {
   setCurrentProject: (p: { id?: string|null; name: string } | null) => void
   promptSuggestMode: 'history' | 'semantic'
   setPromptSuggestMode: (m: 'history' | 'semantic') => void
+  soraVideoBaseUrl: string | null
+  setSoraVideoBaseUrl: (url: string | null) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -76,4 +78,6 @@ export const useUIStore = create<UIState>((set) => ({
   setCurrentProject: (p) => set({ currentProject: p }),
   promptSuggestMode: 'history',
   setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
+  soraVideoBaseUrl: null,
+  setSoraVideoBaseUrl: (url) => set({ soraVideoBaseUrl: url }),
 }))

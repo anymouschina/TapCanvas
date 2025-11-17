@@ -1,12 +1,60 @@
 import type { Node } from 'reactflow'
 import type { TaskKind } from '../api/server'
-import { runTaskByVendor, createSoraVideo, listSoraPendingVideos, getSoraVideoDraftByTask } from '../api/server'
+import {
+  runTaskByVendor,
+  createSoraVideo,
+  listSoraPendingVideos,
+  getSoraVideoDraftByTask,
+} from '../api/server'
+import { useUIStore } from '../ui/uiStore'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
 
 function nowLabel() {
   return new Date().toLocaleTimeString()
+}
+
+const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
+
+function getRemixTargetIdFromNodeData(data?: any): string | null {
+  if (!data) return null
+  const model = String(data.videoModel || '').toLowerCase()
+  const normalized = model.replace('_', '-')
+  if (
+    normalized &&
+    !SORA_VIDEO_MODEL_WHITELIST.has(model) &&
+    !SORA_VIDEO_MODEL_WHITELIST.has(normalized)
+  ) {
+    return null
+  }
+  const candidates = [
+    data.videoPostId,
+    data.videoDraftId,
+    data.videoTaskId,
+    data.soraVideoTask?.generation_id,
+    data.soraVideoTask?.id,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return null
+}
+
+function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
+  if (!url) return null
+  const base = useUIStore.getState().soraVideoBaseUrl
+  if (!base) return url
+  try {
+    const parsed = new URL(url)
+    const baseParsed = new URL(base)
+    parsed.protocol = baseParsed.protocol
+    parsed.host = baseParsed.host
+    parsed.port = baseParsed.port
+    return parsed.toString()
+  } catch {
+    return url
+  }
 }
 
 export async function runNodeRemote(id: string, get: Getter, set: Setter) {
@@ -185,12 +233,32 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       const aspect = (data as any)?.aspect as string | undefined
       const orientation: 'portrait' | 'landscape' | 'square' =
         aspect === '9:16' ? 'portrait' : aspect === '1:1' ? 'square' : 'landscape'
-      const remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
+      let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
       const videoDurationSeconds: number =
         (data as any)?.videoDurationSeconds === 15 ? 15 : 10
       const nFrames = videoDurationSeconds === 15 ? 450 : 300
+      const getCurrentVideoTokenId = () =>
+        (get().nodes.find((n: Node) => n.id === id)?.data as any)
+          ?.videoTokenId as string | undefined
 
-      setNodeStatus(id, 'running', { progress: 5 })
+      const edges = (state.edges || []) as any[]
+      const inbound = edges.filter((e) => e.target === id)
+      if (!remixTargetId && inbound.length) {
+        for (const edge of inbound) {
+          const src = state.nodes.find((n) => n.id === edge.source)
+          const candidate = getRemixTargetIdFromNodeData(src?.data)
+          if (candidate) {
+            remixTargetId = candidate
+            break
+          }
+        }
+      }
+
+      const initialPatch: any = { progress: 5 }
+      if (remixTargetId) {
+        initialPatch.remixTargetId = remixTargetId
+      }
+      setNodeStatus(id, 'running', initialPatch)
       appendLog(
         id,
         `[${nowLabel()}] 调用 Sora-2 生成视频任务…`,
@@ -202,8 +270,6 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       // 若当前节点配置了 remix 目标，则优先走 remix，不再尝试图生
       if (!remixTargetId) {
         try {
-          const edges = (state.edges || []) as any[]
-          const inbound = edges.filter((e) => e.target === id)
           if (inbound.length) {
             const lastEdge = inbound[inbound.length - 1]
             const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
@@ -232,6 +298,14 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         imageUrl: imageUrlForUpload,
         remixTargetId,
       })
+      const usedTokenId = (res as any).__usedTokenId as string | undefined
+      const switchedTokenIds = (res as any).__switchedFromTokenIds as string[] | undefined
+      if (switchedTokenIds?.length) {
+        appendLog(
+          id,
+          `[${nowLabel()}] 当前 Token 限额已耗尽，已自动切换备用 Token 继续执行`,
+        )
+      }
       const generatedModel = (res?.model as string | undefined) || 'sy_8'
 
       const taskId = res?.id as string | undefined
@@ -256,6 +330,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         videoOrientation: orientation,
         videoPrompt: prompt,
         videoDurationSeconds,
+        videoTokenId: usedTokenId || null,
         videoModel: generatedModel,
       })
 
@@ -280,6 +355,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           videoOrientation: orientation,
           videoPrompt: prompt,
           videoDurationSeconds,
+          videoTokenId: usedTokenId || null,
         })
         appendLog(
           id,
@@ -290,7 +366,6 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       // 轮询 nf/pending，最多轮询一段时间（例如 ~90s）
-      const tokenId = (data as any)?.videoTokenId as string | undefined
       let draftSynced = false
       let lastDraft:
         | {
@@ -303,21 +378,23 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           }
         | null = null
 
-      async function syncDraftVideo(force = false) {
+          async function syncDraftVideo(force = false) {
         if (!force && draftSynced) return null
         draftSynced = true
         try {
-          const draft = await getSoraVideoDraftByTask(taskId, tokenId || null)
+          const draftTokenId = getCurrentVideoTokenId()
+          const draft = await getSoraVideoDraftByTask(taskId, draftTokenId || null)
           lastDraft = draft
           const patch: any = {
             videoDraftId: draft.id,
             videoPostId: draft.postId || null,
+            videoTokenId: draftTokenId || null,
           }
           if (draft.videoUrl) {
-            patch.videoUrl = draft.videoUrl
+            patch.videoUrl = rewriteSoraVideoResourceUrl(draft.videoUrl)
           }
           if (draft.thumbnailUrl) {
-            patch.videoThumbnailUrl = draft.thumbnailUrl
+            patch.videoThumbnailUrl = rewriteSoraVideoResourceUrl(draft.thumbnailUrl)
           }
           if (draft.title) {
             patch.videoTitle = draft.title
@@ -388,7 +465,9 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
       if (finishedFromPending) {
         const finalDraft = lastDraft
-        const videoUrl = finalDraft?.videoUrl || (data as any)?.videoUrl || null
+        const videoUrl = rewriteSoraVideoResourceUrl(
+          finalDraft?.videoUrl || (data as any)?.videoUrl || null,
+        )
         const successPreview =
           videoUrl
             ? { type: 'text' as const, value: 'Sora 视频已生成，可在节点中预览。' }
@@ -415,6 +494,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
           videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
           videoModel: generatedModel,
+          videoTokenId: usedTokenId || null,
         })
 
         if (videoUrl) {
@@ -453,6 +533,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
         videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
         videoModel: generatedModel,
+        videoTokenId: usedTokenId || null,
       })
 
       appendLog(
@@ -504,6 +585,17 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       })
 
       lastRes = res
+
+      if (vendor === 'qwen' && res.status === 'failed') {
+        const rawResponse = res.raw?.response
+        const errMsg =
+          rawResponse?.output?.error_message ||
+          rawResponse?.error_message ||
+          rawResponse?.message ||
+          res.raw?.message ||
+          'Qwen 图像生成失败'
+        throw new Error(errMsg)
+      }
 
       const textOut = (res.raw && (res.raw.text as string)) || ''
       if (isTextTask && textOut.trim()) {

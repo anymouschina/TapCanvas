@@ -58,6 +58,13 @@ const getModelLabel = (kind: string | undefined, key: string) => {
   return match ? match.label : key
 }
 
+const genTaskNodeId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return (crypto as any).randomUUID()
+  }
+  return `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 type Data = {
   label: string
   kind?: string
@@ -388,7 +395,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     const pos = { x: self.position.x + 260, y: self.position.y }
     const basePrompt = ((self.data as any)?.prompt as string | undefined) || lastText || ''
     useRFStore.setState((s: any) => {
-      const newId = `n${s.nextId}`
+      const newId = genTaskNodeId()
       const nodeData: any = { label: '继续', kind: 'textToImage' }
       if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt.trim()
       const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
@@ -410,9 +417,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     const self = all.find((n: any) => n.id === id)
     if (!self) return
     const pos = { x: self.position.x + 260, y: self.position.y }
-    const before = useRFStore.getState().nextId
     useRFStore.setState((s: any) => {
-      const newId = `n${s.nextId}`
+      const newId = genTaskNodeId()
       const label = targetKind === 'image' ? 'Image' : 'Video'
       const newKind = targetKind === 'image' ? 'image' : 'composeVideo'
       const basePrompt = (self.data as any)?.prompt as string | undefined

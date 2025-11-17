@@ -81,6 +81,7 @@ export default function ModelPanel(): JSX.Element | null {
         setVideosShared(!!byKey.videos?.shared)
         setVideoShared(!!byKey.video?.shared)
         setSoraShared(!!byKey.sora?.shared)
+        useUIStore.getState().setSoraVideoBaseUrl(byKey.videos?.baseUrl || null)
         const ts = await listModelTokens(sora.id)
         setTokens(ts)
 
@@ -390,6 +391,7 @@ export default function ModelPanel(): JSX.Element | null {
                             shared: videosShared,
                           })
                           setVideosEndpoint(saved)
+                          useUIStore.getState().setSoraVideoBaseUrl(saved.baseUrl || null)
                         }}
             />
             <Modal
