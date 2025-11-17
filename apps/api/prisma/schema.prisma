@@ -256,7 +256,8 @@ model VideoGenerationHistory {
   remixTargetId String? // Remix目标ID
 
   // 生成结果
-  taskId      String   // 任务ID
+  taskId      String   // 任务ID (task_ 开头)
+  generationId String? // 生成ID (gen_ 开头) - 用于remix
   status      String   // pending, running, success, error
   videoUrl    String?  // 生成的视频URL
   thumbnailUrl String? // 缩略图URL

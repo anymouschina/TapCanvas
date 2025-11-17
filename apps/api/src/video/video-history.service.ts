@@ -7,6 +7,7 @@ export interface VideoGenerationRecord {
   parameters?: any
   imageUrl?: string | null
   taskId: string
+  generationId?: string | null
   status: string
   videoUrl?: string | null
   thumbnailUrl?: string | null
@@ -107,6 +108,7 @@ export class VideoHistoryService {
       width?: number
       height?: number
       cost?: number
+      generationId?: string
     }
   ): Promise<void> {
     try {
@@ -148,6 +150,7 @@ export class VideoHistoryService {
           parameters: true,
           imageUrl: true,
           taskId: true,
+          generationId: true,
           status: true,
           videoUrl: true,
           thumbnailUrl: true,
@@ -225,6 +228,7 @@ export class VideoHistoryService {
             parameters: true,
             imageUrl: true,
             taskId: true,
+            generationId: true,
             status: true,
             videoUrl: true,
             thumbnailUrl: true,
