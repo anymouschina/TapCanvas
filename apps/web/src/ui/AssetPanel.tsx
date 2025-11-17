@@ -12,6 +12,7 @@ import {
   listSoraDrafts,
   deleteSoraDraft,
   markDraftPromptUsed,
+  listSoraPublishedVideos,
   listSoraCharacters,
   deleteSoraCharacter,
   checkSoraCharacterUsername,
@@ -43,7 +44,7 @@ export default function AssetPanel(): JSX.Element | null {
   const mounted = active === 'assets'
   const currentProject = useUIStore(s => s.currentProject)
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
-  const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-characters'>('local')
+  const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-published' | 'sora-characters'>('local')
   const [soraProviders, setSoraProviders] = React.useState<ModelProviderDto[]>([])
   const [soraTokens, setSoraTokens] = React.useState<ModelTokenDto[]>([])
   const [selectedTokenId, setSelectedTokenId] = React.useState<string | null>(null)
@@ -51,6 +52,9 @@ export default function AssetPanel(): JSX.Element | null {
   const [draftCursor, setDraftCursor] = React.useState<string | null>(null)
   const [draftLoading, setDraftLoading] = React.useState(false)
   const [soraUsingShared, setSoraUsingShared] = React.useState(false)
+  const [publishedVideos, setPublishedVideos] = React.useState<any[]>([])
+  const [publishedLoading, setPublishedLoading] = React.useState(false)
+  const [soraPublishedUsingShared, setSoraPublishedUsingShared] = React.useState(false)
   const [characters, setCharacters] = React.useState<any[]>([])
   const [charCursor, setCharCursor] = React.useState<string | null>(null)
   const [charLoading, setCharLoading] = React.useState(false)
@@ -93,8 +97,9 @@ export default function AssetPanel(): JSX.Element | null {
   }, [currentProject?.id, mounted])
 
   React.useEffect(() => {
-    if (!mounted || (tab !== 'sora' && tab !== 'sora-characters')) return
+    if (!mounted || (tab !== 'sora' && tab !== 'sora-published' && tab !== 'sora-characters')) return
     if (tab === 'sora') setDraftLoading(true)
+    if (tab === 'sora-published') setPublishedLoading(true)
     if (tab === 'sora-characters') setCharLoading(true)
     listModelProviders()
       .then((ps) => {
@@ -106,6 +111,7 @@ export default function AssetPanel(): JSX.Element | null {
         if (!sora) {
           setSoraTokens([])
           setDrafts([])
+          setPublishedVideos([])
           setCharacters([])
           setSelectedTokenId(null)
           return
@@ -113,7 +119,7 @@ export default function AssetPanel(): JSX.Element | null {
         const tokens = await listModelTokens(sora.id)
         setSoraTokens(tokens)
 
-        // 当进入 Sora 草稿或角色 Tab 时，如果还没有选择 Token，则默认选第一个
+        // 当进入 Sora 草稿、发布或角色 Tab 时，如果还没有选择 Token，则默认选第一个
         if (!selectedTokenId && tokens.length > 0) {
           setSelectedTokenId(tokens[0].id)
         }
@@ -149,6 +155,22 @@ export default function AssetPanel(): JSX.Element | null {
               setSoraUsingShared(false)
             }
           }
+        } else if (tab === 'sora-published') {
+          if (activeTokenId) {
+            setSoraPublishedUsingShared(false)
+            try {
+              const data = await listSoraPublishedVideos(activeTokenId, 8)
+              setPublishedVideos(data.items || [])
+            } catch (err: any) {
+              console.error(err)
+              alert('当前配置不可用，请稍后再试')
+              setPublishedVideos([])
+              setSoraPublishedUsingShared(false)
+            }
+          } else {
+            setPublishedVideos([])
+            setSoraPublishedUsingShared(false)
+          }
         } else if (tab === 'sora-characters') {
           if (activeTokenId) {
             setSoraCharUsingShared(false)
@@ -173,6 +195,7 @@ export default function AssetPanel(): JSX.Element | null {
         setSoraProviders([])
         setSoraTokens([])
         setDrafts([])
+        setPublishedVideos([])
         setCharacters([])
         setSelectedTokenId(null)
         setDraftCursor(null)
@@ -180,6 +203,7 @@ export default function AssetPanel(): JSX.Element | null {
       })
       .finally(() => {
         if (tab === 'sora') setDraftLoading(false)
+        if (tab === 'sora-published') setPublishedLoading(false)
         if (tab === 'sora-characters') setCharLoading(false)
       })
   }, [mounted, tab, selectedTokenId])
@@ -436,6 +460,7 @@ export default function AssetPanel(): JSX.Element | null {
                 <Tabs.List>
                   <Tabs.Tab value="local">项目资产</Tabs.Tab>
                   <Tabs.Tab value="sora">Sora 草稿</Tabs.Tab>
+                  <Tabs.Tab value="sora-published">已发布SORA</Tabs.Tab>
                   <Tabs.Tab value="sora-characters">Sora 角色</Tabs.Tab>
                 </Tabs.List>
                 <Tabs.Panel value="local" pt="xs">
@@ -471,26 +496,64 @@ export default function AssetPanel(): JSX.Element | null {
                         onChange={async (value) => {
                           setSelectedTokenId(value)
                           setSoraUsingShared(false)
+                          setSoraPublishedUsingShared(false)
+                          setSoraCharUsingShared(false)
                           // 切换身份时先清空当前列表并展示加载态，过渡更自然
                           setDrafts([])
                           setDraftCursor(null)
+                          setPublishedVideos([])
+                          setCharacters([])
+                          setCharCursor(null)
+
                           if (value) {
-                            setDraftLoading(true)
-                            try {
-                              const data = await listSoraDrafts(value)
-                              setDrafts(data.items || [])
-                              setDraftCursor(data.cursor || null)
-                            } catch (err: any) {
-                              console.error(err)
-                              alert('当前配置不可用，请稍后再试')
-                              setDrafts([])
-                              setDraftCursor(null)
-                            } finally {
-                              setDraftLoading(false)
+                            // 根据当前 Tab 加载对应的数据
+                            if (tab === 'sora') {
+                              setDraftLoading(true)
+                              try {
+                                const data = await listSoraDrafts(value)
+                                setDrafts(data.items || [])
+                                setDraftCursor(data.cursor || null)
+                              } catch (err: any) {
+                                console.error(err)
+                                alert('当前配置不可用，请稍后再试')
+                                setDrafts([])
+                                setDraftCursor(null)
+                              } finally {
+                                setDraftLoading(false)
+                              }
+                            } else if (tab === 'sora-published') {
+                              setPublishedLoading(true)
+                              try {
+                                const data = await listSoraPublishedVideos(value, 8)
+                                setPublishedVideos(data.items || [])
+                              } catch (err: any) {
+                                console.error(err)
+                                alert('当前配置不可用，请稍后再试')
+                                setPublishedVideos([])
+                              } finally {
+                                setPublishedLoading(false)
+                              }
+                            } else if (tab === 'sora-characters') {
+                              setCharLoading(true)
+                              try {
+                                const data = await listSoraCharacters(value)
+                                setCharacters(data.items || [])
+                                setCharCursor(data.cursor || null)
+                              } catch (err: any) {
+                                console.error(err)
+                                alert('当前配置不可用，请稍后再试')
+                                setCharacters([])
+                                setCharCursor(null)
+                              } finally {
+                                setCharLoading(false)
+                              }
                             }
                           } else {
                             setDrafts([])
                             setDraftCursor(null)
+                            setPublishedVideos([])
+                            setCharacters([])
+                            setCharCursor(null)
                           }
                         }}
                       />
@@ -590,6 +653,149 @@ export default function AssetPanel(): JSX.Element | null {
                           </Button>
                         </Group>
                       )}
+                    </div>
+                  </Stack>
+                </Tabs.Panel>
+                <Tabs.Panel value="sora-published" pt="xs">
+                  <Stack gap="sm">
+                    <Group justify="space-between">
+                      <Text size="sm">Sora Token 身份</Text>
+                      <Select
+                        size="xs"
+                        placeholder={soraTokens.length === 0 ? '暂无 Sora 密钥' : '选择 Token'}
+                        data={soraTokens.map((t) => ({ value: t.id, label: t.label }))}
+                        value={selectedTokenId}
+                        comboboxProps={{ zIndex: 8005 }}
+                        onChange={async (value) => {
+                          setSelectedTokenId(value)
+                          setSoraPublishedUsingShared(false)
+                          setPublishedVideos([])
+                          if (value) {
+                            setPublishedLoading(true)
+                            try {
+                              const data = await listSoraPublishedVideos(value, 8)
+                              setPublishedVideos(data.items || [])
+                            } catch (err: any) {
+                              console.error(err)
+                              alert('当前配置不可用，请稍后再试')
+                              setPublishedVideos([])
+                            } finally {
+                              setPublishedLoading(false)
+                            }
+                          } else {
+                            setPublishedVideos([])
+                          }
+                        }}
+                      />
+                    </Group>
+                    {soraPublishedUsingShared && (
+                      <Text size="xs" c="dimmed">
+                        正在使用共享的 Sora 配置
+                      </Text>
+                    )}
+                    <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
+                      {publishedLoading && publishedVideos.length === 0 && (
+                        <Center py="sm">
+                          <Group gap="xs">
+                            <Loader size="xs" />
+                            <Text size="xs" c="dimmed">
+                              正在加载已发布视频…
+                            </Text>
+                          </Group>
+                        </Center>
+                      )}
+                      {!publishedLoading && publishedVideos.length === 0 && (
+                        <Text size="xs" c="dimmed">暂无已发布视频或未选择 Token</Text>
+                      )}
+                      <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="xs">
+                        {publishedVideos.map((video, idx) => (
+                          <Paper key={video.id ?? idx} withBorder radius="md" p="xs">
+                            {video.thumbnailUrl && (
+                              <Image
+                                src={video.thumbnailUrl}
+                                alt={video.title || `发布视频 ${idx + 1}`}
+                                radius="sm"
+                                mb={4}
+                                height={100}
+                                fit="cover"
+                              />
+                            )}
+                            <Text size="xs" fw={500} lineClamp={1}>
+                              {video.title || `发布视频 ${idx + 1}`}
+                            </Text>
+                            <div style={{ minHeight: 34, marginTop: 2 }}>
+                              {video.prompt && (
+                                <Text size="xs" c="dimmed" lineClamp={2}>
+                                  {video.prompt}
+                                </Text>
+                              )}
+                            </div>
+                            <Group gap="xs" mt={4}>
+                              {video.likeCount !== undefined && (
+                                <Text size="xs" c="dimmed">
+                                  👍 {video.likeCount}
+                                </Text>
+                              )}
+                              {video.viewCount !== undefined && (
+                                <Text size="xs" c="dimmed">
+                                  👁️ {video.viewCount}
+                                </Text>
+                              )}
+                              {video.remixCount !== undefined && (
+                                <Text size="xs" c="dimmed">
+                                  🔄 {video.remixCount}
+                                </Text>
+                              )}
+                            </Group>
+                            <Group justify="flex-end" gap={4} mt={4}>
+                              {video.permalink && (
+                                <Tooltip label="在Sora中查看" withArrow>
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    onClick={() => {
+                                      window.open(video.permalink, '_blank')
+                                    }}
+                                  >
+                                    <IconPlayerPlay size={16} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
+                              <Tooltip label="预览视频" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  onClick={() => {
+                                    if (!video.videoUrl) return
+                                    openPreview({ url: video.videoUrl, kind: 'video', name: video.title || `发布视频 ${idx + 1}` })
+                                  }}
+                                >
+                                  <IconPlayerPlay size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="添加到画布" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="light"
+                                  onClick={() => {
+                                    if (!video.videoUrl) return
+                                    addNode('taskNode', video.title || '已发布视频', {
+                                      kind: 'video',
+                                      source: 'sora',
+                                      videoUrl: video.videoUrl,
+                                      thumbnailUrl: video.thumbnailUrl,
+                                      prompt: video.prompt || '',
+                                    })
+                                    setActivePanel(null)
+                                  }}
+                                >
+                                  <IconPlus size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          </Paper>
+                        ))}
+                      </SimpleGrid>
                     </div>
                   </Stack>
                 </Tabs.Panel>

@@ -235,4 +235,14 @@ export class SoraController {
   ) {
     return this.service.getPostDetailsById(String(req.user.sub), tokenId, postId)
   }
+
+  @Get('published/me')
+  getPublishedVideos(
+    @Query('tokenId') tokenId: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Req() req: any,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) || 8 : 8
+    return this.service.getMyPublishedVideos(String(req.user.sub), tokenId, parsedLimit)
+  }
 }
