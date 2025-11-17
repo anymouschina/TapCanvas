@@ -7,6 +7,7 @@ import {
   getSoraVideoDraftByTask,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
+import { toast } from '../ui/toast'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -289,6 +290,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         }
       }
 
+      const preferredTokenId = (data as any)?.videoTokenId as string | undefined
       const res = await createSoraVideo({
         prompt,
         orientation,
@@ -297,10 +299,12 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         inpaintFileId,
         imageUrl: imageUrlForUpload,
         remixTargetId,
+        tokenId: preferredTokenId || undefined,
       })
       const usedTokenId = (res as any).__usedTokenId as string | undefined
       const switchedTokenIds = (res as any).__switchedFromTokenIds as string[] | undefined
       if (switchedTokenIds?.length) {
+        toast('当前 Sora Token 限额已耗尽，已切换备用 Token 继续执行', 'warning')
         appendLog(
           id,
           `[${nowLabel()}] 当前 Token 限额已耗尽，已自动切换备用 Token 继续执行`,

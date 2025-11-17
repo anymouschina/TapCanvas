@@ -500,6 +500,9 @@ export async function createSoraVideo(payload: {
   if (payload.remixTargetId) {
     body.remixTargetId = payload.remixTargetId
   }
+  if (payload.tokenId) {
+    body.tokenId = payload.tokenId
+  }
 
   const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({
     method: 'POST',
