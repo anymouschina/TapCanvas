@@ -65,7 +65,7 @@ export class TokenRouterService {
         },
       })
 
-      this.logger.debug('Task token mapping recorded', { userId, tokenId, taskId, provider })
+      this.logger.log('Task token mapping recorded', { userId, tokenId, taskId, provider })
     } catch (error) {
       this.logger.error('Failed to record task token mapping', {
         userId,
@@ -152,7 +152,7 @@ export class TokenRouterService {
         }
       }
 
-      this.logger.debug('Task token resolved successfully', {
+      this.logger.log('Task token resolved successfully', {
         userId,
         tokenId: mapping.tokenId,
         taskId,
@@ -216,7 +216,7 @@ export class TokenRouterService {
         },
       })
 
-      this.logger.debug('Task status updated', { taskId, provider, status })
+      this.logger.log('Task status updated', { taskId, provider, status })
     } catch (error) {
       this.logger.error('Failed to update task status', {
         taskId,
@@ -312,7 +312,7 @@ export class TokenRouterService {
       })
 
       if (result.count > 0) {
-        this.logger.debug('Cleaned up expired task token mappings', {
+        this.logger.log('Cleaned up expired task token mappings', {
           deletedCount: result.count,
         })
       }

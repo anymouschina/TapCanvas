@@ -5,19 +5,22 @@ export interface VideoGenerationRecord {
   id: string
   prompt: string
   parameters?: any
-  imageUrl?: string
+  imageUrl?: string | null
   taskId: string
   status: string
-  videoUrl?: string
-  thumbnailUrl?: string
+  videoUrl?: string | null
+  thumbnailUrl?: string | null
   duration?: number
   width?: number
   height?: number
-  tokenId?: string
+  tokenId?: string | null
   provider: string
-  model?: string
-  cost?: number
+  model?: string | null
+  cost?: number | null
   createdAt: string
+  isFavorite?: boolean
+  rating?: number | null
+  notes?: string | null
 }
 
 @Injectable()
@@ -75,7 +78,7 @@ export class VideoHistoryService {
         },
       })
 
-      this.logger.debug('Video generation recorded', {
+      this.logger.log('Video generation recorded', {
         userId,
         nodeId,
         taskId,
@@ -112,7 +115,7 @@ export class VideoHistoryService {
         data: updates,
       })
 
-      this.logger.debug('Video generation updated', { taskId, updates })
+      this.logger.log('Video generation updated', { taskId, updates })
     } catch (error) {
       this.logger.error('Failed to update video generation', {
         taskId,
@@ -162,6 +165,15 @@ export class VideoHistoryService {
       return records.map(record => ({
         ...record,
         createdAt: record.createdAt.toISOString(),
+        duration: record.duration || undefined,
+        width: record.width || undefined,
+        height: record.height || undefined,
+        cost: record.cost || undefined,
+        model: record.model || undefined,
+        tokenId: record.tokenId || undefined,
+        videoUrl: record.videoUrl || undefined,
+        thumbnailUrl: record.thumbnailUrl || undefined,
+        imageUrl: record.imageUrl || undefined,
       }))
     } catch (error) {
       this.logger.error('Failed to get node video history', {
@@ -236,6 +248,15 @@ export class VideoHistoryService {
         records: records.map(record => ({
           ...record,
           createdAt: record.createdAt.toISOString(),
+          duration: record.duration || undefined,
+          width: record.width || undefined,
+          height: record.height || undefined,
+          cost: record.cost || undefined,
+          model: record.model || undefined,
+          tokenId: record.tokenId || undefined,
+          videoUrl: record.videoUrl || undefined,
+          thumbnailUrl: record.thumbnailUrl || undefined,
+          imageUrl: record.imageUrl || undefined,
         })),
         total,
       }
@@ -265,7 +286,7 @@ export class VideoHistoryService {
         data: { isFavorite },
       })
 
-      this.logger.debug('Video favorite toggled', { userId, recordId, isFavorite })
+      this.logger.log('Video favorite toggled', { userId, recordId, isFavorite })
     } catch (error) {
       this.logger.error('Failed to toggle video favorite', {
         userId,
@@ -302,7 +323,7 @@ export class VideoHistoryService {
         data: updateData,
       })
 
-      this.logger.debug('Video rating and notes added', { userId, recordId, rating })
+      this.logger.log('Video rating and notes added', { userId, recordId, rating })
     } catch (error) {
       this.logger.error('Failed to add video rating and notes', {
         userId,

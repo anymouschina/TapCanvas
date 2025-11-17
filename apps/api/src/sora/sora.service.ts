@@ -3,6 +3,7 @@ import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
 import FormData from 'form-data'
 import { TokenRouterService } from './token-router.service'
+import { VideoHistoryService } from '../video/video-history.service'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 
@@ -15,6 +16,7 @@ export class SoraService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokenRouter: TokenRouterService,
+    private readonly videoHistory: VideoHistoryService,
   ) {}
 
   /**
@@ -28,7 +30,7 @@ export class SoraService {
     // 直接截断，因为中文字符截断在任何位置都是可以接受的
     const truncated = text.substring(0, maxLength)
 
-    this.logger.debug('Text truncated for Sora post', {
+    this.logger.log('Text truncated for Sora post', {
       originalLength: text.length,
       truncatedLength: truncated.length,
       maxLength,
@@ -209,7 +211,7 @@ export class SoraService {
     }
   }
 
-  private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any): Promise<string | null> {
+  private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any, userId: string): Promise<string | null> {
     const generationId = matched.generation_id || matched.id
     if (!generationId) {
       this.logger.warn('publishVideoPost: No generation_id found', { matched })
@@ -227,7 +229,7 @@ export class SoraService {
     text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
 
     if (originalLength > SORA_POST_MAX_LENGTH) {
-      this.logger.info('publishVideoPost: Prompt truncated for Sora post', {
+      this.logger.log('publishVideoPost: Prompt truncated for Sora post', {
         originalLength,
         truncatedLength: text.length,
         maxLength: SORA_POST_MAX_LENGTH,
@@ -240,7 +242,7 @@ export class SoraService {
       post_text: text,
     }
 
-    this.logger.info('publishVideoPost: Attempting to publish video', {
+    this.logger.log('publishVideoPost: Attempting to publish video', {
       generationId,
       baseUrl,
       textLength: text.length,
@@ -272,7 +274,7 @@ export class SoraService {
           null
 
         if (postId) {
-          this.logger.info('publishVideoPost: Success', {
+          this.logger.log('publishVideoPost: Success', {
             generationId,
             postId,
             status: res.status,
@@ -347,13 +349,13 @@ export class SoraService {
       }
 
       const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
-      const generationId = draft.generation_id || draft.id
+      const generationId = (draft as any).generation_id || draft.id
 
       if (!generationId) {
         throw new Error('No generation_id found in draft')
       }
 
-      let text = postText || draft.prompt || draft.creation_config?.prompt || ''
+      let text = postText || (draft as any).prompt || (draft as any).creation_config?.prompt || ''
       if (!text) {
         throw new Error('No post text available')
       }
@@ -363,7 +365,7 @@ export class SoraService {
       text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
 
       if (originalLength > SORA_POST_MAX_LENGTH) {
-        this.logger.info('publishVideo: Post text truncated for Sora post', {
+        this.logger.log('publishVideo: Post text truncated for Sora post', {
           originalLength,
           truncatedLength: text.length,
           maxLength: SORA_POST_MAX_LENGTH,
@@ -377,7 +379,7 @@ export class SoraService {
         post_text: text,
       }
 
-      this.logger.info('publishVideo: Manual publish attempt', {
+      this.logger.log('publishVideo: Manual publish attempt', {
         userId,
         taskId,
         generationId,
@@ -412,7 +414,7 @@ export class SoraService {
           // 记录发布历史
           await this.recordPublishedVideo(userId, generationId, postId, baseUrl, token.id)
 
-          this.logger.info('publishVideo: Manual publish success', {
+          this.logger.log('publishVideo: Manual publish success', {
             userId,
             taskId,
             generationId,
@@ -466,7 +468,7 @@ export class SoraService {
     try {
       // 这里可以添加到VideoGenerationHistory表中
       // 标记为已发布状态
-      this.logger.info('recordPublishedVideo', {
+      this.logger.log('recordPublishedVideo', {
         userId,
         generationId,
         postId,
@@ -804,8 +806,57 @@ export class SoraService {
     },
     triedTokenIds: string[] = [],
   ): Promise<any> {
-    // 使用Token路由服务选择最优Token
-    const token: any = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+    let token: any
+
+    // 如果指定了 remixTargetId，需要先解析原视频使用的Token
+    if (payload.remixTargetId) {
+      this.logger.log('Resolving token for remix target', {
+        userId,
+        remixTargetId: payload.remixTargetId,
+      })
+
+      // 从VideoGenerationHistory查找原视频的Token信息
+      const originalVideo = await this.prisma.videoGenerationHistory.findFirst({
+        where: {
+          taskId: payload.remixTargetId,
+          userId, // 确保用户只能remix自己的视频
+          status: 'success',
+        },
+        select: {
+          tokenId: true,
+        },
+      })
+
+      if (originalVideo && originalVideo.tokenId) {
+        // 使用原视频的Token
+        const tokenResult = await this.tokenRouter.resolveTaskToken(userId, payload.remixTargetId, 'sora')
+        if (tokenResult) {
+          token = tokenResult.token
+          this.logger.log('Using original token for remix', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+            tokenId: token.id,
+          })
+        } else {
+          this.logger.warn('Original token not found, falling back to optimal token', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+            originalTokenId: originalVideo.tokenId,
+          })
+          token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+        }
+      } else {
+        this.logger.warn('Remix target video not found, falling back to optimal token', {
+          userId,
+          remixTargetId: payload.remixTargetId,
+        })
+        token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+      }
+    } else {
+      // 没有remixTargetId，使用Token路由服务选择最优Token
+      token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+    }
+
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
     }
@@ -1053,6 +1104,29 @@ export class SoraService {
           'sora',
           'running',
           dataWithUrls
+        )
+
+        // 记录视频生成历史（用于后续remix和token解析）
+        await this.videoHistory.recordVideoGeneration(
+          userId,
+          '', // nodeId - video creation from sora controller may not have nodeId context
+          undefined, // projectId - direct sora creation may not have project context
+          payload.prompt,
+          {
+            orientation: payload.orientation,
+            size: payload.size,
+            n_frames: payload.n_frames,
+            inpaintFileId: payload.inpaintFileId,
+            imageUrl: payload.imageUrl,
+            remixTargetId: payload.remixTargetId,
+          },
+          dataWithUrls.id,
+          'pending', // initial status
+          {
+            provider: 'sora',
+            model: undefined, // Sora doesn't expose model info in current implementation
+            remixTargetId: payload.remixTargetId || undefined,
+          }
         )
       }
 
@@ -1444,7 +1518,7 @@ export class SoraService {
       }
     }
 
-    this.logger.debug('Querying pending videos for all tokens', {
+    this.logger.log('Querying pending videos for all tokens', {
       userId,
       tokenCount: userTokens.length
     })
@@ -1621,7 +1695,7 @@ export class SoraService {
     let token: any
     if (taskTokenResult) {
       token = taskTokenResult.token
-      this.logger.debug('Using task-mapped token', { userId, taskId, tokenId: taskTokenResult.tokenId })
+      this.logger.log('Using task-mapped token', { userId, taskId, tokenId: taskTokenResult.tokenId })
     } else {
       // 回退到传入的tokenId或默认Token
       token = await this.resolveSoraToken(userId, tokenId)
@@ -1634,7 +1708,7 @@ export class SoraService {
     const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
-    this.logger.debug('getDraftByTaskId request', { userId, tokenId, taskId, url })
+    this.logger.log('getDraftByTaskId request', { userId, tokenId, taskId, url })
 
     try {
       const maxAttempts = 3
@@ -1670,7 +1744,7 @@ export class SoraService {
         const data = res.data as any
         const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
 
-        this.logger.debug('getDraftByTaskId response', {
+        this.logger.log('getDraftByTaskId response', {
           attempt,
           taskId,
           tokenId,
@@ -1717,7 +1791,7 @@ export class SoraService {
             if (enc.source) enc.source.path = finalVideoUrl
           }
 
-          this.logger.debug('getDraftByTaskId success', {
+          this.logger.log('getDraftByTaskId success', {
             taskId,
             tokenId,
             matchedId: matched.id,
@@ -1725,7 +1799,26 @@ export class SoraService {
             thumbnail: thumbnailUrl || thumbnail,
           })
 
-          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched)
+          // 更新视频生成历史状态为成功
+          await this.videoHistory.updateVideoGeneration(taskId, {
+            status: 'success',
+            videoUrl: finalVideoUrl || videoUrl || undefined,
+            thumbnailUrl: thumbnailUrl || thumbnail || undefined,
+            duration: matched.duration || undefined,
+            width: matched.width || undefined,
+            height: matched.height || undefined,
+          })
+
+          // 更新任务状态为成功
+          await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'success', {
+            videoUrl: finalVideoUrl || videoUrl,
+            thumbnailUrl: thumbnailUrl || thumbnail,
+            width: matched.width,
+            height: matched.height,
+            duration: matched.duration,
+          })
+
+          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched, userId)
 
           return {
             id: matched.id,
@@ -1754,6 +1847,17 @@ export class SoraService {
           tokenId,
           itemsCount: items.length,
         })
+
+        // 更新视频生成历史状态为失败
+        await this.videoHistory.updateVideoGeneration(taskId, {
+          status: 'error',
+        })
+
+        // 更新任务状态为失败
+        await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', {
+          error: 'Video not found in Sora drafts',
+        })
+
         throw new HttpException(
           { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
           HttpStatus.NOT_FOUND,
@@ -1765,6 +1869,16 @@ export class SoraService {
         HttpStatus.NOT_FOUND,
       )
     } catch (err: any) {
+      // 更新视频生成历史状态为失败
+      await this.videoHistory.updateVideoGeneration(taskId, {
+        status: 'error',
+      })
+
+      // 更新任务状态为失败
+      await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', {
+        error: err?.message || 'Unknown error occurred',
+      })
+
       if (err instanceof HttpException) {
         throw err
       }
