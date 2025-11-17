@@ -816,41 +816,92 @@ export class SoraService {
       })
 
       // 从VideoGenerationHistory查找原视频的Token信息
+      // 优先按 generationId 查找，然后按 taskId 查找
       const originalVideo = await this.prisma.videoGenerationHistory.findFirst({
         where: {
-          taskId: payload.remixTargetId,
           userId, // 确保用户只能remix自己的视频
-          status: 'success',
+          OR: [
+            { generationId: payload.remixTargetId }, // 传入的是 gen_ 开头的ID
+            { taskId: payload.remixTargetId }, // 传入的是 task_ 开头的ID
+          ],
+          // 不限制状态，因为历史数据可能没有状态更新
         },
         select: {
           tokenId: true,
+          status: true,
+          taskId: true, // 保留 taskId 用于后续处理
+          generationId: true, // 保留 generationId 用于日志
+        },
+        orderBy: {
+          createdAt: 'desc',
         },
       })
 
       if (originalVideo && originalVideo.tokenId) {
-        // 使用原视频的Token
-        const tokenResult = await this.tokenRouter.resolveTaskToken(userId, payload.remixTargetId, 'sora')
+        // 使用原视频存储的实际taskId来查找Token映射
+        const actualTaskId = originalVideo.taskId
+        const tokenResult = await this.tokenRouter.resolveTaskToken(userId, actualTaskId, 'sora')
         if (tokenResult) {
           token = tokenResult.token
           this.logger.log('Using original token for remix', {
             userId,
             remixTargetId: payload.remixTargetId,
+            actualTaskId,
+            generationId: originalVideo.generationId,
             tokenId: token.id,
+            originalStatus: originalVideo.status,
           })
         } else {
-          this.logger.warn('Original token not found, falling back to optimal token', {
+          this.logger.warn('Original token not found in TaskTokenMapping, falling back to optimal token', {
             userId,
             remixTargetId: payload.remixTargetId,
+            actualTaskId,
             originalTokenId: originalVideo.tokenId,
+            originalStatus: originalVideo.status,
           })
           token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
         }
       } else {
-        this.logger.warn('Remix target video not found, falling back to optimal token', {
+        // 如果在VideoGenerationHistory中找不到，尝试直接从TaskTokenMapping查找
+        this.logger.warn('Remix target video not found in VideoGenerationHistory, checking TaskTokenMapping', {
           userId,
           remixTargetId: payload.remixTargetId,
         })
-        token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+
+        const taskTokenMapping = await this.prisma.taskTokenMapping.findFirst({
+          where: {
+            taskId: payload.remixTargetId,
+            userId,
+          },
+          select: {
+            tokenId: true,
+          },
+        })
+
+        if (taskTokenMapping && taskTokenMapping.tokenId) {
+          const tokenResult = await this.tokenRouter.resolveTaskToken(userId, payload.remixTargetId, 'sora')
+          if (tokenResult) {
+            token = tokenResult.token
+            this.logger.log('Using original token from TaskTokenMapping for remix', {
+              userId,
+              remixTargetId: payload.remixTargetId,
+              tokenId: token.id,
+            })
+          } else {
+            this.logger.warn('Token from TaskTokenMapping not found, falling back to optimal token', {
+              userId,
+              remixTargetId: payload.remixTargetId,
+              tokenMappingId: taskTokenMapping.tokenId,
+            })
+            token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+          }
+        } else {
+          this.logger.warn('Remix target video not found in any records, falling back to optimal token', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+          })
+          token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+        }
       }
     } else {
       // 没有remixTargetId，使用Token路由服务选择最优Token
@@ -1807,6 +1858,7 @@ export class SoraService {
             duration: matched.duration || undefined,
             width: matched.width || undefined,
             height: matched.height || undefined,
+            generationId: (matched as any).generation_id || (matched as any).id, // 存储gen_开头的ID
           })
 
           // 更新任务状态为成功
