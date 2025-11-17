@@ -92,9 +92,10 @@ export default function AssetPanel(): JSX.Element | null {
     return Array.from({ length: count }, () => createCharVideoUrl)
   }, [createCharVideoUrl, createCharDuration])
   React.useEffect(() => {
-    const loader = currentProject?.id ? listServerAssets(currentProject.id) : Promise.resolve([])
+    // 资产现在是用户级别的，不依赖项目
+    const loader = mounted ? listServerAssets() : Promise.resolve([])
     loader.then(setAssets).catch(() => setAssets([]))
-  }, [currentProject?.id, mounted])
+  }, [mounted])
 
   React.useEffect(() => {
     if (!mounted || (tab !== 'sora' && tab !== 'sora-published' && tab !== 'sora-characters')) return
@@ -577,7 +578,7 @@ export default function AssetPanel(): JSX.Element | null {
                 onChange={handleCharacterFileChange}
               />
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
-                <Title order={6}>我的资产（项目：{currentProject?.name || '未选择'}）</Title>
+                <Title order={6}>我的资产</Title>
               </Group>
               <Tabs value={tab} onChange={(v) => setTab((v as any) || 'local')}>
                 <Tabs.List>

@@ -692,10 +692,9 @@ function CanvasInner(): JSX.Element {
                 const setIds = new Set(sel.map(n=>n.id))
                 const es = edges.filter(e=> setIds.has(e.source) && setIds.has(e.target))
                 const data = { nodes: sel, edges: es }
-                const proj = useUIStore.getState().currentProject
-                if (!proj?.id) { alert('请先选择或创建项目'); return }
+                // 资产现在是用户级别的，不需要项目ID
                 const { createServerAsset } = await import('../api/server')
-                await createServerAsset({ projectId: proj.id!, name, data })
+                await createServerAsset({ name, data })
               }}>创建资产</Button>
               {!selectionPartialOverlaps && (
                 <Button size="xs" variant="subtle" onClick={()=>{

@@ -8,12 +8,14 @@ export class AssetController {
   constructor(private readonly service: AssetService) {}
 
   @Get()
-  list(@Req() req: any, @Query('projectId') projectId?: string) {
-    return this.service.list(String(req.user.sub), projectId || undefined)
+  list(@Req() req: any) {
+    // 获取用户的所有资产，不限制项目
+    return this.service.list(String(req.user.sub))
   }
 
   @Post()
-  create(@Req() req: any, @Body() body: { name: string; data: any; projectId?: string|null }) {
+  create(@Req() req: any, @Body() body: { name: string; data: any }) {
+    // 创建用户级别的资产
     return this.service.create(String(req.user.sub), body)
   }
 
