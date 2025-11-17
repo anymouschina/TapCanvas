@@ -126,6 +126,16 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
+
+  // 文本节点的系统提示词状态
+  const [systemPrompt, setSystemPrompt] = React.useState<string>(
+    (data as any)?.systemPrompt || '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。',
+  )
+
+  const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(
+    (data as any)?.showSystemPrompt || false,
+  )
+
   const selectedCount = useRFStore(s => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
   const fileRef = React.useRef<HTMLInputElement|null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
@@ -233,6 +243,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (kind === 'textToImage') {
       patch.geminiModel = modelKey
       patch.sampleCount = sampleCount
+      patch.systemPrompt = systemPrompt
+      patch.showSystemPrompt = showSystemPrompt
     }
     if (kind === 'image') {
       patch.imageModel = imageModel
@@ -1059,6 +1071,61 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             </div>
           </div>
           <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材' : '详情'}</Text>
+
+          {/* 系统提示词配置 - 仅对文本节点显示 */}
+          {kind === 'textToImage' && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text size="xs" c="dimmed">系统提示词</Text>
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+                >
+                  {showSystemPrompt ? '隐藏' : '显示'}
+                </Button>
+              </div>
+              {showSystemPrompt && (
+                <Textarea
+                  autosize
+                  minRows={2}
+                  maxRows={4}
+                  placeholder="输入AI的系统提示词，用于指导如何优化用户输入的提示词..."
+                  value={systemPrompt}
+                  onChange={(e) => {
+                    const value = e.currentTarget.value
+                    setSystemPrompt(value)
+                    updateNodeData(id, { systemPrompt: value })
+                  }}
+                  style={{
+                    fontSize: 11,
+                    background: 'rgba(15,23,42,0.9)',
+                    border: '1px solid rgba(148,163,184,0.5)',
+                    color: '#e5e7eb',
+                    marginBottom: 4,
+                  }}
+                />
+              )}
+              {!showSystemPrompt && (
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  onClick={() => setShowSystemPrompt(true)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                    background: 'rgba(15,23,42,0.5)',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontStyle: 'italic'
+                  }}
+                >
+                  {systemPrompt.length > 60 ? systemPrompt.slice(0, 60) + '...' : systemPrompt}
+                </Text>
+              )}
+            </div>
+          )}
+
           {kind === 'composeVideo' && (upstreamImageUrl || upstreamText) && (
             <div style={{ marginBottom: 8 }}>
               {upstreamImageUrl && (

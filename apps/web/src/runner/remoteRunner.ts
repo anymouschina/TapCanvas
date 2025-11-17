@@ -173,6 +173,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
               nodeKind: kind,
               nodeId: id,
               modelKey,
+              systemPrompt: (data as any)?.systemPrompt,
             },
           }),
         ),
