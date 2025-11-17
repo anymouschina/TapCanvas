@@ -213,7 +213,7 @@ export const geminiAdapter: ProviderAdapter = {
 
   async runChat(_req: BaseTaskRequest, _ctx: ProviderContext): Promise<TaskResult> {
     const sys = _req.kind === 'prompt_refine'
-      ? '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。'
+      ? ((_req.extras as any)?.systemPrompt as string) || '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。'
       : undefined
     const modelKeyOverride = (_req.extras as any)?.modelKey as string | undefined
     return callGenerateContent('chat', _req.prompt, _ctx, sys, modelKeyOverride)

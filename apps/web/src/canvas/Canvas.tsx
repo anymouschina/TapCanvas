@@ -24,6 +24,7 @@ import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
 import { useInsertMenuStore } from './insertMenuStore'
+import { uuid } from 'zod/v4'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -102,7 +103,7 @@ function CanvasInner(): JSX.Element {
       const data = JSON.parse(rfdata) as { type: string; label?: string; kind?: string }
       // create node via store but place at computed position
       useRFStore.setState((s) => {
-        const id = `n${s.nextId}`
+        const id = `${uuid()}${s.nextId}`
         const node = {
           id,
           type: data.type as any,
@@ -422,7 +423,7 @@ function CanvasInner(): JSX.Element {
 
     useRFStore.setState(s => {
       const before = s.nextId
-      const id = `n${before}`
+      const id = `${uuid()}${before}`
       let label = 'Text'
       let nodeKind: string = 'textToImage'
       if (kind === 'image') {
