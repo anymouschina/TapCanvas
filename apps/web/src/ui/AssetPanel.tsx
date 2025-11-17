@@ -421,15 +421,138 @@ export default function AssetPanel(): JSX.Element | null {
   const applyAssetAt = (assetId: string, pos: { x: number; y: number }) => {
     const rec = assets.find(a => a.id === assetId)
     if (!rec) return
+
     // translate nodes by shift to current position (align min corner)
     const data: any = rec.data || { nodes: [], edges: [] }
-    const minX = Math.min(...(data.nodes||[]).map((n: any) => n.position.x))
-    const minY = Math.min(...(data.nodes||[]).map((n: any) => n.position.y))
+
+    if (!data.nodes || data.nodes.length === 0) return
+
+    const minX = Math.min(...data.nodes.map((n: any) => n.position.x))
+    const minY = Math.min(...data.nodes.map((n: any) => n.position.y))
     const dx = pos.x - minX
     const dy = pos.y - minY
-    const nodes = (data.nodes||[]).map((n: any) => ({ ...n, id: `n${Math.random().toString(36).slice(2,6)}`, position: { x: n.position.x + dx, y: n.position.y + dy }, selected: false }))
-    const edges = (data.edges||[]).map((e: any) => ({ ...e, id: `e${Math.random().toString(36).slice(2,6)}`, selected: false }))
-    useRFStore.setState(s => ({ nodes: [...s.nodes, ...nodes], edges: [...s.edges, ...edges], nextId: s.nextId + nodes.length }))
+
+    // 创建节点ID映射，用于更新边的引用
+    const idMap: { [oldId: string]: string } = {}
+
+    const nodes = data.nodes.map((n: any) => {
+      // 确保每次都生成完全唯一的新ID
+      const timestamp = Date.now()
+      const random = Math.random().toString(36).slice(2, 10)
+      const newId = `n${timestamp}_${random}`
+      idMap[n.id] = newId
+
+      // 创建完全新的节点对象，避免引用问题
+      return {
+        // 复制基本属性
+        id: newId,
+        type: n.type,
+        position: { x: n.position.x + dx, y: n.position.y + dy },
+        data: {
+          // 深度复制原始数据，但清除所有状态
+          ...(n.data || {}),
+          // 强制清除所有可能的状态数据
+          status: undefined,
+          taskId: undefined,
+          imageResults: undefined,
+          videoResults: undefined,
+          audioUrl: undefined,
+          imageUrl: undefined,
+          videoUrl: undefined,
+          videoThumbnailUrl: undefined,
+          videoTitle: undefined,
+          videoDurationSeconds: undefined,
+          lastText: undefined,
+          textResults: undefined,
+          // 确保所有异步状态被清除
+          lastError: undefined,
+          progress: undefined,
+          // 保留基本的配置数据
+          label: n.data?.label,
+          prompt: n.data?.prompt,
+          kind: n.data?.kind,
+          aspect: n.data?.aspect,
+          scale: n.data?.scale,
+          sampleCount: n.data?.sampleCount,
+          geminiModel: n.data?.geminiModel,
+          imageModel: n.data?.imageModel,
+          videoModel: n.data?.videoModel,
+          systemPrompt: n.data?.systemPrompt,
+          showSystemPrompt: n.data?.showSystemPrompt,
+        },
+        selected: false,
+        dragging: false,
+        hidden: false,
+        deletable: true,
+        selectable: true,
+        dragHandle: undefined,
+        zIndex: 1,
+        focusable: true,
+        connectable: true,
+      }
+    })
+
+    const edges = (data.edges || []).map((e: any) => {
+      const timestamp = Date.now()
+      const random = Math.random().toString(36).slice(2, 10)
+      const newEdgeId = `e${timestamp}_${random}`
+
+      return {
+        // 复制边的属性
+        id: newEdgeId,
+        source: idMap[e.source] || e.source,
+        target: idMap[e.target] || e.target,
+        type: e.type || 'default',
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        animated: false,
+        selected: false,
+        hidden: false,
+        data: e.data || {},
+        deletable: true,
+        selectable: true,
+        focusable: true,
+        updatable: true,
+      }
+    })
+
+    // 使用 useRFStore 的 load 方法来安全地添加节点和边
+    const load = useRFStore.getState().load
+    if (load) {
+      // 先获取当前状态
+      const currentNodes = useRFStore.getState().nodes
+      const currentEdges = useRFStore.getState().edges
+
+      // 计算新的 nextId
+      const maxId = Math.max(
+        ...currentNodes.map((n: any) => {
+          const match = n.id.match(/\d+/)
+          return match ? parseInt(match[0], 10) : 0
+        }),
+        ...nodes.map((n: any) => {
+          const match = n.id.match(/\d+/)
+          return match ? parseInt(match[0], 10) : 0
+        })
+      )
+
+      // 合并节点和边
+      const newNodes = [...currentNodes, ...nodes]
+      const newEdges = [...currentEdges, ...edges]
+
+      // 更新状态
+      useRFStore.setState({
+        nodes: newNodes,
+        edges: newEdges,
+        nextId: maxId + 1
+      })
+    } else {
+      // 备用方案：直接更新状态
+      useRFStore.setState(s => ({
+        nodes: [...s.nodes, ...nodes],
+        edges: [...s.edges, ...edges],
+        nextId: s.nextId + nodes.length
+      }))
+    }
   }
 
   return (
