@@ -465,7 +465,7 @@ export class SoraService {
       remixTargetId?: string | null
     },
     triedTokenIds: string[] = [],
-  ) {
+  ): Promise<any> {
     const token: any = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
@@ -644,9 +644,21 @@ export class SoraService {
         (res.data?.type === 'rate_limit_exhausted' ||
           res.data?.rate_limit_and_credit_balance?.rate_limit_reached === true)
       if (isRateLimited) {
+        this.logger.warn('createVideoTask hit rate limit', {
+          userId,
+          tokenId: token.id,
+          triedTokenIds: triedTokenIds,
+          rateLimitData: res.data?.rate_limit_and_credit_balance,
+        })
         const exclusionIds = Array.from(new Set([...triedTokenIds, token.id]))
         const altToken = await this.findAlternateSoraToken(userId, exclusionIds)
         if (altToken) {
+          this.logger.warn('createVideoTask switching tokens', {
+            userId,
+            from: token.id,
+            to: altToken.id,
+            triedTokenIds: exclusionIds,
+          })
           if (token.shared) {
             await this.registerSharedFailure(token.id)
           }
@@ -657,6 +669,10 @@ export class SoraService {
             exclusionIds,
           )
         }
+        this.logger.warn('createVideoTask no alternate token available', {
+          userId,
+          excluded: exclusionIds,
+        })
       }
       if (res.status < 200 || res.status >= 300) {
         const upstreamError =

@@ -4,6 +4,8 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { textToImageSchema, composeVideoSchema, ttsSchema, subtitleAlignSchema, defaultsFor } from './forms'
 import { TextInput, Textarea, NumberInput, Select, Button, Title, Divider, Text, Group } from '@mantine/core'
+import { listModelProviders, listModelTokens, type ModelTokenDto } from '../api/server'
+import { useUIStore } from '../ui/uiStore'
 
 export default function NodeInspector(): JSX.Element {
   const nodes = useRFStore((s) => s.nodes)
@@ -31,6 +33,13 @@ export default function NodeInspector(): JSX.Element {
     defaultValues: defaultsFor(kind)
   })
 
+  const [soraTokens, setSoraTokens] = React.useState<ModelTokenDto[]>([])
+  const [loadingSoraTokens, setLoadingSoraTokens] = React.useState(false)
+  const [soraTokenError, setSoraTokenError] = React.useState<string | null>(null)
+  const showTokenSelector = kind === 'video' || kind === 'composeVideo'
+  const currentTokenId = (selected?.data as any)?.videoTokenId as string | undefined
+  const openModelPanel = () => useUIStore.getState().setActivePanel('models')
+
   useEffect(() => {
     if (selected) {
       const data = { ...defaultsFor(kind), ...(selected.data || {}) }
@@ -39,6 +48,46 @@ export default function NodeInspector(): JSX.Element {
       form.reset(rest)
     }
   }, [selected?.id, kind])
+
+  useEffect(() => {
+    if (!showTokenSelector) {
+      setSoraTokens([])
+      setSoraTokenError(null)
+      setLoadingSoraTokens(false)
+      return
+    }
+    let canceled = false
+    const load = async () => {
+      setLoadingSoraTokens(true)
+      setSoraTokenError(null)
+      try {
+        const providers = await listModelProviders()
+        const sora = providers.find((p) => p.vendor === 'sora')
+        if (!sora) {
+          if (!canceled) {
+            setSoraTokenError('当前未配置 Sora 提供方')
+          }
+          return
+        }
+        const tokens = await listModelTokens(sora.id)
+        if (!canceled) {
+          setSoraTokens(tokens)
+        }
+      } catch {
+        if (!canceled) {
+          setSoraTokenError('Sora Token 加载失败')
+        }
+      } finally {
+        if (!canceled) {
+          setLoadingSoraTokens(false)
+        }
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+  }, [showTokenSelector])
 
   if (!selected) {
     return (
@@ -59,6 +108,40 @@ export default function NodeInspector(): JSX.Element {
         <Button size="xs" variant="light" color="red" onClick={() => cancelNode(selected.id)}>停止</Button>
         <Button size="xs" variant="subtle" onClick={() => useRFStore.getState().updateNodeData(selected.id, { logs: [] })}>清空日志</Button>
       </Group>
+
+      {showTokenSelector && (
+        <div style={{ marginBottom: 12, padding: '10px 8px', borderRadius: 10, border: '1px solid rgba(148,163,184,0.6)' }}>
+          <Group align="flex-end" spacing="xs">
+            <Select
+              label="Sora Token（用于调用视频任务）"
+              data={[
+                { value: '', label: '自动选择（推荐）' },
+                ...soraTokens.map((t) => ({
+                  value: t.id,
+                  label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
+                })),
+              ]}
+              value={currentTokenId || ''}
+              onChange={(value) => {
+                if (!selected) return
+                useRFStore.getState().updateNodeData(selected.id, {
+                  videoTokenId: value ? value : null,
+                })
+              }}
+              withinPortal
+              size="xs"
+              nothingFound="无可用 Token"
+              disabled={loadingSoraTokens}
+            />
+            <Button size="xs" variant="outline" onClick={openModelPanel}>管理</Button>
+          </Group>
+          <Text size="xs" c="dimmed" mt={4}>
+            若未选择，将按创建时间自动选取可用 Token，切换后可在 Model 面板中查看配置。
+          </Text>
+          {loadingSoraTokens && <Text size="xs" c="dimmed">加载 Token...</Text>}
+          {soraTokenError && <Text size="xs" c="red">{soraTokenError}</Text>}
+        </div>
+      )}
 
       {kind === 'subflow' && (
         <div style={{ padding: 10, border: '1px dashed rgba(127,127,127,.35)', borderRadius: 8, marginBottom: 10 }}>
