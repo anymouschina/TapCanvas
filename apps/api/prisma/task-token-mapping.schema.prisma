@@ -1,0 +1,34 @@
+// 任务Token映射表 - 解决多Token一致性问题
+model TaskTokenMapping {
+  id          String   @id @default(uuid())
+  taskId      String   // Sora任务的唯一标识（task_id, generation_id等）
+  userId      String   // 用户ID
+  tokenId     String   // 创建时使用的Token ID
+  provider    String   // 提供商名称（sora, openai等）
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime // 任务过期时间（避免数据永久增长）
+
+  // 关联
+  token       ModelToken @relation(fields: [tokenId], references: [id])
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@unique([taskId, provider])
+  @@index([userId, provider])
+  @@index([expiresAt])
+}
+
+// 任务状态追踪表
+model TaskStatus {
+  id          String   @id @default(uuid())
+  taskId      String   // 任务唯一标识
+  provider    String   // 提供商名称
+  status      String   // pending, running, success, error, canceled
+  data        Json?    // 任务相关数据
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+
+  @@unique([taskId, provider])
+  @@index([status])
+  @@index([createdAt])
+}

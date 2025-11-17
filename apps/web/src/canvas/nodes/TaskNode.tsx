@@ -141,6 +141,29 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
+
+  // Video history results (similar to imageResults)
+  const videoResults = React.useMemo(() => {
+    const raw = (data as any)?.videoResults as {
+      url: string;
+      thumbnailUrl?: string;
+      title?: string;
+      duration?: number;
+      createdAt?: string;
+    }[] | undefined
+    if (raw && Array.isArray(raw) && raw.length > 0) return raw
+    const single = videoUrl ? {
+      url: videoUrl,
+      thumbnailUrl: videoThumbnailUrl,
+      title: videoTitle,
+      duration: (data as any)?.videoDuration
+    } : null
+    return single ? [single] : []
+  }, [data, videoUrl, videoThumbnailUrl, videoTitle])
+
+  const [videoExpanded, setVideoExpanded] = React.useState(false)
+  const [videoPrimaryIndex, setVideoPrimaryIndex] = React.useState(0)
+  const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
   const [hovered, setHovered] = React.useState<number|null>(null)
   const [showMore, setShowMore] = React.useState(false)
   const moreRef = React.useRef<HTMLDivElement|null>(null)
@@ -685,10 +708,30 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             color: '#e5e7eb',
           }}
         >
+          {/* Video results toolbar */}
+          <Group justify="space-between" gap={4}>
+            <Text size="xs" c="dimmed">
+              {videoResults.length > 0
+                ? `共 ${videoResults.length} 个视频${videoPrimaryIndex >= 0 ? ` (主视频: 第 ${videoPrimaryIndex + 1} 个)` : ''}`
+                : '视频生成中...'
+              }
+            </Text>
+            <Group gap={2}>
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                onClick={() => setVideoExpanded(true)}
+                leftSection={<IconClock size={12} />}
+              >
+                {videoResults.length > 0 ? '选择主视频' : '查看历史'}
+              </Button>
+            </Group>
+          </Group>
+
           {videoUrl ? (
             <video
-              src={videoUrl}
-              poster={videoThumbnailUrl || undefined}
+              src={videoResults[videoPrimaryIndex]?.url || videoUrl}
+              poster={videoResults[videoPrimaryIndex]?.thumbnailUrl || videoThumbnailUrl || undefined}
               controls
               loop
               muted
@@ -1497,6 +1540,172 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 })}
               </div>
             </div>
+          </Stack>
+        </Modal>
+      )}
+
+      {/* Video results modal: select primary video + fullscreen preview */}
+      {(kind === 'video' || kind === 'composeVideo') && videoExpanded && (
+        <Modal
+          opened={videoExpanded}
+          onClose={() => setVideoExpanded(false)}
+          title={videoResults.length > 0 ? "选择主视频" : "视频历史记录"}
+          centered
+          size="xl"
+          withinPortal
+          zIndex={8000}
+        >
+          <Stack gap="sm">
+            {videoResults.length === 0 ? (
+              <div
+                style={{
+                  padding: '40px 20px',
+                  textAlign: 'center',
+                  color: 'rgba(226,232,240,0.7)',
+                }}
+              >
+                <IconVideo size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
+                <Text size="sm" c="dimmed">
+                  暂无视频生成历史
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  生成视频后，这里将显示所有历史记录，你可以选择效果最好的作为主视频
+                </Text>
+              </div>
+            ) : (
+              <>
+                <Text size="xs" c="dimmed">
+                  当前共有 {videoResults.length} 个视频。点击「设为主视频」可更新本节点主视频，点击「全屏预览」可放大查看。
+                </Text>
+                <div
+                  style={{
+                    maxHeight: '60vh',
+                    overflowY: 'auto',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      gap: 12,
+                    }}
+                  >
+                    {videoResults.map((video, idx) => {
+                  const isPrimary = idx === videoPrimaryIndex
+                  return (
+                    <Paper
+                      key={`${idx}-${video.url}`}
+                      withBorder
+                      radius="md"
+                      p="xs"
+                      style={{
+                        background: 'rgba(15,23,42,0.95)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: isPrimary
+                            ? '2px solid rgba(96,165,250,0.9)'
+                            : '1px solid rgba(55,65,81,0.7)',
+                          marginBottom: 6,
+                          background: 'black',
+                          position: 'relative',
+                        }}
+                      >
+                        <video
+                          src={video.url}
+                          poster={video.thumbnailUrl || undefined}
+                          muted
+                          loop
+                          playsInline
+                          style={{
+                            width: '100%',
+                            height: 180,
+                            objectFit: 'cover',
+                            display: 'block',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.play().catch(() => {})
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.pause()
+                            e.currentTarget.currentTime = 0
+                          }}
+                        />
+                        {video.duration && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: 4,
+                              right: 4,
+                              background: 'rgba(0,0,0,0.7)',
+                              color: 'white',
+                              fontSize: '10px',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            {Math.round(video.duration)}s
+                          </div>
+                        )}
+                      </div>
+                      <Group justify="space-between">
+                        <Text size="xs" c="dimmed">
+                          {isPrimary ? `主视频 · 第 ${idx + 1} 个` : `第 ${idx + 1} 个`}
+                        </Text>
+                        <Group gap={4}>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              const url = video.url
+                              if (!url) return
+                              const openPreview = useUIStore
+                                .getState()
+                                .openPreview
+                              openPreview({
+                                url,
+                                kind: 'video',
+                                name: video.title || data?.label || 'Video',
+                              })
+                            }}
+                          >
+                            全屏预览
+                          </Button>
+                          {!isPrimary && (
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              onClick={() => {
+                                setVideoPrimaryIndex(idx)
+                                updateNodeData(id, {
+                                  videoUrl: video.url,
+                                  videoThumbnailUrl: video.thumbnailUrl,
+                                  videoTitle: video.title,
+                                  videoDuration: video.duration
+                                })
+                                setVideoExpanded(false)
+                              }}
+                            >
+                              设为主视频
+                            </Button>
+                          )}
+                        </Group>
+                      </Group>
+                      {video.title && (
+                        <Text size="xs" lineClamp={2} c="dimmed" mt={4}>
+                          {video.title}
+                        </Text>
+                      )}
+                    </Paper>
+                  )
+                })}
+              </div>
+            </div>
+              </>
+            )}
           </Stack>
         </Modal>
       )}

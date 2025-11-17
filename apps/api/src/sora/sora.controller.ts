@@ -124,6 +124,20 @@ export class SoraController {
     return this.service.setCameoPublic(String(req.user.sub), tokenId, cameoId)
   }
 
+  @Post('video/publish')
+  publishVideo(
+    @Body()
+    body: {
+      tokenId?: string
+      taskId: string
+      postText?: string
+    },
+    @Req() req: any,
+  ) {
+    const { tokenId, taskId, postText } = body
+    return this.service.publishVideo(String(req.user.sub), tokenId, taskId, postText)
+  }
+
   @Post('profile/upload')
   @UseInterceptors(FileInterceptor('file'))
   uploadProfileAsset(
