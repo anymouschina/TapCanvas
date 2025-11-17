@@ -9,17 +9,18 @@
     "test": "echo 'No tests yet' && exit 0"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "reactflow": "^11.10.4",
-    "zustand": "^4.5.4",
-    "zod": "^3.23.8",
-    "react-hook-form": "^7.53.0",
     "@hookform/resolvers": "^3.9.0",
     "@mantine/core": "^7.13.1",
     "@mantine/hooks": "^7.13.1",
     "@mantine/notifications": "^7.13.1",
-    "@tabler/icons-react": "^3.19.0"
+    "@tabler/icons-react": "^3.19.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.53.0",
+    "react-router-dom": "^7.9.6",
+    "reactflow": "^11.10.4",
+    "zod": "^3.23.8",
+    "zustand": "^4.5.4"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",

@@ -30,13 +30,40 @@ const initialUser = (() => {
 type AuthState = {
   token: string | null
   user: User | null
+  loading: boolean
+  login: (code: string, state?: string) => Promise<void>
   setAuth: (token: string, user?: User | null) => void
   clear: () => void
 }
 
-export const useAuth = create<AuthState>((set) => ({
+export const useAuth = create<AuthState>((set, get) => ({
   token: initialToken,
   user: initialUser,
+  loading: false,
+  login: async (code: string, state?: string) => {
+    set({ loading: true })
+    try {
+      const response = await fetch('/api/auth/github', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code, state }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Authentication failed')
+      }
+
+      const data = await response.json()
+      get().setAuth(data.token, data.user)
+    } catch (error) {
+      console.error('Login failed:', error)
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
   setAuth: (token, user) => {
     localStorage.setItem('tap_token', token)
     const u = user ?? decodeJwtUser(token)

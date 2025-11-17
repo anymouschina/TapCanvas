@@ -466,9 +466,18 @@ export class SoraService {
     tokenId: string
   ): Promise<void> {
     try {
-      // 这里可以添加到VideoGenerationHistory表中
-      // 标记为已发布状态
-      this.logger.log('recordPublishedVideo', {
+      // 更新VideoGenerationHistory表，添加postId
+      await this.prisma.videoGenerationHistory.updateMany({
+        where: {
+          userId,
+          generationId,
+        },
+        data: {
+          postId,
+        },
+      })
+
+      this.logger.log('recordPublishedVideo: postId saved to database', {
         userId,
         generationId,
         postId,
@@ -476,7 +485,7 @@ export class SoraService {
         tokenId,
       })
     } catch (error) {
-      this.logger.error('recordPublishedVideo failed', {
+      this.logger.error('recordPublishedVideo failed to save postId', {
         userId,
         generationId,
         postId,
@@ -816,28 +825,143 @@ export class SoraService {
       })
 
       // 从VideoGenerationHistory查找原视频的Token信息
-      // 优先按 generationId 查找，然后按 taskId 查找
+      // 优先按 postId 查找（s_ 开头），然后按 generationId 查找（gen_ 开头），最后按 taskId 查找（task_ 开头）
       const originalVideo = await this.prisma.videoGenerationHistory.findFirst({
         where: {
           userId, // 确保用户只能remix自己的视频
           OR: [
+            { postId: payload.remixTargetId }, // 传入的是 s_ 开头的postId - 优先级最高
             { generationId: payload.remixTargetId }, // 传入的是 gen_ 开头的ID
             { taskId: payload.remixTargetId }, // 传入的是 task_ 开头的ID
           ],
-          // 不限制状态，因为历史数据可能没有状态更新
         },
         select: {
           tokenId: true,
           status: true,
           taskId: true, // 保留 taskId 用于后续处理
           generationId: true, // 保留 generationId 用于日志
+          postId: true, // 保留 postId 用于日志和后续使用
         },
         orderBy: {
           createdAt: 'desc',
         },
       })
 
+      this.logger.log('Video search result in VideoGenerationHistory', {
+        userId,
+        remixTargetId: payload.remixTargetId,
+        foundOriginalVideo: !!originalVideo,
+        hasTokenId: !!originalVideo?.tokenId,
+        hasPostId: !!originalVideo?.postId,
+        generationId: originalVideo?.generationId,
+      })
+
       if (originalVideo && originalVideo.tokenId) {
+        // 如果有postId，说明是最新的记录，优先使用
+        if (originalVideo.postId) {
+          this.logger.log('Found video with postId for remix', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+            foundPostId: originalVideo.postId,
+            foundGenerationId: originalVideo.generationId,
+          })
+        } else {
+          // 如果没有postId，立即从草稿中获取对应的postId
+          this.logger.log('Video found but missing postId, fetching from drafts to convert gen_ to s_', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+            foundGenerationId: originalVideo.generationId,
+          })
+
+          try {
+            // 获取用户所有token来查找草稿，但使用更直接的方法
+            const allUserTokens = await this.getAllUserSoraTokens(userId)
+            let foundPostId: string | null = null
+            let foundToken: any = null
+
+            for (const searchToken of allUserTokens) {
+              try {
+                // 直接调用 Sora drafts API，避免递归
+                const baseUrl = await this.resolveBaseUrl(searchToken, 'sora', 'https://sora.chatgpt.com')
+                const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
+
+                const res = await axios.get(url, {
+                  headers: {
+                    Authorization: `Bearer ${searchToken.secretToken}`,
+                    'User-Agent': searchToken.userAgent || 'TapCanvas/1.0',
+                    Accept: 'application/json',
+                  },
+                  params: { limit: 50 },
+                  validateStatus: () => true,
+                  timeout: 10000,
+                })
+
+                if (res.status >= 200 && res.status < 300) {
+                  const data = res.data as any
+                  const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+
+                  // 在草稿中搜索gen_ ID
+                  const needle = String(payload.remixTargetId)
+                  const matched = items.find((item) => {
+                    try {
+                      const text = JSON.stringify(item)
+                      return text.includes(needle)
+                    } catch {
+                      return false
+                    }
+                  })
+
+                  if (matched && matched.post_id) {
+                    foundPostId = matched.post_id
+                    foundToken = searchToken
+                    this.logger.log('Found corresponding postId from Sora drafts API', {
+                      userId,
+                      generationId: payload.remixTargetId,
+                      foundPostId: matched.post_id,
+                      matchedId: matched.id,
+                      searchTokenId: searchToken.id,
+                    })
+                    break
+                  }
+                }
+              } catch (err) {
+                this.logger.debug('Failed to search drafts with token', {
+                  userId,
+                  searchTokenId: searchToken.id,
+                  error: err?.message,
+                })
+                continue
+              }
+            }
+
+            if (foundPostId && foundToken) {
+              this.logger.log('Converting gen_ to postId for remix', {
+                userId,
+                originalGenerationId: payload.remixTargetId,
+                convertedPostId: foundPostId,
+                tokenLabel: foundToken.label,
+              })
+
+              // 使用找到的postId重新创建任务
+              return this.createVideoTask(userId, tokenId, {
+                ...payload,
+                remixTargetId: foundPostId, // 使用s_开头的postId
+              }, triedTokenIds)
+            } else {
+              this.logger.warn('Could not find postId for generation, falling back to original logic', {
+                userId,
+                remixTargetId: payload.remixTargetId,
+              })
+            }
+          } catch (err) {
+            this.logger.warn('Failed to fetch postId from drafts, falling back to original logic', {
+              userId,
+              remixTargetId: payload.remixTargetId,
+              error: err?.message,
+            })
+          }
+        }
+
         // 使用原视频存储的实际taskId来查找Token映射
         const actualTaskId = originalVideo.taskId
         const tokenResult = await this.tokenRouter.resolveTaskToken(userId, actualTaskId, 'sora')
@@ -848,20 +972,99 @@ export class SoraService {
             remixTargetId: payload.remixTargetId,
             actualTaskId,
             generationId: originalVideo.generationId,
+            postId: originalVideo.postId,
             tokenId: token.id,
             originalStatus: originalVideo.status,
           })
         } else {
-          this.logger.warn('Original token not found in TaskTokenMapping, falling back to optimal token', {
+          this.logger.warn('Original token not found in TaskTokenMapping, trying direct token lookup', {
             userId,
             remixTargetId: payload.remixTargetId,
             actualTaskId,
             originalTokenId: originalVideo.tokenId,
             originalStatus: originalVideo.status,
           })
-          token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+          // 尝试直接从原始Token ID获取Token
+          try {
+            const directToken = await this.prisma.modelToken.findUnique({
+              where: { id: originalVideo.tokenId },
+              include: {
+                provider: { include: { endpoints: true } },
+              },
+            })
+            if (directToken && directToken.provider.vendor === 'sora') {
+              token = directToken
+              this.logger.log('Using direct token lookup for remix', {
+                userId,
+                remixTargetId: payload.remixTargetId,
+                tokenId: token.id,
+              })
+            } else {
+              this.logger.warn('Direct token lookup failed, falling back to optimal token', {
+                userId,
+                remixTargetId: payload.remixTargetId,
+                originalTokenId: originalVideo.tokenId,
+              })
+              token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+            }
+          } catch (error) {
+            this.logger.error('Error during direct token lookup', {
+              userId,
+              remixTargetId: payload.remixTargetId,
+              originalTokenId: originalVideo.tokenId,
+              error: error.message,
+            })
+            token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
+          }
         }
       } else {
+        // 如果在VideoGenerationHistory中找不到，检查是否是gen_开头的ID，尝试从草稿获取postId
+        if (payload.remixTargetId?.startsWith('gen_')) {
+          this.logger.log('gen_ ID not found in history, trying to find corresponding postId from drafts', {
+            userId,
+            remixTargetId: payload.remixTargetId,
+          })
+
+          try {
+            // 尝试从所有token的草稿中找到这个gen_ ID对应的postId
+            const allUserTokens = await this.getAllUserSoraTokens(userId)
+            let foundPostId: string | null = null
+
+            for (const searchToken of allUserTokens) {
+              try {
+                const draft = await this.getDraftByTaskId(userId, searchToken.id, payload.remixTargetId)
+                if (draft && draft.raw?.post_id) {
+                  foundPostId = draft.raw.post_id
+                  this.logger.log('Found corresponding postId from drafts', {
+                    userId,
+                    generationId: payload.remixTargetId,
+                    foundPostId,
+                    searchTokenId: searchToken.id,
+                  })
+                  break
+                }
+              } catch (err) {
+                // 忽略单个token的失败，继续尝试其他token
+                continue
+              }
+            }
+
+            if (foundPostId) {
+              // 使用找到的postId重新调用自身，使用s_开头的postId
+              return this.createVideoTask(userId, tokenId, {
+                ...payload,
+                remixTargetId: foundPostId, // 使用s_开头的postId
+              }, triedTokenIds)
+            }
+          } catch (err) {
+            this.logger.warn('Failed to find postId from drafts', {
+              userId,
+              remixTargetId: payload.remixTargetId,
+              error: err?.message,
+            })
+          }
+        }
+
         // 如果在VideoGenerationHistory中找不到，尝试直接从TaskTokenMapping查找
         this.logger.warn('Remix target video not found in VideoGenerationHistory, checking TaskTokenMapping', {
           userId,
@@ -896,10 +1099,31 @@ export class SoraService {
             token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
           }
         } else {
+          // 提供更详细的错误信息和调试信息
           this.logger.warn('Remix target video not found in any records, falling back to optimal token', {
             userId,
             remixTargetId: payload.remixTargetId,
           })
+
+          // 尝试查找用户最近的视频记录，用于调试
+          const recentVideos = await this.prisma.videoGenerationHistory.findMany({
+            where: { userId },
+            select: {
+              taskId: true,
+              generationId: true,
+              status: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+          })
+
+          this.logger.log('Recent videos for user (for debugging)', {
+            userId,
+            recentVideos,
+            remixTargetId: payload.remixTargetId,
+          })
+
           token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
         }
       }
@@ -1177,6 +1401,7 @@ export class SoraService {
             provider: 'sora',
             model: undefined, // Sora doesn't expose model info in current implementation
             remixTargetId: payload.remixTargetId || undefined,
+            tokenId: token.id, // 添加 tokenId - 这是最重要的修复！
           }
         )
       }
@@ -1736,223 +1961,544 @@ export class SoraService {
   }
 
   /**
+   * 直接获取草稿详情（根据 gen_ ID）
+   */
+  async getDraftDetailsById(userId: string, tokenId: string | undefined, generationId: string) {
+    const token: any = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL(`/backend/project_y/profile/drafts/v2/${generationId}`, baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    this.logger.log('getDraftDetailsById: Fetching draft details', { userId, generationId, tokenId })
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg = (res.data && (res.data.message || res.data.error)) || `Draft details fetch failed with status ${res.status}`
+        this.logger.error('getDraftDetailsById upstream error', { generationId, tokenId, status: res.status, data: res.data })
+        throw new HttpException({ message: msg, upstreamStatus: res.status }, res.status)
+      }
+
+      this.logger.log('getDraftDetailsById: Success', { generationId, tokenId })
+      return res.data
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message = err?.response?.data?.message || err?.response?.statusText || err?.message || 'Draft details fetch failed'
+      this.logger.error('getDraftDetailsById exception', { generationId, tokenId, status, message })
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
+  /**
+   * 获取发布详情（根据 s_ ID）
+   */
+  async getPostDetailsById(userId: string, tokenId: string | undefined, postId: string) {
+    const token: any = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const url = new URL(`/backend/project_y/post/${postId}`, baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    this.logger.log('getPostDetailsById: Fetching post details', { userId, postId, tokenId })
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg = (res.data && (res.data.message || res.data.error)) || `Post details fetch failed with status ${res.status}`
+        this.logger.error('getPostDetailsById upstream error', { postId, tokenId, status: res.status, data: res.data })
+        throw new HttpException({ message: msg, upstreamStatus: res.status }, res.status)
+      }
+
+      this.logger.log('getPostDetailsById: Success', { postId, tokenId })
+      return res.data
+    } catch (err: any) {
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message = err?.response?.data?.message || err?.response?.statusText || err?.message || 'Post details fetch failed'
+      this.logger.error('getPostDetailsById exception', { postId, tokenId, status, message })
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
+  /**
    * 根据 task_id 反查对应的草稿信息（用于获取最终视频 URL）
-   * 由于 Sora 草稿结构未完全公开，这里采用启发式匹配：在草稿原始对象中搜索 taskId。
+   * 更新：优先使用直接 API 调用，避免列表匹配
    */
   async getDraftByTaskId(userId: string, tokenId: string | undefined, taskId: string) {
+    this.logger.log('getDraftByTaskId: Starting optimized search', { userId, tokenId, taskId })
+
+    // 软性状态检查：优先信任实际的草稿数据
+    let taskStatus = null
+    try {
+      taskStatus = await this.prisma.taskStatus.findUnique({
+        where: {
+          taskId_provider: {
+            taskId,
+            provider: 'sora'
+          }
+        },
+        select: {
+          status: true,
+          data: true,
+          updatedAt: true
+        }
+      })
+    } catch (error: any) {
+      this.logger.warn('Failed to check task status, proceeding with draft search', {
+        userId,
+        taskId,
+        error: error.message
+      })
+    }
+
+    // 如果任务状态明确显示还在处理中，记录警告但不阻塞查询
+    if (taskStatus && (taskStatus.status === 'pending' || taskStatus.status === 'running')) {
+      this.logger.log('Task status shows still running, but checking for completed draft anyway', {
+        userId,
+        taskId,
+        status: taskStatus.status,
+        updatedAt: taskStatus.updatedAt
+      })
+    }
+
+    this.logger.log('Proceeding with draft search', {
+      userId,
+      taskId,
+      taskStatus: taskStatus?.status || 'unknown'
+    })
+
     // 优先使用任务Token映射来获取正确的Token
     const taskTokenResult = await this.tokenRouter.resolveTaskToken(userId, taskId, 'sora')
-
     let token: any
+    let usedMethod = 'unknown'
+
     if (taskTokenResult) {
       token = taskTokenResult.token
-      this.logger.log('Using task-mapped token', { userId, taskId, tokenId: taskTokenResult.tokenId })
+      usedMethod = 'task-mapped'
+      this.logger.log('Using task-mapped token for draft lookup', {
+        userId,
+        taskId,
+        tokenId: taskTokenResult.tokenId,
+        tokenLabel: taskTokenResult.token.label,
+      })
     } else {
       // 回退到传入的tokenId或默认Token
       token = await this.resolveSoraToken(userId, tokenId)
       if (!token || token.provider.vendor !== 'sora') {
         throw new Error('token not found or not a Sora token')
       }
-      this.logger.warn('Task token mapping not found, falling back to provided token', { userId, taskId })
-    }
-
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
-    const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
-    const userAgent = token.userAgent || 'TapCanvas/1.0'
-    this.logger.log('getDraftByTaskId request', { userId, tokenId, taskId, url })
-
-    try {
-      const maxAttempts = 3
-      const retryDelayMs = 5000
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const res = await axios.get(url, {
-          headers: {
-            Authorization: `Bearer ${token.secretToken}`,
-            'User-Agent': userAgent,
-            Accept: 'application/json',
-          },
-          params: { limit: 15 },
-          validateStatus: () => true,
-        })
-
-        if (res.status < 200 || res.status >= 300) {
-          const msg =
-            (res.data && (res.data.message || res.data.error)) ||
-            `Sora drafts lookup failed with status ${res.status}`
-          this.logger.error('getDraftByTaskId upstream error', {
-            taskId,
-            tokenId,
-            status: res.status,
-            data: res.data,
-          })
-          throw new HttpException(
-            { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
-            res.status,
-          )
-        }
-
-        const data = res.data as any
-        const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
-
-        this.logger.log('getDraftByTaskId response', {
-          attempt,
-          taskId,
-          tokenId,
-          raw: data,
-          itemsCount: items.length,
-        })
-
-        const needle = String(taskId)
-        const matched = items.find((item) => {
-          try {
-            const text = JSON.stringify(item)
-            return text.includes(needle)
-          } catch {
-            return false
-          }
-        })
-
-        if (matched) {
-          const enc = matched.encodings || {}
-
-          const thumbnail =
-            enc.thumbnail?.path ||
-            matched.preview_image_url ||
-            matched.thumbnail_url ||
-            null
-          const videoUrl =
-            matched.downloadable_url ||
-            matched.url ||
-            enc.source?.path ||
-            null
-
-          const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
-          const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
-          const thumbnailUrl = rewrite(thumbnail)
-          const finalVideoUrl = rewrite(videoUrl)
-
-          if (thumbnailUrl) {
-            matched.thumbnail_url = thumbnailUrl
-            if (enc.thumbnail) enc.thumbnail.path = thumbnailUrl
-          }
-          if (finalVideoUrl) {
-            matched.downloadable_url = finalVideoUrl
-            matched.url = finalVideoUrl
-            if (enc.source) enc.source.path = finalVideoUrl
-          }
-
-          this.logger.log('getDraftByTaskId success', {
-            taskId,
-            tokenId,
-            matchedId: matched.id,
-            videoUrl: finalVideoUrl || videoUrl,
-            thumbnail: thumbnailUrl || thumbnail,
-          })
-
-          // 更新视频生成历史状态为成功
-          await this.videoHistory.updateVideoGeneration(taskId, {
-            status: 'success',
-            videoUrl: finalVideoUrl || videoUrl || undefined,
-            thumbnailUrl: thumbnailUrl || thumbnail || undefined,
-            duration: matched.duration || undefined,
-            width: matched.width || undefined,
-            height: matched.height || undefined,
-            generationId: (matched as any).generation_id || (matched as any).id, // 存储gen_开头的ID
-          })
-
-          // 更新任务状态为成功
-          await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'success', {
-            videoUrl: finalVideoUrl || videoUrl,
-            thumbnailUrl: thumbnailUrl || thumbnail,
-            width: matched.width,
-            height: matched.height,
-            duration: matched.duration,
-          })
-
-          const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched, userId)
-
-          return {
-            id: matched.id,
-            title: matched.title ?? null,
-            prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
-            thumbnailUrl: thumbnailUrl || thumbnail,
-            videoUrl: finalVideoUrl || videoUrl,
-            postId,
-            raw: matched,
-          }
-        }
-
-        if (attempt < maxAttempts) {
-          this.logger.warn('getDraftByTaskId retrying', {
-            taskId,
-            tokenId,
-            attempt,
-            itemsCount: items.length,
-          })
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
-          continue
-        }
-
-        this.logger.warn('getDraftByTaskId no match', {
-          taskId,
-          tokenId,
-          itemsCount: items.length,
-        })
-
-        // 更新视频生成历史状态为失败
-        await this.videoHistory.updateVideoGeneration(taskId, {
-          status: 'error',
-        })
-
-        // 更新任务状态为失败
-        await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', {
-          error: 'Video not found in Sora drafts',
-        })
-
-        throw new HttpException(
-          { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
-          HttpStatus.NOT_FOUND,
-        )
-      }
-
-      throw new HttpException(
-        { message: '未在 Sora 草稿中找到对应视频，请稍后再试或在 Sora 中手动查看', upstreamStatus: 404 },
-        HttpStatus.NOT_FOUND,
-      )
-    } catch (err: any) {
-      // 更新视频生成历史状态为失败
-      await this.videoHistory.updateVideoGeneration(taskId, {
-        status: 'error',
-      })
-
-      // 更新任务状态为失败
-      await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', {
-        error: err?.message || 'Unknown error occurred',
-      })
-
-      if (err instanceof HttpException) {
-        throw err
-      }
-      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
-      const message =
-        err?.response?.data?.message ||
-        err?.response?.statusText ||
-        err?.message ||
-        'Sora drafts lookup request failed'
-      this.logger.error('getDraftByTaskId exception', {
+      usedMethod = 'fallback'
+      this.logger.warn('Task token mapping not found, using fallback token', {
+        userId,
         taskId,
         tokenId,
-        status,
-        message,
-        upstreamData: err?.response?.data ?? null,
-        stack: err?.stack,
+        tokenLabel: token.label,
       })
-      throw new HttpException(
-        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
-        status,
-      )
     }
+
+    // 尝试直接使用 gen_ ID 获取草稿详情
+    if (taskId.startsWith('gen_')) {
+      try {
+        const draftDetails = await this.getDraftDetailsById(userId, token.id, taskId)
+        this.logger.log('getDraftByTaskId: Success using direct draft API', {
+          userId,
+          taskId,
+          tokenId: token.id,
+          usedMethod,
+          hasVideoUrl: !!draftDetails.videoUrl,
+          hasPostId: !!draftDetails.postId,
+        })
+
+        const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+        const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+
+        const result = {
+          id: draftDetails.id,
+          title: draftDetails.title,
+          prompt: draftDetails.prompt,
+          thumbnailUrl: rewrite(draftDetails.thumbnailUrl),
+          videoUrl: rewrite(draftDetails.videoUrl),
+          postId: draftDetails.postId,
+          raw: draftDetails,
+        }
+
+        return result
+      } catch (error: any) {
+        this.logger.warn('Direct draft API failed, trying legacy method', {
+          userId,
+          taskId,
+          tokenId: token.id,
+          error: error.message,
+          status: error?.response?.status,
+        })
+      }
+    }
+
+    // 如果 gen_ ID 查找失败，尝试 s_ ID 查找发布详情
+    if (taskId.startsWith('s_')) {
+      try {
+        const postDetails = await this.getPostDetailsById(userId, token.id, taskId)
+        this.logger.log('getDraftByTaskId: Success using post API', {
+          userId,
+          taskId,
+          tokenId: token.id,
+          usedMethod,
+          hasVideoUrl: !!postDetails.videoUrl,
+        })
+
+        const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+        const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+
+        const result = {
+          id: postDetails.id,
+          title: postDetails.title,
+          prompt: postDetails.prompt,
+          thumbnailUrl: rewrite(postDetails.thumbnailUrl),
+          videoUrl: rewrite(postDetails.videoUrl),
+          postId: postDetails.id,
+          raw: postDetails,
+        }
+
+        return result
+      } catch (error: any) {
+        this.logger.warn('Post API failed, falling back to legacy method', {
+          userId,
+          taskId,
+          tokenId: token.id,
+          error: error.message,
+          status: error?.response?.status,
+        })
+      }
+    }
+
+    // 如果直接API调用都失败，回退到原来的列表匹配方法
+    this.logger.warn('Direct APIs failed, falling back to legacy draft search', {
+      userId,
+      taskId,
+      tokenId: token.id,
+    })
+
+    let tokens: any[] = []
+    let searchOrder: string[] = []
+
+    if (taskTokenResult) {
+      tokens = [taskTokenResult.token]
+      searchOrder = ['task-mapped']
+      this.logger.log('Using task-mapped token for search', {
+        userId,
+        taskId,
+        tokenId: taskTokenResult.tokenId,
+        tokenLabel: taskTokenResult.token.label
+      })
+    } else {
+      // 获取用户所有的 Sora Token（包括自有和共享的）
+      const allUserTokens = await this.getAllUserSoraTokens(userId)
+
+      // 如果传入了tokenId，优先使用指定的token
+      if (tokenId) {
+        const specifiedToken = allUserTokens.find(t => t.id === tokenId)
+        if (specifiedToken) {
+          tokens = [specifiedToken, ...allUserTokens.filter(t => t.id !== tokenId)]
+          searchOrder = ['specified', 'all-others']
+        } else {
+          tokens = allUserTokens
+          searchOrder = ['all-user-tokens']
+        }
+      } else {
+        tokens = allUserTokens
+        searchOrder = ['all-user-tokens']
+      }
+
+      this.logger.log('Searching across all user tokens', {
+        userId,
+        taskId,
+        totalTokens: tokens.length,
+        searchOrder,
+        tokenId
+      })
+    }
+
+    // 如果没有找到任何token，抛出错误
+    if (tokens.length === 0) {
+      throw new Error('No Sora tokens available for search')
+    }
+
+    // 逐个Token搜索草稿
+    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
+      const token = tokens[tokenIndex]
+      const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+      const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
+      const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+      this.logger.log(`Searching token ${tokenIndex + 1}/${tokens.length}`, {
+        userId,
+        taskId,
+        tokenId: token.id,
+        tokenLabel: token.label,
+        isShared: token.shared,
+        baseUrl,
+      })
+
+      let lastError: any = null
+
+      try {
+        const maxAttempts = 3
+        const retryDelayMs = 3000 // 稍微减少重试延迟，因为我们有多个token要搜索
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          const res = await axios.get(url, {
+            headers: {
+              Authorization: `Bearer ${token.secretToken}`,
+              'User-Agent': userAgent,
+              Accept: 'application/json',
+            },
+            params: { limit: 20 }, // 增加limit，提高找到的概率
+            validateStatus: () => true,
+          })
+
+          if (res.status < 200 || res.status >= 300) {
+            this.logger.warn('Token search failed', {
+              taskId,
+              tokenId: token.id,
+              tokenLabel: token.label,
+              attempt,
+              status: res.status,
+              error: res.data?.message || res.statusText,
+            })
+
+            // 如果是认证错误，跳到下一个token
+            if (res.status === 401 || res.status === 403) {
+              this.logger.warn('Token authentication failed, trying next token', {
+                taskId,
+                tokenId: token.id,
+              })
+              break // 跳出重试循环，尝试下一个token
+            }
+
+            if (attempt < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+              continue
+            }
+
+            // 最后一次重试失败，记录但不抛出异常，继续尝试下一个token
+            this.logger.error('All attempts failed for token', {
+              taskId,
+              tokenId: token.id,
+              finalStatus: res.status,
+            })
+            break
+          }
+
+          const data = res.data as any
+          const items: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+
+          this.logger.log('Draft search response', {
+            tokenIndex: tokenIndex + 1,
+            tokenId: token.id,
+            attempt,
+            taskId,
+            itemsCount: items.length,
+            hasCursor: !!data?.cursor,
+          })
+
+          const needle = String(taskId)
+          const matched = items.find((item) => {
+            try {
+              const text = JSON.stringify(item)
+              return text.includes(needle)
+            } catch {
+              return false
+            }
+          })
+
+          if (matched) {
+            this.logger.log('Found match in token search', {
+              taskId,
+              tokenId: token.id,
+              tokenLabel: token.label,
+              matchedId: matched.id,
+              attempt,
+            })
+
+            const enc = matched.encodings || {}
+
+            const thumbnail =
+              enc.thumbnail?.path ||
+              matched.preview_image_url ||
+              matched.thumbnail_url ||
+              null
+            const videoUrl =
+              matched.downloadable_url ||
+              matched.url ||
+              enc.source?.path ||
+              null
+
+            const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')
+            const rewrite = (raw: string | null | undefined) => this.rewriteVideoUrl(raw || null, videoProxyBase)
+            const thumbnailUrl = rewrite(thumbnail)
+            const finalVideoUrl = rewrite(videoUrl)
+
+            if (thumbnailUrl) {
+              matched.thumbnail_url = thumbnailUrl
+              if (enc.thumbnail) enc.thumbnail.path = thumbnailUrl
+            }
+            if (finalVideoUrl) {
+              matched.downloadable_url = finalVideoUrl
+              matched.url = finalVideoUrl
+              if (enc.source) enc.source.path = finalVideoUrl
+            }
+
+            this.logger.log('getDraftByTaskId success', {
+              taskId,
+              foundTokenId: token.id,
+              foundTokenLabel: token.label,
+              matchedId: matched.id,
+              videoUrl: finalVideoUrl || videoUrl,
+              thumbnail: thumbnailUrl || thumbnail,
+              searchOrder,
+              tokensSearched: tokenIndex + 1,
+            })
+
+            // 更新视频生成历史状态为成功
+            await this.videoHistory.updateVideoGeneration(taskId, {
+              status: 'success',
+              videoUrl: finalVideoUrl || videoUrl || undefined,
+              thumbnailUrl: thumbnailUrl || thumbnail || undefined,
+              duration: matched.duration || undefined,
+              width: matched.width || undefined,
+              height: matched.height || undefined,
+              generationId: (matched as any).generation_id || (matched as any).id, // 存储gen_开头的ID
+            })
+
+            this.logger.log('Video generation history updated with generation ID', {
+              taskId,
+              generationId: (matched as any).generation_id || (matched as any).id,
+              status: 'success',
+              foundTokenId: token.id,
+            })
+
+            // 更新任务状态为成功
+            await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'success', {
+              videoUrl: finalVideoUrl || videoUrl,
+              thumbnailUrl: thumbnailUrl || thumbnail,
+              width: matched.width,
+              height: matched.height,
+              duration: matched.duration,
+            })
+
+            const postId = await this.publishVideoPostIfNeeded(token, baseUrl, matched, userId)
+
+            return {
+              id: matched.id,
+              title: matched.title ?? null,
+              prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
+              thumbnailUrl: thumbnailUrl || thumbnail,
+              videoUrl: finalVideoUrl || videoUrl,
+              postId,
+              raw: matched,
+            }
+          }
+
+          // 如果没找到匹配项，但还有重试机会
+          if (attempt < maxAttempts) {
+            this.logger.warn('No match in this attempt, retrying', {
+              taskId,
+              tokenId: token.id,
+              attempt,
+              itemsCount: items.length,
+            })
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+            continue
+          }
+
+          // 这个Token的所有重试都失败了
+          this.logger.warn('No match found in token after all attempts', {
+            taskId,
+            tokenId: token.id,
+            tokenLabel: token.label,
+            totalAttempts: maxAttempts,
+            finalItemsCount: items.length,
+          })
+        }
+
+        // 如果当前token的所有尝试都失败，继续尝试下一个token
+        // 这个逻辑会在循环结束后自然执行
+      } catch (err: any) {
+        lastError = err
+        this.logger.error('Error searching token', {
+          taskId,
+          tokenId: token.id,
+          tokenLabel: token.label,
+          error: err?.message || 'Unknown error',
+        })
+
+        // 如果是认证错误，直接跳到下一个token
+        if (err?.response?.status === 401 || err?.response?.status === 403) {
+          this.logger.warn('Token authentication failed, skipping to next token', {
+            taskId,
+            tokenId: token.id,
+          })
+          break // 跳出重试循环，尝试下一个token
+        }
+      }
+    }
+
+    // 如果所有token都搜索完了还没找到
+    this.logger.error('Video not found in any user token', {
+      userId,
+      taskId,
+      totalTokensSearched: tokens.length,
+      searchOrder,
+      tokenId,
+    })
+
+    // 更新视频生成历史状态为失败
+    await this.videoHistory.updateVideoGeneration(taskId, {
+      status: 'error',
+    })
+
+    // 更新任务状态为失败
+    await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', {
+      error: 'Video not found in any Sora token drafts',
+    })
+
+    throw new HttpException(
+      {
+        message: `在所有 ${tokens.length} 个 Sora 账号的草稿中都未找到对应视频，请确认任务ID是否正确或稍后再试`,
+        upstreamStatus: 404
+      },
+      HttpStatus.NOT_FOUND,
+    )
   }
 
   async updateCharacter(

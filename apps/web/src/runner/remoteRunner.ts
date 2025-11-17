@@ -29,16 +29,29 @@ function getRemixTargetIdFromNodeData(data?: any): string | null {
   ) {
     return null
   }
-  const candidates = [
-    data.videoPostId,
-    data.videoDraftId,
-    data.videoTaskId,
-    data.soraVideoTask?.generation_id,
-    data.soraVideoTask?.id,
+
+  // 优先检查已知的 remix targets
+  const knownCandidates = [
+    data.videoPostId,      // s_ 开头的 postId (最高优先级)
+    data.videoDraftId,     // draft ID
+    data.videoTaskId,      // task_ 开头的 taskId
   ]
-  for (const candidate of candidates) {
+  for (const candidate of knownCandidates) {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
   }
+
+  // 检查生成任务的 generation_id
+  const generationId = data.soraVideoTask?.generation_id
+  if (typeof generationId === 'string' && generationId.trim() && generationId.startsWith('gen_')) {
+    return generationId.trim()
+  }
+
+  // 检查任务本身的 ID
+  const taskId = data.soraVideoTask?.id
+  if (typeof taskId === 'string' && taskId.trim() && taskId.startsWith('gen_')) {
+    return taskId.trim()
+  }
+
   return null
 }
 
@@ -265,10 +278,10 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         `[${nowLabel()}] 调用 Sora-2 生成视频任务…`,
       )
 
-      // 尝试从上游图像节点获取 Sora file_id / imageUrl（图生视频）
+      // 尝试从上游图像/视频节点获取数据
       let inpaintFileId: string | null = null
       let imageUrlForUpload: string | null = null
-      // 若当前节点配置了 remix 目标，则优先走 remix，不再尝试图生
+      // 若当前节点配置了 remix 目标，则优先走 remix，不再尝试图生/视频
       if (!remixTargetId) {
         try {
           if (inbound.length) {
@@ -276,12 +289,26 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
             const src = state.nodes.find((n: Node) => n.id === lastEdge.source)
             if (src) {
               const sd: any = src.data || {}
+              const skind: string | undefined = sd.kind
+
+              // 获取主图片/视频URL
+              let primaryMediaUrl = null
+              if ((skind === 'image' || skind === 'textToImage')) {
+                primaryMediaUrl = (sd.imageUrl as string | undefined) || null
+              } else if ((skind === 'video' || skind === 'composeVideo')) {
+                // 对于video节点，获取最新的主视频URL或缩略图
+                if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+                  primaryMediaUrl = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
+                } else {
+                  primaryMediaUrl = (sd.videoUrl as string | undefined) || null
+                }
+              }
+
               inpaintFileId =
                 (sd.soraFileId as string | undefined) ||
                 (sd.file_id as string | undefined) ||
                 null
-              imageUrlForUpload =
-                (sd.imageUrl as string | undefined) || null
+              imageUrlForUpload = primaryMediaUrl
             }
           }
         } catch {
@@ -371,16 +398,15 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
       // 轮询 nf/pending，最多轮询一段时间（例如 ~90s）
       let draftSynced = false
-      let lastDraft:
-        | {
-            id: string
-            title: string | null
-            prompt: string | null
-            thumbnailUrl: string | null
-            videoUrl: string | null
-            postId?: string | null
-          }
-        | null = null
+      let lastDraft: {
+        id: string
+        title: string | null
+        prompt: string | null
+        thumbnailUrl: string | null
+        videoUrl: string | null
+        postId?: string | null
+        duration?: number
+      } | null = null
 
           async function syncDraftVideo(force = false) {
         if (!force && draftSynced) return null
@@ -412,6 +438,12 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           }
           return draft
         } catch (err: any) {
+          // 如果是HTTP 202错误，表示任务还在进行中，这是正常的
+          if (err?.upstreamStatus === 202 || err?.status === 202) {
+            appendLog(id, `[${nowLabel()}] 草稿同步：任务仍在进行中，继续等待...`)
+            return null
+          }
+
           const msg = err?.message || '同步 Sora 草稿失败'
           appendLog(id, `[${nowLabel()}] error: ${msg}`)
           return null
@@ -420,13 +452,13 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
       let progress = 10
       const pollIntervalMs = 3000
-      const pollTimeoutMs = 3 * 60 * 1000
-      const startTime = Date.now()
+      // 移除最大超时时间限制，让任务持续轮询直到完成
       let finishedFromPending = false
+      let noPendingCount = 0 // 连续几次检查pending都为空
 
-      while (Date.now() - startTime < pollTimeoutMs) {
+      while (true) {
         if (isCanceled(id)) {
-          setNodeStatus(id, 'canceled', { progress: 0 })
+          setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
           appendLog(id, `[${nowLabel()}] 已取消 Sora 视频任务`)
           endRunToken(id)
           return
@@ -434,15 +466,46 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
         try {
           const pending = await listSoraPendingVideos(null)
+
+          // 如果pending列表为空，更积极地尝试同步草稿
           if (!pending.length) {
-            finishedFromPending = true
-            await syncDraftVideo(true)
-            break
+            noPendingCount++
+
+            // 重置draftSynced标志，允许每次都尝试同步
+            draftSynced = false
+
+            // 先尝试直接同步草稿，如果能获取到说明任务已完成
+            const draftResult = await syncDraftVideo(true)
+            if (draftResult && draftResult.videoUrl) {
+              finishedFromPending = true
+              appendLog(id, `[${nowLabel()}] pending列表为空，但草稿同步成功，任务完成！`)
+              break
+            }
+
+            // 如果连续3次检查pending都为空且草稿还没准备好，延长轮询时间但继续尝试
+            if (noPendingCount >= 3) {
+              appendLog(id, `[${nowLabel()}] pending列表为空，草稿未就绪，延长轮询间隔继续等待...`)
+              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs * 2)) // 延长等待时间
+              continue
+            }
+
+            appendLog(id, `[${nowLabel()}] pending列表为空，${noPendingCount}/3次检查草稿未就绪，继续等待...`)
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+            continue
           }
+
+          // 重置计数器
+          noPendingCount = 0
 
           const found = pending.find((t: any) => t.id === taskId)
           if (!found) {
-            await syncDraftVideo()
+            // 如果在pending中找不到taskId，可能任务已完成，尝试同步草稿
+            const draftResult = await syncDraftVideo(true)
+            if (draftResult && draftResult.videoUrl) {
+              finishedFromPending = true
+              break
+            }
+
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
             continue
           }
@@ -468,10 +531,14 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       if (finishedFromPending) {
-        const finalDraft = lastDraft
+        const finalDraft: typeof lastDraft = lastDraft
         const videoUrl = rewriteSoraVideoResourceUrl(
           finalDraft?.videoUrl || (data as any)?.videoUrl || null,
         )
+        const thumbnailUrl = rewriteSoraVideoResourceUrl(finalDraft?.thumbnailUrl || (data as any)?.videoThumbnailUrl || null)
+        const title = finalDraft?.title || (data as any)?.videoTitle || null
+        const duration = finalDraft?.duration || videoDurationSeconds
+
         const successPreview =
           videoUrl
             ? { type: 'text' as const, value: 'Sora 视频已生成，可在节点中预览。' }
@@ -479,6 +546,19 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
                 type: 'text' as const,
                 value: `Sora 视频已生成（任务 ID: ${taskId}），已写入 Sora 草稿列表。`,
               }
+
+        // 构建新的视频结果对象
+        const newVideoResult = {
+          url: videoUrl,
+          thumbnailUrl,
+          title,
+          duration,
+          createdAt: new Date().toISOString(),
+        }
+
+        // 更新 videoResults 数组，保留历史记录
+        const existingVideoResults = (data.videoResults as any[]) || []
+        const updatedVideoResults = [...existingVideoResults, newVideoResult]
 
         setNodeStatus(id, 'success', {
           progress: 100,
@@ -495,10 +575,14 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
           videoPrompt: prompt,
           videoDurationSeconds,
           videoUrl: videoUrl,
+          videoThumbnailUrl: thumbnailUrl,
+          videoTitle: title,
+          videoDuration: duration,
           videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
           videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
           videoModel: generatedModel,
           videoTokenId: usedTokenId || null,
+          videoResults: updatedVideoResults, // ✅ 添加 videoResults 数组更新
         })
 
         if (videoUrl) {
@@ -518,7 +602,27 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       await syncDraftVideo(true)
-      const finalDraft = lastDraft
+      const finalDraft: typeof lastDraft = lastDraft
+      const videoUrl = rewriteSoraVideoResourceUrl(
+        finalDraft?.videoUrl || (data as any)?.videoUrl || null,
+      )
+      const thumbnailUrl = rewriteSoraVideoResourceUrl(finalDraft?.thumbnailUrl || (data as any)?.videoThumbnailUrl || null)
+      const title = finalDraft?.title || (data as any)?.videoTitle || null
+      const duration = finalDraft?.duration || videoDurationSeconds
+
+      // 构建新的视频结果对象
+      const newVideoResult = {
+        url: videoUrl,
+        thumbnailUrl,
+        title,
+        duration,
+        createdAt: new Date().toISOString(),
+      }
+
+      // 更新 videoResults 数组，保留历史记录
+      const existingVideoResults = (data.videoResults as any[]) || []
+      const updatedVideoResults = [...existingVideoResults, newVideoResult]
+
       setNodeStatus(id, 'success', {
         progress,
         lastResult: {
@@ -533,11 +637,15 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         videoOrientation: orientation,
         videoPrompt: prompt,
         videoDurationSeconds,
-        videoUrl: finalDraft?.videoUrl || (data as any)?.videoUrl || null,
+        videoUrl: videoUrl,
+        videoThumbnailUrl: thumbnailUrl,
+        videoTitle: title,
+        videoDuration: duration,
         videoDraftId: finalDraft?.id || (data as any)?.videoDraftId || null,
         videoPostId: finalDraft?.postId || (data as any)?.videoPostId || null,
         videoModel: generatedModel,
         videoTokenId: usedTokenId || null,
+        videoResults: updatedVideoResults, // ✅ 添加 videoResults 数组更新
       })
 
       appendLog(
@@ -563,7 +671,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
     for (let i = 0; i < sampleCount; i++) {
       if (isCanceled(id)) {
-        setNodeStatus(id, 'canceled', { progress: 0 })
+        setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
         appendLog(id, `[${nowLabel()}] 已取消`)
         endRunToken(id)
         return
@@ -614,7 +722,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       }
 
       if (isCanceled(id)) {
-        setNodeStatus(id, 'canceled', { progress: 0 })
+        setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
         appendLog(id, `[${nowLabel()}] 已取消`)
         endRunToken(id)
         return
