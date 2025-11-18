@@ -475,6 +475,7 @@ const enTranslations = {
   '删除项目': 'Delete Project',
   '项目「{{name}}」已删除': 'Project "{{name}}" deleted',
   '删除项目失败': 'Failed to delete project',
+  '确定要删除项目「{{name}}」吗？': 'Are you sure you want to delete project "{{name}}"?',
 
   // 快捷键
   '快捷键': 'Shortcuts',

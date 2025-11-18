@@ -12,6 +12,7 @@
     "@hookform/resolvers": "^3.9.0",
     "@mantine/core": "^7.13.1",
     "@mantine/hooks": "^7.13.1",
+    "@mantine/modals": "^8.3.8",
     "@mantine/notifications": "^7.13.1",
     "@tabler/icons-react": "^3.19.0",
     "framer-motion": "^12.23.24",
