@@ -1,6 +1,6 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader, Popover } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, deleteProject, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
@@ -19,6 +19,7 @@ export default function ProjectPanel(): JSX.Element | null {
   const [publicProjects, setPublicProjects] = React.useState<ProjectDto[]>([])
   const [loading, setLoading] = React.useState(false)
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null)
+  const [popoverProjectId, setPopoverProjectId] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'my' | 'public'>('my')
 
   React.useEffect(() => {
@@ -191,8 +192,22 @@ export default function ProjectPanel(): JSX.Element | null {
     }
   }
 
+  const closePopover = () => setPopoverProjectId(null)
+  const openDeletePopover = (projectId: string) => {
+    if (popoverProjectId && popoverProjectId !== projectId) {
+      setPopoverProjectId(null)
+      window.setTimeout(() => {
+        setPopoverProjectId(projectId)
+      }, 0)
+      return
+    }
+    setPopoverProjectId(projectId)
+  }
+  const confirmPopoverDelete = (project: ProjectDto) => {
+    closePopover()
+    handleDeleteProject(project)
+  }
   const handleDeleteProject = async (project: ProjectDto) => {
-    if (!confirm($t('确定要删除吗'))) return
     setDeletingProjectId(project.id)
     try {
       await deleteProject(project.id)
@@ -249,7 +264,7 @@ export default function ProjectPanel(): JSX.Element | null {
 
   if (!mounted) return null
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 6001 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 300 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
@@ -460,24 +475,45 @@ export default function ProjectPanel(): JSX.Element | null {
                                 whileTap={{ scale: 0.96 }}
                                 transition={{ type: "spring", stiffness: 400 }}
                               >
-                                <Tooltip
-                                  label={$t('删除项目')}
-                                  position="top"
+                                <Popover
+                                  opened={popoverProjectId === p.id}
+                                  onClose={closePopover}
                                   withArrow
+                                  position="top"
+                                  trapFocus
+                                  shadow="md"
+                                  radius="md"
+                                  withinPortal
+                                  dropdownProps={{ style: { zIndex: 9000 } }}
                                 >
-                                  <ActionIcon
-                                    size="sm"
-                                    variant="subtle"
-                                    color="red"
-                                    onClick={() => handleDeleteProject(p)}
-                                    loading={deletingProjectId === p.id}
-                                    style={{
-                                      border: '1px solid rgba(239, 68, 68, 0.2)'
-                                    }}
-                                  >
-                                    <IconTrash size={14} />
-                                  </ActionIcon>
-                                </Tooltip>
+                                  <Popover.Target>
+                                    <Tooltip
+                                      label={$t('删除项目')}
+                                      position="top"
+                                      withArrow
+                                    >
+                                      <ActionIcon
+                                        size="sm"
+                                        variant="subtle"
+                                        color="red"
+                                        onClick={() => openDeletePopover(p.id)}
+                                        loading={deletingProjectId === p.id}
+                                        style={{
+                                          border: '1px solid rgba(239, 68, 68, 0.2)'
+                                        }}
+                                      >
+                                        <IconTrash size={14} />
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  </Popover.Target>
+                                  <Popover.Dropdown>
+                                    <Text size="xs">{$t('确定要删除项目「{{name}}」吗？', { name: p.name })}</Text>
+                                    <Group position="right" spacing="xs" mt="xs">
+                                      <Button size="xs" variant="subtle" onClick={closePopover}>{$('取消')}</Button>
+                                      <Button size="xs" color="red" loading={deletingProjectId === p.id} onClick={() => confirmPopoverDelete(p)}>{$('删除')}</Button>
+                                    </Group>
+                                  </Popover.Dropdown>
+                                </Popover>
                               </motion.div>
                               <motion.div
                                 whileHover={{
