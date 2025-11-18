@@ -264,6 +264,28 @@ const enTranslations = {
   '未保存': 'Unsaved',
   '项目名': 'Project Name',
 
+  // 公开项目功能
+  '我的项目': 'My Projects',
+  '公开项目': 'Public Projects',
+  '公开': 'Public',
+  '设为公开': 'Set as Public',
+  '设为私有': 'Set as Private',
+  '克隆': 'Clone',
+  '克隆项目': 'Clone Project',
+  '克隆项目 - {{name}}': 'Clone - {{name}}',
+  '暂无公开项目': 'No Public Projects',
+  '作者：{{name}}': 'Author: {{name}}',
+  '正在克隆项目...': 'Cloning project...',
+  '项目「{{name}}」克隆成功': 'Project "{{name}}" cloned successfully',
+  '项目已设为公开': 'Project set as public',
+  '项目已设为私有': 'Project set as private',
+  '克隆项目失败': 'Failed to clone project',
+  '切换公开状态失败': 'Failed to toggle public status',
+  '社区公开项目': 'Community Public Projects',
+  '公开项目已刷新': 'Public projects refreshed',
+  '刷新公开项目失败': 'Failed to refresh public projects',
+  '加载中...': 'Loading...',
+
   // Canvas 界面文字
   '连接无效：类型不兼容、重复或形成环': 'Invalid connection: incompatible types, duplicate, or cycle',
   '连接会导致环': 'Connection creates a cycle',

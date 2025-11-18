@@ -8,7 +8,7 @@ function withAuth(init?: RequestInit): RequestInit {
 }
 
 export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }
-export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string }
+export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string; isPublic?: boolean; owner?: string; ownerName?: string }
 export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null }
 export type ModelTokenDto = {
   id: string
@@ -93,6 +93,39 @@ export async function listProjectFlows(projectId: string): Promise<FlowDto[]> {
 export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[] }): Promise<FlowDto> {
   const r = await fetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } }) }))
   if (!r.ok) throw new Error(`save flow failed: ${r.status}`)
+  return r.json()
+}
+
+// Public project APIs
+export async function listPublicProjects(): Promise<ProjectDto[]> {
+  const r = await fetch(`${API_BASE}/projects/public`, { headers: { 'Content-Type': 'application/json' } })
+  if (!r.ok) throw new Error(`list public projects failed: ${r.status}`)
+  return r.json()
+}
+
+export async function cloneProject(projectId: string, newName?: string): Promise<ProjectDto> {
+  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/clone`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: newName })
+  }))
+  if (!r.ok) throw new Error(`clone project failed: ${r.status}`)
+  return r.json()
+}
+
+export async function toggleProjectPublic(projectId: string, isPublic: boolean): Promise<ProjectDto> {
+  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/public`, withAuth({
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isPublic })
+  }))
+  if (!r.ok) throw new Error(`toggle project public failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getPublicProjectFlows(projectId: string): Promise<FlowDto[]> {
+  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/flows`, { headers: { 'Content-Type': 'application/json' } })
+  if (!r.ok) throw new Error(`get public project flows failed: ${r.status}`)
   return r.json()
 }
 

@@ -58,6 +58,7 @@ model FlowVersion {
 model Project {
   id        String  @id @default(uuid())
   name      String
+  isPublic  Boolean @default(false)
   ownerId   String?
   owner     User?   @relation(fields: [ownerId], references: [id])
   flows     Flow[]
