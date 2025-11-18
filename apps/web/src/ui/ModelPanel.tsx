@@ -1,6 +1,7 @@
 import React from 'react'
 import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea } from '@mantine/core'
 import { useUIStore } from './uiStore'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 import {
   deleteModelToken,
   listModelEndpoints,
@@ -245,12 +246,15 @@ export default function ModelPanel(): JSX.Element | null {
     setTokens(updated)
   }
 
+  // 计算安全的最大高度
+  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+
   return (
     <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 7000 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 420, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
+            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 420, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
                 <Title order={6}>模型配置</Title>

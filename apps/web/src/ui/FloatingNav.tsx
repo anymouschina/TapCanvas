@@ -1,5 +1,5 @@
 import React from 'react'
-import { ActionIcon, Paper, Stack, Tooltip, Avatar, Badge } from '@mantine/core'
+import { ActionIcon, Paper, Stack, Avatar, Badge } from '@mantine/core'
 import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders, IconSettings } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useAuth } from '../auth/store'
@@ -8,32 +8,97 @@ import { useRFStore } from '../canvas/store'
 import { listServerFlows, saveServerFlow, getServerFlow } from '../api/server'
 import { $ } from '../canvas/i18n'
 
+// 添加CSS动画样式
+const animationStyles = `
+  @keyframes bounce-in {
+    0% { transform: scale(1) rotate(0deg); }
+    50% { transform: scale(1.2) rotate(8deg); }
+    100% { transform: scale(1.15) rotate(5deg); }
+  }
+
+  .floating-nav-item {
+    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .floating-nav-item:hover {
+    animation: bounce-in 0.3s ease-out;
+    transform: scale(1.15) rotate(5deg) !important;
+  }
+
+  .floating-nav-add {
+    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .floating-nav-add:hover {
+    animation: bounce-in 0.3s ease-out;
+    transform: scale(1.1) rotate(90deg) !important;
+  }
+
+  .floating-nav-avatar {
+    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .floating-nav-avatar:hover {
+    animation: bounce-in 0.3s ease-out;
+    transform: scale(1.15) rotate(-5deg) !important;
+  }
+`
+
 export default function FloatingNav(): JSX.Element {
   const { setActivePanel, setPanelAnchorY } = useUIStore()
 
+  // 注入CSS样式
+  React.useEffect(() => {
+    const styleElement = document.createElement('style')
+    styleElement.textContent = animationStyles
+    document.head.appendChild(styleElement)
+
+    return () => {
+      document.head.removeChild(styleElement)
+    }
+  }, [])
+
   const Item = ({ label, icon, onHover, badge }: { label: string; icon: React.ReactNode; onHover: (y: number) => void; badge?: string }) => (
-    <Tooltip label={label} position="right" withArrow>
-      <div style={{ position: 'relative' }} onMouseEnter={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onHover(r.top + r.height/2) }} data-ux-floating>
-        <ActionIcon variant="subtle" size={36} radius="xl" aria-label={label}>
-          {icon}
-        </ActionIcon>
-        {badge && (
-          <Badge color="gray" size="xs" variant="light" style={{ position: 'absolute', top: -6, right: -6, borderRadius: 999 }}>{badge}</Badge>
-        )}
-      </div>
-    </Tooltip>
+    <div style={{ position: 'relative' }} data-ux-floating>
+      <ActionIcon
+        variant="subtle"
+        size={36}
+        radius="xl"
+        aria-label={label}
+        className="floating-nav-item"
+        onMouseEnter={(e) => {
+          const r = e.currentTarget.getBoundingClientRect()
+          onHover(r.top + r.height/2)
+        }}
+      >
+        {icon}
+      </ActionIcon>
+      {badge && (
+        <Badge color="gray" size="xs" variant="light" style={{ position: 'absolute', top: -6, right: -6, borderRadius: 999 }}>{badge}</Badge>
+      )}
+    </div>
   )
 
   return (
     <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 6000 }} data-ux-floating>
       <Paper withBorder shadow="sm" radius="xl" className="glass" p={6} data-ux-floating>
         <Stack align="center" gap={6}>
-          <Tooltip label={$('添加')} position="right" withArrow>
-            <ActionIcon size={40} radius={999} style={{ background: '#fff', color: '#0b0b0d' }}
-              onMouseEnter={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPanelAnchorY(r.top + r.height/2); setActivePanel('add') }} data-ux-floating>
+          <ActionIcon
+              size={40}
+              radius={999}
+              className="floating-nav-add"
+              style={{
+                background: '#fff',
+                color: '#0b0b0d',
+              }}
+              onMouseEnter={(e) => {
+                const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                setPanelAnchorY(r.top + r.height/2);
+                setActivePanel('add')
+              }}
+              data-ux-floating>
               <IconPlus size={18} />
             </ActionIcon>
-          </Tooltip>
           <div style={{ height: 6 }} />
           <Item label={$('项目')} icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
           <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
@@ -47,11 +112,23 @@ export default function FloatingNav(): JSX.Element {
           {(() => {
             const user = useAuth.getState().user
             return (
-              <div onMouseEnter={(e)=>{ const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); useUIStore.getState().setPanelAnchorY(r.top + r.height/2); useUIStore.getState().setActivePanel('account') }} data-ux-floating>
-                <Avatar size={30} radius={999} src={user?.avatarUrl} alt={user?.login || 'user'}>
-                  {user?.login?.[0]?.toUpperCase() || 'U'}
-                </Avatar>
-              </div>
+              <Avatar
+                size={30}
+                radius={999}
+                src={user?.avatarUrl}
+                alt={user?.login || 'user'}
+                className="floating-nav-avatar"
+                style={{
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  useUIStore.getState().setPanelAnchorY(r.top + r.height/2);
+                  useUIStore.getState().setActivePanel('account')
+                }}
+                data-ux-floating>
+                {user?.login?.[0]?.toUpperCase() || 'U'}
+              </Avatar>
             )
           })()}
         </Stack>

@@ -7,6 +7,7 @@ import { useRFStore } from '../canvas/store'
 import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh } from '@tabler/icons-react'
 import { $, $t } from '../canvas/i18n'
 import { notifications } from '@mantine/notifications'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 
 export default function ProjectPanel(): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
@@ -261,12 +262,16 @@ export default function ProjectPanel(): JSX.Element | null {
   }
 
   if (!mounted) return null
+
+  // 计算安全的最大高度
+  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 300 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 300 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 500, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
+            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 500, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
               <motion.div
                 initial={{ opacity: 0, y: -5 }}

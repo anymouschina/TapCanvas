@@ -3,6 +3,7 @@ import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Tran
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 import {
   listServerAssets,
   createServerAsset,
@@ -572,12 +573,15 @@ export default function AssetPanel(): JSX.Element | null {
     })
   }
 
+  // 计算安全的最大高度
+  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+
   return (
     <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 6001 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
+            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
               <input
                 ref={createCharCoverInputRef}
