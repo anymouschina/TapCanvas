@@ -1,5 +1,7 @@
 import React from 'react'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea, ActionIcon, Tooltip, FileInput } from '@mantine/core'
+import { IconDownload, IconUpload, IconTrash } from '@tabler/icons-react'
+import { notifications } from '@mantine/notifications'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import {
@@ -17,6 +19,223 @@ import {
 
 export default function ModelPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
+
+  // 导出模型配置
+  const handleExport = async () => {
+    try {
+      // 获取认证token
+      const token = localStorage.getItem('tap_token')
+      if (!token) {
+        throw new Error('用户未登录，无法导出配置')
+      }
+
+      const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+      const response = await fetch(`${API_BASE}/models/export`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`导出失败 (${response.status}): ${errorText}`)
+      }
+
+      let data
+      try {
+        data = await response.json()
+      } catch (jsonError) {
+        console.error('Failed to parse JSON:', jsonError)
+        throw new Error('服务器返回的不是有效的JSON数据')
+      }
+
+      console.log('Export data preview:', {
+        version: data.version,
+        providerCount: data.providers?.length || 0,
+        responseType: response.headers.get('content-type'),
+        responseStatus: response.status
+      })
+
+      // 验证导出的数据
+      if (!data || typeof data !== 'object') {
+        throw new Error('导出的数据格式不正确')
+      }
+
+      if (!data.version || !data.providers) {
+        throw new Error('导出的数据缺少必要字段')
+      }
+
+      // 创建下载链接
+      const jsonStr = JSON.stringify(data, null, 2)
+      const blob = new Blob([jsonStr], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const fileName = `model-config-${new Date().toISOString().split('T')[0]}.json`
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      notifications.show({
+        color: 'green',
+        title: '导出成功',
+        message: `模型配置已导出为 ${fileName}，包含 ${data.providers.length} 个提供商`
+      })
+    } catch (error) {
+      console.error('Export error:', error)
+      notifications.show({
+        color: 'red',
+        title: '导出失败',
+        message: error instanceof Error ? error.message : '未知错误'
+      })
+    }
+  }
+
+  // 导入模型配置
+  const handleImport = async (file: File) => {
+    console.log('Import triggered for file:', file.name, 'Size:', file.size)
+
+    try {
+      // 验证文件类型
+      if (!file.name.endsWith('.json')) {
+        throw new Error('只支持JSON格式文件')
+      }
+
+      // 读取文件内容
+      const text = await file.text()
+      console.log('File content length:', text.length, 'First 100 chars:', text.substring(0, 100))
+
+      // 验证JSON格式
+      let data
+      try {
+        data = JSON.parse(text)
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError)
+        throw new Error('JSON格式错误：' + parseError.message)
+      }
+
+      // 验证数据结构
+      if (!data.version || !data.providers) {
+        console.error('Invalid data structure:', data)
+        throw new Error('无效的配置文件格式')
+      }
+
+      console.log('Importing data:', {
+        version: data.version,
+        providerCount: data.providers?.length || 0,
+        sampleProvider: data.providers?.[0]
+      })
+
+      // 获取认证token
+      const token = localStorage.getItem('tap_token')
+      console.log('Token exists:', !!token, 'Token length:', token?.length)
+      if (!token) {
+        throw new Error('用户未登录，无法导入配置')
+      }
+
+      const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+      const importUrl = `${API_BASE}/models/import`
+      console.log('Making import request to:', importUrl)
+
+      const response = await fetch(importUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      })
+
+      console.log('Import response status:', response.status, 'Headers:', Object.fromEntries(response.headers.entries()))
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Import error response:', errorText)
+        throw new Error(`服务器错误 (${response.status}): ${errorText}`)
+      }
+
+      const result = await response.json()
+      console.log('Import response data:', result)
+
+      // 验证响应数据结构
+      if (!result || typeof result !== 'object') {
+        throw new Error('服务器返回了无效的响应数据')
+      }
+
+      if (result.success) {
+        notifications.show({
+          color: 'green',
+          title: '导入成功',
+          message: `导入完成：提供商 ${result.result.imported.providers} 个，Token ${result.result.imported.tokens} 个，端点 ${result.result.imported.endpoints} 个`
+        })
+
+        // 刷新所有数据
+        const refreshAllData = async () => {
+          try {
+            const ps = await listModelProviders()
+            setProviders(ps)
+
+            // 刷新Sora数据
+            let sora = ps.find((p) => p.vendor === 'sora')
+            if (!sora) {
+              sora = await upsertModelProvider({ name: 'Sora', vendor: 'sora' })
+              setProviders((prev) => [...prev, sora!])
+            }
+            setSoraProvider(sora)
+            const soraEndpoints = await listModelEndpoints(sora.id)
+            const soraEpsByKey: Record<string, ModelEndpointDto> = {}
+            soraEndpoints.forEach((e) => (soraEpsByKey[e.key] = e))
+            setSoraEndpoint(soraEpsByKey['videos'] || null)
+            setVideoEndpoint(soraEpsByKey['video'] || null)
+            setSoraEndpoint(soraEpsByKey['sora'] || null)
+
+            // 刷新Gemini数据
+            let gemini = ps.find((p) => p.vendor === 'gemini')
+            if (gemini) {
+              setGeminiProvider(gemini)
+              setGeminiBaseUrl(gemini.baseUrl || '')
+              const geminiTokenData = await listModelTokens(gemini.id)
+              setGeminiTokens(geminiTokenData)
+            }
+
+            // 刷新Qwen数据
+            let qwen = ps.find((p) => p.vendor === 'qwen')
+            if (qwen) {
+              setQwenProvider(qwen)
+              const qwenTokenData = await listModelTokens(qwen.id)
+              setQwenTokens(qwenTokenData)
+            }
+          } catch (error) {
+            console.error('Failed to refresh data:', error)
+          }
+        }
+
+        refreshAllData()
+
+        if (result.errors && Array.isArray(result.errors) && result.errors.length > 0) {
+          console.warn('Import warnings:', result.errors)
+          notifications.show({
+            color: 'yellow',
+            title: '部分导入失败',
+            message: `遇到 ${result.errors.length} 个错误，请检查配置: ${result.errors.slice(0, 2).join(', ')}`
+          })
+        }
+      } else {
+        throw new Error(result.message || 'Import failed')
+      }
+    } catch (error) {
+      console.error('Import error:', error)
+      notifications.show({
+        color: 'red',
+        title: '导入失败',
+        message: error instanceof Error ? error.message : '文件格式错误'
+      })
+    }
+  }
+
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const mounted = active === 'models'
@@ -258,9 +477,61 @@ export default function ModelPanel(): JSX.Element | null {
               <div className="panel-arrow" />
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
                 <Title order={6}>模型配置</Title>
-                <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
-                  关闭
-                </Button>
+                <Group gap={4}>
+                  <input
+                    id="import-model-config"
+                    type="file"
+                    accept=".json"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) {
+                        handleImport(file)
+                      }
+                      // 清空input值，允许重复导入同一文件
+                      event.target.value = ''
+                    }}
+                    style={{ display: 'none' }}
+                  />
+                  <Tooltip label="导出配置">
+                    <ActionIcon
+                      size={24}
+                      variant="light"
+                      onClick={handleExport}
+                    >
+                      <IconDownload size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="导入配置">
+                    <ActionIcon
+                      size={24}
+                      variant="light"
+                      onClick={() => {
+                        console.log('Import button clicked')
+                        const input = document.getElementById('import-model-config') as HTMLInputElement
+                        if (input) {
+                          input.click()
+                        } else {
+                          // 备用方案：创建临时input元素
+                          const tempInput = document.createElement('input')
+                          tempInput.type = 'file'
+                          tempInput.accept = '.json'
+                          tempInput.onchange = (event) => {
+                            const file = (event.target as HTMLInputElement).files?.[0]
+                            if (file) {
+                              handleImport(file)
+                            }
+                          }
+                          tempInput.click()
+                        }
+                      }}
+                    >
+                      <IconUpload size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
+                    关闭
+                  </Button>
+                </Group>
               </Group>
               <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                 <Stack gap="sm">

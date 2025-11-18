@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards, Res } from '@nestjs/common'
+import type { Response } from 'express'
 import { JwtGuard } from '../auth/jwt.guard'
 import { ModelService } from './model.service'
 
@@ -63,5 +64,37 @@ export class ModelController {
     @Req() req: any,
   ) {
     return this.service.upsertEndpoint(body, String(req.user.sub))
+  }
+
+  @Get('export')
+  async exportAll(@Req() req: any, @Res() res: Response) {
+    try {
+      const data = await this.service.exportAll(String(req.user.sub))
+
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Content-Disposition', `attachment; filename="model-config-${new Date().toISOString().split('T')[0]}.json"`)
+
+      res.json(data)
+    } catch (error) {
+      res.status(500).json({ error: 'Export failed', message: error.message })
+    }
+  }
+
+  @Post('import')
+  async importAll(@Body() data: any, @Req() req: any) {
+    try {
+      const result = await this.service.importAll(String(req.user.sub), data)
+      return {
+        success: true,
+        message: 'Import completed',
+        result
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Import failed',
+        message: error.message
+      }
+    }
   }
 }
