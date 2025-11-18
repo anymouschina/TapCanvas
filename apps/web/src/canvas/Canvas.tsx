@@ -289,8 +289,9 @@ function CanvasInner(): JSX.Element {
     didConnectRef.current = true
     onConnect(c)
   }, [onConnect])
-  // MiniMap drag-to-pan
-  const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect }|null>(null)
+  // MiniMap drag-to-pan and smart click
+  const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect; startPos: { x: number; y: number } }|null>(null)
+  const minimapClickRef = useRef<{ downTime: number; startPos: { x: number; y: number } }|null>(null)
 
   // Group overlay computation
   const selectedNodes = nodes.filter(n=>n.selected)
@@ -463,35 +464,121 @@ function CanvasInner(): JSX.Element {
     closeInsertMenu()
   }
 
-  const handleRootClick = useCallback((e: React.MouseEvent) => {
-    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const cx = e.clientX - rect.left
-    const cy = e.clientY - rect.top
-    const rx = Math.max(0, Math.min(1, cx / rect.width))
-    const ry = Math.max(0, Math.min(1, cy / rect.height))
-    // compute world bounds from nodes
+  // Find the nearest node to a click position in minimap
+  const findNearestNode = useCallback((clickX: number, clickY: number, minimapRect: DOMRect) => {
     const defaultW = 180, defaultH = 96
-    if (nodes.length === 0) return
+    if (nodes.length === 0) return null
+
+    // Convert click position to world coordinates
+    const rx = Math.max(0, Math.min(1, clickX / minimapRect.width))
+    const ry = Math.max(0, Math.min(1, clickY / minimapRect.height))
+
     const minX = Math.min(...nodes.map(n => n.position.x))
     const minY = Math.min(...nodes.map(n => n.position.y))
     const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
     const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
     const worldX = minX + rx * (maxX - minX)
     const worldY = minY + ry * (maxY - minY)
-    const z = viewport.zoom || 1
-    rf.setCenter?.(worldX, worldY, { zoom: z, duration: 200 })
+
+    // Find nearest node
+    let nearestNode = null
+    let minDistance = Infinity
+
+    for (const node of nodes) {
+      const nodeW = ((node as any).width) || defaultW
+      const nodeH = ((node as any).height) || defaultH
+      const nodeCenterX = node.position.x + nodeW / 2
+      const nodeCenterY = node.position.y + nodeH / 2
+
+      const distance = Math.sqrt(Math.pow(worldX - nodeCenterX, 2) + Math.pow(worldY - nodeCenterY, 2))
+
+      if (distance < minDistance) {
+        minDistance = distance
+        nearestNode = node
+      }
+    }
+
+    // Only return node if click is reasonably close (within 30% of minimap dimensions)
+    const threshold = Math.min(minimapRect.width, minimapRect.height) * 0.3
+    const clickThreshold = (threshold / minimapRect.width) * (maxX - minX)
+
+    return minDistance <= clickThreshold ? nearestNode : null
+  }, [nodes])
+
+  const handleRootClick = useCallback((e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
+    if (!el) return
+
+    const rect = el.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const clickY = e.clientY - rect.top
+
+    // Check if this was a quick click (not a drag)
+    if (minimapClickRef.current) {
+      const clickDuration = Date.now() - minimapClickRef.current.downTime
+      const dragDistance = Math.sqrt(
+        Math.pow(clickX - minimapClickRef.current.startPos.x, 2) +
+        Math.pow(clickY - minimapClickRef.current.startPos.y, 2)
+      )
+
+      // If click was quick and minimal movement, treat as smart click
+      if (clickDuration < 200 && dragDistance < 5) {
+        const nearestNode = findNearestNode(clickX, clickY, rect)
+
+        if (nearestNode) {
+          // Select the node and center view on it
+          useRFStore.setState(s => ({
+            nodes: s.nodes.map(n => ({
+              ...n,
+              selected: n.id === nearestNode.id
+            }))
+          }))
+
+          const nodeW = ((nearestNode as any).width) || 180
+          const nodeH = ((nearestNode as any).height) || 96
+          const nodeCenterX = nearestNode.position.x + nodeW / 2
+          const nodeCenterY = nearestNode.position.y + nodeH / 2
+
+          rf.setCenter?.(nodeCenterX, nodeCenterY, { zoom: viewport.zoom || 1, duration: 300 })
+        } else {
+          // No node near click, treat as normal view centering
+          const rx = Math.max(0, Math.min(1, clickX / rect.width))
+          const ry = Math.max(0, Math.min(1, clickY / rect.height))
+          const defaultW = 180, defaultH = 96
+          const minX = Math.min(...nodes.map(n => n.position.x))
+          const minY = Math.min(...nodes.map(n => n.position.y))
+          const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
+          const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+          const worldX = minX + rx * (maxX - minX)
+          const worldY = minY + ry * (maxY - minY)
+          const z = viewport.zoom || 1
+          rf.setCenter?.(worldX, worldY, { zoom: z, duration: 200 })
+        }
+      }
+    }
+
+    minimapClickRef.current = null
     e.stopPropagation()
     e.preventDefault()
-  }, [nodes, rf, viewport.zoom])
+  }, [nodes, rf, viewport.zoom, findNearestNode])
 
   const handleRootMouseDown = useCallback((e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
     if (!el) return
-    minimapDragRef.current = { el, rect: el.getBoundingClientRect() }
-    handleRootClick(e) // center to initial point
-  }, [handleRootClick])
+
+    const rect = el.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const clickY = e.clientY - rect.top
+
+    // Record click info for distinguishing click vs drag
+    minimapClickRef.current = {
+      downTime: Date.now(),
+      startPos: { x: clickX, y: clickY }
+    }
+
+    // Setup drag reference for pan functionality
+    minimapDragRef.current = { el, rect, startPos: { x: clickX, y: clickY } }
+  }, [])
 
   useEffect(() => {
     const onMove = (ev: MouseEvent) => {
@@ -617,9 +704,9 @@ function CanvasInner(): JSX.Element {
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 3 }}
       >
-        <MiniMap width={160} height={110} />
+        <MiniMap style={{ width: 160, height: 110 }} />
         <Controls position="bottom-left" />
-        <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
+        <Background gap={16} size={1} color="#2a2f3a" />
       </ReactFlow>
       {/* Focus mode breadcrumb with hierarchy */}
       {focusGroupId && (
