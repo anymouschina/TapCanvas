@@ -294,15 +294,15 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Group>
               </motion.div>
 
-              <Tabs value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
-                <Tabs.List>
-                  <motion.div
-                    layout
-                    style={{ display: 'flex', gap: '4px' }}
-                  >
-                    <Tabs.Tab
-                      value="my"
-                      leftSection={
+                <Tabs value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
+                  <Tabs.List>
+                    <motion.div
+                      layout
+                      style={{ display: 'flex', gap: '4px' }}
+                    >
+                      <Tabs.Tab
+                        value="my"
+                        leftSection={
                         <motion.div
                           layoutId="tab-icon-my"
                           initial={false}
@@ -312,27 +312,63 @@ export default function ProjectPanel(): JSX.Element | null {
                         </motion.div>
                       }
                     >
-                      {$('我的项目')}
+                      <motion.span
+                        initial={{ opacity: 0.7 }}
+                        animate={activeTab === 'my' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
+                        whileHover={{ scale: 1.05, color: '#60a5fa' }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        {$('我的项目')}
+                      </motion.span>
                     </Tabs.Tab>
-                    <Tabs.Tab
-                      value="public"
-                      leftSection={
-                        <motion.div
-                          layoutId="tab-icon-public"
-                          initial={false}
-                          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      <Tabs.Tab
+                        value="public"
+                        leftSection={
+                          <motion.div
+                            layoutId="tab-icon-public"
+                            initial={false}
+                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                          >
+                            <IconWorld size={14} />
+                          </motion.div>
+                        }
+                      >
+                        <motion.span
+                          initial={{ opacity: 0.7 }}
+                          animate={activeTab === 'public' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
+                          whileHover={{ scale: 1.05, color: '#60a5fa' }}
+                          transition={{ duration: 0.2 }}
                         >
-                          <IconWorld size={14} />
-                        </motion.div>
-                      }
-                    >
-                      {$('公开项目')}
-                    </Tabs.Tab>
-                  </motion.div>
-                </Tabs.List>
+                          {$('公开项目')}
+                        </motion.span>
+                      </Tabs.Tab>
+                    </motion.div>
+                  </Tabs.List>
 
-                <Tabs.Panel value="my" pt="xs">
-                  <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                  <Tabs.Panel value="my" pt="xs">
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <Group mb="xs" spacing="xs">
+                        <motion.div
+                          initial={{ scale: 0.98 }}
+                          animate={{ scale: 1 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <Text size="xs" c="dimmed">{$('我的项目')}</Text>
+                        </motion.div>
+                        <motion.div
+                          whileHover={{ scale: 1.03 }}
+                          whileTap={{ scale: 0.97 }}
+                        >
+                          <Badge color="blue" variant="outline">{$('热门')}</Badge>
+                        </motion.div>
+                      </Group>
+                    </motion.div>
+                    <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
                     <AnimatePresence mode="wait">
                       {myProjects.length === 0 && !loading && (
                         <motion.div
@@ -549,6 +585,27 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Tabs.Panel>
 
                 <Tabs.Panel value="public" pt="xs">
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <Group mb="xs" align="center" spacing="xs">
+                      <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <Text size="xs" c="dimmed">{$('公开项目')}</Text>
+                      </motion.div>
+                      <motion.div
+                        animate={{ rotate: activeTab === 'public' ? 0 : -5 }}
+                        transition={{ duration: 0.3, type: 'spring', stiffness: 200 }}
+                      >
+                        <IconWorld size={12} />
+                      </motion.div>
+                    </Group>
+                  </motion.div>
                   <motion.div
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}

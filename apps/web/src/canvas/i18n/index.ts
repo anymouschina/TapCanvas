@@ -354,9 +354,10 @@ const enTranslations = {
   '上传': 'Upload',
 
   // 项目面板
-  '项目': 'Projects',
-  '未命名项目 {{time}}': 'Untitled Project {{time}}',
-  '新建项目': 'New Project',
+    '项目': 'Projects',
+    '未命名项目 {{time}}': 'Untitled Project {{time}}',
+    '新建项目': 'New Project',
+    '热门': 'Hot',
   '暂无项目': 'No Projects',
   '选择': 'Select',
 
