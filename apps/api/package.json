@@ -36,6 +36,7 @@
     "axios": "^1.13.2",
     "bull": "^4.16.0",
     "form-data": "^4.0.0",
+    "framer-motion": "^12.23.24",
     "nestjs-prisma": "^0.26.0",
     "prisma": "^6.19.0",
     "reflect-metadata": "^0.2.2",
