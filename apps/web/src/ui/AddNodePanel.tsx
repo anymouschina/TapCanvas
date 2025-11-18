@@ -1,6 +1,6 @@
-import React, { useRef } from 'react'
-import { Paper, Title, Stack, Group, Button, Transition } from '@mantine/core'
-import { IconTypography, IconPhoto, IconVideo, IconMusic, IconUpload } from '@tabler/icons-react'
+import React from 'react'
+import { Paper, Title, Stack, Button, Transition } from '@mantine/core'
+import { IconTypography, IconPhoto, IconVideo } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { $ } from '../canvas/i18n'
@@ -10,7 +10,6 @@ export default function AddNodePanel(): JSX.Element | null {
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
   const addNode = useRFStore(s => s.addNode)
-  const fileRef = useRef<HTMLInputElement|null>(null)
 
   const mounted = active === 'add'
   return (
@@ -24,15 +23,8 @@ export default function AddNodePanel(): JSX.Element | null {
         <Stack gap={8}>
           <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode','文本',{kind:'textToImage'}); setActivePanel(null) }}>{$('文本')}</Button>
           <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode','Image',{kind:'image'}); setActivePanel(null) }}>{$('图像')}</Button>
-          <Group grow>
-            <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode','视频',{kind:'composeVideo'}); setActivePanel(null) }}>{$('视频')}</Button>
-          </Group>
-          <Group grow>
-            <Button variant="light" leftSection={<IconMusic size={16} />} onClick={() => { addNode('taskNode','音频',{kind:'tts'}); setActivePanel(null) }}>{$('音频')}</Button>
-            <Button variant="light" leftSection={<IconUpload size={16} />} onClick={() => fileRef.current?.click()}>{$('上传')}</Button>
-          </Group>
-        </Stack>
-        <input ref={fileRef} type="file" hidden onChange={() => setActivePanel(null)} />
+          <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode','视频',{kind:'composeVideo'}); setActivePanel(null) }}>{$('视频')}</Button>
+                </Stack>
             </Paper>
           </div>
         )}
