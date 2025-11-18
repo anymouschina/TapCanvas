@@ -6,6 +6,7 @@ import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { listServerFlows, saveServerFlow, getServerFlow } from '../api/server'
+import { $ } from '../canvas/i18n'
 
 export default function FloatingNav(): JSX.Element {
   const { setActivePanel, setPanelAnchorY } = useUIStore()
@@ -27,18 +28,18 @@ export default function FloatingNav(): JSX.Element {
     <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 6000 }} data-ux-floating>
       <Paper withBorder shadow="sm" radius="xl" className="glass" p={6} data-ux-floating>
         <Stack align="center" gap={6}>
-          <Tooltip label="添加" position="right" withArrow>
+          <Tooltip label={$('添加')} position="right" withArrow>
             <ActionIcon size={40} radius={999} style={{ background: '#fff', color: '#0b0b0d' }}
               onMouseEnter={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPanelAnchorY(r.top + r.height/2); setActivePanel('add') }} data-ux-floating>
               <IconPlus size={18} />
             </ActionIcon>
           </Tooltip>
           <div style={{ height: 6 }} />
-          <Item label="项目" icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
-          <Item label="工作流" icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
-          <Item label="我的资产" icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
-          <Item label="模型配置" icon={<IconSettings size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
-          <Item label="历史记录" icon={<IconHistory size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
+          <Item label={$('项目')} icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
+          <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
+          <Item label={$('我的资产')} icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
+          <Item label={$('模型配置')} icon={<IconSettings size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
+          <Item label={$('历史记录')} icon={<IconHistory size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
           {/* <Item label="图片编辑" icon={<IconPhotoEdit size={18} />}  badge="Beta" /> */}
           {/* <Item label="标尺" icon={<IconRuler size={18} />}  /> */}
           {/* <Item label="帮助" icon={<IconHelpCircle size={18} />}  /> */}

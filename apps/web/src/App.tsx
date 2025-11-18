@@ -1,7 +1,7 @@
 import React from 'react'
 import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconBrandGithub } from '@tabler/icons-react'
+import { IconBrandGithub, IconLanguage } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { useRFStore } from './canvas/store'
@@ -12,6 +12,7 @@ import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
 import { listModelProviders, listModelEndpoints, upsertModelProvider, saveProjectFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
 import { useAuth } from './auth/store'
+import { getCurrentLanguage, setLanguage, $ } from './canvas/i18n'
 import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
 import { listFlows, saveFlow, deleteFlow as deleteLibraryFlow, renameFlow, scanCycles } from './flows/registry'
@@ -43,6 +44,7 @@ export default function App(): JSX.Element {
   const rfState = useRFStore()
   const auth = useAuth()
   const [saving, setSaving] = React.useState(false)
+  const [currentLang, setCurrentLang] = React.useState(getCurrentLanguage())
 
   React.useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -168,15 +170,15 @@ export default function App(): JSX.Element {
     const nodes = useRFStore.getState().nodes
     const edges = useRFStore.getState().edges
     const nid = 'saving-' + Date.now()
-    notifications.show({ id: nid, title: '保存中', message: '正在保存当前项目…', loading: true, autoClose: false, withCloseButton: false })
+    notifications.show({ id: nid, title: $('保存中'), message: $('正在保存当前项目…'), loading: true, autoClose: false, withCloseButton: false })
     setSaving(true)
     try {
       const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges })
       setCurrentFlow({ id: saved.id, name: flowName, source: 'server' })
       setDirty(false)
-      notifications.update({ id: nid, title: '已保存', message: `项目「${proj!.name}」已保存`, loading: false, autoClose: 1500, color: 'green' })
+      notifications.update({ id: nid, title: $('已保存'), message: $('项目「{{name}}」已保存', { name: proj!.name }), loading: false, autoClose: 1500, color: 'green' })
     } catch (e: any) {
-      notifications.update({ id: nid, title: '保存失败', message: e?.message || '网络或服务器错误', loading: false, autoClose: 3000, color: 'red' })
+      notifications.update({ id: nid, title: $('保存失败'), message: e?.message || $('网络或服务器错误'), loading: false, autoClose: 3000, color: 'red' })
     } finally {
       setSaving(false)
     }
@@ -195,12 +197,23 @@ export default function App(): JSX.Element {
         <Group justify="space-between" p="sm">
           <Group>
             <Title order={4}>TapCanvas</Title>
-            {isDirty && (<Badge color="red" variant="light">未保存</Badge>)}
+            {isDirty && (<Badge color="red" variant="light">{$('未保存')}</Badge>)}
           </Group>
           <Group gap="xs">
-            <TextInput size="xs" placeholder="项目名" value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
-            <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving}>保存</Button>
+            <TextInput size="xs" placeholder={$('项目名')} value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
+            <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving}>{$('保存')}</Button>
             {/* 历史入口迁移到左侧浮动菜单 */}
+            <ActionIcon
+              variant="subtle"
+              aria-label="Language / 语言"
+              onClick={() => {
+                const newLang = currentLang === 'zh' ? 'en' : 'zh'
+                setLanguage(newLang)
+                setCurrentLang(newLang)
+              }}
+            >
+              <IconLanguage size={18} />
+            </ActionIcon>
             <ActionIcon component="a" href="https://github.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer" variant="subtle" aria-label="GitHub">
               <IconBrandGithub size={18} />
             </ActionIcon>

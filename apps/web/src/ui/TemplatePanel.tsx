@@ -3,6 +3,7 @@ import { Paper, Title, Tabs, SimpleGrid, Card, Image, Text, Button, Group, Badge
 import { useUIStore } from './uiStore'
 import { listServerFlows, listProjectFlows, type FlowDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
+import { $, $t } from '../canvas/i18n'
 
 const publicTemplates:[] = [
   // { title: 'UGC Creator' },
@@ -41,18 +42,18 @@ export default function TemplatePanel(): JSX.Element | null {
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
         <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
-          <Title order={6}>工作流（项目：{currentProject?.name || '全部'}）</Title>
+          <Title order={6}>{$t('工作流（项目：{{project}}）', { project: currentProject?.name || '全部' })}</Title>
           <Group>
-            <Badge color="gray" variant="light">推荐</Badge>
-            <Badge color="gray" variant="light">浏览全部</Badge>
-            <Badge color="gray" variant="light">创建</Badge>
+            <Badge color="gray" variant="light">{$('推荐')}</Badge>
+            <Badge color="gray" variant="light">{$('浏览全部')}</Badge>
+            <Badge color="gray" variant="light">{$('创建')}</Badge>
           </Group>
         </Group>
         <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
         <Tabs defaultValue="public">
           <Tabs.List>
-            <Tabs.Tab value="public">公共工作流</Tabs.Tab>
-            <Tabs.Tab value="server">我的工作流(服务端)</Tabs.Tab>
+            <Tabs.Tab value="public">{$('公共工作流')}</Tabs.Tab>
+            <Tabs.Tab value="server">{$('我的工作流(服务端)')}</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="public" pt="xs">
             <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">

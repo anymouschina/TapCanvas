@@ -20,7 +20,7 @@ import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
 import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip } from '@mantine/core'
 import { IconBrandGithub } from '@tabler/icons-react'
-import { getCurrentLanguage, setLanguage } from './i18n'
+import { getCurrentLanguage, setLanguage, $ } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
@@ -192,7 +192,7 @@ function CanvasInner(): JSX.Element {
         fromHandle: from.handleId || 'out-any',
       })
     } else if (connectingType && lastReason.current) {
-      const msg = lastReason.current || '连接无效：类型不兼容、重复或形成环'
+      const msg = lastReason.current || $('连接无效：类型不兼容、重复或形成环')
       toast(msg, 'error')
     }
     setConnectingType(null)
@@ -354,11 +354,11 @@ function CanvasInner(): JSX.Element {
     const inPos = ((group.data as any)?.ioInPos) as { x:number;y:number } | undefined
     const outPos = ((group.data as any)?.ioOutPos) as { x:number;y:number } | undefined
     if (inCross.length) {
-      ioNodes.push({ id: inNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: inPos || { x: 8, y: 8 }, data: { kind: 'io-in', label: '入口', types: typesIn } })
+      ioNodes.push({ id: inNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: inPos || { x: 8, y: 8 }, data: { kind: 'io-in', label: $('入口'), types: typesIn } })
     }
     if (outCross.length) {
       const def = { x: Math.max(8, gWidth - 104), y: Math.max(8, gHeight - 36) }
-      ioNodes.push({ id: outNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: outPos || def, data: { kind: 'io-out', label: '出口', types: typesOut } })
+      ioNodes.push({ id: outNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: outPos || def, data: { kind: 'io-out', label: $('出口'), types: typesOut } })
     }
     const remapEdgesIn = inCross.map((e, idx) => ({ id: `ioe-in-${idx}-${e.target}`, source: inNodeId, sourceHandle: `out-${inferType(e)}`, target: e.target, targetHandle: e.targetHandle, type: 'typed' as const, animated: true }))
     const remapEdgesOut = outCross.map((e, idx) => ({ id: `ioe-out-${e.source}-${idx}`, source: e.source, sourceHandle: e.sourceHandle, target: outNodeId, targetHandle: `in-${inferType(e)}`, type: 'typed' as const, animated: true }))
@@ -581,9 +581,9 @@ function CanvasInner(): JSX.Element {
         isValidConnection={(c) => {
           if (!c.source || !c.target) return false
           if (c.source === c.target) return false
-          if (createsCycle({ source: c.source, target: c.target })) { lastReason.current = '连接会导致环'; return false }
+          if (createsCycle({ source: c.source, target: c.target })) { lastReason.current = $('连接会导致环'); return false }
           const dup = edges.some(e => e.source === c.source && e.target === c.target)
-          if (dup) { lastReason.current = '重复连接'; return false }
+          if (dup) { lastReason.current = $('重复连接'); return false }
           const sNode = nodes.find(n => n.id === c.source)
           const tNode = nodes.find(n => n.id === c.target)
           const sKind = sNode?.data?.kind as string | undefined
@@ -602,13 +602,13 @@ function CanvasInner(): JSX.Element {
                 crossAllowed = true
               }
               if (!crossAllowed) {
-                lastReason.current = `类型不兼容：${sType} → ${tType}`
+                lastReason.current = $('类型不兼容：{{from}} → {{to}}', { from: sType, to: tType })
                 return false
               }
             }
           }
           const ok = isValidEdgeByType(sKind, tKind)
-          if (!ok) lastReason.current = '不允许的连接方向'
+          if (!ok) lastReason.current = $('不允许的连接方向')
           return ok
         }}
         snapToGrid
@@ -627,7 +627,7 @@ function CanvasInner(): JSX.Element {
           <Group gap={8} style={{ flexWrap: 'nowrap' }}>
             {focusStack.map((gid, idx) => {
               const n = nodes.find(nn => nn.id === gid)
-              const label = (n?.data as any)?.label || '组'
+              const label = (n?.data as any)?.label || $('组')
               const isLast = idx === focusStack.length - 1
               return (
                 <Group key={gid} gap={6} style={{ flexWrap: 'nowrap' }}>
@@ -650,22 +650,22 @@ function CanvasInner(): JSX.Element {
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
           <Paper withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: 'rgba(15,16,20,.9)' }}>
             <Stack gap={8}>
-              <Text c="dimmed">快速开始</Text>
+              <Text c="dimmed">{$('快速开始')}</Text>
               <Group gap={8} style={{ flexWrap: 'nowrap' }}>
-                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }) }}>新建 text</Button>
+                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }) }}>{$('新建 text')}</Button>
                 <Button size="sm" variant="light" onClick={() => {
                   // create a small sample flow in center
                   const center = rf.project?.({ x: window.innerWidth/2, y: window.innerHeight/2 }) || { x: 200, y: 200 }
                   useRFStore.setState((s) => {
                     const n1 = { id: `n${s.nextId}`, type: 'taskNode' as const, position: { x: center.x - 240, y: center.y - 60 }, data: { label: 'text', kind: 'textToImage' } }
-                    const n2 = { id: `n${s.nextId+1}`, type: 'taskNode' as const, position: { x: center.x, y: center.y - 60 }, data: { label: '图像', kind: 'image' } }
+                    const n2 = { id: `n${s.nextId+1}`, type: 'taskNode' as const, position: { x: center.x, y: center.y - 60 }, data: { label: $('图像'), kind: 'image' } }
                     const n3 = { id: `n${s.nextId+2}`, type: 'taskNode' as const, position: { x: center.x + 260, y: center.y - 60 }, data: { label: 'video', kind: 'composeVideo' } }
                     const e1 = { id: `e-${n1.id}-${n2.id}`, source: n1.id, target: n2.id, type: 'typed' as const, animated: true } as any
                     const e2 = { id: `e-${n2.id}-${n3.id}`, source: n2.id, target: n3.id, type: 'typed' as const, animated: true } as any
                     return { nodes: [n1, n2, n3], edges: [e1, e2], nextId: s.nextId + 3 }
                   })
-                }}>创建示例工作流</Button>
-                <Button size="sm" variant="subtle" onClick={() => { toast('支持拖拽模板/资产到画布','success') }}>了解更多</Button>
+                }}>{$('创建示例工作流')}</Button>
+                <Button size="sm" variant="subtle" onClick={() => { toast($('支持拖拽模板/资产到画布'),'success') }}>{$('了解更多')}</Button>
               </Group>
               <Text size="xs" c="dimmed">提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
             </Stack>

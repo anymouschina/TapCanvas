@@ -2,6 +2,7 @@ import React from 'react'
 import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center, Modal, TextInput } from '@mantine/core'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
+import { $ } from '../canvas/i18n'
 import {
   listServerAssets,
   createServerAsset,
@@ -137,7 +138,7 @@ export default function AssetPanel(): JSX.Element | null {
               setDraftCursor(data.cursor || null)
             } catch (err: any) {
               console.error(err)
-              alert('当前配置不可用，请稍后再试')
+              alert($('当前配置不可用，请稍后再试'))
               setDrafts([])
               setDraftCursor(null)
             }
@@ -164,7 +165,7 @@ export default function AssetPanel(): JSX.Element | null {
               setPublishedVideos(data.items || [])
             } catch (err: any) {
               console.error(err)
-              alert('当前配置不可用，请稍后再试')
+              alert($('当前配置不可用，请稍后再试'))
               setPublishedVideos([])
               setSoraPublishedUsingShared(false)
             }
@@ -181,7 +182,7 @@ export default function AssetPanel(): JSX.Element | null {
               setCharCursor(data.cursor || null)
             } catch (err: any) {
               console.error(err)
-              alert('当前配置不可用，请稍后再试')
+              alert($('当前配置不可用，请稍后再试'))
               setCharacters([])
               setCharCursor(null)
             }
@@ -233,7 +234,7 @@ export default function AssetPanel(): JSX.Element | null {
       setCharCursor(data.cursor || null)
     } catch (err: any) {
       console.error(err)
-      alert('当前配置不可用，请稍后再试')
+      alert($('当前配置不可用，请稍后再试'))
     } finally {
       setCharLoading(false)
     }
@@ -241,7 +242,7 @@ export default function AssetPanel(): JSX.Element | null {
 
   const addDraftToCanvas = (d: any) => {
     if (!d?.videoUrl) return
-    addNode('taskNode', d.title || 'Sora 草稿', {
+    addNode('taskNode', d.title || $('Sora 草稿'), {
       kind: 'video',
       source: 'sora',
       videoUrl: d.videoUrl,
@@ -654,7 +655,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 setDraftCursor(data.cursor || null)
                               } catch (err: any) {
                                 console.error(err)
-                                alert('当前配置不可用，请稍后再试')
+                                alert($('当前配置不可用，请稍后再试'))
                                 setDrafts([])
                                 setDraftCursor(null)
                               } finally {
@@ -667,7 +668,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 setPublishedVideos(data.items || [])
                               } catch (err: any) {
                                 console.error(err)
-                                alert('当前配置不可用，请稍后再试')
+                                alert($('当前配置不可用，请稍后再试'))
                                 setPublishedVideos([])
                               } finally {
                                 setPublishedLoading(false)
@@ -680,7 +681,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 setCharCursor(data.cursor || null)
                               } catch (err: any) {
                                 console.error(err)
-                                alert('当前配置不可用，请稍后再试')
+                                alert($('当前配置不可用，请稍后再试'))
                                 setCharacters([])
                                 setCharCursor(null)
                               } finally {
@@ -774,7 +775,7 @@ export default function AssetPanel(): JSX.Element | null {
                                       setDrafts(prev => prev.filter(x => x.id !== d.id))
                                     } catch (err: any) {
                                       console.error(err)
-                                      alert('当前配置不可用，请稍后再试')
+                                      alert($('当前配置不可用，请稍后再试'))
                                     }
                                   }}
                                 >
@@ -816,7 +817,7 @@ export default function AssetPanel(): JSX.Element | null {
                               setPublishedVideos(data.items || [])
                             } catch (err: any) {
                               console.error(err)
-                              alert('当前配置不可用，请稍后再试')
+                              alert($('当前配置不可用，请稍后再试'))
                               setPublishedVideos([])
                             } finally {
                               setPublishedLoading(false)
@@ -962,7 +963,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 setCharCursor(data.cursor || null)
                               } catch (err: any) {
                                 console.error(err)
-                                alert('当前配置不可用，请稍后再试')
+                                alert($('当前配置不可用，请稍后再试'))
                                 setCharacters([])
                                 setCharCursor(null)
                               } finally {
