@@ -1,4 +1,5 @@
 # TapCanvas
+**Language:** 中文 | [English](README_EN.md)
 
 **可视化 AI 创作画布（零 GPU）**
 
@@ -477,3 +478,7 @@ MIT License
 如果您有任何问题、建议或合作意向，欢迎直接联系作者：
 
 ![联系作者](assets/author.jpg)
+
+---
+
+
