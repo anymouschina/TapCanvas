@@ -3,13 +3,14 @@ import { Paper, Group, Title, Transition, Button, Stack, Text } from '@mantine/c
 import { useUIStore } from './uiStore'
 import { getServerFlow, listFlowVersions, rollbackFlow } from '../api/server'
 import { useRFStore } from '../canvas/store'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 
 export default function HistoryPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const { currentFlow, setCurrentFlow, setDirty } = useUIStore()
-  const setNodesAndEdges = useRFStore((s) => (nodes: any[], edges: any[]) => {
+  const setNodesAndEdges = useRFStore(() => (nodes: any[], edges: any[]) => {
     useRFStore.setState({ nodes, edges })
   })
   const mounted = active === 'history'
@@ -24,6 +25,9 @@ export default function HistoryPanel(): JSX.Element | null {
 
   if (!mounted) return null
 
+  // 计算安全的最大高度
+  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+
   return (
     <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 7000 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
@@ -35,7 +39,7 @@ export default function HistoryPanel(): JSX.Element | null {
               radius="lg"
               className="glass"
               p="md"
-              style={{ width: 420, maxHeight: '70vh', overflowY: 'auto', transformOrigin: 'left center' }}
+              style={{ width: 420, maxHeight: `${maxHeight}px`, overflowY: 'auto', transformOrigin: 'left center' }}
               data-ux-panel
             >
               <div className="panel-arrow" />

@@ -4,6 +4,7 @@ import { useUIStore } from './uiStore'
 import { listServerFlows, listProjectFlows, type FlowDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
 import { $, $t } from '../canvas/i18n'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 
 const publicTemplates:[] = [
   // { title: 'UGC Creator' },
@@ -34,12 +35,16 @@ export default function TemplatePanel(): JSX.Element | null {
   }, [active, currentProject?.id])
   const mounted = active === 'template'
   if (!mounted) return null
+
+  // 计算安全的最大高度
+  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+
   return (
     <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 6001 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
+            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
         <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
           <Title order={6}>{$t('工作流（项目：{{project}}）', { project: currentProject?.name || '全部' })}</Title>
