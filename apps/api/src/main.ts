@@ -6,6 +6,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'https://tapcanvas.beqlee.icu',
+      'https://tapcanvas-api.beqlee.icu',
       'http://localhost:5173',
       'http://localhost:5174',
       'http://127.0.0.1:5173',
