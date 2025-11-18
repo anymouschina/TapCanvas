@@ -9,10 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dependencies (uses pnpm workspaces)
 pnpm install
 
-# Start web development server
+# Start web development server (React + Vite)
 pnpm dev:web
 
-# Start API development server
+# Start API development server (NestJS)
 pnpm dev:api
 
 # Build the web application
@@ -20,11 +20,14 @@ pnpm build
 
 # Run tests across all packages
 pnpm test
+
+# Run tests for a specific package
+pnpm --filter @tapcanvas/web test
 ```
 
 ### Infrastructure
 ```bash
-# Start backend infrastructure (ActivePieces)
+# Start backend infrastructure (ActivePieces workflow engine)
 pnpm compose:up
 
 # Stop backend infrastructure
@@ -45,148 +48,220 @@ pnpm tap [command]
 
 ## Architecture Overview
 
-TapCanvas is a visual AI creation canvas platform built as a monorepo using pnpm workspaces. The core concept is a node-based visual editor for AI workflows, allowing users to connect different AI models (text, image, video) through intuitive drag-and-drop interfaces.
+TapCanvas is a visual AI creation canvas platform built as a monorepo using pnpm workspaces. It provides a node-based visual editor for AI workflows, allowing users to connect different AI models (text, image, video) through intuitive drag-and-drop interfaces.
 
-### High-Level Architecture
+### Canvas System Architecture (Recently Refactored)
 
+The canvas system has been comprehensively refactored following "Yahoo's military regulations" architectural principles:
+
+**Core Philosophy:**
+- **Single Responsibility**: Each component has one clear purpose
+- **Unified Exports**: All modules export through a single entry point (`index.ts`)
+- **Type Safety**: Comprehensive TypeScript interfaces throughout
+- **Utility Abstraction**: Business logic separated from presentation components
+
+**Canvas Module Structure:**
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Frontend (React)                      │
-├─────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│  │ Canvas UI   │  │ Node Editor │  │ Asset Mgmt  │      │
-│  │ (ReactFlow) │  │ Components  │  │ System      │      │
-│  └─────────────┘  └─────────────┘  └─────────────┘      │
-└─────────────────────────────────────────────────────────┘
-                            │
-                    HTTP/WebSocket API
-                            │
-┌─────────────────────────────────────────────────────────┐
-│                   Backend Services                       │
-├─────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│  │ ActivePieces│  │ AI Models   │  │ File Storage│      │
-│  │ Workflow    │  │ (Sora, etc) │  │ (S3/OSS)    │      │
-│  │ Engine      │  └─────────────┘  └─────────────┘      │
-│  └─────────────┘                                           │
-└─────────────────────────────────────────────────────────┘
+apps/web/src/canvas/
+├── index.ts                    # Unified export module
+├── store.ts                    # Zustand state management with history
+├── utils/                      # Pure utility functions (business logic)
+│   ├── constants.ts           # Centralized constants and node types
+│   ├── node.ts                # Node manipulation utilities
+│   ├── edge.ts                # Edge validation and creation
+│   ├── layout.ts              # Layout algorithms (grid, hierarchical, radial, force-directed)
+│   ├── geometry.ts            # Mathematical calculations
+│   ├── validation.ts          # Data validation schemas
+│   ├── serialization.ts       # Data persistence utilities
+│   └── colors.ts              # Color schemes and themes
+├── components/shared/          # Reusable UI components
+│   ├── NodeBase/              # Base node component architecture
+│   ├── Modal/                 # Reusable modal components
+│   └── GitHubLanguageButton.tsx # Language switcher + GitHub icon
+├── nodes/                     # Node type implementations
+│   ├── TaskNode.refactored.tsx # Main workflow nodes
+│   ├── GroupNode.tsx          # Group container nodes
+│   └── IONode.tsx             # Input/output interface nodes
+├── edges/                     # Edge type implementations
+│   ├── TypedEdge.tsx          # Standard typed connections
+│   └── OrthTypedEdge.tsx      # Orthogonal routing
+├── i18n/                      # Internationalization system
+│   └── index.ts               # Chinese/English translation functions
+└── examples/                  # Demo components
 ```
 
-### Key Components
+### Node System Architecture
 
-#### Canvas System (`apps/web/src/canvas/`)
-The core visual editor system built on ReactFlow:
+**Node Type Hierarchy:**
+- **Base Node**: Abstract foundation with standardized interface
+- **TaskNode**: Main workflow nodes (text→image→video pipeline)
+- **GroupNode**: Containers for complex workflow organization with focus mode
+- **IONode**: Input/output interfaces for cross-group connections
 
-- **Node System**: Extensible node types (text, image, video, group)
-- **Edge System**: Type-safe connections between nodes with validation
-- **State Management**: Zustand store with undo/redo, clipboard, and execution state
-- **Layout Engine**: Multiple layout algorithms (grid, hierarchical, radial, force-directed)
-
-**Recently Refactored**: The canvas module has been restructured following Yahoo's military regulations:
-- Abstracted utility functions (`utils/`)
-- Reusable component architecture (`components/shared/`)
-- Single responsibility principle for all components
-- Type-safe interfaces throughout
-
-#### Node Architecture
-Nodes are the primary building blocks in workflows:
-
+**Node Data Structure:**
 ```typescript
-// Node structure (simplified)
 interface NodeData {
   id: string;
   label: string;
-  kind: string; // 'text', 'image', 'video', etc.
+  kind: string; // 'text', 'image', 'video', 'subflow', etc.
   config: Record<string, any>;
   progress?: number;
-  status?: 'idle' | 'running' | 'success' | 'error';
+  status?: 'idle'|'running'|'success'|'error';
   inputs?: string[];
   outputs?: string[];
 }
 ```
 
-**Key Node Types**:
-- **TaskNode**: Main workflow nodes (text→image→video pipeline)
-- **GroupNode**: Containers for organizing complex workflows
-- **IONode**: Input/output interfaces for cross-group connections
+**AI Model Integration:**
+- **Text Generation**: Gemini 2.5 Flash/Pro models
+- **Image Generation**: Qwen Image Plus (multiple resolutions: 16:9, 1:1, 9:16)
+- **Video Generation**: Sora 2 with character references (@mentions)
 
-#### State Management (`store.ts`)
-Complex Zustand store managing:
-- Graph structure (nodes, edges)
-- Execution state and progress tracking
-- History management (undo/redo)
-- Clipboard operations
-- Group management
+### State Management Architecture
 
-### AI Model Integration
+**Zustand Store Design:**
+- **Complex State Management**: Graph structure (nodes, edges), execution state, history, clipboard, group management
+- **History System**: Built-in undo/redo with 50-step history limit
+- **Execution Tracking**: Real-time node status, progress tracking, cancellation support
+- **Group Management**: Hierarchical organization with parent-child relationships and focus mode
 
-The system integrates multiple AI models through a standardized interface:
+**State Update Patterns:**
+```typescript
+// Always batch updates with history tracking
+updateNodeData: (id, patch) => set((s) => ({
+  nodes: s.nodes.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n),
+  historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+  historyFuture: [],
+}))
+```
 
-- **Sora 2**: Video generation with character references (@mentions)
-- **Gemini 2.5**: Text generation and prompt optimization
-- **Qwen Image Plus**: Image generation with multiple resolutions
+### Edge System & Connection Validation
 
-### Workflow Engine
+**Edge Architecture:**
+- **Type-safe connections** with source/target validation
+- **Multiple edge types**: smooth, orthogonal, bezier connections
+- **Connection validation** preventing cycles and incompatible types
+- **Animated edges** with visual feedback for state changes
 
-ActivePieces provides the backend workflow orchestration:
-- DAG (Directed Acyclic Graph) execution
-- Concurrency control
-- Error handling and retry logic
-- Real-time status updates
+### Layout Engine Architecture
+
+**Multiple Layout Algorithms:**
+- **Grid Layout**: Simple grid arrangement for node organization
+- **Hierarchical Layout**: DAG-based topological sorting for workflows
+- **Radial Layout**: Center-based layout with distance calculations
+- **Force-Directed Layout**: Physics-based positioning with repulsion/attraction
+- **Alignment Tools**: Grid snapping, horizontal/vertical alignment
+
+### Internationalization System
+
+**Simple but Effective i18n:**
+- **Dual-language support** (Chinese default, English secondary)
+- **React hooks** for component-level internationalization
+- **Template interpolation** for dynamic content: `$t('项目「{{name}}」已保存', { name: 'My Project' })`
+- **Local storage persistence** for language preferences
+- **Language switcher component** in canvas top-right corner
+
+### UI Component Organization
+
+**Panel System:**
+- **FloatingNav.tsx**: Left sidebar navigation (项目/工作流/资产/配置/历史)
+- **ProjectPanel.tsx**: Project management and switching
+- **TemplatePanel.tsx**: Workflow template browsing and application
+- **AssetPanel.tsx**: Personal asset management
+- **ModelPanel.tsx**: AI model configuration and API key management
+- **AddNodePanel.tsx**: Node creation and configuration
+
+**Component Patterns:**
+- All UI components use **Mantine** library with glass morphism styling
+- Consistent **Paper + Stack + Group** patterns for panel layouts
+- **ActionIcon + Tooltip** for interactive elements
+- **Modal** components for configuration dialogs
 
 ## Development Guidelines
 
 ### Canvas Development
 
-When working with the canvas system:
-
-1. **Use the refactored utilities**: Import from `utils/` rather than implementing new functions
-2. **Follow the component hierarchy**: Extend `NodeBase` for custom nodes
-3. **Maintain type safety**: Use the comprehensive TypeScript interfaces
-4. **Leverage the store**: Use Zustand actions rather than direct state mutation
+**Core Principles:**
+1. **Use utility functions**: Import from `utils/` rather than implementing new functions
+2. **Follow component hierarchy**: Extend `NodeBase` for custom nodes
+3. **Maintain type safety**: Use comprehensive TypeScript interfaces
+4. **Leverage store actions**: Use Zustand actions rather than direct state mutation
 
 ```typescript
-// Correct: Use utility functions
+// Correct pattern
 import { createNode, layoutHierarchical, getNodeInputTypes } from '@/canvas/utils';
-
-// Correct: Extend NodeBase for custom nodes
 import { NodeBase } from '@/canvas/components/shared/NodeBase';
+import { useRFStore } from '@/canvas/store';
 
-// Correct: Use store actions
-const { updateNodeData, runNode } = useRFStore();
+// Use store actions for state updates
+const { updateNodeData, runNode, createEdge } = useRFStore();
 ```
 
 ### Adding New Node Types
 
 1. Create node component extending `NodeBase`
-2. Add node type to constants (`NODE_KINDS`)
-3. Implement input/output type inference
+2. Add node type to `utils/constants.ts` (`NODE_KINDS`)
+3. Implement input/output type inference in `utils/node.ts`
 4. Add configuration template
-5. Register in node registry
+5. Register in node type system
 
-### Working with AI Models
+### Internationalization Development
 
-Models are integrated through standardized interfaces in `packages/pieces/`. Each model piece defines:
-- Input/output schema
-- Execution logic
-- Error handling
-- Progress reporting
+**Translation Functions:**
+```typescript
+import { $, $t, useI18n } from '@/canvas/i18n';
+
+// Simple translation
+$('确定') // Returns 'OK' or '确定' based on current language
+
+// Template interpolation
+$t('项目「{{name}}」已保存', { name: 'My Project' })
+
+// React hook
+const { currentLanguage, setLanguage, isEn, isZh } = useI18n();
+```
+
+**Adding Translations:**
+1. Add entries to `enTranslations` object in `i18n/index.ts`
+2. Use Chinese text as translation keys
+3. Use `$()` for simple text, `$t()` for parameterized text
+4. Test both languages in UI
 
 ### State Management Patterns
 
-The Zustand store handles complex state through actions:
+**Best Practices:**
 - Prefer batch updates for performance
-- Use history system for undo/redo
-- Leverage computed selectors for derived state
+- Always include history tracking for user actions
+- Use computed selectors for derived state
+- Leverage the built-in clipboard and history systems
+
+### Working with AI Models
+
+**Model Integration:**
+- Models are configured through `ModelPanel.tsx`
+- API keys and endpoints managed through server API
+- Each model defines input/output schema and execution logic
+- Progress tracking and error handling built into node execution
 
 ## Technical Stack
 
-- **Frontend**: React 18 + TypeScript + Vite
-- **UI**: Mantine component library + React Flow
-- **State**: Zustand
-- **Backend**: ActivePieces workflow engine
-- **Build**: Vite + pnpm workspaces
-- **Deployment**: Cloudflare Workers
+**Frontend:**
+- **React 18** + TypeScript + Vite
+- **Mantine** component library + **React Flow** for node editor
+- **Zustand** for state management
+- **React Hook Form** + **Zod** for form validation
+- **Custom internationalization system**
+
+**Backend:**
+- **NestJS** API with Prisma ORM
+- **ActivePieces** workflow engine for orchestration
+- **Temporal** for workflow management
+- **Bull** for job queues
+
+**Development:**
+- **pnpm workspaces** for monorepo management
+- **ESLint + Prettier** for code quality
+- **TypeScript strict mode** for type safety
 
 ## Project Structure
 
@@ -194,14 +269,16 @@ The Zustand store handles complex state through actions:
 TapCanvas/
 ├── apps/
 │   ├── web/              # React frontend application
+│   │   └── src/
+│   │       ├── canvas/   # Core canvas system (recently refactored)
+│   │       └── ui/       # UI components and panels
 │   └── api/              # NestJS API service
 ├── packages/
 │   ├── cli/              # Command line tools
 │   ├── sdk/              # TypeScript SDK
-│   └── pieces/           # AI model integrations
-├── infra/
-│   └── activepieces/     # Backend workflow orchestration
-└── apps/web/src/canvas/  # Core canvas system (recently refactored)
+│   └── pieces/           # AI model integrations (placeholder)
+└── infra/
+    └── activepieces/     # Backend workflow orchestration
 ```
 
-The canvas module (`apps/web/src/canvas/`) contains the main visual editor and has been comprehensively refactored for maintainability and extensibility.
+The canvas module (`apps/web/src/canvas/`) contains the main visual editor and has been comprehensively refactored following strict architectural principles for maintainability and extensibility.
