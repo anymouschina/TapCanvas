@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Patch, Req, UseGuards, Param } from '@nestjs/common'
+import { Body, Controller, Get, Post, Patch, Req, UseGuards, Param, Delete } from '@nestjs/common'
 import { ProjectService } from './project.service'
 import { JwtGuard } from '../auth/jwt.guard'
 
@@ -23,6 +23,11 @@ export class ProjectController {
   clone(@Param('id') id: string, @Body() body: { name?: string }, @Req() req: any) {
     return this.service.clone(String(req.user.sub), id, body.name)
   }
+
+  @Delete(':id')
+  delete(@Param('id') id: string, @Req() req: any) {
+    return this.service.delete(String(req.user.sub), id)
+  }
 }
 
 // 公开访问的端点（不需要认证）
@@ -36,4 +41,3 @@ export class PublicProjectController {
   @Get('projects/:id/flows')
   getProjectFlows(@Param('id') id: string) { return this.service.getProjectFlows(id) }
 }
-

@@ -120,5 +120,24 @@ export class ProjectService {
       orderBy: { updatedAt: 'desc' }
     })
   }
-}
 
+  async delete(userId: string, projectId: string) {
+    const project = await this.prisma.project.findUnique({ where: { id: projectId } })
+    if (!project) throw new BadRequestException('Project not found')
+    if (project.ownerId !== String(userId)) throw new ForbiddenException('Not project owner')
+
+    const flows = await this.prisma.flow.findMany({ where: { projectId }, select: { id: true } })
+    const flowIds = flows.map(f => f.id)
+
+    await this.prisma.$transaction(async (tx) => {
+      if (flowIds.length > 0) {
+        await tx.flowExecution.deleteMany({ where: { flowId: { in: flowIds } } })
+        await tx.flowVersion.deleteMany({ where: { flowId: { in: flowIds } } })
+        await tx.flow.deleteMany({ where: { id: { in: flowIds } } })
+      }
+      await tx.asset.deleteMany({ where: { projectId } })
+      await tx.videoGenerationHistory.deleteMany({ where: { projectId } })
+      await tx.project.delete({ where: { id: projectId } })
+    })
+  }
+}
