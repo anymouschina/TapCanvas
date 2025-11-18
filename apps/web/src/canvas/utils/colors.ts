@@ -3,7 +3,7 @@
  * 参考雅虎军规：工具函数职责单一，可复用
  */
 
-import { COLORS, STATUS_COLORS, TYPE_COLORS } from './constants';
+import { COLORS } from './constants';
 
 /**
  * 根据类型获取对应的颜色

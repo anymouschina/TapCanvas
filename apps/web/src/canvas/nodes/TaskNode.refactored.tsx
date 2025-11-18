@@ -9,6 +9,7 @@ import { NodeBase } from '../components/shared/NodeBase/NodeBase';
 import { NodeToolbar } from 'reactflow';
 import { useRFStore } from '../store';
 import { createNode, getNodeInputTypes, getNodeOutputTypes } from '../utils';
+import { $, $t } from '../i18n';
 import type { NodeData } from '../components/shared/NodeBase/NodeBase.types';
 
 // 工具按钮组件
@@ -379,38 +380,38 @@ export const TaskNodeRefactored: React.FC<NodeProps<NodeData>> = ({ id, data, se
       >
         <NodeToolbarButton
           icon={<span>⚙️</span>}
-          label="Configure"
+          label={$('配置')}
           onClick={() => setShowConfig(!showConfig)}
         />
 
         <NodeToolbarButton
           icon={<span>▶️</span>}
-          label="Run"
+          label={$('运行')}
           onClick={handleRun}
           disabled={data.status === 'running'}
         />
 
         <NodeToolbarButton
           icon={<span>📋</span>}
-          label="Copy Config"
+          label={$('复制配置')}
           onClick={handleCopyConfig}
         />
 
         <NodeToolbarButton
           icon={<span>📄</span>}
-          label="Paste Config"
+          label={$('粘贴配置')}
           onClick={handlePasteConfig}
         />
 
         <NodeToolbarButton
           icon={<span>📋</span>}
-          label="Duplicate"
+          label={$('复制')}
           onClick={handleDuplicate}
         />
 
         <NodeToolbarButton
           icon={<span>🗑️</span>}
-          label="Delete"
+          label={$('删除')}
           onClick={handleDelete}
         />
       </NodeToolbar>

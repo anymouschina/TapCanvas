@@ -3,6 +3,16 @@
  * 参考雅虎军规：统一入口，便于模块管理
  */
 
+// 国际化功能
+export { $, $t, useI18n, setLanguage, getCurrentLanguage, initLanguage } from './i18n';
+export { LanguageSwitcher } from './components/shared/LanguageSwitcher';
+export {
+  GitHubLanguageButton,
+  SimpleGitHubLanguageButton,
+  CompactGitHubLanguageButton,
+  FixedGitHubLanguageButton
+} from './components/shared/GitHubLanguageButton';
+
 // 工具函数
 export * from './utils';
 
@@ -40,3 +50,7 @@ export { useInsertMenuStore } from './insertMenuStore';
 
 // 主要组件
 export { default as Canvas } from './Canvas';
+
+// 示例组件
+export { I18nDemo, I18nExamples } from './examples/I18nDemo';
+export { QuickI18nExample } from './examples/QuickI18nExample';

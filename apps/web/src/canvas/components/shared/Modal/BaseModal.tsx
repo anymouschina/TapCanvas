@@ -5,6 +5,7 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom';
+import { $, $t } from '../../i18n';
 
 export interface BaseModalProps {
   /** 是否显示 */
@@ -53,8 +54,8 @@ export const BaseModal: React.FC<BaseModalProps> = ({
   open,
   title,
   children,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText = $('确定'),
+  cancelText = $('取消'),
   showConfirm = true,
   showCancel = true,
   onConfirm,
@@ -226,8 +227,8 @@ export const BaseModal: React.FC<BaseModalProps> = ({
                   width: '32px',
                   height: '32px',
                 }}
-                title={cancelText}
-                aria-label={cancelText}
+                title={$(cancelText)}
+                aria-label={$(cancelText)}
               >
                 ×
               </button>
@@ -277,7 +278,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
                   transition: 'all 0.2s ease',
                 }}
               >
-                {cancelText}
+                {$(cancelText)}
               </button>
             )}
 
@@ -316,7 +317,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
                     }}
                   />
                 )}
-                {confirmText}
+                {$(confirmText)}
               </button>
             )}
           </div>

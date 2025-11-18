@@ -165,29 +165,29 @@ export const DEFAULTS = {
 
 // 错误消息
 export const ERROR_MESSAGES = {
-  INVALID_NODE_TYPE: 'Invalid node type',
-  INVALID_EDGE_TYPE: 'Invalid edge type',
-  CONNECTION_FAILED: 'Connection failed',
-  NODE_NOT_FOUND: 'Node not found',
-  EDGE_NOT_FOUND: 'Edge not found',
-  GROUP_NOT_FOUND: 'Group not found',
-  VALIDATION_FAILED: 'Validation failed',
-  EXECUTION_FAILED: 'Execution failed',
-  NETWORK_ERROR: 'Network error',
-  STORAGE_ERROR: 'Storage error',
+  INVALID_NODE_TYPE: '节点类型无效',
+  INVALID_EDGE_TYPE: '边类型无效',
+  CONNECTION_FAILED: '连接失败',
+  NODE_NOT_FOUND: '节点未找到',
+  EDGE_NOT_FOUND: '边未找到',
+  GROUP_NOT_FOUND: '分组未找到',
+  VALIDATION_FAILED: '验证失败',
+  EXECUTION_FAILED: '执行失败',
+  NETWORK_ERROR: '网络错误',
+  STORAGE_ERROR: '存储错误',
 } as const;
 
 // 成功消息
 export const SUCCESS_MESSAGES = {
-  NODE_CREATED: 'Node created successfully',
-  NODE_DELETED: 'Node deleted successfully',
-  EDGE_CREATED: 'Connection created successfully',
-  EDGE_DELETED: 'Connection deleted successfully',
-  GROUP_CREATED: 'Group created successfully',
-  GROUP_DELETED: 'Group deleted successfully',
-  LAYOUT_APPLIED: 'Layout applied successfully',
-  SAVED: 'Saved successfully',
-  EXECUTION_STARTED: 'Execution started',
+  NODE_CREATED: '节点创建成功',
+  NODE_DELETED: '节点删除成功',
+  EDGE_CREATED: '连接创建成功',
+  EDGE_DELETED: '连接删除成功',
+  GROUP_CREATED: '分组创建成功',
+  GROUP_DELETED: '分组删除成功',
+  LAYOUT_APPLIED: '布局应用成功',
+  SAVED: '保存成功',
+  EXECUTION_STARTED: '开始执行',
 } as const;
 
 // 文件类型

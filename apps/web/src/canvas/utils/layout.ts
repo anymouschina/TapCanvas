@@ -4,14 +4,13 @@
  */
 
 import { CANVAS_CONFIG } from './constants';
-import type { Node, Edge, Position } from 'reactflow';
+import type { Node, Edge } from 'reactflow';
 
 /**
  * 布局配置接口
  */
 export interface LayoutConfig {
   nodeSpacingX: number;
-  nodeSpacingY: number;
   levelSpacing: number;
   alignX?: 'left' | 'center' | 'right';
   alignY?: 'top' | 'center' | 'bottom';
@@ -31,7 +30,6 @@ export interface LayoutResult {
  */
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   nodeSpacingX: CANVAS_CONFIG.NODE_SPACING_X,
-  nodeSpacingY: CANVAS_CONFIG.NODE_SPACING_Y,
   levelSpacing: CANVAS_CONFIG.NODE_SPACING_Y * 2,
   alignX: 'center',
   alignY: 'center',
@@ -51,7 +49,8 @@ export function layoutGrid(
   startX: number = 0,
   startY: number = 0
 ): Node[] {
-  const { nodeSpacingX, nodeSpacingY } = { ...DEFAULT_LAYOUT_CONFIG, ...config };
+  const { nodeSpacingX } = { ...DEFAULT_LAYOUT_CONFIG, ...config };
+  const nodeSpacingY = CANVAS_CONFIG.NODE_SPACING_Y;
 
   const cols = Math.ceil(Math.sqrt(nodes.length));
 
@@ -81,10 +80,11 @@ export function layoutHierarchical(
   edges: Edge[],
   config: Partial<LayoutConfig> = {}
 ): LayoutResult {
-  const { nodeSpacingX, nodeSpacingY, levelSpacing, alignX, alignY } = {
+  const { nodeSpacingX, levelSpacing, alignX, alignY } = {
     ...DEFAULT_LAYOUT_CONFIG,
     ...config,
   };
+  const nodeSpacingY = CANVAS_CONFIG.NODE_SPACING_Y;
 
   // 构建邻接表和入度表
   const adjacencyList = new Map<string, string[]>();

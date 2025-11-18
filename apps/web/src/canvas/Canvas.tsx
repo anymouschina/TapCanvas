@@ -18,7 +18,9 @@ import IONode from './nodes/IONode'
 import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
-import { Paper, Stack, Button, Divider, Group, Text } from '@mantine/core'
+import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip } from '@mantine/core'
+import { IconBrandGithub } from '@tabler/icons-react'
+import { getCurrentLanguage, setLanguage } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
@@ -62,6 +64,7 @@ function CanvasInner(): JSX.Element {
   const downPos = useRef<{x:number;y:number}|null>(null)
   const timerRef = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
+  const [currentLang, setCurrentLangState] = useState(getCurrentLanguage())
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
 
