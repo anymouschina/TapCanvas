@@ -164,6 +164,9 @@ importers:
       '@tabler/icons-react':
         specifier: ^3.19.0
         version: 3.35.0(react@18.3.1)
+      framer-motion:
+        specifier: ^12.23.24
+        version: 12.23.24(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
