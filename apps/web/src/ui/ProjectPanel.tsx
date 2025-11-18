@@ -59,7 +59,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(34, 197, 94, 0.1)',
+          backgroundColor: 'rgba(34, 197, 94, 0.12)',
           border: '1px solid rgba(34, 197, 94, 0.2)',
         }
       })
@@ -81,7 +81,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }
       })
@@ -110,7 +110,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(34, 197, 94, 0.1)',
+          backgroundColor: 'rgba(34, 197, 94, 0.12)',
           border: '1px solid rgba(34, 197, 94, 0.2)',
         }
       })
@@ -134,7 +134,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }
       })
@@ -161,7 +161,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: isPublic ? 'rgba(34, 197, 94, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+          backgroundColor: isPublic ? 'rgba(34, 197, 94, 0.12)' : 'rgba(59, 130, 246, 0.12)',
           border: `1px solid ${isPublic ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)'}`,
         }
       })
@@ -183,7 +183,7 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }
       })
@@ -199,9 +199,9 @@ export default function ProjectPanel(): JSX.Element | null {
             <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 500, maxHeight: '70vh', transformOrigin: 'left center' }} data-ux-panel>
               <div className="panel-arrow" />
               <motion.div
-                initial={{ opacity: 0, y: -10 }}
+                initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
+                transition={{ duration: 0.15 }}
                 style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}
               >
                 <Group justify="space-between" mb={8}>
@@ -266,10 +266,10 @@ export default function ProjectPanel(): JSX.Element | null {
                     <AnimatePresence mode="wait">
                       {myProjects.length === 0 && !loading && (
                         <motion.div
-                          initial={{ opacity: 0, y: 20 }}
+                          initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -20 }}
-                          transition={{ duration: 0.3 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.2 }}
                         >
                           <Text size="xs" c="dimmed" ta="center">{$('暂无项目')}</Text>
                         </motion.div>
@@ -279,72 +279,146 @@ export default function ProjectPanel(): JSX.Element | null {
                       {myProjects.map((p, index) => (
                         <motion.div
                           key={p.id}
-                          initial={{ opacity: 0, x: -20 }}
+                          initial={{ opacity: 0, x: -15 }}
                           animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 20 }}
+                          exit={{ opacity: 0, x: 15 }}
                           transition={{
-                            duration: 0.2,
-                            delay: index * 0.05,
+                            duration: 0.15,
+                            delay: index * 0.02,
                             type: "spring",
-                            stiffness: 300,
-                            damping: 20
+                            stiffness: 500,
+                            damping: 25
                           }}
                           whileHover={{
-                            scale: 1.02,
-                            boxShadow: "0 4px 20px rgba(0, 0, 0, 0.1)",
-                            borderColor: '#3b82f6'
+                            scale: 1.005,
+                            boxShadow: "0 4px 20px rgba(59, 130, 246, 0.15)",
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(15, 23, 42, 0.8)'
                           }}
                           style={{
-                            border: '1px solid #eee',
+                            border: '1px solid rgba(59, 130, 246, 0.1)',
                             borderRadius: 8,
                             cursor: 'pointer',
-                            transition: 'all 0.2s ease'
+                            transition: 'all 0.15s ease',
+                            margin: '6px 12px',
+                            padding: '2px 0',
+                            backgroundColor: 'rgba(15, 23, 42, 0.6)'
                           }}
                         >
-                          <Group justify="space-between" p="xs">
-                            <div style={{ flex: 1 }}>
-                              <Group gap={8}>
-                                <Text
-                                  size="sm"
-                                  fw={currentProject?.id===p.id?600:400}
-                                  c={currentProject?.id===p.id?undefined:'dimmed'}
+                          <Group justify="space-between" p="sm" gap="md">
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Group gap={10} mb={6}>
+                                <motion.div
+                                  whileHover={{ scale: 1.02 }}
+                                  transition={{ type: "spring", stiffness: 400 }}
                                 >
-                                  {p.name}
-                                </Text>
+                                  <Text
+                                    size="sm"
+                                    fw={currentProject?.id===p.id?600:500}
+                                    c={currentProject?.id===p.id?'blue':undefined}
+                                    style={{
+                                      letterSpacing: '0.01em',
+                                      lineHeight: 1.4
+                                    }}
+                                  >
+                                    {p.name}
+                                  </Text>
+                                </motion.div>
                                 {p.isPublic && (
                                   <motion.div
-                                    initial={{ scale: 0 }}
-                                    animate={{ scale: 1 }}
-                                    transition={{ type: "spring", stiffness: 500, delay: index * 0.05 + 0.1 }}
+                                    initial={{ scale: 0, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    transition={{
+                                      type: "spring",
+                                      stiffness: 600,
+                                      damping: 25,
+                                      delay: index * 0.02 + 0.08
+                                    }}
+                                    whileHover={{ scale: 1.1 }}
                                   >
-                                    <Badge size="xs" color="green" variant="light">{$('公开')}</Badge>
+                                    <Badge
+                                      size="xs"
+                                      color="green"
+                                      variant="light"
+                                      style={{
+                                        boxShadow: '0 2px 8px rgba(34, 197, 94, 0.15)'
+                                      }}
+                                    >
+                                      {$('公开')}
+                                    </Badge>
                                   </motion.div>
                                 )}
                               </Group>
                               {p.ownerName && (
-                                <Text size="xs" c="dimmed">{$('作者：{{name}}', { name: p.ownerName })}</Text>
+                                <motion.div
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  transition={{ delay: index * 0.02 + 0.15 }}
+                                >
+                                  <Text
+                                    size="xs"
+                                    c="dimmed"
+                                    style={{
+                                      letterSpacing: '0.02em',
+                                      opacity: 0.8
+                                    }}
+                                  >
+                                    {$('作者：{{name}}', { name: p.ownerName })}
+                                  </Text>
+                                </motion.div>
                               )}
                             </div>
-                            <Group gap={4}>
-                              <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                                <Tooltip label={p.isPublic ? $('设为私有') : $('设为公开')}>
+                            <Group gap={6} align="center">
+                              <motion.div
+                                whileHover={{
+                                  scale: 1.08,
+                                  rotate: p.isPublic ? 15 : -15
+                                }}
+                                whileTap={{
+                                  scale: 0.96,
+                                  rotate: 0
+                                }}
+                                transition={{ type: "spring", stiffness: 400 }}
+                              >
+                                <Tooltip
+                                  label={p.isPublic ? $('设为私有') : $('设为公开')}
+                                  position="top"
+                                  withArrow
+                                >
                                   <ActionIcon
                                     size="sm"
                                     variant="subtle"
                                     color={p.isPublic ? 'green' : 'gray'}
-                                    onClick={() => handleTogglePublic(p, !p.isPublic)}
+                                    onClick={async () => handleTogglePublic(p, !p.isPublic)}
+                                    style={{
+                                      border: p.isPublic ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(107, 114, 128, 0.2)'
+                                    }}
                                   >
                                     {p.isPublic ? <IconWorld size={14} /> : <IconWorldOff size={14} />}
                                   </ActionIcon>
                                 </Tooltip>
                               </motion.div>
-                              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                              <motion.div
+                                whileHover={{
+                                  scale: 1.04,
+                                  x: 2
+                                }}
+                                whileTap={{
+                                  scale: 0.98,
+                                  x: 0
+                                }}
+                                transition={{ type: "spring", stiffness: 500 }}
+                              >
                                 <Button
                                   size="xs"
                                   variant="light"
                                   onClick={async () => {
                                     setCurrentProject({ id: p.id, name: p.name })
                                     setActivePanel(null)
+                                  }}
+                                  style={{
+                                    fontWeight: 500,
+                                    letterSpacing: '0.02em'
                                   }}
                                 >
                                   {$('选择')}
@@ -360,13 +434,13 @@ export default function ProjectPanel(): JSX.Element | null {
 
                 <Tabs.Panel value="public" pt="xs">
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
+                    transition={{ duration: 0.15 }}
                   >
                     <Group justify="space-between" mb={8}>
                       <Text size="sm" fw={500}>{$('社区公开项目')}</Text>
-                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                      <motion.div whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.96 }}>
                         <Tooltip label={$('刷新公开项目')}>
                           <ActionIcon
                             size="sm"
@@ -386,10 +460,10 @@ export default function ProjectPanel(): JSX.Element | null {
                       {loading && activeTab === 'public' && (
                         <motion.div
                           key="loading"
-                          initial={{ opacity: 0, scale: 0.8 }}
+                          initial={{ opacity: 0, scale: 0.95 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.8 }}
-                          transition={{ duration: 0.2 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          transition={{ duration: 0.15 }}
                         >
                           <Group justify="center" py="xl">
                             <motion.div
@@ -406,10 +480,10 @@ export default function ProjectPanel(): JSX.Element | null {
                       {!loading && publicProjects.length === 0 && (
                         <motion.div
                           key="empty"
-                          initial={{ opacity: 0, y: 20 }}
+                          initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -20 }}
-                          transition={{ duration: 0.3 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.2 }}
                         >
                           <Group justify="center" py="xl">
                             <Text size="sm" c="dimmed">{$('暂无公开项目')}</Text>
@@ -429,27 +503,30 @@ export default function ProjectPanel(): JSX.Element | null {
                             {publicProjects.map((p, index) => (
                               <motion.div
                                 key={p.id}
-                                initial={{ opacity: 0, x: 20 }}
+                                initial={{ opacity: 0, x: 15 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, x: -20 }}
+                                exit={{ opacity: 0, x: -15 }}
                                 transition={{
-                                  duration: 0.2,
-                                  delay: index * 0.05,
+                                  duration: 0.15,
+                                  delay: index * 0.02,
                                   type: "spring",
-                                  stiffness: 300,
-                                  damping: 20
+                                  stiffness: 500,
+                                  damping: 25
                                 }}
                                 whileHover={{
-                                  scale: 1.02,
-                                  boxShadow: "0 4px 20px rgba(0, 0, 0, 0.1)",
+                                  scale: 1.005,
+                                  boxShadow: "0 4px 20px rgba(59, 130, 246, 0.15)",
                                   borderColor: '#3b82f6',
-                                  backgroundColor: 'rgba(59, 130, 246, 0.02)'
+                                  backgroundColor: 'rgba(15, 23, 42, 0.8)'
                                 }}
                                 style={{
-                                  border: '1px solid #eee',
+                                  border: '1px solid rgba(59, 130, 246, 0.1)',
                                   borderRadius: 8,
                                   cursor: 'pointer',
-                                  transition: 'all 0.2s ease'
+                                  transition: 'all 0.15s ease',
+                                  margin: '6px 12px',
+                                  padding: '2px 0',
+                                  backgroundColor: 'rgba(15, 23, 42, 0.6)'
                                 }}
                               >
                                 <Group justify="space-between" p="xs">
@@ -459,7 +536,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                       <motion.div
                                         initial={{ scale: 0 }}
                                         animate={{ scale: 1 }}
-                                        transition={{ type: "spring", stiffness: 500, delay: index * 0.05 + 0.1 }}
+                                        transition={{ type: "spring", stiffness: 600, delay: index * 0.02 + 0.05 }}
                                       >
                                         <Badge size="xs" color="blue" variant="light">{$('公开')}</Badge>
                                       </motion.div>
