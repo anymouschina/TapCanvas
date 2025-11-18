@@ -193,14 +193,12 @@ export default function ProjectPanel(): JSX.Element | null {
   }
 
   const closePopover = () => setPopoverProjectId(null)
+  const handleTabChange = (value: 'my' | 'public') => {
+    setPopoverProjectId(null)
+    setActiveTab(value)
+  }
+
   const openDeletePopover = (projectId: string) => {
-    if (popoverProjectId && popoverProjectId !== projectId) {
-      setPopoverProjectId(null)
-      window.setTimeout(() => {
-        setPopoverProjectId(projectId)
-      }, 0)
-      return
-    }
     setPopoverProjectId(projectId)
   }
   const confirmPopoverDelete = (project: ProjectDto) => {
@@ -296,7 +294,7 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Group>
               </motion.div>
 
-              <Tabs value={activeTab} onChange={(value) => value && setActiveTab(value as 'my' | 'public')} color="blue">
+              <Tabs value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
                 <Tabs.List>
                   <motion.div
                     layout
@@ -306,7 +304,7 @@ export default function ProjectPanel(): JSX.Element | null {
                       value="my"
                       leftSection={
                         <motion.div
-                          layoutId="tab-icon"
+                          layoutId="tab-icon-my"
                           initial={false}
                           transition={{ type: "spring", stiffness: 300, damping: 30 }}
                         >
@@ -320,7 +318,7 @@ export default function ProjectPanel(): JSX.Element | null {
                       value="public"
                       leftSection={
                         <motion.div
-                          layoutId="tab-icon"
+                          layoutId="tab-icon-public"
                           initial={false}
                           transition={{ type: "spring", stiffness: 300, damping: 30 }}
                         >
@@ -485,6 +483,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                   radius="md"
                                   withinPortal
                                   dropdownProps={{ style: { zIndex: 9000 } }}
+                                  closeOnClickOutside
                                 >
                                   <Popover.Target>
                                     <Tooltip
