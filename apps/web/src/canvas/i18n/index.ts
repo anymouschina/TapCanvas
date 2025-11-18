@@ -472,6 +472,9 @@ const enTranslations = {
   '确认删除': 'Confirm Delete',
   '此操作不可恢复': 'This action cannot be undone',
   '确定要删除吗': 'Are you sure you want to delete',
+  '删除项目': 'Delete Project',
+  '项目「{{name}}」已删除': 'Project "{{name}}" deleted',
+  '删除项目失败': 'Failed to delete project',
 
   // 快捷键
   '快捷键': 'Shortcuts',

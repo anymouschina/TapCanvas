@@ -1,10 +1,10 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, Switch, ActionIcon, Tooltip, Loader } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader } from '@mantine/core'
 import { useUIStore } from './uiStore'
-import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, type ProjectDto } from '../api/server'
+import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, deleteProject, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
-import { IconCopy, IconWorld, IconWorldOff, IconRefresh } from '@tabler/icons-react'
+import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh } from '@tabler/icons-react'
 import { $, $t } from '../canvas/i18n'
 import { notifications } from '@mantine/notifications'
 
@@ -18,6 +18,7 @@ export default function ProjectPanel(): JSX.Element | null {
   const [myProjects, setMyProjects] = React.useState<ProjectDto[]>([])
   const [publicProjects, setPublicProjects] = React.useState<ProjectDto[]>([])
   const [loading, setLoading] = React.useState(false)
+  const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'my' | 'public'>('my')
 
   React.useEffect(() => {
@@ -187,6 +188,62 @@ export default function ProjectPanel(): JSX.Element | null {
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }
       })
+    }
+  }
+
+  const handleDeleteProject = async (project: ProjectDto) => {
+    if (!confirm($t('确定要删除吗'))) return
+    setDeletingProjectId(project.id)
+    try {
+      await deleteProject(project.id)
+      setMyProjects(prev => prev.filter(p => p.id !== project.id))
+      if (currentProject?.id === project.id) {
+        setCurrentProject(null)
+      }
+      notifications.show({
+        id: `delete-project-${project.id}`,
+        withCloseButton: true,
+        autoClose: 4000,
+        title: $('成功'),
+        message: $t('项目「{{name}}」已删除', { name: project.name }),
+        color: 'green',
+        icon: <motion.div
+          initial={{ scale: 0, rotate: 0 }}
+          animate={{ scale: 1, rotate: 360 }}
+          transition={{ duration: 0.4, type: "spring" }}
+        >
+          ✅
+        </motion.div>,
+        style: {
+          backdropFilter: 'blur(10px)',
+          backgroundColor: 'rgba(34, 197, 94, 0.12)',
+          border: '1px solid rgba(34, 197, 94, 0.2)',
+        }
+      })
+    } catch (error) {
+      console.error('删除项目失败:', error)
+      notifications.show({
+        id: `delete-project-error-${project.id}`,
+        withCloseButton: true,
+        autoClose: 4000,
+        title: $('失败'),
+        message: $t('删除项目失败'),
+        color: 'red',
+        icon: <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ duration: 0.4, type: "spring" }}
+        >
+          ❌
+        </motion.div>,
+        style: {
+          backdropFilter: 'blur(10px)',
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
+          border: '1px solid rgba(239, 68, 68, 0.2)'
+        }
+      })
+    } finally {
+      setDeletingProjectId(null)
     }
   }
 
@@ -395,6 +452,30 @@ export default function ProjectPanel(): JSX.Element | null {
                                     }}
                                   >
                                     {p.isPublic ? <IconWorld size={14} /> : <IconWorldOff size={14} />}
+                                  </ActionIcon>
+                                </Tooltip>
+                              </motion.div>
+                              <motion.div
+                                whileHover={{ scale: 1.04 }}
+                                whileTap={{ scale: 0.96 }}
+                                transition={{ type: "spring", stiffness: 400 }}
+                              >
+                                <Tooltip
+                                  label={$t('删除项目')}
+                                  position="top"
+                                  withArrow
+                                >
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    color="red"
+                                    onClick={() => handleDeleteProject(p)}
+                                    loading={deletingProjectId === p.id}
+                                    style={{
+                                      border: '1px solid rgba(239, 68, 68, 0.2)'
+                                    }}
+                                  >
+                                    <IconTrash size={14} />
                                   </ActionIcon>
                                 </Tooltip>
                               </motion.div>

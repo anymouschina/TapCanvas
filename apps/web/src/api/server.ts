@@ -123,6 +123,11 @@ export async function toggleProjectPublic(projectId: string, isPublic: boolean):
   return r.json()
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete project failed: ${r.status}`)
+}
+
 export async function getPublicProjectFlows(projectId: string): Promise<FlowDto[]> {
   const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/flows`, { headers: { 'Content-Type': 'application/json' } })
   if (!r.ok) throw new Error(`get public project flows failed: ${r.status}`)
