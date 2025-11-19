@@ -44,7 +44,10 @@ const TEXT_MODELS = [
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
 ]
-const IMAGE_MODELS = [{ value: 'qwen-image-plus', label: 'Qwen Image Plus' }]
+const IMAGE_MODELS = [
+  { value: 'qwen-image-plus', label: 'Qwen Image Plus' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' }
+]
 const VIDEO_MODELS = [{ value: 'sora-2', label: 'Sora 2' }]
 
 const allowedModelsByKind = (kind?: string) => {
@@ -1073,7 +1076,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               </ActionIcon>
             </div>
           </div>
-          <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材' : '详情'}</Text>
+          <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材（暂时只支持一次生成1个视频，已知bug）' : '详情'}</Text>
 
           {/* Error Display - Show error messages when node status is error */}
           {status === 'error' && (data as any)?.lastError && (

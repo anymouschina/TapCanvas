@@ -147,6 +147,26 @@ const TaskNodeConfig: React.FC<{
               />
             </div>
 
+            <div>
+              <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
+                Model
+              </label>
+              <select
+                value={nodeData.config?.model || 'qwen-image-plus'}
+                onChange={(e) => handleConfigChange('model', e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              >
+                <option value="qwen-image-plus">Qwen Image Plus</option>
+                <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
+              </select>
+            </div>
+
             <div style={{ display: 'flex', gap: '8px' }}>
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
