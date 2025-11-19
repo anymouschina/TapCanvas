@@ -22,6 +22,7 @@ import {
   IconDeviceTv,
   IconClock,
   IconChevronDown,
+  IconBrain,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
 
@@ -181,6 +182,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const [promptSuggestions, setPromptSuggestions] = React.useState<string[]>([])
   const [activeSuggestion, setActiveSuggestion] = React.useState(0)
+  const [suggestionsEnabled, setSuggestionsEnabled] = React.useState(false)
   const suggestTimeout = React.useRef<number | null>(null)
   const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
   const lastResult = (data as any)?.lastResult as { preview?: { type?: string; value?: string } } | undefined
@@ -323,7 +325,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       suggestTimeout.current = null
     }
     const value = prompt.trim()
-    if (!value || value.length < 6) {
+    if (!value || value.length < 6 || !suggestionsEnabled) {
       setPromptSuggestions([])
       setActiveSuggestion(0)
       return
@@ -345,7 +347,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         suggestTimeout.current = null
       }
     }
-  }, [prompt])
+  }, [prompt, suggestionsEnabled])
 
   // 输入 @ 时，通过后端转发 Sora search_mentions 接口获取可引用角色（Sora2）
   React.useEffect(() => {
@@ -1196,11 +1198,30 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             </div>
           )}
           <div style={{ position: 'relative' }}>
+            {/* 智能建议状态指示器 */}
+            {prompt.length >= 6 && (
+              <ActionIcon
+                variant="subtle"
+                size="xs"
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  zIndex: 10,
+                  background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
+                  border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
+                }}
+                onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
+                title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
+              >
+                <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
+              </ActionIcon>
+            )}
             <Textarea
               autosize
               minRows={2}
               maxRows={6}
-              placeholder="在这里输入提示词..."
+              placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
               value={prompt}
               onChange={(e)=>{
                 const el = e.currentTarget
@@ -1229,6 +1250,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 setMentionFilter('')
               }}
               onKeyDown={(e) => {
+                const isMac = navigator.platform.toLowerCase().includes('mac')
+                const mod = isMac ? e.metaKey : e.ctrlKey
+
                 if (e.key === 'Escape') {
                   if (mentionOpen) {
                     e.stopPropagation()
@@ -1237,7 +1261,25 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                     mentionMetaRef.current = null
                     return
                   }
+                  // 如果没有在@选择状态，Esc键关闭建议
+                  if (!mentionOpen && promptSuggestions.length > 0) {
+                    e.preventDefault()
+                    setPromptSuggestions([])
+                    setSuggestionsEnabled(false)
+                    return
+                  }
                 }
+
+                // Ctrl/Cmd + Space 激活智能建议
+                if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
+                  e.preventDefault()
+                  const value = prompt.trim()
+                  if (value.length >= 6) {
+                    setSuggestionsEnabled(true)
+                  }
+                  return
+                }
+
                 if (!promptSuggestions.length) return
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
@@ -1251,10 +1293,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   if (suggestion) {
                     setPrompt(suggestion)
                     setPromptSuggestions([])
+                    setSuggestionsEnabled(false)
                     markDraftPromptUsed(suggestion, 'sora').catch(() => {})
                   }
                 } else if (e.key === 'Escape') {
                   setPromptSuggestions([])
+                  setSuggestionsEnabled(false)
                 }
               }}
             />
