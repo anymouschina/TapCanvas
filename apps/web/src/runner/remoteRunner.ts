@@ -695,7 +695,12 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
   }
 
   try {
-    const vendor = taskKind === 'text_to_image' ? 'qwen' : 'gemini'
+    // 根据图像节点选择的模型来决定使用哪个厂商
+    const selectedModel = taskKind === 'text_to_image' ?
+      ((data.imageModel as string) || 'qwen-image-plus') :
+      ((data.model as string) || 'qwen-image-plus')
+    const vendor = taskKind === 'text_to_image' && selectedModel.startsWith('gemini') ? 'gemini' :
+                   taskKind === 'text_to_image' ? 'qwen' : 'gemini'
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
@@ -710,11 +715,11 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
       const progressBase = 5 + Math.floor((90 * i) / sampleCount)
       setNodeStatus(id, 'running', { progress: progressBase })
+      const vendorName = vendor === 'qwen' ? 'Qwen' : 'Gemini'
+      const modelType = taskKind === 'text_to_image' ? '图像' : '文案'
       appendLog(
         id,
-        `[${nowLabel()}] 调用${
-          vendor === 'qwen' ? 'Qwen 图像' : 'Gemini 文案'
-        }模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
+        `[${nowLabel()}] 调用${vendorName} ${modelType}模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
       )
 
       const res = await runTaskByVendor(vendor, {
@@ -723,7 +728,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
         extras: {
           nodeKind: kind,
           nodeId: id,
-          modelKey,
+          modelKey: selectedModel,
         },
       })
 
@@ -811,9 +816,22 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       appendLog(id, `[${nowLabel()}] 文案模型调用成功`)
     }
   } catch (err: any) {
-    const msg = err?.message || '文案模型调用失败'
-    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    const msg = err?.message || '图像模型调用失败'
+    const status = (err as any)?.status || 'unknown'
+    const enhancedMsg = status === 429
+      ? `${msg} (API配额已用尽，请稍后重试或升级计划)`
+      : msg
+
+    // 显示 toast 错误提示
+    toast(enhancedMsg, status === 429 ? 'warning' : 'error')
+
+    setNodeStatus(id, 'error', {
+      progress: 0,
+      lastError: enhancedMsg,
+      httpStatus: status,
+      isQuotaExceeded: status === 429
+    })
+    appendLog(id, `[${nowLabel()}] error: ${enhancedMsg}`)
   } finally {
     endRunToken(id)
   }

@@ -760,6 +760,18 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ vendor, request }),
   }))
-  if (!r.ok) throw new Error(`run task failed: ${r.status}`)
+  if (!r.ok) {
+    let errorMessage = `run task failed: ${r.status}`
+    try {
+      const errorData = await r.json()
+      errorMessage = errorData.message || errorData.error || errorMessage
+    } catch {
+      // 如果解析 JSON 失败，使用默认错误消息
+    }
+
+    const error = new Error(errorMessage) as any
+    error.status = r.status
+    throw error
+  }
   return r.json()
 }
