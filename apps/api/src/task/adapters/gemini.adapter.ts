@@ -96,8 +96,16 @@ async function callGenerateContent(
     const msg =
       (res.data && (res.data.error?.message || res.data.message)) ||
       `Gemini generateContent failed with status ${res.status}`
-    const err = new Error(msg)
-    ;(err as any).status = res.status
+    const err = new Error(msg) as any
+    err.status = res.status
+    err.response = res.data
+
+    // 如果是配额超限错误，提取更详细的信息
+    if (res.status === 429 && res.data) {
+      err.isQuotaExceeded = true
+      err.retryAfter = res.data.retryAfter || null
+    }
+
     throw err
   }
 
@@ -127,15 +135,14 @@ async function callGenerateImage(
   }
 
   const baseUrl = normalizeBaseUrl(ctx.baseUrl)
-  // 默认对外暴露 gemini-2.5-flash-image-preview，但底层按需映射到实际图片模型
-  let model = 'models/gemini-2.5-flash-image-preview'
+  // 默认使用 gemini-2.5-flash-image 模型
+  let model = 'models/gemini-2.5-flash-image'
   const override = modelKeyOverride && modelKeyOverride.trim()
   if (override) {
     const key = override.trim()
     model = key.startsWith('models/') ? key : `models/${key}`
   }
-  // 当前 Gemini 图片生成实际使用 imagegeneration 模型；保持对外 modelKey 不变
-  const apiModel = model === 'models/gemini-2.5-flash-image-preview' ? 'models/gemini-2.5-flash-image-preview' : model
+  const apiModel = model
 
   const url = `${baseUrl}/v1beta/${apiModel}:generateContent?key=${encodeURIComponent(ctx.apiKey)}`
   const body = {
@@ -145,6 +152,9 @@ async function callGenerateImage(
         parts: [{ text: prompt }],
       },
     ],
+    generationConfig: {
+      responseModalities: ['IMAGE', 'TEXT'],
+    },
   }
 
   const res = await axios.post(url, body, {
@@ -159,20 +169,51 @@ async function callGenerateImage(
     const msg =
       (res.data && (res.data.error?.message || res.data.message)) ||
       `Gemini generateImages failed with status ${res.status}，${url}`
-    const err = new Error(msg)
-    ;(err as any).status = res.status
+    const err = new Error(msg) as any
+    err.status = res.status
+    err.response = res.data
+
+    // 如果是配额超限错误，提取更详细的信息
+    if (res.status === 429 && res.data) {
+      err.isQuotaExceeded = true
+      err.retryAfter = res.data.retryAfter || null
+    }
+
     throw err
   }
 
   const raw = res.data as any
-  const imgs: any[] = Array.isArray(raw?.generatedImages)
+  const candidates = raw?.candidates || []
+  const parts = candidates[0]?.content?.parts || []
+
+  // 从 Gemini 2.5 Flash Image 响应中提取图像
+  const imgs: any[] = []
+  parts.forEach((part: any) => {
+    if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('image/')) {
+      // 处理 base64 编码的图像数据
+      const base64Data = part.inlineData.data
+      if (base64Data) {
+        // 将 base64 转换为数据 URL
+        const mimeType = part.inlineData.mimeType
+        imgs.push({
+          url: `data:${mimeType};base64,${base64Data}`,
+          uri: `data:${mimeType};base64,${base64Data}`
+        })
+      }
+    }
+  })
+
+  // 兼容旧格式的响应
+  const legacyImgs: any[] = Array.isArray(raw?.generatedImages)
     ? raw.generatedImages
     : Array.isArray(raw?.images)
       ? raw.images
       : []
 
+  const allImgs = [...imgs, ...legacyImgs]
+
   const assets: TaskAsset[] =
-    imgs
+    allImgs
       .map((img: any): TaskAsset | null => {
         const url =
           img.uri ||
