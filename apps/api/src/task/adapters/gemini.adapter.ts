@@ -15,6 +15,7 @@ const DEFAULT_TEXT_MODEL = 'models/gemini-2.5-flash'
 const CHAT_SUPPORTED_MODELS = new Set([
   'models/gemini-2.5-flash',
   'models/gemini-2.5-pro',
+  'models/gemini-3-pro-preview',
 ])
 
 function normalizeBaseUrl(baseUrl?: string): string {

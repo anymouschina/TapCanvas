@@ -2,6 +2,16 @@ import { useEffect } from 'react'
 import { useRFStore, persistToLocalStorage } from './canvas/store'
 import { useUIStore } from './ui/uiStore'
 
+function isTextInputElement(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName
+  if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
+  if (target.getAttribute('contenteditable') === 'true') return true
+  if (target.closest('input') || target.closest('textarea')) return true
+  if (target.closest('[contenteditable="true"]')) return true
+  return false
+}
+
 export default function KeyboardShortcuts() {
   const removeSelected = useRFStore((s) => s.removeSelected)
   const copySelected = useRFStore((s) => s.copySelected)
@@ -25,14 +35,10 @@ export default function KeyboardShortcuts() {
       const isMac = navigator.platform.toLowerCase().includes('mac')
       const mod = isMac ? e.metaKey : e.ctrlKey
       const target = e.target as HTMLElement | null
-      const tagName = target?.tagName
+      const focusTarget = document.activeElement as HTMLElement | null
       const isTextInput =
-        tagName === 'INPUT' ||
-        tagName === 'TEXTAREA' ||
-        !!target?.closest('input') ||
-        !!target?.closest('textarea') ||
-        target?.getAttribute('contenteditable') === 'true' ||
-        !!target?.closest('[contenteditable="true"]')
+        isTextInputElement(target) ||
+        isTextInputElement(focusTarget)
       // Delete
       if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput) {
         e.preventDefault()

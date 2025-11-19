@@ -234,8 +234,18 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
       )
     } catch (err: any) {
       const msg = err?.message || '文案模型调用失败'
-      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      const status = (err as any)?.status || 'unknown'
+      const enhancedMsg = status === 429
+        ? `${msg} (API配额已用尽，请稍后重试或升级计划)`
+        : msg
+
+      setNodeStatus(id, 'error', {
+        progress: 0,
+        lastError: enhancedMsg,
+        httpStatus: status,
+        isQuotaExceeded: status === 429
+      })
+      appendLog(id, `[${nowLabel()}] error: ${enhancedMsg}`)
     } finally {
       endRunToken(id)
     }
