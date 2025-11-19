@@ -625,8 +625,21 @@ function CanvasInner(): JSX.Element {
         }
       }}
       onKeyDown={(e) => {
-        // 处理键盘删除事件
-        if (e.key === 'Delete' || e.key === 'Backspace') {
+        // 处理键盘删除事件 - 检查是否在输入框中
+        function isTextInputElement(target: EventTarget | null) {
+          if (!(target instanceof HTMLElement)) return false
+          const tagName = target.tagName
+          if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
+          if (target.getAttribute('contenteditable') === 'true') return true
+          if (target.closest('input') || target.closest('textarea')) return true
+          if (target.closest('[contenteditable="true"]')) return true
+          return false
+        }
+
+        const focusTarget = document.activeElement as HTMLElement | null
+        const isTextInput = isTextInputElement(e.target) || isTextInputElement(focusTarget)
+
+        if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput) {
           e.preventDefault()
           useRFStore.getState().removeSelected()
         }

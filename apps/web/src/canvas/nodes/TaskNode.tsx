@@ -41,6 +41,7 @@ const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
 const TEXT_MODELS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
 ]
 const IMAGE_MODELS = [{ value: 'qwen-image-plus', label: 'Qwen Image Plus' }]
 const VIDEO_MODELS = [{ value: 'sora-2', label: 'Sora 2' }]
@@ -1071,6 +1072,34 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             </div>
           </div>
           <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材' : '详情'}</Text>
+
+          {/* Error Display - Show error messages when node status is error */}
+          {status === 'error' && (data as any)?.lastError && (
+            <Paper
+              withBorder
+              radius="md"
+              p="xs"
+              mb="xs"
+              style={{
+                background: 'rgba(239,68,68,0.1)',
+                borderColor: 'rgba(239,68,68,0.3)',
+                border: '1px solid',
+              }}
+            >
+              <Text size="xs" c="red.4" style={{ fontWeight: 500 }}>
+                执行错误
+              </Text>
+              <Text size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
+                {(data as any).lastError}
+              </Text>
+              {/* Show quota exceeded hint if it's a 429 error */}
+              {(data as any)?.httpStatus === 429 && (
+                <Text size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
+                  💡 提示：API 配额已用尽，请稍后重试或升级您的服务计划
+                </Text>
+              )}
+            </Paper>
+          )}
 
           {/* 系统提示词配置 - 仅对文本节点显示 */}
           {kind === 'textToImage' && (
