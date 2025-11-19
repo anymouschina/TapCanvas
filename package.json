@@ -14,9 +14,6 @@
     "build": "pnpm --filter @tapcanvas/web build",
     "build:api": "pnpm --filter api build",
     "test": "pnpm -w -r run test",
-    "compose:up": "cd infra/activepieces && docker compose up -d",
-    "compose:down": "cd infra/activepieces && docker compose down",
-    "compose:logs": "cd infra/activepieces && docker compose logs -f",
     "deploy:web:cf": "pnpm --filter @tapcanvas/web build && npx wrangler deploy"
   },
   "devDependencies": {
