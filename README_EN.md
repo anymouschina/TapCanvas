@@ -179,7 +179,7 @@ Through visual workflows, we not only lower the barrier to AI video creation but
 
 ### Backend Integration
 
-- **Activepieces**: Lightweight workflow orchestration engine
+- **NestJS + Bull Queue**: High-performance workflow orchestration and task management
 - **Third-party AI APIs**:
   - OpenAI Sora 2 (video generation)
   - Gemini 2.5 (text generation)
@@ -291,15 +291,12 @@ TapCanvas/
 │   └── api/              # API service
 ├── packages/
 │   ├── cli/              # Command line tools
-│   ├── sdk/              # SDK package
-│   └── pieces/           # AI model integrations
-└── infra/
-    └── activepieces/     # Backend orchestration service
+│   └── sdk/              # SDK package
 ```
 
 ### Adding New AI Models
 
-1. Create new model integration in `packages/pieces`
+1. Create new adapter in `apps/api/src/task/adapters`
 2. Define input/output interfaces
 3. Implement model call logic
 4. Add corresponding node types in frontend

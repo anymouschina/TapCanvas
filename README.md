@@ -237,7 +237,7 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 
 ### 后端集成
 
-- **Activepieces**：轻量级工作流编排引擎
+- **NestJS + Bull 队列**：高性能工作流编排和任务管理
 - **第三方 AI API**：
   - OpenAI Sora 2（视频生成）
   - Gemini 2.5（文本生成）
@@ -349,15 +349,12 @@ TapCanvas/
 │   └── api/              # API 服务
 ├── packages/
 │   ├── cli/              # 命令行工具
-│   ├── sdk/              # SDK 包
-│   └── pieces/           # AI 模型集成
-└── infra/
-    └── activepieces/     # 后台编排服务
+│   └── sdk/              # SDK 包
 ```
 
 ### 添加新的 AI 模型
 
-1. 在 `packages/pieces` 中创建新的模型集成
+1. 在 `apps/api/src/task/adapters` 中创建新的适配器
 2. 定义输入输出接口
 3. 实现模型调用逻辑
 4. 在前端添加对应的节点类型
