@@ -46,6 +46,7 @@ type RFState = {
   deleteEdge: (id: string) => void
   duplicateNode: (id: string) => void
   pasteFromClipboardAt: (pos: { x: number; y: number }) => void
+  importWorkflow: (workflowData: { nodes: Node[], edges: Edge[] }, position?: { x: number; y: number }) => void
   selectAll: () => void
   clearSelection: () => void
   invertSelection: () => void
@@ -406,6 +407,52 @@ export const useRFStore = create<RFState>((set, get) => ({
       source: idMap.get(e.source) || e.source,
       target: idMap.get(e.target) || e.target,
       selected: false,
+    }))
+    return {
+      nodes: [...s.nodes, ...newNodes],
+      edges: [...s.edges, ...newEdges],
+      nextId: s.nextId + newNodes.length,
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
+  importWorkflow: (workflowData, position) => set((s) => {
+    if (!workflowData?.nodes?.length) return {}
+
+    // 确定导入位置
+    const pos = position || { x: 100, y: 100 }
+    const minX = Math.min(...workflowData.nodes.map(n => n.position.x))
+    const minY = Math.min(...workflowData.nodes.map(n => n.position.y))
+    const shift = { x: pos.x - minX, y: pos.y - minY }
+
+    const idMap = new Map<string, string>()
+    const newNodes: Node[] = workflowData.nodes.map((n) => {
+      const newId = genNodeId()
+      idMap.set(n.id, newId)
+      return {
+        ...n,
+        id: newId,
+        selected: false,
+        dragging: false,
+        position: { x: n.position.x + shift.x, y: n.position.y + shift.y },
+        // 清理状态相关的数据
+        data: {
+          ...n.data,
+          status: undefined,
+          progress: undefined,
+          logs: undefined,
+          canceled: undefined,
+          lastError: undefined
+        }
+      }
+    })
+    const newEdges: Edge[] = workflowData.edges.map((e) => ({
+      ...e,
+      id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
+      source: idMap.get(e.source) || e.source,
+      target: idMap.get(e.target) || e.target,
+      selected: false,
+      animated: false
     }))
     return {
       nodes: [...s.nodes, ...newNodes],

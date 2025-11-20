@@ -51,6 +51,7 @@ function CanvasInner(): JSX.Element {
   const deleteEdge = useRFStore(s => s.deleteEdge)
   const duplicateNode = useRFStore(s => s.duplicateNode)
   const pasteFromClipboardAt = useRFStore(s => s.pasteFromClipboardAt)
+  const importWorkflow = useRFStore(s => s.importWorkflow)
   const autoLayoutAllDag = useRFStore(s => s.autoLayoutAllDag)
   const autoLayoutSelectedDag = useRFStore(s => s.autoLayoutSelectedDag)
   const runSelected = useRFStore(s => s.runSelected)
@@ -829,6 +830,29 @@ function CanvasInner(): JSX.Element {
             {menu.type === 'canvas' && (
               <>
                 <Button variant="subtle" onClick={() => { pasteFromClipboardAt(rf.screenToFlowPosition({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
+                <Button variant="subtle" onClick={() => {
+                  const input = document.createElement('input')
+                  input.type = 'file'
+                  input.accept = '.json'
+                  input.onchange = async (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0]
+                    if (!file) return
+                    try {
+                      const text = await file.text()
+                      const data = JSON.parse(text)
+                      if (data.nodes && Array.isArray(data.nodes) && data.edges && Array.isArray(data.edges)) {
+                        const pos = rf.screenToFlowPosition({ x: menu.x, y: menu.y })
+                        importWorkflow(data, pos)
+                        setMenu(null)
+                      } else {
+                        alert('无效的工作流格式')
+                      }
+                    } catch (err) {
+                      alert('解析 JSON 失败: ' + (err as Error).message)
+                    }
+                  }
+                  input.click()
+                }}>导入工作流 JSON</Button>
                 <Button variant="subtle" onClick={() => { autoLayoutAllDag(); setMenu(null) }}>自动布局（全图）</Button>
                 <Button variant="subtle" onClick={() => { useUIStore.getState().toggleEdgeRoute(); setMenu(null) }}>切换边线（当前：{edgeRoute==='orth'?'正交':'平滑'}）</Button>
                 {focusGroupId && <Button variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}

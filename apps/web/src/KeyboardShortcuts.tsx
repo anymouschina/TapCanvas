@@ -16,6 +16,7 @@ export default function KeyboardShortcuts() {
   const removeSelected = useRFStore((s) => s.removeSelected)
   const copySelected = useRFStore((s) => s.copySelected)
   const pasteFromClipboard = useRFStore((s) => s.pasteFromClipboard)
+  const importWorkflow = useRFStore((s) => s.importWorkflow)
   const undo = useRFStore((s) => s.undo)
   const redo = useRFStore((s) => s.redo)
   const selectAll = useRFStore((s) => s.selectAll)
@@ -53,6 +54,24 @@ export default function KeyboardShortcuts() {
       if (mod && e.key.toLowerCase() === 'v' && !isTextInput) {
         e.preventDefault()
         pasteFromClipboard()
+      }
+      // Import Workflow from JSON (skip when focused in an input/textarea/contenteditable)
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'v' && !isTextInput) {
+        e.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          try {
+            const data = JSON.parse(text)
+            if (data.nodes && Array.isArray(data.nodes) && data.edges && Array.isArray(data.edges)) {
+              importWorkflow(data, { x: 100, y: 100 })
+            } else {
+              alert('剪贴板中的内容不是有效的工作流格式')
+            }
+          } catch (err) {
+            alert('解析剪贴板 JSON 失败: ' + (err as Error).message)
+          }
+        }).catch(() => {
+          alert('无法读取剪贴板内容')
+        })
       }
       // Undo / Redo
       if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey && !isTextInput) {
@@ -107,7 +126,7 @@ export default function KeyboardShortcuts() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [removeSelected, copySelected, pasteFromClipboard])
+  }, [removeSelected, copySelected, pasteFromClipboard, importWorkflow])
 
   return null
 }
