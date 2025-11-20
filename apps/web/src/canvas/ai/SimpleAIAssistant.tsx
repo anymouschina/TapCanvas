@@ -40,6 +40,41 @@ interface AssistantAction {
   reasoning?: string
 }
 
+const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string }> = [
+  { keyword: '文本', type: 'text', label: '文本节点' },
+  { keyword: '文生图', type: 'image', label: '文生图节点' },
+  { keyword: '图像', type: 'image', label: '图像节点' },
+  { keyword: '视频', type: 'video', label: '视频节点' },
+  { keyword: '音频', type: 'audio', label: '音频节点' },
+  { keyword: '字幕', type: 'subtitle', label: '字幕节点' }
+]
+
+function inferActionsFromMessage(message: string): AssistantAction[] {
+  const text = message.trim()
+  if (!text) return []
+
+  const createKeywords = ['创建', '添加', '新建']
+  const shouldCreateNode = createKeywords.some(keyword => text.includes(keyword)) && text.includes('节点')
+
+  if (shouldCreateNode) {
+    const mapping = FALLBACK_NODE_TYPES.find(item => text.includes(item.keyword)) || FALLBACK_NODE_TYPES[0]
+    const labelMatch = text.match(/"([^"]+)"/) || text.match(/“([^”]+)”/)
+    const label = labelMatch ? labelMatch[1] : text.replace(/.*(创建|添加|新建)/, '').replace('节点', '').trim() || mapping.label
+
+    return [{
+      type: 'createNode',
+      params: {
+        type: mapping.type,
+        label: label || mapping.label,
+        config: mapping.type === 'image' ? { kind: 'image', prompt: text } : { prompt: text }
+      },
+      reasoning: '根据自然语言推断创建节点'
+    }]
+  }
+
+  return []
+}
+
 interface ExecutedAction {
   id: string
   action: AssistantAction
@@ -151,6 +186,12 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
       }
 
       const data = await response.json() as { reply: string; plan?: string[]; actions?: AssistantAction[] }
+      if ((!data.actions || data.actions.length === 0) && userMessage) {
+        const fallback = inferActionsFromMessage(userMessage)
+        if (fallback.length) {
+          data.actions = fallback
+        }
+      }
       const messageId = nanoid()
       const assistantMessage: AssistantMessage = {
         id: messageId,
@@ -291,9 +332,9 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
             h="100%"
             px="lg"
             ref={scrollAreaRef}
-            styles={{ viewport: { overflowX: 'hidden' } }}
+            styles={{ viewport: { overflowX: 'hidden' }}}
           >
-            <Stack gap="md" py="lg">
+            <Stack gap="md" py="lg" >
               {messages.length === 0 && (
                 <Paper p="lg" radius="md" style={{ background: 'rgba(8,12,24,0.8)', border: '1px dashed rgba(99,102,241,0.5)' }}>
                   <Stack gap="xs">

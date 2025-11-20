@@ -21,7 +21,7 @@ export class CanvasService {
       const { addNode } = useRFStore.getState()
 
       // 生成默认位置（如果未提供）
-      const position = params.position || this.generateDefaultPosition()
+      const position = params.position || CanvasService.generateDefaultPosition()
 
       // 调用store方法创建节点
       addNode(params.type, params.label, {
