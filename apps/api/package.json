@@ -23,6 +23,9 @@
     "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.45",
+    "@ai-sdk/google": "^2.0.39",
+    "@ai-sdk/openai": "^2.0.69",
     "@huggingface/inference": "^4.13.3",
     "@nestjs/bull": "^11.0.0",
     "@nestjs/common": "^11.0.1",
@@ -31,13 +34,15 @@
     "@nestjs/platform-express": "^11.0.1",
     "@prisma/client": "^6.19.0",
     "axios": "^1.13.2",
+    "ai": "^5.0.97",
     "bull": "^4.16.0",
     "form-data": "^4.0.0",
     "framer-motion": "^12.23.24",
     "nestjs-prisma": "^0.26.0",
     "prisma": "^6.19.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
