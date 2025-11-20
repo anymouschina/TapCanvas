@@ -33,6 +33,363 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 
 通过可视化工作流的方式，我们不仅降低了AI视频创作的门槛，更为创作者提供了一个专业、高效的创作平台。
 
+## 🚀 快速运行
+
+### 方法一：Docker 运行（推荐）
+
+使用 Docker 可以快速启动所有依赖服务，无需手动配置数据库和缓存。
+
+```bash
+# 1. 启动基础服务（PostgreSQL + Redis）
+docker-compose -f docker-compose.minimal.yml up -d
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，填入你的 API 密钥
+
+# 3. 安装依赖
+pnpm install
+
+# 4. 启动开发服务器
+pnpm dev:web    # 前端服务 (http://localhost:5173)
+pnpm dev:api    # API 服务 (http://localhost:3001)
+```
+
+**管理界面访问：**
+- 数据库管理：http://localhost:8080 (Adminer)
+- Redis 管理：http://localhost:8081 (Redis Commander)
+
+### 方法二：本地运行
+
+如果你已经本地安装了 PostgreSQL 和 Redis。
+
+```bash
+# 1. 确保本地服务运行
+# PostgreSQL (端口 5432)
+# Redis (端口 6379)
+
+# 2. 配置数据库连接
+# 创建数据库 tapCanvas
+# 修改 apps/api/.env 中的 DATABASE_URL
+
+# 3. 安装依赖
+pnpm install
+
+# 4. 数据库迁移
+cd apps/api
+pnpm prisma:generate
+pnpm prisma:migrate
+
+# 5. 启动开发服务器
+pnpm dev:web    # 前端服务
+pnpm dev:api    # API 服务
+```
+
+### 环境配置
+
+项目使用 `.env.example` 作为配置模板。请按以下步骤配置：
+
+```bash
+# 1. 复制主配置模板
+cp .env.example .env
+
+# 2. 编辑 .env 文件，填入真实的 API 密钥
+# 必需配置项：
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/tapCanvas?schema=public"
+GITHUB_CLIENT_ID="your_github_client_id"
+GITHUB_CLIENT_SECRET="your_github_client_secret"
+JWT_SECRET="your-strong-jwt-secret"
+HF_TOKEN="your_huggingface_token"
+SILICONFLOW_API_KEY="your_siliconflow_api_key"
+SORA_API_KEY="your_sora_api_key"
+
+# 3. API 服务将自动读取项目根目录的 .env 文件
+# 如需 API 专用配置，可创建 apps/api/.env.local 文件
+```
+
+**重要提示：**
+- ⚠️ **不要将真实的 `.env` 文件提交到 Git** (已配置在 `.gitignore` 中)
+- 🔑 所有 API 密钥都需要在对应平台注册获取
+- 📝 项目提供两个 `.env.example` 模板：根目录和 `apps/api/` 目录
+- ✅ 项目已配置 `.gitignore` 只忽略 `.env` 文件，但保留 `.env.example` 模板
+- 🔒 确保 API 密钥安全，只在本地 `.env` 文件中填写真实密钥
+- 📁 **API 配置统一管理**：推荐在项目根目录配置 `.env`，API 服务会自动读取
+- 🔐 **已移除敏感文件**：原 `apps/api/.env` 文件（含真实密钥）已从项目中移除
+
+**获取 API 密钥：**
+1. **GitHub OAuth**: https://github.com/settings/applications/new
+2. **Hugging Face**: https://huggingface.co/settings/tokens
+3. **Silicon Flow**: https://siliconflow.cn
+4. **Sora API**: 需要联系获取访问权限
+
+### 验证运行
+
+启动成功后，访问以下地址验证：
+
+- **前端应用**：http://localhost:5173
+- **API 服务**：http://localhost:3001
+- **API 文档**：http://localhost:3001/api (如果有 Swagger)
+
+如果看到 TapCanvas 的界面，说明运行成功！
+
+## 🎯 快速体验
+
+如果你想要快速体验 TapCanvas 的功能，可以使用以下预配置的模型提供商设置：
+
+### 模型配置示例
+
+在应用的"模型配置"面板中，你可以导入以下配置结构（已移除敏感信息）：
+
+```json
+{
+  "version": "1.0.0",
+  "exportedAt": "2025-11-20T02:47:29.179Z",
+  "providers": [
+    {
+      "id": "3dd9bc5e-9e91-4572-8e45-431647524743",
+      "name": "Sora",
+      "vendor": "sora",
+      "baseUrl": null,
+      "tokens": [
+        {
+          "id": "e36aea87-3d86-45ce-a023-784f90bad930",
+          "label": "token-1",
+          "secretToken": "YOUR_SORA_API_TOKEN_HERE",
+          "enabled": true,
+          "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+          "shared": false
+        }
+      ],
+      "endpoints": [
+        {
+          "id": "acbd3702-ac60-45c0-b214-c1950bd3d2d6",
+          "key": "videos",
+          "label": "videos 域名",
+          "baseUrl": "https://videos.beqlee.icu",
+          "shared": false
+        },
+        {
+          "id": "72925a18-1445-43bd-a8e8-9ef051f66ed0",
+          "key": "sora",
+          "label": "sora 域名",
+          "baseUrl": "https://sora2.beqlee.icu",
+          "shared": false
+        }
+      ]
+    },
+    {
+      "id": "6a77570a-b441-4ef9-877d-12a156b8a4a1",
+      "name": "Qwen",
+      "vendor": "qwen",
+      "baseUrl": null,
+      "tokens": [
+        {
+          "id": "139f22f3-0938-476d-b45c-d6dbd3dddcf2",
+          "label": "qwen",
+          "secretToken": "YOUR_QWEN_API_KEY_HERE",
+          "enabled": true,
+          "userAgent": null,
+          "shared": false
+        }
+      ],
+      "endpoints": []
+    },
+    {
+      "id": "48edea28-1ebb-43b4-acb3-a4fc17aeead9",
+      "name": "Gemini",
+      "vendor": "gemini",
+      "baseUrl": "https://generativelanguage.beqlee.icu",
+      "tokens": [
+        {
+          "id": "af9ae30d-d5f0-4205-a095-63dc1cb67950",
+          "label": "2",
+          "secretToken": "YOUR_GEMINI_API_KEY_HERE",
+          "enabled": true,
+          "userAgent": null,
+          "shared": false
+        }
+      ],
+      "endpoints": []
+    }
+  ]
+}
+```
+
+### 快速开始步骤
+
+1. **配置 API 密钥**：将上述配置中的 `YOUR_*_API_KEY_HERE` 替换为你的真实 API 密钥
+2. **导入配置**：在模型配置面板中导入修改后的配置
+3. **创建第一个工作流**：
+   - 从左侧拖拽"文本"节点到画布
+   - 输入简单的提示词，如"一只可爱的猫咪在花园里玩耍"
+   - 连接"图像"节点，选择 16:9 比例
+   - 点击运行按钮开始生成
+
+### 体验提示
+
+- 🎨 **建议先尝试文生图**：从文本生成图像开始，了解基本流程
+- 🎬 **然后尝试图生视频**：使用生成的图像创建视频内容
+- 💡 **使用智能提示**：点击文本节点的"AI 优化"按钮获得更好的提示词建议
+- 📱 **调整参数**：尝试不同的分辨率、时长等参数设置
+
+## 🌐 代理配置说明
+
+由于国内网络环境的不可抗力因素，部分 AI 服务可能无法直接访问。推荐使用 Cloudflare Workers 和 Durable Objects 配置代理来解决这个问题。
+
+### 前置条件
+
+- 注册 Cloudflare 账号：https://dash.cloudflare.com/
+- 启用 Durable Objects 功能
+
+### 配置步骤
+
+#### 1. 创建 Worker
+
+1. 登录 Cloudflare Dashboard
+2. 选择 "Workers & Pages" → "Create application" → "Create Worker"
+3. 给 Worker 命名（如 `tapcanvas-proxy`）
+4. 点击 "Deploy"
+
+#### 2. 启用 Durable Objects
+
+1. 在 Worker 设置中，找到 "Settings" → "Durable Objects"
+2. 点击 "Configure Durable Objects"
+3. 确认启用该功能
+
+#### 3. 配置 Worker 脚本
+
+将以下脚本复制到 Worker 编辑器中：
+
+```javascript
+import { DurableObject } from "cloudflare:workers";
+
+export class MyDurableObject extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+  }
+
+  async fetch(request) {
+    // 转发逻辑：从 Durable Object 接收 request，转发至上游
+
+    // 域名映射：将代理域名映射到真实域名
+    const upstream = new URL(request.url
+      .replace('sora2.beqlee.icu', 'sora.chatgpt.com')
+      .replace('videos.beqlee.icu', 'videos.openai.com')
+      .replace('generativelanguage.beqlee.icu', 'generativelanguage.googleapis.com')
+    );
+
+    const forwardedReq = new Request(upstream.toString(), {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      redirect: 'follow',
+    });
+
+    const upstreamResp = await fetch(forwardedReq);
+
+    const ct = upstreamResp.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const data = await upstreamResp.json();
+      const result = { ok: true, data };
+      return new Response(JSON.stringify(result, null, 2), {
+        status: upstreamResp.status,
+        headers: { "content-type": "application/json; charset=utf-8" }
+      });
+    }
+
+    return new Response(upstreamResp.body, {
+      status: upstreamResp.status,
+      headers: upstreamResp.headers
+    });
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const id = env.MY_DURABLE_OBJECT.idFromName("singleton");
+    const stub = env.MY_DURABLE_OBJECT.get(id);
+    const resp = await stub.fetch(request);
+    return resp;
+  }
+};
+```
+
+#### 4. 绑定 Durable Object
+
+1. 在 Worker 设置中，找到 "Settings" → "Variables"
+2. 添加 Durable Object 绑定：
+   - **Variable name**: `MY_DURABLE_OBJECT`
+   - **Durable Object class name**: `MyDurableObject`
+   - **Script name**: 选择你创建的 Worker 脚本
+
+#### 5. 部署 Worker
+
+1. 保存并部署 Worker 脚本
+2. 记录 Worker 的访问地址：`https://your-worker-name.your-subdomain.workers.dev`
+
+#### 6. 更新 TapCanvas 配置
+
+在 TapCanvas 的模型配置中，将端点 URL 更新为你的 Worker 地址：
+
+```json
+{
+  "endpoints": [
+    {
+      "key": "sora",
+      "label": "sora 域名",
+      "baseUrl": "https://your-worker-name.your-subdomain.workers.dev"
+    }
+  ]
+}
+```
+
+### 域名映射说明
+
+Worker 脚本中的域名映射如下：
+
+| 代理域名 | 真实域名 | 用途 |
+|---------|---------|------|
+| `sora2.beqlee.icu` | `sora.chatgpt.com` | Sora API |
+| `videos.beqlee.icu` | `videos.openai.com` | OpenAI Videos API |
+| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API |
+
+### 故障排除
+
+#### 常见问题
+
+1. **Worker 返回 403 错误**
+   - 检查 Durable Object 是否正确绑定
+   - 确认 Variable name 为 `MY_DURABLE_OBJECT`
+
+2. **请求超时**
+   - 检查 Worker 的执行时间限制
+   - 考虑升级到付费计划获得更长的执行时间
+
+3. **部分请求失败**
+   - 检查上游服务是否正常运行
+   - 查看 Worker 的日志信息
+
+#### 测试代理
+
+创建测试文件验证代理是否正常工作：
+
+```bash
+# 测试 Sora API 代理
+curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
+  -H "Authorization: Bearer YOUR_SORA_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+### 安全提示
+
+- 🔒 定期轮换 API 密钥
+- 🛡️ 启用 Cloudflare 的防火墙规则
+- 📊 监控 Worker 的使用量和成本
+- 🔐 不要在代码中硬编码敏感信息
+
+通过以上配置，你可以在国内环境下稳定使用 TapCanvas 的各项 AI 功能。
+
 ## 📋 待办事项
 
 为了实现"一站式解决AIGC创作问题"的目标，我们正在积极开发以下核心功能：
@@ -248,41 +605,6 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 - **本地存储**：浏览器 localStorage 用于模板和缓存
 - **云端存储**：S3/OSS 用于生成的媒体文件
 - **项目数据**：支持云端同步和备份
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Node.js 18+
-- pnpm 10.8.1+
-- 现代浏览器（Chrome 90+, Firefox 88+, Safari 14+）
-
-### 安装和运行
-
-```bash
-# 克隆项目
-git clone https://github.com/anymouschina/TapCanvas.git
-cd TapCanvas
-
-# 安装依赖
-pnpm install
-
-# 启动开发服务器
-pnpm dev:web
-
-# 启动 API 服务器
-pnpm dev:api
-```
-
-### 配置 AI API
-
-1. 在项目根目录创建 `.env` 文件
-2. 配置所需的 API 密钥：
-   ```
-   OPENAI_API_KEY=your_openai_api_key
-   GOOGLE_API_KEY=your_google_api_key
-   QWEN_API_KEY=your_qwen_api_key
-   ```
 
 ## 📖 使用指南
 

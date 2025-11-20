@@ -32,6 +32,363 @@ The TapCanvas project is specially optimized for Sora 2 with dedicated canvas ca
 
 Through visual workflows, we not only lower the barrier to AI video creation but also provide creators with a professional and efficient creation platform.
 
+## 🚀 Quick Start
+
+### Method 1: Docker Run (Recommended)
+
+Use Docker to quickly start all dependencies without manually configuring databases and cache.
+
+```bash
+# 1. Start basic services (PostgreSQL + Redis)
+docker-compose -f docker-compose.minimal.yml up -d
+
+# 2. Configure environment variables
+cp .env.example .env
+# Edit .env file and add your API keys
+
+# 3. Install dependencies
+pnpm install
+
+# 4. Start development servers
+pnpm dev:web    # Frontend service (http://localhost:5173)
+pnpm dev:api    # API service (http://localhost:3001)
+```
+
+**Management Interface Access:**
+- Database Management: http://localhost:8080 (Adminer)
+- Redis Management: http://localhost:8081 (Redis Commander)
+
+### Method 2: Local Run
+
+If you have PostgreSQL and Redis installed locally.
+
+```bash
+# 1. Ensure local services are running
+# PostgreSQL (port 5432)
+# Redis (port 6379)
+
+# 2. Configure database connection
+# Create database tapCanvas
+# Modify DATABASE_URL in apps/api/.env
+
+# 3. Install dependencies
+pnpm install
+
+# 4. Database migration
+cd apps/api
+pnpm prisma:generate
+pnpm prisma:migrate
+
+# 5. Start development servers
+pnpm dev:web    # Frontend service
+pnpm dev:api    # API service
+```
+
+### Environment Configuration
+
+The project uses `.env.example` as a configuration template. Please follow these steps:
+
+```bash
+# 1. Copy main configuration template
+cp .env.example .env
+
+# 2. Edit .env file and fill in real API keys
+# Required configurations:
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/tapCanvas?schema=public"
+GITHUB_CLIENT_ID="your_github_client_id"
+GITHUB_CLIENT_SECRET="your_github_client_secret"
+JWT_SECRET="your-strong-jwt-secret"
+HF_TOKEN="your_huggingface_token"
+SILICONFLOW_API_KEY="your_siliconflow_api_key"
+SORA_API_KEY="your_sora_api_key"
+
+# 3. API service will automatically read .env file from project root
+# For API-specific configuration, create apps/api/.env.local file
+```
+
+**Important Notes:**
+- ⚠️ **Do not commit real .env file to Git** (configured in .gitignore)
+- 🔑 All API keys need to be registered and obtained from corresponding platforms
+- 📝 Project provides two .env.example templates: root directory and apps/api/ directory
+- ✅ Project configured .gitignore to only ignore .env files but keep .env.example templates
+- 🔒 Ensure API key security, only fill real keys in local .env file
+- 📁 **Unified API Configuration Management**: Recommended to configure .env in project root, API service will read automatically
+- 🔐 **Sensitive Files Removed**: Original apps/api/.env file (with real keys) has been removed from project
+
+**Get API Keys:**
+1. **GitHub OAuth**: https://github.com/settings/applications/new
+2. **Hugging Face**: https://huggingface.co/settings/tokens
+3. **Silicon Flow**: https://siliconflow.cn
+4. **Sora API**: Need to contact for access permission
+
+### Verify Running
+
+After successful startup, visit the following addresses to verify:
+
+- **Frontend Application**: http://localhost:5173
+- **API Service**: http://localhost:3001
+- **API Documentation**: http://localhost:3001/api (if Swagger available)
+
+If you see the TapCanvas interface, it means running successfully!
+
+## 🎯 Quick Experience
+
+If you want to quickly experience TapCanvas features, you can use the following pre-configured model provider settings:
+
+### Model Configuration Example
+
+In the application's "Model Configuration" panel, you can import the following configuration structure (sensitive information removed):
+
+```json
+{
+  "version": "1.0.0",
+  "exportedAt": "2025-11-20T02:47:29.179Z",
+  "providers": [
+    {
+      "id": "3dd9bc5e-9e91-4572-8e45-431647524743",
+      "name": "Sora",
+      "vendor": "sora",
+      "baseUrl": null,
+      "tokens": [
+        {
+          "id": "e36aea87-3d86-45ce-a023-784f90bad930",
+          "label": "token-1",
+          "secretToken": "YOUR_SORA_API_TOKEN_HERE",
+          "enabled": true,
+          "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+          "shared": false
+        }
+      ],
+      "endpoints": [
+        {
+          "id": "acbd3702-ac60-45c0-b214-c1950bd3d2d6",
+          "key": "videos",
+          "label": "videos domain",
+          "baseUrl": "https://videos.beqlee.icu",
+          "shared": false
+        },
+        {
+          "id": "72925a18-1445-43bd-a8e8-9ef051f66ed0",
+          "key": "sora",
+          "label": "sora domain",
+          "baseUrl": "https://sora2.beqlee.icu",
+          "shared": false
+        }
+      ]
+    },
+    {
+      "id": "6a77570a-b441-4ef9-877d-12a156b8a4a1",
+      "name": "Qwen",
+      "vendor": "qwen",
+      "baseUrl": null,
+      "tokens": [
+        {
+          "id": "139f22f3-0938-476d-b45c-d6dbd3dddcf2",
+          "label": "qwen",
+          "secretToken": "YOUR_QWEN_API_KEY_HERE",
+          "enabled": true,
+          "userAgent": null,
+          "shared": false
+        }
+      ],
+      "endpoints": []
+    },
+    {
+      "id": "48edea28-1ebb-43b4-acb3-a4fc17aeead9",
+      "name": "Gemini",
+      "vendor": "gemini",
+      "baseUrl": "https://generativelanguage.beqlee.icu",
+      "tokens": [
+        {
+          "id": "af9ae30d-d5f0-4205-a095-63dc1cb67950",
+          "label": "2",
+          "secretToken": "YOUR_GEMINI_API_KEY_HERE",
+          "enabled": true,
+          "userAgent": null,
+          "shared": false
+        }
+      ],
+      "endpoints": []
+    }
+  ]
+}
+```
+
+### Quick Start Steps
+
+1. **Configure API Keys**: Replace `YOUR_*_API_KEY_HERE` in the above configuration with your real API keys
+2. **Import Configuration**: Import the modified configuration in the Model Configuration panel
+3. **Create First Workflow**:
+   - Drag "Text" node from the left sidebar to the canvas
+   - Enter a simple prompt, like "A cute cat playing in a garden"
+   - Connect to "Image" node, select 16:9 aspect ratio
+   - Click the run button to start generation
+
+### Experience Tips
+
+- 🎨 **Start with Text-to-Image**: Begin with text generation to understand the basic workflow
+- 🎬 **Then try Image-to-Video**: Use generated images to create video content
+- 💡 **Use Intelligent Prompts**: Click the "AI Optimize" button in text nodes for better prompt suggestions
+- 📱 **Adjust Parameters**: Try different resolutions, durations, and other parameter settings
+
+## 🌐 Proxy Configuration Guide
+
+Due to unavoidable factors in the domestic network environment, some AI services may not be directly accessible. It is recommended to use Cloudflare Workers and Durable Objects to configure a proxy to solve this problem.
+
+### Prerequisites
+
+- Register Cloudflare account: https://dash.cloudflare.com/
+- Enable Durable Objects feature
+
+### Configuration Steps
+
+#### 1. Create Worker
+
+1. Log in to Cloudflare Dashboard
+2. Select "Workers & Pages" → "Create application" → "Create Worker"
+3. Name your Worker (e.g., `tapcanvas-proxy`)
+4. Click "Deploy"
+
+#### 2. Enable Durable Objects
+
+1. In Worker settings, find "Settings" → "Durable Objects"
+2. Click "Configure Durable Objects"
+3. Confirm to enable this feature
+
+#### 3. Configure Worker Script
+
+Copy the following script to the Worker editor:
+
+```javascript
+import { DurableObject } from "cloudflare:workers";
+
+export class MyDurableObject extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+  }
+
+  async fetch(request) {
+    // Forwarding logic: receive request from Durable Object, forward to upstream
+
+    // Domain mapping: map proxy domains to real domains
+    const upstream = new URL(request.url
+      .replace('sora2.beqlee.icu', 'sora.chatgpt.com')
+      .replace('videos.beqlee.icu', 'videos.openai.com')
+      .replace('generativelanguage.beqlee.icu', 'generativelanguage.googleapis.com')
+    );
+
+    const forwardedReq = new Request(upstream.toString(), {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      redirect: 'follow',
+    });
+
+    const upstreamResp = await fetch(forwardedReq);
+
+    const ct = upstreamResp.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const data = await upstreamResp.json();
+      const result = { ok: true, data };
+      return new Response(JSON.stringify(result, null, 2), {
+        status: upstreamResp.status,
+        headers: { "content-type": "application/json; charset=utf-8" }
+      });
+    }
+
+    return new Response(upstreamResp.body, {
+      status: upstreamResp.status,
+      headers: upstreamResp.headers
+    });
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const id = env.MY_DURABLE_OBJECT.idFromName("singleton");
+    const stub = env.MY_DURABLE_OBJECT.get(id);
+    const resp = await stub.fetch(request);
+    return resp;
+  }
+};
+```
+
+#### 4. Bind Durable Object
+
+1. In Worker settings, find "Settings" → "Variables"
+2. Add Durable Object binding:
+   - **Variable name**: `MY_DURABLE_OBJECT`
+   - **Durable Object class name**: `MyDurableObject`
+   - **Script name**: Select your created Worker script
+
+#### 5. Deploy Worker
+
+1. Save and deploy Worker script
+2. Record Worker access URL: `https://your-worker-name.your-subdomain.workers.dev`
+
+#### 6. Update TapCanvas Configuration
+
+In TapCanvas's model configuration, update the endpoint URL to your Worker address:
+
+```json
+{
+  "endpoints": [
+    {
+      "key": "sora",
+      "label": "sora domain",
+      "baseUrl": "https://your-worker-name.your-subdomain.workers.dev"
+    }
+  ]
+}
+```
+
+### Domain Mapping Explanation
+
+Domain mapping in the Worker script:
+
+| Proxy Domain | Real Domain | Purpose |
+|-------------|------------|---------|
+| `sora2.beqlee.icu` | `sora.chatgpt.com` | Sora API |
+| `videos.beqlee.icu` | `videos.openai.com` | OpenAI Videos API |
+| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API |
+
+### Troubleshooting
+
+#### Common Issues
+
+1. **Worker returns 403 error**
+   - Check if Durable Object is correctly bound
+   - Confirm Variable name is `MY_DURABLE_OBJECT`
+
+2. **Request timeout**
+   - Check Worker execution time limit
+   - Consider upgrading to paid plan for longer execution time
+
+3. **Partial request failures**
+   - Check if upstream services are running normally
+   - View Worker log information
+
+#### Test Proxy
+
+Create a test file to verify if the proxy is working properly:
+
+```bash
+# Test Sora API proxy
+curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
+  -H "Authorization: Bearer YOUR_SORA_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+### Security Tips
+
+- 🔒 Regularly rotate API keys
+- 🛡️ Enable Cloudflare firewall rules
+- 📊 Monitor Worker usage and costs
+- 🔐 Do not hardcode sensitive information in code
+
+With the above configuration, you can stably use TapCanvas's AI features in the domestic environment.
+
 ---
 
 ## 🎯 Core Features
