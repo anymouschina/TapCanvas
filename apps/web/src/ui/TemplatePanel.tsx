@@ -53,7 +53,6 @@ export default function TemplatePanel(): JSX.Element | null {
               style={{
                 width: 720,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 transformOrigin: 'left center',
                 display: 'flex',

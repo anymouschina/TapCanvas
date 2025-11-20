@@ -280,7 +280,6 @@ export default function ProjectPanel(): JSX.Element | null {
               style={{
                 width: 500,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 transformOrigin: 'left center',
                 display: 'flex',

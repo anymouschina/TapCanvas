@@ -590,7 +590,6 @@ export default function AssetPanel(): JSX.Element | null {
               style={{
                 width: 640,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 transformOrigin: 'left center',
                 display: 'flex',

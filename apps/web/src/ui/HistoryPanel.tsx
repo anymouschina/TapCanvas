@@ -42,7 +42,6 @@ export default function HistoryPanel(): JSX.Element | null {
               style={{
                 width: 420,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 transformOrigin: 'left center',
                 display: 'flex',

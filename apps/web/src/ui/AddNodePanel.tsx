@@ -28,7 +28,6 @@ export default function AddNodePanel(): JSX.Element | null {
               style={{
                 width: 320,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 display: 'flex',
                 flexDirection: 'column',

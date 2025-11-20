@@ -30,7 +30,6 @@ export default function AccountPanel(): JSX.Element | null {
               style={{
                 width: 300,
                 maxHeight: `${maxHeight}px`,
-                height: `${maxHeight}px`,
                 minHeight: 0,
                 overflow: 'hidden',
                 display: 'flex',
