@@ -164,7 +164,6 @@ function buildPromptFromState(
       if (skind === 'textToImage' || skind === 'image') {
         upstreamPrompt =
           (sd.prompt as string | undefined) ||
-          (sd.label as string | undefined) ||
           ''
       }
     }
