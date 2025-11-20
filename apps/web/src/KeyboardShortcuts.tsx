@@ -40,13 +40,15 @@ export default function KeyboardShortcuts() {
       const isTextInput =
         isTextInputElement(target) ||
         isTextInputElement(focusTarget)
+      const selection = window.getSelection()
+      const hasTextSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length)
       // Delete
       if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput) {
         e.preventDefault()
         removeSelected()
       }
       // Copy (skip when focused in an input/textarea/contenteditable)
-      if (mod && e.key.toLowerCase() === 'c' && !isTextInput) {
+      if (mod && e.key.toLowerCase() === 'c' && !isTextInput && !hasTextSelection) {
         e.preventDefault()
         copySelected()
       }
