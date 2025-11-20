@@ -80,7 +80,7 @@ export default function FloatingNav(): JSX.Element {
   )
 
   return (
-    <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 6000 }} data-ux-floating>
+    <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 300 }} data-ux-floating>
       <Paper withBorder shadow="sm" radius="xl" className="glass" p={6} data-ux-floating>
         <Stack align="center" gap={6}>
           <ActionIcon

@@ -17,6 +17,7 @@ import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
 import { listFlows, saveFlow, deleteFlow as deleteLibraryFlow, renameFlow, scanCycles } from './flows/registry'
 import FloatingNav from './ui/FloatingNav'
+import AIFloatingButton from './ui/AIFloatingButton'
 import AddNodePanel from './ui/AddNodePanel'
 import TemplatePanel from './ui/TemplatePanel'
 import AccountPanel from './ui/AccountPanel'
@@ -24,6 +25,7 @@ import ProjectPanel from './ui/ProjectPanel'
 import AssetPanel from './ui/AssetPanel'
 import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
+import AIChatPanel from './ui/AIChatPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 
@@ -279,6 +281,7 @@ export default function App(): JSX.Element {
       <KeyboardShortcuts />
       <ToastHost />
       <FloatingNav />
+      <AIFloatingButton />
       <AddNodePanel />
       <TemplatePanel />
       <ProjectPanel />
@@ -286,6 +289,7 @@ export default function App(): JSX.Element {
       <AssetPanel />
       <ModelPanel />
       <HistoryPanel />
+      <AIChatPanel />
       <ParamModal />
       <PreviewModal />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}

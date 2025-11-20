@@ -13,8 +13,8 @@ type UIState = {
   setAddPanelOpen: (v: boolean) => void
   templatePanelOpen: boolean
   setTemplatePanelOpen: (v: boolean) => void
-  activePanel: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | null
-  setActivePanel: (p: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | null) => void
+  activePanel: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null
+  setActivePanel: (p: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null) => void
   panelAnchorY: number | null
   setPanelAnchorY: (y: number | null) => void
   paramNodeId: string | null
@@ -39,6 +39,12 @@ type UIState = {
   setPromptSuggestMode: (m: 'history' | 'semantic') => void
   soraVideoBaseUrl: string | null
   setSoraVideoBaseUrl: (url: string | null) => void
+  // AI Chat
+  aiChatMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>
+  addAiMessage: (message: { role: 'user' | 'assistant'; content: string }) => void
+  clearAiMessages: () => void
+  selectedAiModel: string
+  setSelectedAiModel: (model: string) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -80,4 +86,12 @@ export const useUIStore = create<UIState>((set) => ({
   setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
   soraVideoBaseUrl: null,
   setSoraVideoBaseUrl: (url) => set({ soraVideoBaseUrl: url }),
+  // AI Chat
+  aiChatMessages: [],
+  addAiMessage: (message) => set((s) => ({
+    aiChatMessages: [...s.aiChatMessages, { ...message, timestamp: Date.now() }]
+  })),
+  clearAiMessages: () => set({ aiChatMessages: [] }),
+  selectedAiModel: 'gemini-2.0-flash-exp',
+  setSelectedAiModel: (model) => set({ selectedAiModel: model }),
 }))
