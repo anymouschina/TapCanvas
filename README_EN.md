@@ -38,6 +38,34 @@ Through visual workflows, we not only lower the barrier to AI video creation but
 
 TapCanvas's visual canvas interface demonstrates powerful AI creation workflow capabilities: starting from text prompts, generating images and videos through intelligent connections, achieving the complete transformation from creative ideas to finished works.
 
+## ⚙️ Configure Models Before Use
+
+**Important: Before using TapCanvas, you must configure AI models first!**
+
+![Model Configuration](assets/setting.jpg)
+
+### Model-Node Mapping
+
+Different AI models support different node types. Please configure them correctly:
+
+| Model | Supported Node Type | Function Description |
+|-------|-------------------|---------------------|
+| **Sora** | 🎬 **Video Node** | Image-to-Video, Text-to-Video, Video Composition |
+| **Qwen** | 🖼️ **Image Node** | Text-to-Image, Image Generation, Multiple Resolutions |
+| **Gemini** | 📝 **Text Node** | Text Generation, Prompt Optimization, Smart Suggestions |
+
+### Configuration Steps
+
+1. **Open Model Configuration Panel**: Click "Model Configuration" in the right panel
+2. **Add Providers**: Add Sora, Qwen, Gemini models as needed
+3. **Configure API Keys**: Fill in real API keys from each platform
+4. **Test Connection**: Ensure each model can be called normally
+
+> 💡 **Tip**: Only nodes with correctly configured models can work properly. For example:
+> - Want to generate videos? → Must configure **Sora** model
+> - Want to generate images? → Must configure **Qwen** model
+> - Want to optimize prompts? → Must configure **Gemini** model
+
 ## 🚀 Quick Start
 
 ### Method 1: Docker Run (Recommended)
