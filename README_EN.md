@@ -48,11 +48,11 @@ TapCanvas's visual canvas interface demonstrates powerful AI creation workflow c
 
 Different AI models support different node types. Please configure them correctly:
 
-| Model | Supported Node Type | Function Description |
-|-------|-------------------|---------------------|
-| **Sora** | 🎬 **Video Node** | Image-to-Video, Text-to-Video, Video Composition |
-| **Qwen** | 🖼️ **Image Node** | Text-to-Image, Image Generation, Multiple Resolutions |
-| **Gemini** | 📝 **Text Node** | Text Generation, Prompt Optimization, Smart Suggestions |
+| Node Type | Supported Models | Function Description |
+|-----------|----------------|---------------------|
+| **🎬 Video Node** | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | Image-to-Video, Text-to-Video, Video Composition, Animation Creation |
+| **🖼️ Image Node** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | Text-to-Image, Image Generation, Multiple Resolutions, Style Transfer |
+| **📝 Text Node** | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat | Text Generation, Prompt Optimization, Smart Suggestions, Content Creation |
 
 ### Configuration Steps
 
@@ -62,9 +62,21 @@ Different AI models support different node types. Please configure them correctl
 4. **Test Connection**: Ensure each model can be called normally
 
 > 💡 **Tip**: Only nodes with correctly configured models can work properly. For example:
-> - Want to generate videos? → Must configure **Sora** model
-> - Want to generate images? → Must configure **Qwen** model
-> - Want to optimize prompts? → Must configure **Gemini** model
+> - Want to generate videos? → Must configure **Sora 2**, **Runway** or **Pika** video models
+> - Want to generate images? → Must configure **Qwen**, **DALL-E**, **Stable Diffusion** or **FLUX** image models
+> - Want to optimize prompts? → Must configure **Gemini**, **Claude**, **GPT** or **DeepSeek** text models
+
+### 🎯 Recommended Configuration Combinations
+
+**Beginner Recommended Setup**:
+- 📝 **Text**: Gemini 2.5 Flash (Cost-effective)
+- 🖼️ **Image**: Qwen Image Plus or FLUX.1 Pro (High quality)
+- 🎬 **Video**: Sora 2 (Most powerful)
+
+**Professional Setup**:
+- 📝 **Text**: Gemini 2.5 Pro or Claude 3.5 Sonnet
+- 🖼️ **Image**: DALL-E 3 or Midjourney V6
+- 🎬 **Video**: Runway Gen-3 or Pika Labs V2
 
 ## 🚀 Quick Start
 
