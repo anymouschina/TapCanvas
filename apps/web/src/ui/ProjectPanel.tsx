@@ -271,7 +271,24 @@ export default function ProjectPanel(): JSX.Element | null {
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 500, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
+            <Paper
+              withBorder
+              shadow="md"
+              radius="lg"
+              className="glass"
+              p="md"
+              style={{
+                width: 500,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                transformOrigin: 'left center',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+              data-ux-panel
+            >
               <div className="panel-arrow" />
               <motion.div
                 initial={{ opacity: 0, y: -5 }}
@@ -299,6 +316,7 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Group>
               </motion.div>
 
+                <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
                 <Tabs value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
                   <Tabs.List>
                     <motion.div
@@ -373,7 +391,7 @@ export default function ProjectPanel(): JSX.Element | null {
                         </motion.div>
                       </Group>
                     </motion.div>
-                    <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                    <div>
                     <AnimatePresence mode="wait">
                       {myProjects.length === 0 && !loading && (
                         <motion.div
@@ -745,7 +763,8 @@ export default function ProjectPanel(): JSX.Element | null {
                     </AnimatePresence>
                   </div>
                 </Tabs.Panel>
-              </Tabs>
+                </Tabs>
+                </div>
             </Paper>
           </div>
         )}

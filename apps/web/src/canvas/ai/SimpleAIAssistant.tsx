@@ -29,7 +29,7 @@ import {
 } from '@tabler/icons-react'
 import { nanoid } from 'nanoid'
 import { useRFStore } from '../store'
-import { TEXT_MODELS } from '../../config/models'
+import { getAllowedModelsByKind, getDefaultModel } from '../../config/models'
 import { functionHandlers } from '../../ai/canvasService'
 import type { FunctionResult } from '../../ai/canvasService'
 import { getAuthToken } from '../../auth/store'
@@ -38,6 +38,7 @@ interface AssistantAction {
   type: keyof typeof functionHandlers | string
   params?: Record<string, any>
   reasoning?: string
+  storeResultAs?: string
 }
 
 const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string }> = [
@@ -49,30 +50,193 @@ const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string 
   { keyword: '字幕', type: 'subtitle', label: '字幕节点' }
 ]
 
+const REF_PLACEHOLDER = /^\{\{ref:([a-zA-Z0-9_-]+)\}\}$/
+
+function resolvePlaceholders(value: any, refs: Record<string, string>): any {
+  if (Array.isArray(value)) {
+    return value.map(item => resolvePlaceholders(item, refs))
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, val]) => [key, resolvePlaceholders(val, refs)]))
+  }
+  if (typeof value === 'string') {
+    const match = value.match(REF_PLACEHOLDER)
+    if (match) {
+      const refValue = refs[match[1]]
+      return refValue ?? value
+    }
+  }
+  return value
+}
+
+function extractStyleKeyword(text: string): string | undefined {
+  const styleMatch = text.match(/([\u4e00-\u9fa5A-Za-z0-9\s]+)风格/)
+  return styleMatch ? styleMatch[1].trim() : undefined
+}
+
+function extractDesiredCount(text: string): number {
+  const explicitMatch = text.match(/(\d+)\s*(个|张|幅|场|镜|段)/)
+  if (explicitMatch) {
+    return Math.min(12, Math.max(1, parseInt(explicitMatch[1], 10)))
+  }
+  if (text.includes('多个') || text.includes('若干') || text.includes('一些')) {
+    return 4
+  }
+  return 3
+}
+
+function buildWorkflowActions(text: string): AssistantAction[] {
+  const wantsWorkflow = text.includes('工作流') || text.includes('流程')
+  const mentionsImage = text.includes('文生图') || text.includes('图像') || text.includes('图片') || text.includes('海报')
+  const mentionsVideo = text.includes('视频') || text.includes('文生视频') || text.includes('短片') || text.includes('影片')
+  if (!mentionsImage && !mentionsVideo) return []
+  if (!wantsWorkflow && !mentionsVideo && !text.includes('文生图')) return []
+
+  const style = extractStyleKeyword(text)
+  const actions: AssistantAction[] = []
+
+  actions.push({
+    type: 'createNode',
+    storeResultAs: 'workflow_prompt',
+    reasoning: '创建工作流提示词节点',
+    params: {
+      type: 'text',
+      label: style ? `${style}提示词` : '提示词',
+      config: {
+        kind: 'text',
+        prompt: text,
+        style
+      }
+    }
+  })
+
+  if (mentionsImage) {
+    actions.push({
+      type: 'createNode',
+      storeResultAs: 'workflow_image',
+      reasoning: '创建文生图节点生成图像',
+      params: {
+        type: 'image',
+        label: style ? `${style}文生图` : '文生图节点',
+        config: {
+          kind: 'image',
+          prompt: `${style ? `${style} ` : ''}文生图：${text}`
+        }
+      }
+    })
+    actions.push({
+      type: 'connectNodes',
+      reasoning: '链接提示词节点到文生图节点',
+      params: {
+        sourceNodeId: '{{ref:workflow_prompt}}',
+        targetNodeId: '{{ref:workflow_image}}'
+      }
+    })
+  }
+
+  if (mentionsVideo) {
+    const sourceRef = mentionsImage ? 'workflow_image' : 'workflow_prompt'
+    actions.push({
+      type: 'createNode',
+      storeResultAs: 'workflow_video',
+      reasoning: '创建文生视频节点',
+      params: {
+        type: 'video',
+        label: style ? `${style}视频` : '文生视频节点',
+        config: {
+          kind: 'composeVideo',
+          prompt: `${style ? `${style} ` : ''}视频：${text}`
+        }
+      }
+    })
+    actions.push({
+      type: 'connectNodes',
+      reasoning: '将文生图或提示词节点连接到视频节点',
+      params: {
+        sourceNodeId: `{{ref:${sourceRef}}}`,
+        targetNodeId: '{{ref:workflow_video}}'
+      }
+    })
+  }
+
+  return actions
+}
+
+function buildStoryboardActions(text: string): AssistantAction[] {
+  const mentionsStoryboard = text.includes('分镜') || text.includes('镜头') || text.includes('片段') || text.includes('场景')
+  const mentionsImage = text.includes('文生图') || text.includes('图像') || text.includes('图片')
+  if (!mentionsStoryboard || !mentionsImage) {
+    return []
+  }
+
+  const count = extractDesiredCount(text)
+  const style = extractStyleKeyword(text)
+  const actions: AssistantAction[] = []
+
+  for (let i = 1; i <= count; i++) {
+    const label = `${style ? `${style}` : '分镜'}-${i}`
+    actions.push({
+      type: 'createNode',
+      storeResultAs: `storyboard_${i}`,
+      reasoning: `创建第${i}个分镜图像节点`,
+      params: {
+        type: 'image',
+        label,
+        config: {
+          kind: 'image',
+          prompt: `${text} - 分镜${i}`,
+          storyboardIndex: i
+        }
+      }
+    })
+  }
+
+  return actions
+}
+
+function buildSingleNodeAction(text: string): AssistantAction[] {
+  const mapping = FALLBACK_NODE_TYPES.find(item => text.includes(item.keyword)) || FALLBACK_NODE_TYPES[0]
+  const labelMatch = text.match(/"([^"]+)"/) || text.match(/“([^”]+)”/)
+  const label = labelMatch ? labelMatch[1] : text.replace(/.*(创建|添加|新建)/, '').replace('节点', '').trim() || mapping.label
+
+  return [{
+    type: 'createNode',
+    storeResultAs: 'single_node',
+    params: {
+      type: mapping.type,
+      label: label || mapping.label,
+      config: mapping.type === 'image' ? { kind: 'image', prompt: text } : { prompt: text }
+    },
+    reasoning: '根据自然语言推断创建节点'
+  }]
+}
+
 function inferActionsFromMessage(message: string): AssistantAction[] {
   const text = message.trim()
   if (!text) return []
 
+  const workflowActions = buildWorkflowActions(text)
+  if (workflowActions.length) return workflowActions
+
+  const storyboardActions = buildStoryboardActions(text)
+  if (storyboardActions.length) return storyboardActions
+
   const createKeywords = ['创建', '添加', '新建']
-  const shouldCreateNode = createKeywords.some(keyword => text.includes(keyword)) && text.includes('节点')
-
+  const shouldCreateNode = createKeywords.some(keyword => text.includes(keyword))
   if (shouldCreateNode) {
-    const mapping = FALLBACK_NODE_TYPES.find(item => text.includes(item.keyword)) || FALLBACK_NODE_TYPES[0]
-    const labelMatch = text.match(/"([^"]+)"/) || text.match(/“([^”]+)”/)
-    const label = labelMatch ? labelMatch[1] : text.replace(/.*(创建|添加|新建)/, '').replace('节点', '').trim() || mapping.label
-
-    return [{
-      type: 'createNode',
-      params: {
-        type: mapping.type,
-        label: label || mapping.label,
-        config: mapping.type === 'image' ? { kind: 'image', prompt: text } : { prompt: text }
-      },
-      reasoning: '根据自然语言推断创建节点'
-    }]
+    return buildSingleNodeAction(text)
   }
 
   return []
+}
+
+function normalizeActionParams(params?: Record<string, any>) {
+  if (!params || typeof params !== 'object') return {}
+  if ('payload' in params && params.payload && typeof params.payload === 'object') {
+    const { payload, ...rest } = params
+    return { ...payload, ...rest }
+  }
+  return params
 }
 
 interface ExecutedAction {
@@ -106,11 +270,12 @@ interface SimpleAIAssistantProps {
 export function SimpleAIAssistant({ opened, onClose, position = 'right', width = 420 }: SimpleAIAssistantProps) {
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
+  const textModelOptions = useMemo(() => getAllowedModelsByKind('text'), [])
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [model, setModel] = useState(TEXT_MODELS[0]?.value || 'gemini-2.5-flash')
+  const [model, setModel] = useState(() => getDefaultModel('text'))
   const [error, setError] = useState<string | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
 
@@ -122,6 +287,13 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
       }
     }
   }, [messages, isLoading])
+
+  useEffect(() => {
+    if (textModelOptions.length && !textModelOptions.find(option => option.value === model)) {
+      setModel(textModelOptions[0].value)
+    }
+  }, [textModelOptions, model])
+  const currentModelLabel = textModelOptions.find(option => option.value === model)?.label || model
 
   const canvasContext = useMemo(() => {
     if (!nodes.length) return undefined
@@ -188,9 +360,9 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
       const data = await response.json() as { reply: string; plan?: string[]; actions?: AssistantAction[] }
       if ((!data.actions || data.actions.length === 0) && userMessage) {
         const fallback = inferActionsFromMessage(userMessage)
-        if (fallback.length) {
-          data.actions = fallback
-        }
+        data.actions = fallback
+        data.plan = ([] as string[]).concat(data.plan || [])
+        data.plan.unshift('⚙️ 自动根据指令生成动作序列，模型未输出tool调用')
       }
       const messageId = nanoid()
       const assistantMessage: AssistantMessage = {
@@ -226,6 +398,7 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
   }
 
   const executeActionsSequentially = async (messageId: string, actions: AssistantAction[]) => {
+    const refs: Record<string, string> = {}
     for (const [index, action] of actions.entries()) {
       const handler = (functionHandlers as any)[action.type]
       let result: FunctionResult
@@ -233,7 +406,9 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
         result = { success: false, error: `暂不支持的操作：${action.type}` }
       } else {
         try {
-          result = await handler(action.params || {})
+          const normalizedParams = normalizeActionParams(action.params)
+          const resolvedParams = resolvePlaceholders(normalizedParams, refs)
+          result = await handler(resolvedParams || {})
         } catch (err) {
           result = { success: false, error: err instanceof Error ? err.message : '执行失败' }
         }
@@ -246,6 +421,13 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
         }
         return { ...msg, actions: updated }
       }))
+
+      if (result.success && action.storeResultAs) {
+        const nodeId = (result.data && (result.data.nodeId || result.data.id)) as string | undefined
+        if (nodeId) {
+          refs[action.storeResultAs] = nodeId
+        }
+      }
     }
   }
 
@@ -260,7 +442,7 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
         width,
         maxWidth: 'calc(100vw - 32px)',
         height: 'calc(100vh - 72px)',
-        zIndex: 1200,
+        zIndex: 200,
         pointerEvents: 'auto',
         overflow: 'hidden'
       }}
@@ -287,11 +469,34 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
                 <Text fw={600} fz="lg" c="#eff6ff">暗夜AI助手</Text>
                 <Text size="xs" c="dimmed">洞悉画布 · 智能生成节点</Text>
               </Box>
+              <Badge color="violet" variant="light" size="sm" radius="sm">
+                {currentModelLabel}
+              </Badge>
               {isLoading && (
                 <Badge color="pink" variant="light">思考中...</Badge>
               )}
             </Group>
-            <Group gap="xs">
+            <Group gap="xs" align="center">
+              <Select
+                size="xs"
+                value={model}
+                onChange={(value) => value && setModel(value)}
+                data={textModelOptions.map(option => ({ value: option.value, label: option.label }))}
+                aria-label="选择推理模型"
+                withinPortal
+                variant="filled"
+                styles={{
+                  input: {
+                    backgroundColor: 'rgba(15,23,42,0.6)',
+                    borderColor: 'rgba(99,102,241,0.4)',
+                    color: '#f8fafc',
+                    minWidth: 180,
+                    cursor: 'pointer'
+                  },
+                  dropdown: { backgroundColor: '#0f172a', borderColor: 'rgba(99,102,241,0.4)' },
+                  option: { color: '#e2e8f0' }
+                }}
+              />
               <Tooltip label="模型与上下文">
                 <ActionIcon variant="subtle" color="gray" onClick={() => setShowSettings(v => !v)}>
                   <IconSettings size={16} />
@@ -311,7 +516,7 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
                 label="推理模型"
                 value={model}
                 onChange={value => value && setModel(value)}
-                data={TEXT_MODELS.map(m => ({ value: m.value, label: m.label }))}
+                data={textModelOptions.map(m => ({ value: m.value, label: m.label }))}
                 styles={{ label: { color: '#9ca3af' } }}
               />
               {canvasContext && (

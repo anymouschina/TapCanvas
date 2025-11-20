@@ -11,6 +11,8 @@ export const TEXT_MODELS: ModelOption[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+  { value: 'claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+  { value: 'claude-3.5-haiku', label: 'Claude 3.5 Haiku' }
 ]
 
 export const IMAGE_MODELS: ModelOption[] = [
@@ -62,6 +64,10 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'gemini-2.5-flash': 'google',
   'gemini-2.5-pro': 'google',
   'models/gemini-3-pro-preview': 'google',
+  'claude-3.5-sonnet': 'anthropic',
+  'claude-3.5-haiku': 'anthropic',
+  'claude-3-sonnet': 'anthropic',
+  'claude-3-haiku': 'anthropic',
   'qwen-image-plus': 'openai', // 假设使用OpenAI
   'gemini-2.5-flash-image': 'google',
   'sora-2': 'openai', // 假设使用OpenAI

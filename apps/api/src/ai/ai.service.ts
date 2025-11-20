@@ -19,6 +19,7 @@ const assistantSchema = z.object({
       payload: z.any().optional().describe('占位字段，实际参数会扩展在该对象上')
     }).catchall(z.any()).default({}).describe('工具调用参数'),
     reasoning: z.string().optional(),
+    storeResultAs: z.string().optional().describe('为该action输出注册引用名称')
   })).default([]),
 })
 
@@ -41,21 +42,50 @@ export class AiService {
     const chatMessages = this.normalizeMessages(payload.messages)
 
     try {
-      this.logger.debug('AI chat request', { provider, model: payload.model, userId, contextNodes: payload.context?.nodes?.length })
-      const result = await generateObject({
-        model,
-        system: systemPrompt,
-        messages: chatMessages,
-        schema: assistantSchema,
-        temperature: payload.temperature ?? 0.2,
-        maxRetries: 1,
-      })
+      const maxAttempts = 3
+      const reminder = '系统校验：你必须输出至少一个action。请选择最合适的createNode / connectNodes / get_canvas_info等工具，按步骤给出动作。'
+      const conversation = [...chatMessages]
+      let lastResult: { reply: string; plan?: string[]; actions?: any[] } | null = null
 
-      const { reply, plan, actions } = result.object
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        this.logger.debug('AI chat request', {
+          provider,
+          model: payload.model,
+          userId,
+          contextNodes: payload.context?.nodes?.length,
+          attempt: attempt + 1
+        })
+
+        const result = await generateObject({
+          model,
+          system: systemPrompt,
+          messages: conversation,
+          schema: assistantSchema,
+          temperature: payload.temperature ?? 0.2,
+          maxRetries: 1,
+        })
+
+        const { reply, plan, actions } = result.object
+        lastResult = { reply, plan, actions }
+
+        if (actions && actions.length > 0) {
+          return {
+            reply,
+            plan: plan || [],
+            actions
+          }
+        }
+
+        conversation.push({
+          role: 'user',
+          content: `${reminder}\n用户原始意图：${payload.messages[payload.messages.length - 1]?.content || ''}`
+        })
+      }
+
       return {
-        reply,
-        plan: plan || [],
-        actions: actions || [],
+        reply: lastResult?.reply || '我未能生成可执行的画布动作，请更具体地描述工作流需求。',
+        plan: lastResult?.plan || [],
+        actions: lastResult?.actions || []
       }
     } catch (error) {
       this.logger.error('AI chat失败', error as any)
@@ -138,6 +168,10 @@ export class AiService {
   }
 
   private normalizeBaseUrl(provider: SupportedProvider, baseUrl?: string | null): string | undefined {
+    if (provider === 'anthropic') {
+      return undefined
+    }
+
     const trimmed = baseUrl?.trim()
     if (!trimmed || trimmed.length === 0) {
       if (provider === 'google') {

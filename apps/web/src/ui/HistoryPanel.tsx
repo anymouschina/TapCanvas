@@ -39,7 +39,16 @@ export default function HistoryPanel(): JSX.Element | null {
               radius="lg"
               className="glass"
               p="md"
-              style={{ width: 420, maxHeight: `${maxHeight}px`, overflowY: 'auto', transformOrigin: 'left center' }}
+              style={{
+                width: 420,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                transformOrigin: 'left center',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
               data-ux-panel
             >
               <div className="panel-arrow" />
@@ -49,6 +58,7 @@ export default function HistoryPanel(): JSX.Element | null {
                   关闭
                 </Button>
               </Group>
+              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
               <Stack gap="xs">
                 {(!versions || versions.length === 0) && (
                   <Text size="sm" c="dimmed">
@@ -82,6 +92,7 @@ export default function HistoryPanel(): JSX.Element | null {
                   </Group>
                 ))}
               </Stack>
+              </div>
             </Paper>
           </div>
         )}
@@ -89,4 +100,3 @@ export default function HistoryPanel(): JSX.Element | null {
     </div>
   )
 }
-

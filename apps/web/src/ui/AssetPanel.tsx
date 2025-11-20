@@ -581,7 +581,24 @@ export default function AssetPanel(): JSX.Element | null {
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 640, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
+            <Paper
+              withBorder
+              shadow="md"
+              radius="lg"
+              className="glass"
+              p="md"
+              style={{
+                width: 640,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                transformOrigin: 'left center',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+              data-ux-panel
+            >
               <div className="panel-arrow" />
               <input
                 ref={createCharCoverInputRef}
@@ -600,6 +617,7 @@ export default function AssetPanel(): JSX.Element | null {
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
                 <Title order={6}>我的资产</Title>
               </Group>
+              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
               <Tabs value={tab} onChange={(v) => setTab((v as any) || 'local')}>
                 <Tabs.List>
                   <Tabs.Tab value="local">项目资产</Tabs.Tab>
@@ -608,7 +626,7 @@ export default function AssetPanel(): JSX.Element | null {
                   <Tabs.Tab value="sora-characters">Sora 角色</Tabs.Tab>
                 </Tabs.List>
                 <Tabs.Panel value="local" pt="xs">
-                  <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                  <div>
                     {assets.length === 0 && (<Text size="xs" c="dimmed">暂无资产</Text>)}
                     <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                       {assets.map(a => (
@@ -1115,6 +1133,7 @@ export default function AssetPanel(): JSX.Element | null {
                   </Stack>
                 </Tabs.Panel>
               </Tabs>
+              </div>
             </Paper>
             <Modal
               opened={renameCharOpen}

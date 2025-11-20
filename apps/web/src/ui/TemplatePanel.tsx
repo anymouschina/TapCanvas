@@ -44,7 +44,24 @@ export default function TemplatePanel(): JSX.Element | null {
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 720, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
+            <Paper
+              withBorder
+              shadow="md"
+              radius="lg"
+              className="glass"
+              p="md"
+              style={{
+                width: 720,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                transformOrigin: 'left center',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+              data-ux-panel
+            >
               <div className="panel-arrow" />
         <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
           <Title order={6}>{$t('工作流（项目：{{project}}）', { project: currentProject?.name || '全部' })}</Title>
@@ -54,7 +71,7 @@ export default function TemplatePanel(): JSX.Element | null {
             <Badge color="gray" variant="light">{$('创建')}</Badge>
           </Group>
         </Group>
-        <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+        <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
         <Tabs defaultValue="public">
           <Tabs.List>
             <Tabs.Tab value="public">{$('公共工作流')}</Tabs.Tab>

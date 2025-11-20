@@ -13,31 +13,93 @@ export class CanvasService {
    */
   static async createNode(params: {
     type: string
-    label: string
-    config?: Record<string, any>
+    label?: string
+    config?: Record<string, any> | null
     position?: { x: number; y: number }
   }): Promise<FunctionResult> {
     try {
-      const { addNode } = useRFStore.getState()
+      const store = useRFStore.getState()
+      const prevIds = new Set(store.nodes.map(node => node.id))
+      const { addNode } = store
 
       // 生成默认位置（如果未提供）
       const position = params.position || CanvasService.generateDefaultPosition()
 
+      const normalized = CanvasService.normalizeNodeParams(params)
+
       // 调用store方法创建节点
-      addNode(params.type, params.label, {
-        ...params.config,
+      addNode(normalized.nodeType, normalized.label, {
+        ...normalized.data,
         position
       })
 
+      const updatedState = useRFStore.getState()
+      const newNode = [...updatedState.nodes].reverse().find(node => !prevIds.has(node.id)) || updatedState.nodes[updatedState.nodes.length - 1]
+
       return {
         success: true,
-        data: { message: `成功创建${params.label}节点` }
+        data: { message: `成功创建${params.label}节点`, nodeId: newNode?.id }
       }
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : '创建节点失败'
       }
+    }
+  }
+
+  private static normalizeNodeParams(params: {
+    type: string
+    label?: string
+    config?: Record<string, any> | null
+  }): { nodeType: string; label: string; data: Record<string, any> } {
+    const rawType = (params.type || 'taskNode').trim()
+    const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
+
+    const baseData: Record<string, any> = { label }
+    let nodeType = rawType
+
+    const logicalKinds: Record<string, string> = {
+      text: 'text',
+      textToImage: 'textToImage',
+      image: 'image',
+      video: 'composeVideo',
+      composeVideo: 'composeVideo',
+      audio: 'audio',
+      subtitle: 'subtitle'
+    }
+
+    if (logicalKinds[rawType]) {
+      nodeType = 'taskNode'
+      baseData.kind = logicalKinds[rawType]
+    }
+
+    const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
+    const data = { ...baseData, ...safeConfig }
+    if (!data.prompt && label) {
+      data.prompt = label
+    }
+
+    return { nodeType, label, data }
+  }
+
+  private static defaultLabelForType(type: string) {
+    switch (type) {
+      case 'text':
+        return '文本提示'
+      case 'textToImage':
+        return '文生图提示'
+      case 'image':
+        return '文生图'
+      case 'video':
+      case 'composeVideo':
+        return '文生视频'
+      case 'audio':
+        return '音频节点'
+      case 'subtitle':
+        return '字幕节点'
+      default:
+        return type
     }
   }
 

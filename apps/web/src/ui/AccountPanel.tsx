@@ -2,6 +2,7 @@ import React from 'react'
 import { Paper, Group, Title, Transition, Button, Avatar, Text, Stack, Divider, SegmentedControl } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { useAuth } from '../auth/store'
+import { calculateSafeMaxHeight } from './utils/panelPosition'
 
 export default function AccountPanel(): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
@@ -13,40 +14,61 @@ export default function AccountPanel(): JSX.Element | null {
   const user = useAuth(s => s.user)
   const clear = useAuth(s => s.clear)
   if (!mounted) return null
+
+  const maxHeight = calculateSafeMaxHeight(anchorY, 120)
   return (
     <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 6001 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 300, maxHeight: '60vh', overflowY: 'auto', transformOrigin: 'left center' }} data-ux-panel>
+            <Paper
+              withBorder
+              shadow="md"
+              radius="lg"
+              className="glass"
+              p="md"
+              style={{
+                width: 300,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                transformOrigin: 'left center',
+              }}
+              data-ux-panel
+            >
               <div className="panel-arrow" />
-              <Group>
-                <Avatar src={user?.avatarUrl} alt={user?.login} radius={999} />
-                <div>
-                  <Title order={6}>{user?.login || '未登录'}</Title>
-                  {user?.email && <Text size="xs" c="dimmed">{user.email}</Text>}
-                </div>
-              </Group>
-              <Divider my={10} />
-              <Stack gap={6}>
-                {user?.login && (
-                  <Button size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
-                )}
-                <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
-                <Divider label="提示词自动补全" labelPosition="left" my={8} />
-                <Stack gap={4}>
-                  <Text size="xs" c="dimmed">补全模式</Text>
-                  <SegmentedControl
-                    size="xs"
-                    value={promptSuggestMode}
-                    onChange={(v) => setPromptSuggestMode(v as 'history' | 'semantic')}
-                    data={[
-                      { label: '历史匹配', value: 'history' },
-                      { label: '语义匹配', value: 'semantic' },
-                    ]}
-                  />
+              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+                <Group>
+                  <Avatar src={user?.avatarUrl} alt={user?.login} radius={999} />
+                  <div>
+                    <Title order={6}>{user?.login || '未登录'}</Title>
+                    {user?.email && <Text size="xs" c="dimmed">{user.email}</Text>}
+                  </div>
+                </Group>
+                <Divider my={10} />
+                <Stack gap={6}>
+                  {user?.login && (
+                    <Button size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
+                  )}
+                  <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
+                  <Divider label="提示词自动补全" labelPosition="left" my={8} />
+                  <Stack gap={4}>
+                    <Text size="xs" c="dimmed">补全模式</Text>
+                    <SegmentedControl
+                      size="xs"
+                      value={promptSuggestMode}
+                      onChange={(v) => setPromptSuggestMode(v as 'history' | 'semantic')}
+                      data={[
+                        { label: '历史匹配', value: 'history' },
+                        { label: '语义匹配', value: 'semantic' },
+                      ]}
+                    />
+                  </Stack>
                 </Stack>
-              </Stack>
+              </div>
             </Paper>
           </div>
         )}

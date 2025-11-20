@@ -201,6 +201,19 @@ export default function ModelPanel(): JSX.Element | null {
               setGeminiTokens(geminiTokenData)
             }
 
+            // 刷新Anthropic数据
+            let anthropic = ps.find((p) => p.vendor === 'anthropic')
+            if (!anthropic) {
+              anthropic = await upsertModelProvider({ name: 'Anthropic', vendor: 'anthropic' })
+              setProviders((prev) => [...prev, anthropic!])
+            }
+            if (anthropic) {
+              setAnthropicProvider(anthropic)
+              setAnthropicBaseUrl(anthropic.baseUrl || '')
+              const anthropicTokenData = await listModelTokens(anthropic.id)
+              setAnthropicTokens(anthropicTokenData)
+            }
+
             // 刷新Qwen数据
             let qwen = ps.find((p) => p.vendor === 'qwen')
             if (qwen) {
@@ -268,6 +281,14 @@ export default function ModelPanel(): JSX.Element | null {
   const [geminiLabel, setGeminiLabel] = React.useState('')
   const [geminiSecret, setGeminiSecret] = React.useState('')
   const [geminiShared, setGeminiShared] = React.useState(false)
+  const [anthropicProvider, setAnthropicProvider] = React.useState<ModelProviderDto | null>(null)
+  const [anthropicBaseUrl, setAnthropicBaseUrl] = React.useState('')
+  const [anthropicTokens, setAnthropicTokens] = React.useState<ModelTokenDto[]>([])
+  const [anthropicModalOpen, setAnthropicModalOpen] = React.useState(false)
+  const [anthropicEditingToken, setAnthropicEditingToken] = React.useState<ModelTokenDto | null>(null)
+  const [anthropicLabel, setAnthropicLabel] = React.useState('')
+  const [anthropicSecret, setAnthropicSecret] = React.useState('')
+  const [anthropicShared, setAnthropicShared] = React.useState(false)
   const [qwenProvider, setQwenProvider] = React.useState<ModelProviderDto | null>(null)
   const [qwenTokens, setQwenTokens] = React.useState<ModelTokenDto[]>([])
   const [qwenModalOpen, setQwenModalOpen] = React.useState(false)
@@ -315,6 +336,17 @@ export default function ModelPanel(): JSX.Element | null {
         setGeminiBaseUrl(gemini.baseUrl || '')
         const gTokens = await listModelTokens(gemini.id)
         setGeminiTokens(gTokens)
+
+        // 初始化 Anthropic 提供方
+        let anthropic = ps.find((p) => p.vendor === 'anthropic')
+        if (!anthropic) {
+          anthropic = await upsertModelProvider({ name: 'Anthropic', vendor: 'anthropic' })
+          setProviders((prev) => [...prev, anthropic!])
+        }
+        setAnthropicProvider(anthropic)
+        setAnthropicBaseUrl(anthropic.baseUrl || '')
+        const aTokens = await listModelTokens(anthropic.id)
+        setAnthropicTokens(aTokens)
 
         // 初始化 Qwen 提供方
         let qwen = ps.find((p) => p.vendor === 'qwen')
@@ -406,6 +438,43 @@ export default function ModelPanel(): JSX.Element | null {
     setGeminiTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
+  const openAnthropicModalForNew = () => {
+    setAnthropicEditingToken(null)
+    setAnthropicLabel('')
+    setAnthropicSecret('')
+    setAnthropicShared(false)
+    setAnthropicModalOpen(true)
+  }
+
+  const handleSaveAnthropicToken = async () => {
+    if (!anthropicProvider) return
+    const existingSecret = anthropicEditingToken?.secretToken ?? ''
+    const finalSecret = anthropicSecret || existingSecret
+    if (!finalSecret.trim()) {
+      alert('请填写 API Key')
+      return
+    }
+    const saved = await upsertModelToken({
+      id: anthropicEditingToken?.id,
+      providerId: anthropicProvider.id,
+      label: anthropicLabel || '未命名密钥',
+      secretToken: finalSecret,
+      userAgent: null,
+      shared: anthropicShared,
+    })
+    const next = anthropicEditingToken
+      ? anthropicTokens.map((t) => (t.id === saved.id ? saved : t))
+      : [...anthropicTokens, saved]
+    setAnthropicTokens(next)
+    setAnthropicModalOpen(false)
+  }
+
+  const handleDeleteAnthropicToken = async (id: string) => {
+    if (!confirm('确定删除该密钥吗？')) return
+    await deleteModelToken(id)
+    setAnthropicTokens((prev) => prev.filter((t) => t.id !== id))
+  }
+
   const openQwenModalForNew = () => {
     setQwenEditingToken(null)
     setQwenLabel('')
@@ -473,7 +542,24 @@ export default function ModelPanel(): JSX.Element | null {
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
-            <Paper withBorder shadow="md" radius="lg" className="glass" p="md" style={{ width: 420, maxHeight: `${maxHeight}px`, transformOrigin: 'left center' }} data-ux-panel>
+            <Paper
+              withBorder
+              shadow="md"
+              radius="lg"
+              className="glass"
+              p="md"
+              style={{
+                width: 420,
+                maxHeight: `${maxHeight}px`,
+                height: `${maxHeight}px`,
+                minHeight: 0,
+                transformOrigin: 'left center',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+              data-ux-panel
+            >
               <div className="panel-arrow" />
               <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
                 <Title order={6}>模型配置</Title>
@@ -533,7 +619,7 @@ export default function ModelPanel(): JSX.Element | null {
                   </Button>
                 </Group>
               </Group>
-              <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
                 <Stack gap="sm">
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
@@ -582,6 +668,25 @@ export default function ModelPanel(): JSX.Element | null {
                     </Text>
                     <Text size="xs" c="dimmed">
                       已配置密钥：{geminiTokens.length}
+                    </Text>
+                  </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" align="flex-start" mb={4}>
+                      <Group gap={6}>
+                        <Title order={6}>Anthropic/GLM</Title>
+                        <Badge color="yellow" size="xs">
+                          New
+                        </Badge>
+                      </Group>
+                      <Button size="xs" onClick={openAnthropicModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed" mb={2}>
+                      配置 Claude API Key，支持 3.5 Sonnet / Haiku 等模型，可选自定义代理地址。
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{anthropicTokens.length}
                     </Text>
                   </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
@@ -769,6 +874,136 @@ export default function ModelPanel(): JSX.Element | null {
                     )}
                   </Stack>
                 </Stack>
+              </div>
+            </Modal>
+            <Modal
+              opened={anthropicModalOpen}
+              onClose={() => setAnthropicModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Anthropic 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      配置 Claude / Anthropic API Key，可任选官方或自建代理 Base URL，支持 3.5 Sonnet / Haiku 等模型。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://console.anthropic.com/account/keys', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="Anthropic 代理 Base URL"
+                        placeholder="例如：https://api.anthropic.com"
+                        value={anthropicBaseUrl}
+                        onChange={(e) => setAnthropicBaseUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!anthropicProvider) return
+                          const saved = await upsertModelProvider({
+                            id: anthropicProvider.id,
+                            name: anthropicProvider.name,
+                            vendor: anthropicProvider.vendor,
+                            baseUrl: anthropicBaseUrl.trim() || null,
+                          })
+                          setAnthropicProvider(saved)
+                          setAnthropicBaseUrl(saved.baseUrl || '')
+                        }}
+                      />
+                    </div>
+                  </Stack>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 Claude Key</Title>
+                    <Button size="xs" onClick={openAnthropicModalForNew}>
+                      新增密钥
+                    </Button>
+                  </Group>
+                  {anthropicTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack gap="xs">
+                    {anthropicTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setAnthropicEditingToken(t)
+                              setAnthropicLabel(t.label)
+                              setAnthropicSecret('')
+                              setAnthropicShared(!!t.shared)
+                              setAnthropicModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteAnthropicToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{anthropicEditingToken ? '编辑密钥' : '新增密钥'}</Title>
+                    <TextInput label="名称" placeholder="例如：Claude 主账号 Key" value={anthropicLabel} onChange={(e) => setAnthropicLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={anthropicEditingToken ? '留空则不修改已有密钥' : '粘贴你的 Anthropic API Key'}
+                      value={anthropicSecret}
+                      onChange={(e) => setAnthropicSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={anthropicShared}
+                      onChange={(e) => setAnthropicShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setAnthropicModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveAnthropicToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
               </div>
             </Modal>
             <Modal
