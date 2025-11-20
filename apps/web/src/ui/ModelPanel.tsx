@@ -677,7 +677,16 @@ export default function ModelPanel(): JSX.Element | null {
                           New
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openAnthropicModalForNew}>
+                      <Button
+                        size="xs"
+                        onClick={() => {
+                          setAnthropicEditingToken(null)
+                          setAnthropicLabel('')
+                          setAnthropicSecret('')
+                          setAnthropicShared(false)
+                          setAnthropicModalOpen(true)
+                        }}
+                      >
                         管理密钥
                       </Button>
                     </Group>
@@ -710,172 +719,7 @@ export default function ModelPanel(): JSX.Element | null {
                 </Stack>
               </div>
             </Paper>
-            <Modal
-              opened={modalOpen}
-              onClose={() => setModalOpen(false)}
-              fullScreen
-              withinPortal
-              zIndex={8000}
-              title="Sora 身份配置"
-              styles={{
-                content: {
-                  height: '100vh',
-                  paddingTop: 16,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  paddingBottom: 16,
-                },
-                body: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%',
-                  overflow: 'hidden',
-                },
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
-                    你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
-                  </Text>
-                  <Group spacing="xs">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        window.open('https://sora.chatgpt.com/api/auth/session', '_blank', 'noopener')
-                      }
-                    >
-                      获取 session
-                    </Button>
-                    <Button size="xs" variant="light" onClick={() => setSessionModalOpen(true)}>
-                      导入 session
-                    </Button>
-                  </Group>
-                  <Stack gap="xs">
-                    <div>
-                      <TextInput
-                        label="videos 域名（例如长视频 API）"
-                        placeholder="例如：https://videos.sora.example.com"
-                        value={videosUrl}
-                        onChange={(e) => setVideosUrl(e.currentTarget.value)}
-                        onBlur={async () => {
-                          if (!soraProvider || !videosUrl.trim()) return
-                          const saved = await upsertModelEndpoint({
-                            id: videosEndpoint?.id,
-                            providerId: soraProvider.id,
-                            key: 'videos',
-                            label: 'videos 域名',
-                            baseUrl: videosUrl.trim(),
-                            shared: videosShared,
-                          })
-                          setVideosEndpoint(saved)
-                          useUIStore.getState().setSoraVideoBaseUrl(saved.baseUrl || null)
-                        }}
-            />
-            <Modal
-              opened={geminiModalOpen}
-              onClose={() => setGeminiModalOpen(false)}
-              fullScreen
-              withinPortal
-              zIndex={8000}
-              title="Gemini 身份配置"
-              styles={{
-                content: {
-                  height: '100vh',
-                  paddingTop: 16,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  paddingBottom: 16,
-                },
-                body: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%',
-                  overflow: 'hidden',
-                },
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
-                      在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        window.open('https://aistudio.google.com/api-keys', '_blank', 'noopener')
-                      }
-                    >
-                      获取 API Key
-                    </Button>
-                  </Group>
-                  <Stack gap="xs">
-                    <div>
-                      <TextInput
-                        label="Base URL（可选，一般保持默认）"
-                        placeholder="例如：https://generativelanguage.googleapis.com"
-                        value={geminiBaseUrl}
-                        onChange={(e) => setGeminiBaseUrl(e.currentTarget.value)}
-                        onBlur={async () => {
-                          if (!geminiProvider) return
-                          await upsertModelProvider({
-                            id: geminiProvider.id,
-                            name: geminiProvider.name,
-                            vendor: geminiProvider.vendor,
-                            baseUrl: geminiBaseUrl.trim() || undefined,
-                          })
-                        }}
-                      />
-                    </div>
-                  </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 Gemini Key</Title>
-                    <Button size="xs" onClick={openGeminiModalForNew}>
-                      新增 Key
-                    </Button>
-                  </Group>
-                  <Stack gap="xs">
-                    {geminiTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Text size="sm">{t.label}</Text>
-                          <Text size="xs" c="dimmed">
-                            {t.shared ? '共享' : '仅自己可见'}
-                          </Text>
-                        </div>
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="light"
-                            onClick={() => {
-                              setGeminiEditingToken(t)
-                              setGeminiLabel(t.label)
-                              setGeminiSecret('')
-                              setGeminiShared(!!t.shared)
-                              setGeminiModalOpen(true)
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
-                            删除
-                          </Button>
-                        </Group>
-                      </Group>
-                    ))}
-                    {geminiTokens.length === 0 && (
-                      <Text size="xs" c="dimmed">
-                        暂无已保存的 Gemini Key。
-                      </Text>
-                    )}
-                  </Stack>
-                </Stack>
-              </div>
-            </Modal>
-            <Modal
+                      <Modal
               opened={anthropicModalOpen}
               onClose={() => setAnthropicModalOpen(false)}
               fullScreen
@@ -1000,6 +844,131 @@ export default function ModelPanel(): JSX.Element | null {
                         取消
                       </Button>
                       <Button onClick={handleSaveAnthropicToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+                      <Modal
+              opened={geminiModalOpen}
+              onClose={() => setGeminiModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Gemini 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://aistudio.google.com/api-keys', '_blank', 'noopener')
+                      }
+                    >
+                      获取 API Key
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="Base URL（可选，一般保持默认）"
+                        placeholder="例如：https://generativelanguage.googleapis.com"
+                        value={geminiBaseUrl}
+                        onChange={(e) => setGeminiBaseUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!geminiProvider) return
+                          await upsertModelProvider({
+                            id: geminiProvider.id,
+                            name: geminiProvider.name,
+                            vendor: geminiProvider.vendor,
+                            baseUrl: geminiBaseUrl.trim() || undefined,
+                          })
+                        }}
+                      />
+                    </div>
+                  </Stack>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 Gemini Key</Title>
+                    <Button size="xs" onClick={openGeminiModalForNew}>
+                      新增 Key
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    {geminiTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Text size="sm">{t.label}</Text>
+                          <Text size="xs" c="dimmed">
+                            {t.shared ? '共享' : '仅自己可见'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => {
+                              setGeminiEditingToken(t)
+                              setGeminiLabel(t.label)
+                              setGeminiSecret('')
+                              setGeminiShared(!!t.shared)
+                              setGeminiModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                    {geminiTokens.length === 0 && (
+                      <Text size="xs" c="dimmed">
+                        暂无已保存的 Gemini Key。
+                      </Text>
+                    )}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{geminiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput label="名称" placeholder="例如：主账号 Key" value={geminiLabel} onChange={(e) => setGeminiLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={geminiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 Gemini API Key'}
+                      value={geminiSecret}
+                      onChange={(e) => setGeminiSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={geminiShared}
+                      onChange={(e) => setGeminiShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setGeminiModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveGeminiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
@@ -1143,8 +1112,94 @@ export default function ModelPanel(): JSX.Element | null {
                     )}
                   </Stack>
                 </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{qwenEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput label="名称" placeholder="例如：Qwen 主账号 Key" value={qwenLabel} onChange={(e) => setQwenLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="DashScope API Key"
+                      placeholder={qwenEditingToken ? '留空则不修改已有 Key' : '粘贴你的 DashScope API Key'}
+                      value={qwenSecret}
+                      onChange={(e) => setQwenSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={qwenShared}
+                      onChange={(e) => setQwenShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setQwenModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveQwenToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
               </div>
             </Modal>
+            <Modal
+              opened={modalOpen}
+              onClose={() => setModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="Sora 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text size="sm" c="dimmed">
+                    你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
+                  </Text>
+                  <Group spacing="xs">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://sora.chatgpt.com/api/auth/session', '_blank', 'noopener')
+                      }
+                    >
+                      获取 session
+                    </Button>
+                    <Button size="xs" variant="light" onClick={() => setSessionModalOpen(true)}>
+                      导入 session
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="videos 域名（例如长视频 API）"
+                        placeholder="例如：https://videos.sora.example.com"
+                        value={videosUrl}
+                        onChange={(e) => setVideosUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!soraProvider || !videosUrl.trim()) return
+                          const saved = await upsertModelEndpoint({
+                            id: videosEndpoint?.id,
+                            providerId: soraProvider.id,
+                            key: 'videos',
+                            label: 'videos 域名',
+                            baseUrl: videosUrl.trim(),
+                            shared: videosShared,
+                          })
+                          setVideosEndpoint(saved)
+                          useUIStore.getState().setSoraVideoBaseUrl(saved.baseUrl || null)
+                        }}
+            />
                       <Switch
                         size="xs"
                         mt={4}
@@ -1300,239 +1355,6 @@ export default function ModelPanel(): JSX.Element | null {
                         取消
                       </Button>
                       <Button onClick={handleSaveToken}>保存</Button>
-                    </Group>
-                  </Stack>
-                </Paper>
-              </div>
-            </Modal>
-            <Modal
-              opened={qwenModalOpen}
-              onClose={() => setQwenModalOpen(false)}
-              fullScreen
-              withinPortal
-              zIndex={8000}
-              title="Qwen 身份配置"
-              styles={{
-                content: {
-                  height: '100vh',
-                  paddingTop: 16,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  paddingBottom: 16,
-                },
-                body: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%',
-                  overflow: 'hidden',
-                },
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
-                      在此配置 DashScope API Key。将用于调用 Qwen 文生图（qwen-image-plus）。
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        window.open('https://bailian.console.aliyun.com/?tab=model#/api-key', '_blank', 'noopener')
-                      }
-                    >
-                      获取 API Key
-                    </Button>
-                  </Group>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的密钥</Title>
-                    <Button size="xs" variant="light" onClick={openQwenModalForNew}>
-                      新增密钥
-                    </Button>
-                  </Group>
-                  {qwenTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
-                    {qwenTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
-                            {t.shared && (
-                              <Badge size="xs" color="grape">
-                                共享
-                              </Badge>
-                            )}
-                          </Group>
-                          <Text size="xs" c="dimmed">
-                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
-                          </Text>
-                        </div>
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() => {
-                              setQwenEditingToken(t)
-                              setQwenLabel(t.label)
-                              setQwenSecret('')
-                              setQwenShared(!!t.shared)
-                              setQwenModalOpen(true)
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteQwenToken(t.id)}>
-                            删除
-                          </Button>
-                        </Group>
-                      </Group>
-                    ))}
-                  </Stack>
-                </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{qwenEditingToken ? '编辑密钥' : '新增密钥'}</Title>
-                    <TextInput label="名称" placeholder="例如：主账号 DashScope Key" value={qwenLabel} onChange={(e) => setQwenLabel(e.currentTarget.value)} />
-                    <TextInput
-                      label="API Key"
-                      placeholder={qwenEditingToken ? '留空则不修改已有密钥' : '粘贴你的 DashScope API Key'}
-                      value={qwenSecret}
-                      onChange={(e) => setQwenSecret(e.currentTarget.value)}
-                    />
-                    <Switch
-                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
-                      checked={qwenShared}
-                      onChange={(e) => setQwenShared(e.currentTarget.checked)}
-                    />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setQwenModalOpen(false)}>
-                        取消
-                      </Button>
-                      <Button onClick={handleSaveQwenToken}>保存</Button>
-                    </Group>
-                  </Stack>
-                </Paper>
-              </div>
-            </Modal>
-            <Modal
-              opened={geminiModalOpen}
-              onClose={() => setGeminiModalOpen(false)}
-              fullScreen
-              withinPortal
-              zIndex={8000}
-              title="Gemini 身份配置"
-              styles={{
-                content: {
-                  height: '100vh',
-                  paddingTop: 16,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  paddingBottom: 16,
-                },
-                body: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%',
-                  overflow: 'hidden',
-                },
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
-                    在此配置 Gemini API Key。后续可以为文本/视频节点选择使用 Gemini 作为底层模型。
-                  </Text>
-                      <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        window.open('https://aistudio.google.com/api-keys', '_blank', 'noopener')
-                      }
-                    >
-                      获取 API Key
-                    </Button>
-                  <TextInput
-                    label="Gemini 代理 Base URL"
-                    placeholder="例如：https://your-proxy.example.com"
-                    value={geminiBaseUrl}
-                    onChange={(e) => setGeminiBaseUrl(e.currentTarget.value)}
-                    onBlur={async () => {
-                      if (!geminiProvider) return
-                      const saved = await upsertModelProvider({
-                        id: geminiProvider.id,
-                        name: geminiProvider.name,
-                        vendor: geminiProvider.vendor,
-                        baseUrl: geminiBaseUrl.trim() || null,
-                      })
-                      setGeminiProvider(saved)
-                      setGeminiBaseUrl(saved.baseUrl || '')
-                    }}
-                  />
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的密钥</Title>
-                    <Button size="xs" variant="light" onClick={openGeminiModalForNew}>
-                      新增密钥
-                    </Button>
-                  </Group>
-                  {geminiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
-                    {geminiTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
-                            {t.shared && (
-                              <Badge size="xs" color="grape">
-                                共享
-                              </Badge>
-                            )}
-                          </Group>
-                          <Text size="xs" c="dimmed">
-                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
-                          </Text>
-                        </div>
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() => {
-                              setGeminiEditingToken(t)
-                              setGeminiLabel(t.label)
-                              setGeminiSecret('')
-                              setGeminiShared(!!t.shared)
-                              setGeminiModalOpen(true)
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
-                            删除
-                          </Button>
-                        </Group>
-                      </Group>
-                    ))}
-                  </Stack>
-                </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{geminiEditingToken ? '编辑密钥' : '新增密钥'}</Title>
-                    <TextInput label="名称" placeholder="例如：Gemini 主账号 Key" value={geminiLabel} onChange={(e) => setGeminiLabel(e.currentTarget.value)} />
-                    <TextInput
-                      label="API Key"
-                      placeholder={geminiEditingToken ? '留空则不修改已有密钥' : '粘贴你的 Gemini API Key'}
-                      value={geminiSecret}
-                      onChange={(e) => setGeminiSecret(e.currentTarget.value)}
-                    />
-                    <Switch
-                      label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
-                      checked={geminiShared}
-                      onChange={(e) => setGeminiShared(e.currentTarget.checked)}
-                    />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setGeminiModalOpen(false)}>
-                        取消
-                      </Button>
-                      <Button onClick={handleSaveGeminiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
