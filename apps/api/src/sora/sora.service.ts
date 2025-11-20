@@ -1518,6 +1518,73 @@ export class SoraService {
     }
   }
 
+  async uploadImage(
+    userId: string,
+    tokenId: string | undefined,
+    file: any,
+  ) {
+    const token = await this.resolveSoraToken(userId, tokenId)
+    if (!token || token.provider.vendor !== 'sora') {
+      throw new Error('token not found or not a Sora token')
+    }
+
+    const baseUrl = await this.resolveBaseUrl(
+      token,
+      'sora',
+      'https://sora.chatgpt.com',
+    )
+    const url = new URL('/backend/project_y/file/upload', baseUrl).toString()
+    const userAgent = token.userAgent || 'TapCanvas/1.0'
+
+    const form = new FormData()
+    form.append('file', file.buffer, {
+      filename: file.originalname || 'image.png',
+      contentType: file.mimetype || 'image/png',
+    })
+    form.append('use_case', 'profile')
+
+    try {
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        maxBodyLength: Infinity,
+      })
+
+      const result = res.data
+      this.logger.log('Image uploaded to Sora successfully', {
+        userId,
+        file_id: result.file_id,
+        asset_pointer: result.asset_pointer,
+      })
+
+      return result
+    } catch (err: any) {
+      this.logger.error('Failed to upload image to Sora', {
+        userId,
+        error: err?.response?.data || err?.message,
+        status: err?.response?.status,
+      })
+
+      if (token.shared) {
+        await this.registerSharedFailure(token.id)
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Sora upload image request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null },
+        status,
+      )
+    }
+  }
+
   async getCameoStatus(userId: string, tokenId: string | undefined, cameoId: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {

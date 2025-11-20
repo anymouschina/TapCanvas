@@ -638,6 +638,36 @@ export async function uploadSoraProfileAsset(
   return body
 }
 
+export async function uploadSoraImage(
+  tokenId: string | undefined,
+  file: File,
+): Promise<{ file_id: string; asset_pointer?: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  if (tokenId) form.append('tokenId', tokenId)
+
+  const r = await fetch(`${API_BASE}/sora/upload/image`, withAuth({
+    method: 'POST',
+    body: form,
+  }))
+
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+
+  if (!r.ok) {
+    const msg =
+      (body && (body.message || body.error)) ||
+      `upload sora image failed: ${r.status}`
+    throw new Error(msg)
+  }
+
+  return body
+}
+
 export async function updateSoraCharacter(payload: {
   tokenId: string
   characterId: string

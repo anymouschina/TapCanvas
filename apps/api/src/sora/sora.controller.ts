@@ -236,6 +236,20 @@ export class SoraController {
     return this.service.getPostDetailsById(String(req.user.sub), tokenId, postId)
   }
 
+  @Post('upload/image')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(
+    @Body() body: { tokenId?: string },
+    @UploadedFile() file: any,
+    @Req() req: any,
+  ) {
+    const { tokenId } = body
+    if (!file) {
+      throw new Error('file is required')
+    }
+    return this.service.uploadImage(String(req.user.sub), tokenId, file)
+  }
+
   @Get('published/me')
   getPublishedVideos(
     @Query('tokenId') tokenId: string | undefined,

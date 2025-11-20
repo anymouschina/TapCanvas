@@ -24,7 +24,7 @@ import {
   IconChevronDown,
   IconBrain,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage } from '../../api/server'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -144,6 +144,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const selectedCount = useRFStore(s => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
   const fileRef = React.useRef<HTMLInputElement|null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
+  const soraFileId = (data as any)?.soraFileId as string | undefined
+  const [uploading, setUploading] = React.useState(false)
   const imageResults = React.useMemo(() => {
     const raw = (data as any)?.imageResults as { url: string }[] | undefined
     if (raw && Array.isArray(raw) && raw.length > 0) return raw
@@ -260,6 +262,16 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.sampleCount = sampleCount
       patch.videoModel = videoModel
       patch.videoDurationSeconds = videoDuration
+      // Include upstream Sora file_id if available
+      if (upstreamSoraFileId) {
+        patch.inpaintFileId = upstreamSoraFileId
+      }
+    }
+    if (kind === 'video') {
+      // Include upstream Sora file_id if available
+      if (upstreamSoraFileId) {
+        patch.inpaintFileId = upstreamSoraFileId
+      }
     }
     if (kind === 'image') {
       setPrompt(nextPrompt)
@@ -272,12 +284,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [mentionItems, setMentionItems] = React.useState<any[]>([])
   const [mentionLoading, setMentionLoading] = React.useState(false)
   const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
-  const { upstreamText, upstreamImageUrl, upstreamVideoUrl } = useRFStore((s) => {
+  const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
-    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null, upstreamVideoUrl: null as string | null }
+    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null, upstreamVideoUrl: null as string | null, upstreamSoraFileId: null as string | null }
     const last = edgesToThis[edgesToThis.length - 1]
     const src = s.nodes.find((n) => n.id === last.source)
-    if (!src) return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null }
+    if (!src) return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
     const uText =
@@ -287,8 +299,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
     // 获取最新的主图片 URL
     let uImg = null
+    let uSoraFileId = null
     if (skind === 'image' || skind === 'textToImage') {
       uImg = (sd.imageUrl as string | undefined) || null
+      uSoraFileId = (sd.soraFileId as string | undefined) || null
     } else if ((skind === 'video' || skind === 'composeVideo') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
       // 对于video节点，优先获取主视频的缩略图作为上游图片
       uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
@@ -304,7 +318,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       }
     }
 
-    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo }
+    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
   })
 
   React.useEffect(() => {
@@ -501,6 +515,35 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
     })
   }
+
+  // Handle image upload with Sora API
+  const handleImageUpload = async (file: File) => {
+    if (kind !== 'image') return
+
+    try {
+      setUploading(true)
+
+      // First, create a local URL for immediate preview
+      const localUrl = URL.createObjectURL(file)
+      updateNodeData(id, { imageUrl: localUrl })
+
+      // Then upload to Sora to get file_id
+      const result = await uploadSoraImage(undefined, file) // Use default token for now
+
+      if (result.file_id) {
+        updateNodeData(id, {
+          soraFileId: result.file_id,
+          assetPointer: result.asset_pointer
+        })
+      }
+    } catch (error) {
+      console.error('Failed to upload image to Sora:', error)
+      // Keep the local URL even if upload fails
+    } finally {
+      setUploading(false)
+    }
+  }
+
   return (
     <div style={{
       border: '1px solid rgba(127,127,127,.35)',
@@ -611,8 +654,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
                   const f = e.currentTarget.files?.[0]
                   if (!f) return
-                  const url = URL.createObjectURL(f)
-                  updateNodeData(id, { imageUrl: url })
+                  await handleImageUpload(f)
                 }} />
               </div>
             </>
@@ -662,9 +704,40 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                   style={{ position: 'absolute', right: 8, top: 8 }}
                   title="替换图片"
                   onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
                 >
-                  <IconUpload size={14} />
+                  {uploading ? (
+                    <div style={{
+                      width: 14,
+                      height: 14,
+                      border: '2px solid #ffffff',
+                      borderTop: '2px solid transparent',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite',
+                    }} />
+                  ) : (
+                    <IconUpload size={14} />
+                  )}
                 </ActionIcon>
+                {/* Sora file_id indicator */}
+                {soraFileId && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 8,
+                      top: 8,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      background: 'rgba(34, 197, 94, 0.9)',
+                      color: 'white',
+                      fontSize: '10px',
+                      fontWeight: 500,
+                    }}
+                    title={`Sora File ID: ${soraFileId}`}
+                  >
+                    ✓ Sora
+                  </div>
+                )}
                 {/* 数量 + 展开标签 */}
                 {imageResults.length > 1 && (
                   <button
@@ -699,8 +772,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 onChange={async (e) => {
                   const f = e.currentTarget.files?.[0]
                   if (!f) return
-                  const url = URL.createObjectURL(f)
-                  updateNodeData(id, { imageUrl: url })
+                  await handleImageUpload(f)
                 }}
               />
             </div>
@@ -1165,6 +1237,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               {upstreamImageUrl && (
                 <div
                   style={{
+                    position: 'relative',
                     width: '100%',
                     maxHeight: 180,
                     borderRadius: 8,
@@ -1186,6 +1259,25 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                       backgroundColor: 'black',
                     }}
                   />
+                  {/* Sora file_id indicator for upstream image */}
+                  {upstreamSoraFileId && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 8,
+                        top: 8,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        background: 'rgba(34, 197, 94, 0.9)',
+                        color: 'white',
+                        fontSize: '10px',
+                        fontWeight: 500,
+                      }}
+                      title={`Using Sora File ID: ${upstreamSoraFileId}`}
+                    >
+                      ✓ Sora
+                    </div>
+                  )}
                 </div>
               )}
               {upstreamText && (

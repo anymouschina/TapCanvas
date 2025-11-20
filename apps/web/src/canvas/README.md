@@ -32,7 +32,7 @@ src/canvas/
 │   └── managers/                     # 功能管理器（计划）
 ├── nodes/                           # 节点组件
 │   ├── TaskNode.tsx                 # 原始任务节点
-│   ├── TaskNode.refactored.tsx      # 重构后的任务节点
+│   ├── TaskNode.tsx      # 重构后的任务节点
 │   ├── GroupNode.tsx                # 分组节点
 │   ├── IONode.tsx                   # 输入输出节点
 │   └── index.ts                     # 节点组件导出

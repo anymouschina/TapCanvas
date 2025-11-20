@@ -79,7 +79,7 @@ apps/web/src/canvas/
 │   ├── Modal/                 # Reusable modal components
 │   └── GitHubLanguageButton.tsx # Language switcher + GitHub icon
 ├── nodes/                     # Node type implementations
-│   ├── TaskNode.refactored.tsx # Main workflow nodes
+│   ├── TaskNode.tsx # Main workflow nodes
 │   ├── GroupNode.tsx          # Group container nodes
 │   └── IONode.tsx             # Input/output interface nodes
 ├── edges/                     # Edge type implementations

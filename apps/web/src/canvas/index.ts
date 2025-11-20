@@ -36,7 +36,7 @@ export { NodeConfigModal } from './components/shared/Modal/NodeConfigModal';
 
 // 节点组件
 export { default as TaskNode } from './nodes/TaskNode';
-export { TaskNodeRefactored } from './nodes/TaskNode.refactored';
+export { TaskNodeRefactored } from './nodes/TaskNode';
 export { default as GroupNode } from './nodes/GroupNode';
 export { default as IONode } from './nodes/IONode';
 
