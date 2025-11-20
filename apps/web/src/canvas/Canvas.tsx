@@ -19,7 +19,7 @@ import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
 import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip } from '@mantine/core'
-import { IconBrandGithub } from '@tabler/icons-react'
+import { IconBrandGithub, IconRobot } from '@tabler/icons-react'
 import { getCurrentLanguage, setLanguage, $ } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
@@ -27,6 +27,7 @@ import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
+import { SimpleAIAssistant } from './ai/SimpleAIAssistant'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -66,6 +67,7 @@ function CanvasInner(): JSX.Element {
   const timerRef = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
   const [currentLang, setCurrentLangState] = useState(getCurrentLanguage())
+  const [aiAssistantOpened, setAiAssistantOpened] = useState(false)
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
 
@@ -667,7 +669,7 @@ function CanvasInner(): JSX.Element {
             setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
           }
         }}
-        
+
         onMove={(_evt, vp) => setViewport(vp)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -722,6 +724,33 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color="#2a2f3a" />
       </ReactFlow>
+
+      {/* AI助手按钮 */}
+      <ActionIcon
+        size="lg"
+        radius="xl"
+        color="green"
+        variant="filled"
+        style={{
+          position: 'absolute',
+          right: 20,
+          top: 20,
+          zIndex: 1000
+        }}
+        onClick={() => setAiAssistantOpened(true)}
+      >
+        <Tooltip label="AI助手">
+          <IconRobot size={20} />
+        </Tooltip>
+      </ActionIcon>
+
+      {/* AI助手面板 */}
+      <SimpleAIAssistant
+        opened={aiAssistantOpened}
+        onClose={() => setAiAssistantOpened(false)}
+        position="right"
+        width={400}
+      />
       {/* Focus mode breadcrumb with hierarchy */}
       {focusGroupId && (
         <Paper withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>

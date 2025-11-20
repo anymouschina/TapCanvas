@@ -51,6 +51,27 @@ export { useInsertMenuStore } from './insertMenuStore';
 // 主要组件
 export { default as Canvas } from './Canvas';
 
+// AI助手
+export {
+  AIAssistant,
+  aiAssistant,
+  AICanvasTools,
+  aiCanvasTools,
+  AIAssistantPanel
+} from './ai';
+export type {
+  AIMessage,
+  ToolCall,
+  ChatOptions,
+  AddNodeToolParams,
+  EditNodeToolParams,
+  DeleteNodeToolParams,
+  ConnectNodesToolParams,
+  FindNodesToolParams,
+  GetCanvasInfoToolParams,
+  ToolResult
+} from './ai';
+
 // 示例组件
 export { I18nDemo, I18nExamples } from './examples/I18nDemo';
 export { QuickI18nExample } from './examples/QuickI18nExample';

@@ -9,6 +9,8 @@
     "test": "echo 'No tests yet' && exit 0"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.45",
+    "@ai-sdk/google": "^2.0.39",
     "@ai-sdk/openai": "^2.0.69",
     "@ai-sdk/react": "^2.0.97",
     "@hookform/resolvers": "^3.9.0",

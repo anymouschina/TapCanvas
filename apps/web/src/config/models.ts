@@ -1,0 +1,72 @@
+/**
+ * 模型配置 - 与TaskNode保持一致
+ */
+
+export interface ModelOption {
+  value: string
+  label: string
+}
+
+export const TEXT_MODELS: ModelOption[] = [
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+]
+
+export const IMAGE_MODELS: ModelOption[] = [
+  { value: 'qwen-image-plus', label: 'Qwen Image Plus' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' }
+]
+
+export const VIDEO_MODELS: ModelOption[] = [{ value: 'sora-2', label: 'Sora 2' }]
+
+export type NodeKind =
+  | 'text'
+  | 'textToImage'
+  | 'image'
+  | 'video'
+  | 'composeVideo'
+  | 'audio'
+  | 'subtitle'
+
+export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
+  switch (kind) {
+    case 'textToImage':
+      return TEXT_MODELS
+    case 'image':
+      return IMAGE_MODELS
+    case 'composeVideo':
+    case 'video':
+      return VIDEO_MODELS
+    case 'text':
+    default:
+      return TEXT_MODELS
+  }
+}
+
+export function getModelLabel(kind: NodeKind | undefined, modelValue: string): string {
+  const models = getAllowedModelsByKind(kind)
+  const model = models.find(m => m.value === modelValue)
+  return model?.label || modelValue
+}
+
+export function getDefaultModel(kind?: NodeKind): string {
+  const models = getAllowedModelsByKind(kind)
+  return models[0]?.value || TEXT_MODELS[0].value
+}
+
+// Provider映射
+export type AIProvider = 'openai' | 'anthropic' | 'google'
+
+export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
+  'gemini-2.5-flash': 'google',
+  'gemini-2.5-pro': 'google',
+  'models/gemini-3-pro-preview': 'google',
+  'qwen-image-plus': 'openai', // 假设使用OpenAI
+  'gemini-2.5-flash-image': 'google',
+  'sora-2': 'openai', // 假设使用OpenAI
+}
+
+export function getModelProvider(modelValue: string): AIProvider {
+  return MODEL_PROVIDER_MAP[modelValue] || 'google'
+}
