@@ -23,6 +23,7 @@ import {
   IconClock,
   IconChevronDown,
   IconBrain,
+  IconDeviceMobile,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage } from '../../api/server'
 
@@ -35,6 +36,11 @@ const RESOLUTION_OPTIONS = [
 const DURATION_OPTIONS = [
   { value: '10', label: '10s' },
   { value: '15', label: '15s' },
+]
+
+const ORIENTATION_OPTIONS = [
+  { value: 'landscape', label: '横屏' },
+  { value: 'portrait', label: '竖屏' },
 ]
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
@@ -210,6 +216,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [videoDuration, setVideoDuration] = React.useState<number>(
     (data as any)?.videoDurationSeconds === 15 ? 15 : 10,
   )
+  const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>(
+    (data as any)?.orientation || 'landscape'
+  )
 
   const activeModelKey =
     kind === 'textToImage'
@@ -222,6 +231,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const modelList = allowedModelsByKind(kind)
   const showTimeMenu = kind === 'composeVideo' || kind === 'video'
   const showResolutionMenu = kind === 'composeVideo' || kind === 'video' || kind === 'image'
+  const showOrientationMenu = kind === 'composeVideo' || kind === 'video'
   React.useEffect(() => {
     if (!modelList.some((m) => m.value === activeModelKey) && modelList.length) {
       const first = modelList[0].value
@@ -262,12 +272,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.sampleCount = sampleCount
       patch.videoModel = videoModel
       patch.videoDurationSeconds = videoDuration
+      patch.orientation = orientation
       // Include upstream Sora file_id if available
       if (upstreamSoraFileId) {
         patch.inpaintFileId = upstreamSoraFileId
       }
     }
     if (kind === 'video') {
+      patch.orientation = orientation
       // Include upstream Sora file_id if available
       if (upstreamSoraFileId) {
         patch.inpaintFileId = upstreamSoraFileId
@@ -1095,6 +1107,44 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                         onClick={() => {
                           setAspect(option.value)
                           updateNodeData(id, { aspect: option.value })
+                        }}
+                      >
+                        {option.label}
+                      </Menu.Item>
+                    ))}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+              {showOrientationMenu && (
+                <Menu withinPortal position="bottom-start" transition="pop-top-left">
+                  <Menu.Target>
+                    <button
+                      type="button"
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        borderRadius: 999,
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        padding: '4px 10px',
+                        color: '#fde68a',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        minWidth: 100,
+                      }}
+                    >
+                      <IconDeviceMobile size={14} />
+                      <span>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
+                      <IconArrowRight size={12} />
+                    </button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {ORIENTATION_OPTIONS.map((option) => (
+                      <Menu.Item
+                        key={option.value}
+                        onClick={() => {
+                          setOrientation(option.value as 'portrait' | 'landscape')
+                          updateNodeData(id, { orientation: option.value })
                         }}
                       >
                         {option.label}

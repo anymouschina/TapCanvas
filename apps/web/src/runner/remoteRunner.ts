@@ -329,7 +329,7 @@ async function runTextTask(ctx: RunnerContext) {
 async function runVideoTask(ctx: RunnerContext) {
   const { id, data, state, prompt, kind, setNodeStatus, appendLog, isCanceled } = ctx
   try {
-    const orientation: 'portrait' | 'landscape' | 'square' = 'portrait'
+    const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
     const videoDurationSeconds: number =
       (data as any)?.videoDurationSeconds === 15 ? 15 : 10
