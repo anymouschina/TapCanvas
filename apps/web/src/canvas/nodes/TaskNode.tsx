@@ -27,10 +27,10 @@ import {
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage } from '../../api/server'
 import {
-  getAllowedModelsByKind,
   getModelLabel,
   type NodeKind
 } from '../../config/models'
+import { useModelOptions } from '../../config/useModelOptions'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -209,7 +209,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         : kind === 'composeVideo' || kind === 'video'
           ? videoModel
           : modelKey
-  const modelList = getAllowedModelsByKind(kind as NodeKind)
+  const modelList = useModelOptions(kind as NodeKind)
   const showTimeMenu = kind === 'composeVideo' || kind === 'video'
   const showResolutionMenu = kind === 'composeVideo' || kind === 'video' || kind === 'image'
   const showOrientationMenu = kind === 'composeVideo' || kind === 'video'

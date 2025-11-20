@@ -8,6 +8,7 @@ import {
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
+import { isAnthropicModel } from '../config/modelSource'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -232,10 +233,10 @@ async function runTextTask(ctx: RunnerContext) {
   const { id, sampleCount, taskKind, kind, data, modelKey, prompt, setNodeStatus, appendLog } = ctx
   ctx.beginToken(id)
   try {
-    const vendor = 'gemini'
+    const vendor = isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini'
     appendLog(
       id,
-      `[${nowLabel()}] 调用Gemini 文案模型批量生成提示词 x${sampleCount}（并行）…`,
+      `[${nowLabel()}] 调用${vendor === 'anthropic' ? 'Claude' : 'Gemini'} 文案模型批量生成提示词 x${sampleCount}（并行）…`,
     )
 
     const indices = Array.from({ length: sampleCount }, (_, i) => i)
@@ -687,11 +688,13 @@ async function runGenericTask(ctx: RunnerContext) {
   try {
     const selectedModel = taskKind === 'text_to_image'
       ? (data.imageModel as string) || 'qwen-image-plus'
-      : (data.model as string) || 'qwen-image-plus'
-    const vendor = taskKind === 'text_to_image' && selectedModel.startsWith('gemini') ? 'gemini'
-      : taskKind === 'text_to_image'
-      ? 'qwen'
-      : 'gemini'
+      : (data.model as string) || 'gemini-2.5-flash'
+
+    const vendor = taskKind === 'text_to_image'
+      ? (selectedModel.toLowerCase().includes('gemini') ? 'gemini' : 'qwen')
+      : isAnthropicModel(selectedModel) || selectedModel.toLowerCase().includes('claude')
+        ? 'anthropic'
+        : 'gemini'
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
@@ -706,7 +709,7 @@ async function runGenericTask(ctx: RunnerContext) {
 
       const progressBase = 5 + Math.floor((90 * i) / sampleCount)
       setNodeStatus(id, 'running', { progress: progressBase })
-      const vendorName = vendor === 'qwen' ? 'Qwen' : 'Gemini'
+      const vendorName = vendor === 'qwen' ? 'Qwen' : vendor === 'anthropic' ? 'Claude' : 'Gemini'
       const modelType = taskKind === 'text_to_image' ? '图像' : '文案'
       appendLog(
         id,
