@@ -32,6 +32,12 @@ The TapCanvas project is specially optimized for Sora 2 with dedicated canvas ca
 
 Through visual workflows, we not only lower the barrier to AI video creation but also provide creators with a professional and efficient creation platform.
 
+## 🖼️ Feature Preview
+
+![Feature Preview](assets/feature.jpg)
+
+TapCanvas's visual canvas interface demonstrates powerful AI creation workflow capabilities: starting from text prompts, generating images and videos through intelligent connections, achieving the complete transformation from creative ideas to finished works.
+
 ## 🚀 Quick Start
 
 ### Method 1: Docker Run (Recommended)
