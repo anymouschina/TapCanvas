@@ -48,7 +48,7 @@ export default function AIFloatingButton(): JSX.Element {
   }, [])
 
   return (
-    <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 5999 }}>
+    <div style={{ position: 'fixed', right: 20, bottom: '50%', zIndex: 299 }}>
       <ActionIcon
         size={56}
         radius={999}
