@@ -26,6 +26,11 @@ import {
   IconDeviceMobile,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage } from '../../api/server'
+import {
+  getAllowedModelsByKind,
+  getModelLabel,
+  type NodeKind
+} from '../../config/models'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -44,30 +49,6 @@ const ORIENTATION_OPTIONS = [
 ]
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
-
-const TEXT_MODELS = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
-]
-const IMAGE_MODELS = [
-  { value: 'qwen-image-plus', label: 'Qwen Image Plus' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' }
-]
-const VIDEO_MODELS = [{ value: 'sora-2', label: 'Sora 2' }]
-
-const allowedModelsByKind = (kind?: string) => {
-  if (kind === 'textToImage') return TEXT_MODELS
-  if (kind === 'image') return IMAGE_MODELS
-  if (kind === 'composeVideo' || kind === 'video') return VIDEO_MODELS
-  return TEXT_MODELS
-}
-
-const getModelLabel = (kind: string | undefined, key: string) => {
-  const list = allowedModelsByKind(kind)
-  const match = list.find((m) => m.value === key)
-  return match ? match.label : key
-}
 
 const genTaskNodeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -228,7 +209,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         : kind === 'composeVideo' || kind === 'video'
           ? videoModel
           : modelKey
-  const modelList = allowedModelsByKind(kind)
+  const modelList = getAllowedModelsByKind(kind as NodeKind)
   const showTimeMenu = kind === 'composeVideo' || kind === 'video'
   const showResolutionMenu = kind === 'composeVideo' || kind === 'video' || kind === 'image'
   const showOrientationMenu = kind === 'composeVideo' || kind === 'video'
