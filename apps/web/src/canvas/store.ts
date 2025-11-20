@@ -242,9 +242,21 @@ export const useRFStore = create<RFState>((set, get) => ({
     historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
     historyFuture: [],
   })),
-  setNodeStatus: (id, status, patch) => set((s) => ({
-    nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status, ...(patch||{}) } } : n))
-  })),
+  setNodeStatus: (id, status, patch) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status, ...(patch||{}) } } : n))
+    }))
+
+    // 当任务成功完成时，静默保存项目状态
+    if (status === 'success') {
+      // 延迟一小段时间确保数据已更新
+      setTimeout(() => {
+        if ((window as any).silentSaveProject) {
+          (window as any).silentSaveProject()
+        }
+      }, 100)
+    }
+  },
   appendLog: (id, line) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, logs: [...((n.data as any)?.logs || []), line] } } : n))
   })),

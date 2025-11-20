@@ -184,6 +184,44 @@ export default function App(): JSX.Element {
     }
   }
 
+  // 静默保存函数，不显示通知
+  const silentSave = async () => {
+    if (saving) return
+
+    // 确保项目存在
+    let proj = useUIStore.getState().currentProject
+    if (!proj?.id) {
+      const name = (currentProject?.name || `未命名项目 ${new Date().toLocaleString()}`).trim()
+      try {
+        const p = await upsertProject({ name })
+        setProjects(prev => [p, ...prev])
+        setCurrentProject({ id: p.id, name: p.name })
+        proj = { id: p.id, name: p.name }
+      } catch {
+        // 静默保存失败时不抛出错误，避免打扰用户
+        return
+      }
+    }
+
+    const flowName = proj!.name || '未命名'
+    const nodes = useRFStore.getState().nodes
+    const edges = useRFStore.getState().edges
+
+    try {
+      const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges })
+      setCurrentFlow({ id: saved.id, name: flowName, source: 'server' })
+      setDirty(false)
+    } catch {
+      // 静默保存失败时不抛出错误
+    }
+  }
+
+  // 导出静默保存函数供其他组件使用
+  React.useEffect(() => {
+    // 将 silentSave 函数挂载到全局，供其他组件调用
+    (window as any).silentSaveProject = silentSave
+  }, [saving, currentFlow, currentProject])
+
   return (
     <AppShell
       data-compact={'false'}

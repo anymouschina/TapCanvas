@@ -535,6 +535,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           soraFileId: result.file_id,
           assetPointer: result.asset_pointer
         })
+
+        // 静默保存项目状态
+        if ((window as any).silentSaveProject) {
+          (window as any).silentSaveProject()
+        }
       }
     } catch (error) {
       console.error('Failed to upload image to Sora:', error)
