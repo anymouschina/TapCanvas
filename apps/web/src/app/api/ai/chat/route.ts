@@ -8,6 +8,7 @@ import { openai } from '@ai-sdk/openai'
 import { anthropic } from '@ai-sdk/anthropic'
 import { google } from '@ai-sdk/google'
 import { NextRequest } from 'next/server'
+import { isAnthropicModel } from '../../../config/modelSource'
 
 // 配置运行时为Edge
 export const runtime = 'edge'
@@ -26,20 +27,15 @@ export async function POST(req: NextRequest) {
 
     // 根据模型选择提供商
     let selectedModel
-    switch (model) {
-      case 'gpt-4-turbo':
-      case 'gpt-3.5-turbo':
-        selectedModel = openai(model, { apiKey })
-        break
-      case 'claude-3-sonnet':
-      case 'claude-3-haiku':
-        selectedModel = anthropic(model, { apiKey })
-        break
-      case 'gemini-pro':
-        selectedModel = google(model, { apiKey })
-        break
-      default:
-        selectedModel = openai('gpt-3.5-turbo', { apiKey })
+    const lower = String(model || '').toLowerCase()
+    if (isAnthropicModel(model) || lower.includes('claude')) {
+      selectedModel = anthropic(model, { apiKey })
+    } else if (lower.startsWith('gpt-')) {
+      selectedModel = openai(model, { apiKey })
+    } else if (lower.startsWith('gemini')) {
+      selectedModel = google(model, { apiKey })
+    } else {
+      selectedModel = openai('gpt-3.5-turbo', { apiKey })
     }
 
     // 准备消息

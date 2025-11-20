@@ -1,6 +1,7 @@
 /**
  * 模型配置 - 与TaskNode保持一致
  */
+import { isAnthropicModel } from './modelSource'
 
 export interface ModelOption {
   value: string
@@ -11,8 +12,6 @@ export const TEXT_MODELS: ModelOption[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
-  { value: 'claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
-  { value: 'claude-3.5-haiku', label: 'Claude 3.5 Haiku' }
 ]
 
 export const IMAGE_MODELS: ModelOption[] = [
@@ -64,15 +63,19 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'gemini-2.5-flash': 'google',
   'gemini-2.5-pro': 'google',
   'models/gemini-3-pro-preview': 'google',
-  'claude-3.5-sonnet': 'anthropic',
-  'claude-3.5-haiku': 'anthropic',
-  'claude-3-sonnet': 'anthropic',
-  'claude-3-haiku': 'anthropic',
   'qwen-image-plus': 'openai', // 假设使用OpenAI
   'gemini-2.5-flash-image': 'google',
   'sora-2': 'openai', // 假设使用OpenAI
 }
 
 export function getModelProvider(modelValue: string): AIProvider {
-  return MODEL_PROVIDER_MAP[modelValue] || 'google'
+  if (MODEL_PROVIDER_MAP[modelValue]) return MODEL_PROVIDER_MAP[modelValue]
+  const lower = modelValue.toLowerCase()
+  // 动态列表（/v1/models）返回的ID会被标记
+  if (isAnthropicModel(modelValue)) return 'anthropic'
+  if (lower.includes('claude') || lower.includes('glm')) return 'anthropic'
+  if (lower.includes('gemini')) return 'google'
+  if (lower.includes('gpt') || lower.includes('openai') || lower.includes('o3-')) return 'openai'
+  if (lower.includes('qwen')) return 'openai'
+  return 'google'
 }

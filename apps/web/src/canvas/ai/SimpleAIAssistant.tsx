@@ -29,7 +29,8 @@ import {
 } from '@tabler/icons-react'
 import { nanoid } from 'nanoid'
 import { useRFStore } from '../store'
-import { getAllowedModelsByKind, getDefaultModel } from '../../config/models'
+import { getDefaultModel } from '../../config/models'
+import { useModelOptions } from '../../config/useModelOptions'
 import { functionHandlers } from '../../ai/canvasService'
 import type { FunctionResult } from '../../ai/canvasService'
 import { getAuthToken } from '../../auth/store'
@@ -270,7 +271,7 @@ interface SimpleAIAssistantProps {
 export function SimpleAIAssistant({ opened, onClose, position = 'right', width = 420 }: SimpleAIAssistantProps) {
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
-  const textModelOptions = useMemo(() => getAllowedModelsByKind('text'), [])
+  const textModelOptions = useModelOptions('text')
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
