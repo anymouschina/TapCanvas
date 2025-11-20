@@ -26,6 +26,22 @@ export default function TypedEdge(props: EdgeProps<any>) {
   const t = (props.data && (props.data as any).edgeType) || inferType(props.sourceHandle, props.targetHandle)
   const stroke = colorFor(t)
 
+  // 不显示 "any" 类型的标签
+  if (t === 'any') {
+    const [edgePath] = getSmoothStepPath({
+      sourceX: props.sourceX,
+      sourceY: props.sourceY,
+      sourcePosition: props.sourcePosition,
+      targetX: props.targetX,
+      targetY: props.targetY,
+      targetPosition: props.targetPosition,
+    })
+
+    return (
+      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 3, opacity: 0.95 }} />
+    )
+  }
+
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,

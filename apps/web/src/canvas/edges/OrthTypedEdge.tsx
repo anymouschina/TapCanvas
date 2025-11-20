@@ -81,6 +81,14 @@ export default function OrthTypedEdge(props: EdgeProps<any>) {
   for (const k of steps) { const y = props.sourceY + k * 30; if (!intersectsH(y, props.sourceX, (props.sourceX + props.targetX)/2)) { sy = y; break } }
   for (const k of steps) { const y = props.targetY + k * 30; if (!intersectsH(y, props.targetX, (props.sourceX + props.targetX)/2)) { ty = y; break } }
   const [edgePath, labelX, labelY] = orthPathAvoid(props.sourceX, sy, props.targetX, ty, obstacles)
+
+  // 不显示 "any" 类型的标签
+  if (t === 'any') {
+    return (
+      <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 3, opacity: 0.95 }} />
+    )
+  }
+
   return (
     <>
       <BaseEdge id={props.id} path={edgePath} style={{ stroke, strokeWidth: 3, opacity: 0.95 }} />
