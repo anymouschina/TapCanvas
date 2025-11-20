@@ -27,7 +27,7 @@ pnpm --filter @tapcanvas/web test
 
 ### Infrastructure
 ```bash
-# Start backend infrastructure (ActivePieces workflow engine)
+# Start backend infrastructure (PostgreSQL + Redis)
 pnpm compose:up
 
 # Stop backend infrastructure
@@ -254,9 +254,7 @@ const { currentLanguage, setLanguage, isEn, isZh } = useI18n();
 
 **Backend:**
 - **NestJS** API with Prisma ORM
-- **ActivePieces** workflow engine for orchestration
-- **Temporal** for workflow management
-- **Bull** for job queues
+- **Bull** for job queues and task orchestration
 
 **Development:**
 - **pnpm workspaces** for monorepo management
@@ -278,7 +276,7 @@ TapCanvas/
 │   ├── sdk/              # TypeScript SDK
 │   └── pieces/           # AI model integrations (placeholder)
 └── infra/
-    └── activepieces/     # Backend workflow orchestration
+    └── docker/           # Docker infrastructure files
 ```
 
 The canvas module (`apps/web/src/canvas/`) contains the main visual editor and has been comprehensively refactored following strict architectural principles for maintainability and extensibility.

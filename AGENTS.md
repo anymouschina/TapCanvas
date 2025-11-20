@@ -5,7 +5,7 @@
 - Web app: `apps/web` (Vite + React + TypeScript, Mantine UI, React Flow canvas).
   - Canvas and UI: `apps/web/src/canvas`, `apps/web/src/ui`, `apps/web/src/flows`, `apps/web/src/assets`.
 - Shared libs: `packages/schemas`, `packages/sdk`, `packages/pieces`.
-- Local orchestration (optional): `infra/activepieces` (Docker Compose setup).
+- Local orchestration (optional): `infra/` (Docker Compose setup).
 
 ## Build, Test, and Dev
 - Install deps (workspace): `pnpm -w install`

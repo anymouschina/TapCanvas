@@ -4,10 +4,19 @@ node_modules/
 dist/
 .turbo/
 
-# Env / local
-.env*
-apps/**/.env*
-packages/**/.env*
+# Env / local (忽略真实环境文件，保留 .env.example)
+.env
+.env.local
+.env.development
+.env.production
+apps/**/.env
+apps/**/.env.local
+apps/**/.env.development
+apps/**/.env.production
+packages/**/.env
+packages/**/.env.local
+packages/**/.env.development
+packages/**/.env.production
 
 # OS / misc
 .DS_Store
