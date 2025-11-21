@@ -88,6 +88,11 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharCoverUploading, setCreateCharCoverUploading] = React.useState(false)
   const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
   const [createCharProgress, setCreateCharProgress] = React.useState<number | null>(null)
+  const [pickCharVideoOpen, setPickCharVideoOpen] = React.useState(false)
+  const [pickCharTab, setPickCharTab] = React.useState<'local' | 'drafts' | 'published'>('local')
+  const [pickCharLoading, setPickCharLoading] = React.useState(false)
+  const [pickCharError, setPickCharError] = React.useState<string | null>(null)
+  const [pickCharSelected, setPickCharSelected] = React.useState<{ url: string; title: string } | null>(null)
   const [publishingId, setPublishingId] = React.useState<string | null>(null)
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
@@ -243,9 +248,36 @@ export default function AssetPanel(): JSX.Element | null {
     }
   }
 
+  function getDraftVideoUrl(d: any): string | null {
+    if (!d) return null
+    const raw = (d as any)?.raw || {}
+    const draft = raw.draft || {}
+    const encodings = draft.encodings || raw.encodings || {}
+    return (
+      d.videoUrl ||
+      draft.url ||
+      encodings.source?.path ||
+      encodings['source_wm']?.path ||
+      draft.downloadable_url ||
+      null
+    )
+  }
+
+  function getPublishedVideoUrl(p: any): string | null {
+    if (!p) return null
+    const encodings = (p as any)?.encodings || {}
+    return (
+      p.videoUrl ||
+      encodings.source?.path ||
+      encodings['source_wm']?.path ||
+      (p as any)?.url ||
+      null
+    )
+  }
+
   const addDraftToCanvas = (d: any, remix = false) => {
     if (!d) return
-    const videoUrl = d.videoUrl
+    const videoUrl = getDraftVideoUrl(d)
     const remixTarget = d.videoDraftId || d.videoPostId || d.id || (d.raw as any)?.generation_id || (d.raw as any)?.id || null
     const baseData: any = {
       kind: remix ? 'composeVideo' : 'video',
@@ -263,13 +295,92 @@ export default function AssetPanel(): JSX.Element | null {
     }
     setActivePanel(null)
   }
+
   if (!mounted) return null
 
   const handlePickCharacterVideo = () => {
+    if (!selectedTokenId) {
+      alert('请先选择一个 Sora Token')
+      return
+    }
+    setPickCharError(null)
+    setPickCharVideoOpen(true)
+    setPickCharTab('local')
+    setPickCharSelected(null)
+  }
+
+  const ensureDraftsForPick = async () => {
+    if (!selectedTokenId || drafts.length > 0 || draftLoading) return
+    try {
+      setPickCharLoading(true)
+      const data = await listSoraDrafts(selectedTokenId)
+      setDrafts(data.items || [])
+      setDraftCursor(data.cursor || null)
+    } catch (err: any) {
+      console.error(err)
+      setPickCharError(err?.message || '加载草稿失败')
+    } finally {
+      setPickCharLoading(false)
+    }
+  }
+
+  const ensurePublishedForPick = async () => {
+    if (!selectedTokenId || publishedVideos.length > 0 || publishedLoading) return
+    try {
+      setPickCharLoading(true)
+      const data = await listSoraPublishedVideos(selectedTokenId, 12)
+      setPublishedVideos(data.items || [])
+    } catch (err: any) {
+      console.error(err)
+      setPickCharError(err?.message || '加载已发布视频失败')
+    } finally {
+      setPickCharLoading(false)
+    }
+  }
+
+  const getVideoDuration = async (url: string): Promise<number> => new Promise((resolve, reject) => {
+    const v = document.createElement('video')
+    v.preload = 'metadata'
+    v.crossOrigin = 'anonymous'
+    v.onloadedmetadata = () => resolve(v.duration || 0)
+    v.onerror = () => reject(new Error('无法读取视频时长'))
+    v.src = url
+  })
+
+  const prepareCharacterFromUrl = async (url: string | null, title: string) => {
+    if (!url) {
+      setPickCharError('该视频没有可用的播放地址')
+      return
+    }
     if (!selectedTokenId) return
-    if (createCharInputRef.current) {
-      createCharInputRef.current.value = ''
-      createCharInputRef.current.click()
+    setPickCharLoading(true)
+    setPickCharError(null)
+    try {
+      const response = await fetch(url)
+      if (!response.ok) throw new Error(`拉取视频失败：${response.status}`)
+      const blob = await response.blob()
+      const safeName = (title || 'sora-video').replace(/[^a-zA-Z0-9-_]+/g, '-').slice(0, 40) || 'sora-video'
+      const file = new File([blob], `${safeName}.mp4`, { type: blob.type || 'video/mp4' })
+      if (createCharVideoUrl) {
+        URL.revokeObjectURL(createCharVideoUrl)
+      }
+      const objectUrl = URL.createObjectURL(blob)
+      const duration = await getVideoDuration(objectUrl)
+      if (!duration || !Number.isFinite(duration)) {
+        throw new Error('无法识别视频时长')
+      }
+      setCreateCharFile(file)
+      setCreateCharVideoUrl(objectUrl)
+      setCreateCharDuration(duration)
+      setPickCharVideoOpen(false)
+      setPickCharSelected(null)
+      setPickCharTab('local')
+      setCreateCharTrimOpen(true)
+    } catch (err: any) {
+      console.error(err)
+      setPickCharError(err?.message || '无法使用该视频，请稍后再试')
+    } finally {
+      setPickCharLoading(false)
     }
   }
 
@@ -282,6 +393,7 @@ export default function AssetPanel(): JSX.Element | null {
       alert('请选择视频文件')
       return
     }
+    setPickCharVideoOpen(false)
     const url = URL.createObjectURL(file)
     try {
       const duration = await new Promise<number>((resolve, reject) => {
@@ -782,15 +894,6 @@ export default function AssetPanel(): JSX.Element | null {
                                   <IconPlayerPlay size={16} />
                                 </ActionIcon>
                               </Tooltip>
-                              <Tooltip label="添加到画布" withArrow>
-                                <ActionIcon
-                                  size="sm"
-                                  variant="light"
-                                  onClick={() => addDraftToCanvas(d, false)}
-                                >
-                                  <IconPlus size={16} />
-                                </ActionIcon>
-                              </Tooltip>
                               <Tooltip label="发布为公开视频" withArrow>
                                 <ActionIcon
                                   size="sm"
@@ -980,27 +1083,6 @@ export default function AssetPanel(): JSX.Element | null {
                                   }}
                                 >
                                   <IconPlayerPlay size={16} />
-                                </ActionIcon>
-                              </Tooltip>
-                              <Tooltip label="添加到画布" withArrow>
-                                <ActionIcon
-                                  size="sm"
-                                  variant="light"
-                                  onClick={() => {
-                                    if (!video.videoUrl) return
-                                    addNode('taskNode', video.title || '已发布视频', {
-                                      kind: 'video',
-                                      source: 'sora',
-                                      videoUrl: video.videoUrl,
-                                      thumbnailUrl: video.thumbnailUrl,
-                                      prompt: video.prompt || '',
-                                      videoPostId: (video as any)?.id || (video as any)?.postId || null,
-                                      remixTargetId: (video as any)?.id || (video as any)?.postId || null,
-                                    })
-                                    setActivePanel(null)
-                                  }}
-                                >
-                                  <IconPlus size={16} />
                                 </ActionIcon>
                               </Tooltip>
                               <Tooltip label="Remix 到视频节点" withArrow>
@@ -1335,6 +1417,150 @@ export default function AssetPanel(): JSX.Element | null {
                   </Button>
                 </Group>
               </Stack>
+            </Modal>
+            <Modal
+              opened={pickCharVideoOpen}
+              onClose={() => {
+                setPickCharVideoOpen(false)
+                setPickCharError(null)
+                setPickCharSelected(null)
+                setPickCharTab('local')
+              }}
+              size="lg"
+              title="选择角色来源视频"
+              withinPortal
+              zIndex={8006}
+            >
+              <Tabs
+                value={pickCharTab}
+                onChange={(v) => {
+                  const next = (v as any) || 'local'
+                  setPickCharTab(next)
+                  if (next === 'drafts') ensureDraftsForPick()
+                  if (next === 'published') ensurePublishedForPick()
+                }}
+              >
+                <Tabs.List>
+                  <Tabs.Tab value="local">本地上传</Tabs.Tab>
+                  <Tabs.Tab value="drafts">草稿视频</Tabs.Tab>
+                  <Tabs.Tab value="published">已发布视频</Tabs.Tab>
+                </Tabs.List>
+                <Tabs.Panel value="local" mt="sm">
+                  <Stack gap="xs">
+                    <Text size="sm" c="dimmed">上传本地视频创建角色（≤15秒）</Text>
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        onClick={() => {
+                          if (createCharInputRef.current) {
+                            createCharInputRef.current.value = ''
+                            createCharInputRef.current.click()
+                          }
+                        }}
+                      >
+                        选择视频
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Tabs.Panel>
+                <Tabs.Panel value="drafts" mt="sm">
+                  {pickCharLoading && (
+                    <Group gap="xs">
+                      <Loader size="xs" />
+                      <Text size="xs" c="dimmed">正在加载草稿…</Text>
+                    </Group>
+                  )}
+                  {!pickCharLoading && drafts.length === 0 && (
+                    <Text size="xs" c="dimmed">暂无草稿视频</Text>
+                  )}
+                  <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: 4 }}>
+                    <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="xs" mt="xs">
+                      {drafts.map((d, idx) => (
+                        <Card
+                          key={d.id ?? idx}
+                          withBorder
+                          radius="md"
+                          p="xs"
+                          style={{ display: 'flex', flexDirection: 'column', gap: 6,height:'fit-content' }}
+                        >
+                          {d.thumbnailUrl && (
+                            <Image src={d.thumbnailUrl} alt={d.title || d.id} height={96} radius="sm" fit="cover" />
+                          )}
+                          <Text size="xs" fw={500} lineClamp={1}>{d.title || `草稿 ${idx + 1}`}</Text>
+                          <Text size="xs" c="dimmed" lineClamp={2}>
+                            {d.prompt || '—'}
+                          </Text>
+                          <Group justify="flex-end" gap={6} mt="auto">
+                            <Button
+                              size="xs"
+                              variant={pickCharSelected?.url === getDraftVideoUrl(d) ? 'filled' : 'light'}
+                              loading={pickCharLoading}
+                              onClick={() => {
+                                const url = getDraftVideoUrl(d)
+                                setPickCharSelected(url ? { url, title: d.title || d.id || '草稿视频' } : null)
+                                prepareCharacterFromUrl(url, d.title || d.id || 'draft')
+                              }}
+                            >
+                              使用
+                            </Button>
+                          </Group>
+                        </Card>
+                      ))}
+                    </SimpleGrid>
+                  </div>
+                </Tabs.Panel>
+                <Tabs.Panel value="published" mt="sm">
+                  {pickCharLoading && (
+                    <Group gap="xs">
+                      <Loader size="xs" />
+                      <Text size="xs" c="dimmed">正在加载已发布视频…</Text>
+                    </Group>
+                  )}
+                  {!pickCharLoading && publishedVideos.length === 0 && (
+                    <Text size="xs" c="dimmed">暂无已发布视频</Text>
+                  )}
+                  <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: 4 }}>
+                    <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="xs" mt="xs">
+                      {publishedVideos.map((pv, idx) => (
+                        <Card
+                          key={pv.id ?? idx}
+                          withBorder
+                          radius="md"
+                          p="xs"
+                          style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                        >
+                          {pv.thumbnailUrl && (
+                            <Image src={pv.thumbnailUrl} alt={pv.title || pv.id} height={96} radius="sm" fit="cover" />
+                          )}
+                          <Text size="xs" fw={500} lineClamp={1}>{pv.title || `作品 ${idx + 1}`}</Text>
+                          <Text size="xs" c="dimmed" lineClamp={2}>
+                            {pv.prompt || '—'}
+                          </Text>
+                          <Group justify="flex-end" gap={6} mt="auto">
+                            <Button
+                              size="xs"
+                              variant={pickCharSelected?.url === getPublishedVideoUrl(pv) ? 'filled' : 'light'}
+                              loading={pickCharLoading}
+                              onClick={() => {
+                                const url = getPublishedVideoUrl(pv)
+                                setPickCharSelected(url ? { url, title: pv.title || pv.id || '已发布视频' } : null)
+                                prepareCharacterFromUrl(url, pv.title || pv.id || 'published')
+                              }}
+                            >
+                              使用
+                            </Button>
+                          </Group>
+                        </Card>
+                      ))}
+                    </SimpleGrid>
+                  </div>
+                </Tabs.Panel>
+              </Tabs>
+              {pickCharError && (
+                <Text size="xs" c="red" mt="sm">
+                  {pickCharError}
+                </Text>
+              )}
             </Modal>
             <Modal
               opened={createCharFinalizeOpen}
