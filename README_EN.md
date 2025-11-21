@@ -38,6 +38,14 @@ Through visual workflows, we not only lower the barrier to AI video creation but
 
 TapCanvas's visual canvas interface demonstrates powerful AI creation workflow capabilities: starting from text prompts, generating images and videos through intelligent connections, achieving the complete transformation from creative ideas to finished works.
 
+## 📅 Changelog
+
+- **2025-11-21**: Added a new set of feature screenshots covering assets/drafts/published works and role creation, located at `assets/2025-11-21-*.jpg`.
+  - Assets & drafts: ![2025-11-21-drafts](assets/2025-11-21-drafts.jpg)
+  - Role list: ![2025-11-21-role](assets/2025-11-21-role.jpg)
+  - Role creation: ![2025-11-21-role-create](assets/2025-11-21-role-create.jpg)
+  - AI overview: ![2025-11-21-ai](assets/2025-11-21-ai.jpg)
+
 ## ⚙️ Configure Models Before Use
 
 **Important: Before using TapCanvas, you must configure AI models first!**
@@ -820,4 +828,3 @@ Welcome to join our user communication group to share experiences, exchange skil
 If you have any questions, suggestions, or cooperation intentions, welcome to directly contact the author:
 
 ![Contact Author](assets/author.jpg)
-
