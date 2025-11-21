@@ -74,9 +74,16 @@ export class AICanvasTools {
         }
       }
 
+      const normalizedKind = (() => {
+        const rawKind = config?.kind
+        if (rawKind === 'video') return NODE_KINDS.VIDEO?.replace('video', 'composeVideo') || 'composeVideo'
+        if (rawKind === undefined) return NODE_KINDS.TEXT
+        return rawKind
+      })()
+
       // 添加节点到画布
       store.addNode(type, label || `新建${type}`, {
-        kind: config?.kind || NODE_KINDS.TEXT,
+        kind: normalizedKind,
         ...config
       })
 

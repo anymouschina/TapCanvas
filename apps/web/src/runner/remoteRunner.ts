@@ -199,7 +199,7 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
 
 function resolveTaskKind(kind: string): TaskKind {
   if (kind === 'image') return 'text_to_image'
-  if (kind === 'composeVideo') return 'text_to_video'
+  if (kind === 'composeVideo' || kind === 'video') return 'text_to_video'
   return 'prompt_refine'
 }
 
@@ -209,7 +209,7 @@ function buildPromptFromState(
   state: any,
   id: string,
 ): string {
-  if (kind === 'image' || kind === 'composeVideo') {
+  if (kind === 'image' || kind === 'composeVideo' || kind === 'video') {
     const edges = (state.edges || []) as any[]
     const inbound = edges.filter((e) => e.target === id)
     let upstreamPrompt = ''
@@ -236,7 +236,7 @@ function buildPromptFromState(
 
 function computeSampleMeta(kind: string, data: any) {
   const isImageTask = kind === 'image'
-  const isVideoTask = kind === 'composeVideo'
+  const isVideoTask = kind === 'composeVideo' || kind === 'video'
   const isTextTask = kind === 'textToImage'
   const rawSampleCount = typeof data.sampleCount === 'number' ? data.sampleCount : 1
   const supportsSamples = isImageTask || isVideoTask || isTextTask

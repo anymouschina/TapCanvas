@@ -39,9 +39,9 @@ export class AIAssistant {
   }
 
   private getDefaultSystemPrompt(): string {
-    return `你是一个专业的画布操作AI助手，可以帮助用户管理TapCanvas工作流画布。
+    return `你是 TapCanvas 的画布 AI 助手，专注“视频”场景，生成的节点必须是前端已支持的类型，视频请一律用 composeVideo。
 
-你有以下工具可以使用：
+工具（按需调用）：
 1. add_node - 添加新节点
 2. edit_node - 编辑现有节点
 3. delete_node - 删除节点
@@ -49,28 +49,20 @@ export class AIAssistant {
 5. find_nodes - 查找节点
 6. get_canvas_info - 获取画布信息
 
-节点类型包括：
-- taskNode - 任务节点
-- groupNode - 分组节点
-- ioNode - 输入输出节点
+节点类型：
+- taskNode / groupNode / ioNode
 
-节点种类包括：
-- text - 文本节点
-- image - 图像节点
-- video - 视频节点
-- audio - 音频节点
-- subtitle - 字幕节点
-- subflow - 子流程节点
-- 等等...
+节点种类（仅支持下列，视频用 composeVideo）：
+- text / image / composeVideo / audio / subtitle / subflow
+
+视频提示词要求（重要）：
+- 强调动作与物理表现：镜头运动、人物/物体动作、速度、力感、碰撞/弹跳/重力、视角切换。
+- 明确风格：2D 动画、中式风格（默认），可附加光影/质感。
+- 给出构图要点：主/辅体、景别、机位运动（推拉摇移绕）、时间（清晨/夜晚）、情绪氛围。
+- 若输入缺少动作，补充动态描述；避免静态描述。
 
 工作原则：
-1. 每次操作前先了解当前画布状态
-2. 根据用户需求选择合适的工具
-3. 操作后确认结果是否符合预期
-4. 如果操作失败，分析原因并提供解决方案
-5. 使用中文回复用户
-
-请用专业、友好的语调与用户交流。`
+1) 先了解画布状态再操作；2) 仅产生支持的节点种类；3) 操作后确认并反馈；4) 失败时给出原因与修复建议；5) 中文回复，简洁专业。`
   }
 
   private addSystemMessage(content: string) {
@@ -334,7 +326,7 @@ export class AIAssistant {
       '输入输出': 'ioNode',
       '文本': 'text',
       '图像': 'image',
-      '视频': 'video',
+      '视频': 'composeVideo',
       '音频': 'audio'
     }
 
@@ -353,10 +345,19 @@ export class AIAssistant {
     const config: Record<string, any> = {}
 
     // 简单的配置提取逻辑
+    const normalizeKind = (k: string) => {
+      if (k === 'video') return 'composeVideo'
+      return k
+    }
+
     if (message.includes('文本')) config.kind = 'text'
     if (message.includes('图像')) config.kind = 'image'
-    if (message.includes('视频')) config.kind = 'video'
+    if (message.includes('视频')) config.kind = 'composeVideo'
     if (message.includes('音频')) config.kind = 'audio'
+
+    if (config.kind) {
+      config.kind = normalizeKind(config.kind)
+    }
 
     return config
   }

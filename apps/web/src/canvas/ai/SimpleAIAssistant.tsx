@@ -71,7 +71,7 @@ const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string 
   { keyword: '文本', type: 'text', label: '文本节点' },
   { keyword: '文生图', type: 'image', label: '文生图节点' },
   { keyword: '图像', type: 'image', label: '图像节点' },
-  { keyword: '视频', type: 'video', label: '视频节点' },
+  { keyword: '视频', type: 'composeVideo', label: '视频节点' },
   { keyword: '音频', type: 'audio', label: '音频节点' },
   { keyword: '字幕', type: 'subtitle', label: '字幕节点' }
 ]
@@ -194,8 +194,7 @@ function buildWorkflowActions(text: string): AssistantAction[] {
 
 function buildStoryboardActions(text: string): AssistantAction[] {
   const mentionsStoryboard = text.includes('分镜') || text.includes('镜头') || text.includes('片段') || text.includes('场景')
-  const mentionsImage = text.includes('文生图') || text.includes('图像') || text.includes('图片')
-  if (!mentionsStoryboard || !mentionsImage) {
+  if (!mentionsStoryboard) {
     return []
   }
 
@@ -208,13 +207,13 @@ function buildStoryboardActions(text: string): AssistantAction[] {
     actions.push({
       type: 'createNode',
       storeResultAs: `storyboard_${i}`,
-      reasoning: `创建第${i}个分镜图像节点`,
+      reasoning: `创建第${i}个分镜视频节点`,
       params: {
-        type: 'image',
+        type: 'composeVideo',
         label,
         config: {
-          kind: 'image',
-          prompt: `${text} - 分镜${i}`,
+          kind: 'composeVideo',
+          prompt: `${text} - 分镜${i}，2D 动画，中式风格`,
           storyboardIndex: i
         }
       }
@@ -228,14 +227,18 @@ function buildSingleNodeAction(text: string): AssistantAction[] {
   const mapping = FALLBACK_NODE_TYPES.find(item => text.includes(item.keyword)) || FALLBACK_NODE_TYPES[0]
   const labelMatch = text.match(/"([^"]+)"/) || text.match(/“([^”]+)”/)
   const label = labelMatch ? labelMatch[1] : text.replace(/.*(创建|添加|新建)/, '').replace('节点', '').trim() || mapping.label
+  const type = mapping.type === 'video' ? 'composeVideo' : mapping.type
 
   return [{
     type: 'createNode',
     storeResultAs: 'single_node',
     params: {
-      type: mapping.type,
+      type,
       label: label || mapping.label,
-      config: mapping.type === 'image' ? { kind: 'image', prompt: text } : { prompt: text }
+      config: {
+        kind: type === 'composeVideo' ? 'composeVideo' : mapping.type,
+        prompt: type === 'composeVideo' ? `${text}，2D 动画，中式风格` : text
+      }
     },
     reasoning: '根据自然语言推断创建节点'
   }]

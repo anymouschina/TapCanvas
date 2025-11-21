@@ -81,6 +81,14 @@ function cloneGraph(nodes: Node[], edges: Edge[]) {
   return JSON.parse(JSON.stringify({ nodes, edges })) as { nodes: Node[]; edges: Edge[] }
 }
 
+function upgradeVideoKind(node: Node): Node {
+  const data: any = node.data || {}
+  if (data.kind === 'video') {
+    return { ...node, data: { ...data, kind: 'composeVideo' } }
+  }
+  return node
+}
+
 function getRemixTargetIdFromNode(node?: Node) {
   const data = node?.data as any
   if (!data) return null
@@ -178,10 +186,11 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (!data) return
     // support optional groups in payload
     const anyData = data as any
+    const upgradedNodes = (data.nodes || []).map(upgradeVideoKind)
     set((s) => ({
-      nodes: data.nodes,
+      nodes: upgradedNodes,
       edges: data.edges,
-      nextId: data.nodes.length + 1,
+      nextId: upgradedNodes.length + 1,
       groups: Array.isArray(anyData.groups) ? anyData.groups : [],
       nextGroupId: Array.isArray(anyData.groups) ? anyData.groups.length + 1 : 1,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
@@ -277,7 +286,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const selected = s.nodes.find((n) => n.selected)
     if (!selected) return
     const kind = (selected.data as any)?.kind as string | undefined
-    if (kind === 'textToImage' || kind === 'composeVideo' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image') {
+    if (kind === 'textToImage' || kind === 'composeVideo' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image') {
       await runNodeRemote(selected.id, get, set)
     } else {
       await runNodeMock(selected.id, get, set)
@@ -399,7 +408,8 @@ export const useRFStore = create<RFState>((set, get) => ({
     const newNodes: Node[] = s.clipboard.nodes.map((n) => {
       const newId = genNodeId()
       idMap.set(n.id, newId)
-      return { ...n, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } }
+      const upgraded = upgradeVideoKind(n)
+      return { ...upgraded, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } }
     })
     const newEdges: Edge[] = s.clipboard.edges.map((e) => ({
       ...e,
@@ -429,15 +439,16 @@ export const useRFStore = create<RFState>((set, get) => ({
     const newNodes: Node[] = workflowData.nodes.map((n) => {
       const newId = genNodeId()
       idMap.set(n.id, newId)
+      const upgraded = upgradeVideoKind(n)
       return {
-        ...n,
+        ...upgraded,
         id: newId,
         selected: false,
         dragging: false,
         position: { x: n.position.x + shift.x, y: n.position.y + shift.y },
         // 清理状态相关的数据
         data: {
-          ...n.data,
+          ...upgraded.data,
           status: undefined,
           progress: undefined,
           logs: undefined,
