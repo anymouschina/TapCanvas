@@ -29,7 +29,7 @@ import {
   type ModelProviderDto,
   type ModelTokenDto,
 } from '../api/server'
-import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload, IconUserPlus } from '@tabler/icons-react'
 import { VideoTrimModal } from './VideoTrimModal'
 
 function PlaceholderImage({ label }: { label: string }) {
@@ -881,7 +881,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 </Text>
                               )}
                             </div>
-                            <Group justify="flex-end" gap={4} mt={4}>
+                            <Group justify="flex-end" gap={4} mt={4} wrap="nowrap">
                               <Tooltip label="预览草稿" withArrow>
                                 <ActionIcon
                                   size="sm"
@@ -892,6 +892,24 @@ export default function AssetPanel(): JSX.Element | null {
                                   }}
                                 >
                                   <IconPlayerPlay size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="用此视频创建角色" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="light"
+                                  disabled={!selectedTokenId || pickCharLoading}
+                                  onClick={() => {
+                                    const url = getDraftVideoUrl(d)
+                                    if (!url) {
+                                      alert('未找到可用的视频链接')
+                                      return
+                                    }
+                                    setPickCharError(null)
+                                    prepareCharacterFromUrl(url, d.title || d.id || 'draft')
+                                  }}
+                                >
+                                  <IconUserPlus size={16} />
                                 </ActionIcon>
                               </Tooltip>
                               <Tooltip label="发布为公开视频" withArrow>
@@ -1059,7 +1077,7 @@ export default function AssetPanel(): JSX.Element | null {
                                 </Text>
                               )}
                             </Group>
-                            <Group justify="flex-end" gap={4} mt={4}>
+                            <Group justify="flex-end" gap={4} mt={4} wrap="nowrap">
                               {video.permalink && (
                                 <Tooltip label="在Sora中查看" withArrow>
                                   <ActionIcon
@@ -1083,6 +1101,24 @@ export default function AssetPanel(): JSX.Element | null {
                                   }}
                                 >
                                   <IconPlayerPlay size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="用此视频创建角色" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="light"
+                                  disabled={!selectedTokenId || pickCharLoading}
+                                  onClick={() => {
+                                    const url = getPublishedVideoUrl(video)
+                                    if (!url) {
+                                      alert('未找到可用的视频链接')
+                                      return
+                                    }
+                                    setPickCharError(null)
+                                    prepareCharacterFromUrl(url, video.title || video.id || 'published')
+                                  }}
+                                >
+                                  <IconUserPlus size={16} />
                                 </ActionIcon>
                               </Tooltip>
                               <Tooltip label="Remix 到视频节点" withArrow>
@@ -1426,10 +1462,15 @@ export default function AssetPanel(): JSX.Element | null {
                 setPickCharSelected(null)
                 setPickCharTab('local')
               }}
-              size="lg"
+              size="xl"
               title="选择角色来源视频"
               withinPortal
-              zIndex={8006}
+              zIndex={12000}
+              centered
+              styles={{
+                content: { paddingBottom: 16 },
+                body: { maxHeight: '80vh', overflow: 'hidden' },
+              }}
             >
               <Tabs
                 value={pickCharTab}
@@ -1766,6 +1807,7 @@ export default function AssetPanel(): JSX.Element | null {
               progressPct={createCharProgress}
               onClose={handleTrimClose}
               onConfirm={handleTrimConfirm}
+              centered
             />
           </div>
         )}
