@@ -9,6 +9,9 @@ export interface ModelOption {
 }
 
 export const TEXT_MODELS: ModelOption[] = [
+  { value: 'glm-4.6', label: 'GLM-4.6 (Claude兼容)' },
+  { value: 'glm-4.5', label: 'GLM-4.5' },
+  { value: 'glm-4.5-air', label: 'GLM-4.5-Air' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
@@ -60,6 +63,9 @@ export function getDefaultModel(kind?: NodeKind): string {
 export type AIProvider = 'openai' | 'anthropic' | 'google'
 
 export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
+  'glm-4.6': 'anthropic',
+  'glm-4.5': 'anthropic',
+  'glm-4.5-air': 'anthropic',
   'gemini-2.5-flash': 'google',
   'gemini-2.5-pro': 'google',
   'models/gemini-3-pro-preview': 'google',
