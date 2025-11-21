@@ -56,12 +56,12 @@ export class AiService {
           attempt: attempt + 1
         })
 
-        // 对非官方 Anthropic 代理（如 GLM），直接走简化调用，避免 ai-sdk 工具/模式不兼容
+        // 对非官方 Anthropic 代理（如 GLM），直接走简化调用，避免 ai-sdk 解析错误
         if (this.isAnthropic(provider) && this.isCustomAnthropicBase(baseUrl)) {
           const res = await this.callAnthropicRaw({
             model: payload.model,
             apiKey,
-            baseUrl: baseUrl || undefined,
+            baseUrl,
             systemPrompt,
             messages: conversation,
             temperature: payload.temperature ?? 0.2,
@@ -73,6 +73,7 @@ export class AiService {
               actions: res.actions || [],
             }
           }
+          throw new BadRequestException('AI助手不可用：Anthropic 代理返回无效响应')
         }
 
         const result = await generateObject({
@@ -101,10 +102,11 @@ export class AiService {
         })
       }
 
+      const fallbackActions = this.buildFallbackActions(payload.messages)
       return {
-        reply: lastResult?.reply || '我未能生成可执行的画布动作，请更具体地描述工作流需求。',
+        reply: lastResult?.reply || '已自动为你生成基础画布操作。',
         plan: lastResult?.plan || [],
-        actions: lastResult?.actions || []
+        actions: (lastResult?.actions && lastResult.actions.length > 0) ? lastResult.actions : fallbackActions
       }
     } catch (error) {
       this.logger.error('AI chat失败', error as any)
@@ -120,7 +122,8 @@ export class AiService {
             temperature: payload.temperature ?? 0.2,
           })
           if (fallback) {
-            return { reply: fallback.reply, plan: fallback.plan || [], actions: fallback.actions || [] }
+            const ensured = (fallback.actions && fallback.actions.length > 0) ? fallback.actions : this.buildFallbackActions(payload.messages)
+            return { reply: fallback.reply, plan: fallback.plan || [], actions: ensured }
           }
         } catch (e) {
           this.logger.error('Anthropic fallback失败', e as any)
@@ -133,6 +136,53 @@ export class AiService {
 
   private isAnthropic(provider: SupportedProvider) {
     return provider === 'anthropic'
+  }
+
+  private buildFallbackActions(messages: ChatRequestDto['messages']): any[] {
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const content = (lastUser?.content || '').toString().toLowerCase()
+    const wantsImage = /文生图|图片|image|photo|帅哥|照片|图像/.test(content)
+    const wantsVideo = /视频|video/.test(content)
+
+    if (wantsImage || wantsVideo) {
+      const actions: any[] = [
+        {
+          type: 'createNode',
+          storeResultAs: 'fallback_text',
+          reasoning: '创建文本节点以接收用户描述',
+          params: {
+            type: 'text',
+            label: '提示词',
+            config: { kind: 'text', prompt: lastUser?.content || '请输入描述' }
+          }
+        },
+        {
+          type: 'createNode',
+          storeResultAs: wantsVideo ? 'fallback_video' : 'fallback_image',
+          reasoning: wantsVideo ? '创建文生视频节点' : '创建文生图节点',
+          params: {
+            type: wantsVideo ? 'composeVideo' : 'image',
+            label: wantsVideo ? '文生视频' : '文生图',
+            config: { kind: wantsVideo ? 'composeVideo' : 'image', prompt: lastUser?.content || '内容' }
+          }
+        },
+        {
+          type: 'connectNodes',
+          reasoning: '将文本输出连接到生成节点',
+          params: {
+            sourceNodeId: '{{ref:fallback_text}}',
+            targetNodeId: `{{ref:${wantsVideo ? 'fallback_video' : 'fallback_image'}}}`
+          }
+        }
+      ]
+      return actions
+    }
+
+    return [{
+      type: 'getNodes',
+      reasoning: '无动作输出时，默认查询画布状态',
+      params: {}
+    }]
   }
 
   private isCustomAnthropicBase(baseUrl?: string | null) {
@@ -256,10 +306,15 @@ export class AiService {
   }): Promise<{ reply: string; plan?: string[]; actions?: any[] } | null> {
     const url = this.buildAnthropicUrl(params.baseUrl || undefined)
     const system = params.systemPrompt
-    const messages = params.messages.map((m) => ({
-      role: m.role,
-      content: [{ type: 'text', text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
-    }))
+    const messages = params.messages.map((m) => {
+      // Anthropic 代理仅支持 user/assistant，将 system 归并为 user
+      const role = m.role === 'assistant' ? 'assistant' : 'user'
+      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      return {
+        role,
+        content: [{ type: 'text', text }],
+      }
+    })
     const body = {
       model: params.model,
       system,
@@ -292,15 +347,15 @@ export class AiService {
           .filter((c: any) => c?.type === 'text' && typeof c.text === 'string')
           .map((c: any) => c.text)
           .join('\n')
-        const parsed = this.safeParseJson(combined)
+        const parsed = this.extractAssistantPayload(combined) || this.safeParseJson(combined)
         if (parsed) return parsed
         return { reply: combined || '' }
       }
-      const parsed = this.safeParseJson(json)
+      const parsed = this.extractAssistantPayload(json) || this.safeParseJson(json)
       if (parsed) return parsed
       return { reply: typeof json === 'string' ? json : JSON.stringify(json) }
     } catch {
-      const parsed = this.safeParseJson(text)
+      const parsed = this.extractAssistantPayload(text) || this.safeParseJson(text)
       if (parsed) return parsed
       return { reply: text || '' }
     }
@@ -321,6 +376,25 @@ export class AiService {
     } catch {
       return null
     }
+    return null
+  }
+
+  private extractAssistantPayload(input: any): { reply: string; plan?: string[]; actions?: any[] } | null {
+    const text = typeof input === 'string' ? input.trim() : ''
+    if (text) {
+      // 优先查找 ```json fenced block
+      const fence = text.match(/```json\s*([\s\S]*?)\s*```/i)
+      const candidate = fence ? fence[1] : text
+      const parsed = this.safeParseJson(candidate)
+      if (parsed) return parsed
+    }
+
+    // 如果已经是对象，尝试直接解析
+    if (input && typeof input === 'object') {
+      const parsed = this.safeParseJson(input)
+      if (parsed) return parsed
+    }
+
     return null
   }
 
@@ -354,8 +428,9 @@ export class AiService {
   }
 
   private normalizeMessages(messages: ChatRequestDto['messages']): CoreMessage[] {
+    // ai-sdk CoreMessage 不支持 system 角色；将 system 合并为 user，避免下游 provider 校验失败
     return messages.map(msg => ({
-      role: msg.role,
+      role: msg.role === 'assistant' ? 'assistant' : 'user',
       content: msg.content,
     }))
   }

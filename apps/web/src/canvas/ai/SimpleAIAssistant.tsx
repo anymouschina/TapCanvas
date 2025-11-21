@@ -57,10 +57,10 @@ const NODE_TYPE_MAP: Record<string, string> = {
   video: 'composeVideo',
   audio: 'audio',
   subtitle: 'subtitle',
-  text_to_image: 'textToImage',
-  texttoimage: 'textToImage',
+  text_to_image: 'image',
+  texttoimage: 'image',
   text_to_video: 'composeVideo',
-  t2i: 'textToImage',
+  t2i: 'image',
   t2v: 'composeVideo',
   text_to_text: 'text',
   textinput: 'text',
@@ -77,6 +77,10 @@ const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string 
 ]
 
 const REF_PLACEHOLDER = /^\{\{ref:([a-zA-Z0-9_-]+)\}\}$/
+const ENV_API_BASE = (import.meta as any).env?.VITE_API_BASE as string | undefined
+const DEFAULT_DEV_API_BASE = (import.meta as any).env?.DEV ? 'http://localhost:3000' : ''
+const API_BASE = ENV_API_BASE && ENV_API_BASE.length > 0 ? ENV_API_BASE : DEFAULT_DEV_API_BASE
+const AI_ENDPOINT = API_BASE ? `${API_BASE.replace(/\/$/, '')}/ai/chat` : '/api/ai/chat'
 
 function resolvePlaceholders(value: any, refs: Record<string, string>): any {
   if (Array.isArray(value)) {
@@ -343,10 +347,19 @@ function stripJsonBlock(text: string): string {
 function normalizeActions(actions: AssistantAction[]): AssistantAction[] {
   return actions.map(action => {
     if (action.type === 'createNode' && action.params) {
-      const type = normalizeNodeType((action.params as any).type || (action.params as any).nodeType)
-      const normalizedParams = { ...action.params, type }
+      const rawType = (action.params as any).type || (action.params as any).nodeType
+      const type = normalizeNodeType(rawType)
+      const normalizedParams: any = { ...action.params, type }
       if (normalizedParams.config && normalizedParams.config.kind) {
         normalizedParams.config = { ...normalizedParams.config, kind: normalizeNodeType(normalizedParams.config.kind) }
+      }
+      // 将 textToImage 映射为我们已有的 image 节点类型
+      if (type === 'image' && !normalizedParams.label) {
+        normalizedParams.label = '文生图'
+      }
+      // 确保 config 存在且至少有 prompt 字段
+      if (!normalizedParams.config) {
+        normalizedParams.config = {}
       }
       return { ...action, params: normalizedParams }
     }
@@ -396,13 +409,13 @@ async function callModelDirect(params: {
   const { provider, model, apiKey, baseUrl, messages, temperature, systemPrompt } = params
   try {
     const modelClient = buildModelClient(provider, model, apiKey, baseUrl)
-  const result = await generateObject({
-    model: modelClient,
-    system: systemPrompt,
-    messages: messages.map(m => ({ role: m.role, content: m.content })) as any,
-    schema: assistantSchema,
-    temperature,
-  })
+    const result = await generateObject({
+      model: modelClient,
+      system: systemPrompt,
+      messages: messages.map(m => ({ role: m.role, content: m.content })) as any,
+      schema: assistantSchema,
+      temperature,
+    })
     const normalizedActions = normalizeActions(result.object.actions || [])
     return { reply: result.object.reply, plan: result.object.plan || [], actions: normalizedActions }
   } catch (err) {
@@ -573,18 +586,46 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
         throw new Error('未找到可用的 API Key，请在模型面板配置后重试')
       }
 
-      const data = await callModelDirect({
-        provider: vendor as Provider,
-        model,
-        apiKey,
-        baseUrl,
-        messages: payloadMessages,
-        temperature: 0.2,
-        systemPrompt: ASSISTANT_SYSTEM_PROMPT,
-      })
-      data.reply = stripJsonBlock(data.reply)
-      // Log basic info only to help diagnose routing; do not log content
-      console.debug('[SimpleAIAssistant] direct provider=%s model=%s len=%d', vendor, model, payloadMessages.length)
+      let data: { reply: string; plan?: string[]; actions?: AssistantAction[] } | null = null
+
+      // 优先走后端 /ai/chat，失败则前端直连
+      try {
+        const resp = await fetch(AI_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+          },
+          body: JSON.stringify({
+            model,
+            messages: payloadMessages,
+            context: canvasContext,
+            temperature: 0.2,
+            apiKey,
+            baseUrl,
+            provider: vendor,
+          }),
+        })
+        if (!resp.ok) {
+          const text = await resp.text()
+          throw new Error(text || '后端AI接口不可用')
+        }
+        data = await resp.json()
+        console.debug('[SimpleAIAssistant] backend ai/chat provider=%s model=%s len=%d', vendor, model, payloadMessages.length)
+      } catch (e) {
+        console.debug('[SimpleAIAssistant] backend ai/chat failed, fallback direct, err=%s', (e as any)?.message || e)
+        data = await callModelDirect({
+          provider: vendor as Provider,
+          model,
+          apiKey,
+          baseUrl,
+          messages: payloadMessages,
+          temperature: 0.2,
+          systemPrompt: ASSISTANT_SYSTEM_PROMPT,
+        })
+        data.reply = stripJsonBlock(data.reply)
+        console.debug('[SimpleAIAssistant] direct provider=%s model=%s len=%d', vendor, model, payloadMessages.length)
+      }
       if ((!data.actions || data.actions.length === 0) && userMessage) {
         const fallback = inferActionsFromMessage(userMessage)
         data.actions = normalizeActions(fallback)

@@ -164,7 +164,7 @@ export class CanvasService {
     targetHandle?: string
   }): Promise<FunctionResult> {
     try {
-      const { nodes, edges, createEdge } = useRFStore.getState()
+      const { nodes, edges, onConnect } = useRFStore.getState()
 
       // 验证节点存在
       const sourceNode = nodes.find(n => n.id === params.sourceNodeId)
@@ -189,8 +189,8 @@ export class CanvasService {
         }
       }
 
-      // 创建连接
-      createEdge({
+      // 创建连接（复用 React Flow 的 onConnect 逻辑，含去重和动画）
+      onConnect({
         source: params.sourceNodeId,
         target: params.targetNodeId,
         sourceHandle: params.sourceHandle,
