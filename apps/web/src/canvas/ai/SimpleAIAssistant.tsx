@@ -55,6 +55,7 @@ const NODE_TYPE_MAP: Record<string, string> = {
   text: 'text',
   image: 'image',
   video: 'composeVideo',
+  composevideo: 'composeVideo',
   audio: 'audio',
   subtitle: 'subtitle',
   text_to_image: 'image',
@@ -270,13 +271,25 @@ function normalizeActionParams(params?: Record<string, any>) {
     const { payload, ...rest } = params
     return { ...payload, ...rest }
   }
+  if (params.type) {
+    const key = String(params.type).toLowerCase()
+    if (NODE_TYPE_MAP[key]) {
+      params.type = NODE_TYPE_MAP[key]
+    }
+  }
+  if (params.kind) {
+    const key = String(params.kind).toLowerCase()
+    if (NODE_TYPE_MAP[key]) {
+      params.kind = NODE_TYPE_MAP[key]
+    }
+  }
   return params
 }
 
 const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在画布上输出可执行的动作(JSON)。
 
 可用action:
-- createNode: { type(text|image|video|audio|subtitle|composeVideo), label?, config?, position? }
+- createNode: { type(text|image|composeVideo|audio|subtitle), label?, config?, position? }
 - updateNode: { nodeId, label?, config? }
 - deleteNode: { nodeId }
 - connectNodes: { sourceNodeId, targetNodeId }
@@ -287,7 +300,12 @@ const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在
 - formatAll: {} // 全选并自动布局
 - runDag: { concurrency?: number } // 执行工作流
 
-输出格式(JSON):
+约束：
+- 仅使用上述受支持的 type；视频一律用 composeVideo。
+- 只需生成分镜/场景节点，不要创建“合成/汇总/最终输出”节点，不执行 runDag。
+- 视频提示词要强调动作、物理表现、机位/镜头运动、光影与中式2D动画风格。
+
+输出格式(JSON)，仅使用上述受支持的 type，视频请使用 composeVideo：
 {
   "reply": "给用户的简短回复",
   "plan": ["步骤1", "步骤2"],
@@ -350,7 +368,26 @@ function stripJsonBlock(text: string): string {
 }
 
 function normalizeActions(actions: AssistantAction[]): AssistantAction[] {
-  return actions.map(action => {
+  const cleaned = actions
+    // 移除 runDag 等自动执行动作
+    .filter(action => action.type !== 'runDag')
+    // 移除缺少提示词的“合成”类视频节点（防止生成空的合成节点）
+    .filter(action => {
+      if (action.type !== 'createNode') return true
+      const kind = (action.params as any)?.config?.kind
+      const prompt = (action.params as any)?.config?.prompt
+      if (kind === 'composeVideo' && (!prompt || !String(prompt).trim())) {
+        return false
+      }
+      const label = (action.params as any)?.label || ''
+      if (kind === 'composeVideo' && typeof label === 'string' && label.includes('合成')) {
+        // 防止自动生成合成节点，由用户手动合成
+        return false
+      }
+      return true
+    })
+
+  return cleaned.map(action => {
     if (action.type === 'createNode' && action.params) {
       const rawType = (action.params as any).type || (action.params as any).nodeType
       const type = normalizeNodeType(rawType)
@@ -918,12 +955,6 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
             placeholder="用自然语言描述你想要的工作流..."
             value={inputValue}
             onChange={(event) => setInputValue(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                handleSendMessage()
-              }
-            }}
             rightSection={
               <ActionIcon color="violet" variant="gradient" gradient={{ from: 'violet', to: 'indigo' }} onClick={handleSendMessage} disabled={!inputValue.trim() || isLoading}>
                 <IconSend size={16} />
