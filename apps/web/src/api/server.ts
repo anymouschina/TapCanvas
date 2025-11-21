@@ -1,5 +1,6 @@
 import type { Edge, Node } from 'reactflow'
 import { getAuthToken } from '../auth/store'
+// self-import guard: only used for type re-export in the same module
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
 function withAuth(init?: RequestInit): RequestInit {
@@ -228,6 +229,20 @@ export async function listSoraDrafts(tokenId?: string | null, cursor?: string | 
   const r = await fetch(url, withAuth())
   if (!r.ok) throw new Error(`list drafts failed: ${r.status}`)
   return r.json()
+}
+
+export async function publishSoraDraft(tokenId: string, draftId: string, postText?: string, generationId?: string): Promise<void> {
+  // 保留兼容，内部将 draftId 作为 taskId 透传到 video/publish
+  return publishSoraVideo(tokenId, draftId, postText, generationId)
+}
+
+export async function publishSoraVideo(tokenId: string, taskId: string, postText?: string, generationId?: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/sora/video/publish`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokenId, taskId, postText, generationId: generationId || taskId }),
+  }))
+  if (!r.ok) throw new Error(`publish video failed: ${r.status}`)
 }
 
 export async function deleteSoraDraft(tokenId: string, draftId: string): Promise<void> {

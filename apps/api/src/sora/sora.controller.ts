@@ -131,11 +131,12 @@ export class SoraController {
       tokenId?: string
       taskId: string
       postText?: string
+      generationId?: string
     },
     @Req() req: any,
   ) {
-    const { tokenId, taskId, postText } = body
-    return this.service.publishVideo(String(req.user.sub), tokenId, taskId, postText)
+    const { tokenId, taskId, postText, generationId } = body
+    return this.service.publishVideo(String(req.user.sub), tokenId, taskId, postText, generationId)
   }
 
   @Post('profile/upload')

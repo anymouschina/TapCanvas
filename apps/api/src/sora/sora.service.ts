@@ -46,7 +46,7 @@ export class SoraService {
     }
 
     // 优先使用用户配置 / 共享的自定义 sora 域名；若未配置，再退回官方域名
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
 
     const userAgent = token.userAgent || 'TapCanvas/1.0'
@@ -236,7 +236,10 @@ export class SoraService {
       })
     }
 
-    const url = new URL('/backend/project_y/post', baseUrl).toString()
+    const resolvedBaseUrl =
+      baseUrl ||
+      (await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com'))
+    const url = new URL('/backend/project_y/post', resolvedBaseUrl).toString()
     const body = {
       attachments_to_create: [{ generation_id: generationId, kind: 'sora' }],
       post_text: text,
@@ -244,7 +247,7 @@ export class SoraService {
 
     this.logger.log('publishVideoPost: Attempting to publish video', {
       generationId,
-      baseUrl,
+      baseUrl: resolvedBaseUrl,
       textLength: text.length,
     })
 
@@ -256,8 +259,8 @@ export class SoraService {
           Accept: 'application/json',
           'Content-Type': 'application/json',
           // 添加必要的headers以模拟浏览器行为
-          'origin': baseUrl,
-          'referer': `${baseUrl}/`,
+          'origin': resolvedBaseUrl,
+          'referer': `${resolvedBaseUrl}/`,
           'sec-fetch-dest': 'empty',
           'sec-fetch-mode': 'cors',
           'sec-fetch-site': 'same-origin',
@@ -333,7 +336,8 @@ export class SoraService {
     userId: string,
     tokenId: string | undefined,
     taskId: string,
-    postText?: string
+    postText?: string,
+    generationId?: string,
   ): Promise<{ success: boolean; postId?: string; message?: string }> {
     try {
       // 获取Token
@@ -342,25 +346,14 @@ export class SoraService {
         throw new Error('token not found or not a Sora token')
       }
 
-      // 获取草稿信息
-      const draft = await this.getDraftByTaskId(userId, tokenId, taskId)
-      if (!draft || !draft.id) {
-        throw new Error('draft not found for the given taskId')
-      }
+      const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
+      const finalGenerationId = generationId || taskId
 
-      const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
-      const generationId = (draft as any).generation_id || draft.id
+      if (!finalGenerationId) throw new Error('No generation_id provided')
 
-      if (!generationId) {
-        throw new Error('No generation_id found in draft')
-      }
+      let text = postText || ''
+      if (!text) throw new Error('No post text available')
 
-      let text = postText || (draft as any).prompt || (draft as any).creation_config?.prompt || ''
-      if (!text) {
-        throw new Error('No post text available')
-      }
-
-      // 使用智能截断确保不超过2000字符限制
       const originalLength = text.length
       text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
 
@@ -374,15 +367,12 @@ export class SoraService {
       }
 
       const url = new URL('/backend/project_y/post', baseUrl).toString()
-      const body = {
-        attachments_to_create: [{ generation_id: generationId, kind: 'sora' }],
-        post_text: text,
-      }
+      const body = { attachments_to_create: [{ generation_id: finalGenerationId, kind: 'sora' }], post_text: text }
 
       this.logger.log('publishVideo: Manual publish attempt', {
         userId,
         taskId,
-        generationId,
+        generationId: finalGenerationId,
         baseUrl,
         textLength: text.length,
       })
@@ -412,12 +402,12 @@ export class SoraService {
 
         if (postId) {
           // 记录发布历史
-          await this.recordPublishedVideo(userId, generationId, postId, baseUrl, token.id)
+          await this.recordPublishedVideo(userId, finalGenerationId, postId, baseUrl, token.id)
 
           this.logger.log('publishVideo: Manual publish success', {
             userId,
             taskId,
-            generationId,
+            generationId: finalGenerationId,
             postId,
             baseUrl,
           })
@@ -500,7 +490,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
     try {
@@ -678,7 +668,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/profile/drafts/${draftId}`, baseUrl).toString()
 
     const userAgent = token.userAgent || 'TapCanvas/1.0'
@@ -718,7 +708,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/characters/${characterId}`, baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -758,7 +748,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/characters/upload', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
     const [start, end] = range
@@ -1152,7 +1142,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
     // 若指定了 remix 目标，则优先走 remix 模式（不再尝试图生）
@@ -1591,7 +1581,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/cameos/in_progress/${cameoId}`, baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -1643,7 +1633,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/characters/finalize', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -1721,7 +1711,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(
       `/backend/project_y/cameos/by_id/${cameoId}/update_v2`,
       baseUrl,
@@ -1772,7 +1762,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile/username/check', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -1826,7 +1816,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile/search_mentions', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2002,7 +1992,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/nf/pending', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2068,7 +2058,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/profile/drafts/v2/${generationId}`, baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2113,7 +2103,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL(`/backend/project_y/post/${postId}`, baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2158,7 +2148,7 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+    const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
     const url = new URL('/backend/project_y/profile_feed/me', baseUrl).toString()
     const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2473,7 +2463,7 @@ export class SoraService {
     // 逐个Token搜索草稿
     for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
       const token = tokens[tokenIndex]
-      const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+      const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
       const url = new URL('/backend/project_y/profile/drafts', baseUrl).toString()
       const userAgent = token.userAgent || 'TapCanvas/1.0'
 
@@ -2727,7 +2717,7 @@ export class SoraService {
         throw new Error('token not found or not a Sora token')
       }
 
-      const baseUrl = await this.resolveBaseUrl(token, 'sora', 'https://sora.chatgpt.com')
+      const baseUrl = await this.resolveBaseUrl(token, ['sora', 'video', 'videos'], 'https://sora.chatgpt.com')
       const url = new URL(`/backend/project_y/characters/${characterId}/update`, baseUrl).toString()
       const userAgent = token.userAgent || 'TapCanvas/1.0'
       const res = await axios.post(
@@ -2885,26 +2875,37 @@ export class SoraService {
       provider: {
         id: string
         vendor: string
+        baseUrl?: string | null
         endpoints: { key: string; baseUrl: string | null | undefined }[]
       }
     },
-    key: string,
+    key: string | string[],
     fallback: string,
   ): Promise<string> {
+    const keys = Array.isArray(key) ? key : [key]
+
     // 1. 优先使用当前 provider 上配置的域名
-    const own = token.provider.endpoints.find((e) => e.key === key && e.baseUrl)
-    if (own?.baseUrl) return own.baseUrl
+    for (const k of keys) {
+      const own = token.provider.endpoints.find((e) => e.key === k && e.baseUrl)
+      if (own?.baseUrl) return own.baseUrl
+    }
+
+    // 1.5 如果 provider 自身配置了基础域名，也优先使用
+    if (token.provider.baseUrl) return token.provider.baseUrl
 
     // 2. 退回到任意共享的同 key 域名（通常由管理员配置）
-    const shared = await this.prisma.modelEndpoint.findFirst({
+    const sharedEndpoints = await this.prisma.modelEndpoint.findMany({
       where: {
-        key,
+        key: { in: keys },
         shared: true,
         provider: { vendor: 'sora' },
       },
       orderBy: { createdAt: 'asc' },
     })
-    if (shared?.baseUrl) return shared.baseUrl
+    for (const k of keys) {
+      const shared = sharedEndpoints.find((e) => e.key === k && e.baseUrl)
+      if (shared?.baseUrl) return shared.baseUrl
+    }
 
     // 3. 最后使用内置默认
     return fallback

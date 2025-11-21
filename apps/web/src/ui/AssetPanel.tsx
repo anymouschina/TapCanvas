@@ -12,6 +12,7 @@ import {
   listModelProviders,
   listModelTokens,
   listSoraDrafts,
+  publishSoraDraft,
   deleteSoraDraft,
   markDraftPromptUsed,
   listSoraPublishedVideos,
@@ -28,7 +29,7 @@ import {
   type ModelProviderDto,
   type ModelTokenDto,
 } from '../api/server'
-import { IconPlayerPlay, IconPlus, IconTrash, IconPencil } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload } from '@tabler/icons-react'
 import { VideoTrimModal } from './VideoTrimModal'
 
 function PlaceholderImage({ label }: { label: string }) {
@@ -87,6 +88,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharCoverUploading, setCreateCharCoverUploading] = React.useState(false)
   const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
   const [createCharProgress, setCreateCharProgress] = React.useState<number | null>(null)
+  const [publishingId, setPublishingId] = React.useState<string | null>(null)
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
     const usedDuration = Math.min(createCharDuration, 2)
@@ -241,15 +243,21 @@ export default function AssetPanel(): JSX.Element | null {
     }
   }
 
-  const addDraftToCanvas = (d: any) => {
-    if (!d?.videoUrl) return
-    addNode('taskNode', d.title || $('Sora 草稿'), {
-      kind: 'video',
+  const addDraftToCanvas = (d: any, remix = false) => {
+    if (!d) return
+    const videoUrl = d.videoUrl
+    const remixTarget = d.videoDraftId || d.videoPostId || d.id || (d.raw as any)?.generation_id || (d.raw as any)?.id || null
+    const baseData: any = {
+      kind: remix ? 'composeVideo' : 'video',
       source: 'sora',
-      videoUrl: d.videoUrl,
+      videoUrl: videoUrl || undefined,
       thumbnailUrl: d.thumbnailUrl,
       prompt: d.prompt || '',
-    })
+      videoDraftId: d.id,
+      videoPostId: d.postId || null,
+      remixTargetId: remix ? remixTarget : undefined,
+    }
+    addNode('taskNode', d.title || $('Sora 草稿'), baseData)
     if (d.prompt) {
       markDraftPromptUsed(d.prompt, 'sora').catch(() => {})
     }
@@ -778,9 +786,49 @@ export default function AssetPanel(): JSX.Element | null {
                                 <ActionIcon
                                   size="sm"
                                   variant="light"
-                                  onClick={() => addDraftToCanvas(d)}
+                                  onClick={() => addDraftToCanvas(d, false)}
                                 >
                                   <IconPlus size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="发布为公开视频" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="default"
+                                  loading={publishingId === d.id}
+                                  disabled={!selectedTokenId || publishingId === d.id}
+                                  onClick={async () => {
+                                    const ids = getDraftTaskId(d)
+                                    const taskId = ids.generationId || ids.taskId
+                                    if (!selectedTokenId || !taskId) return
+                                    setPublishingId(d.id)
+                                    try {
+                                      const postText =
+                                        d.prompt ||
+                                        (d.raw as any)?.prompt ||
+                                        (d.raw as any)?.creation_config?.prompt ||
+                                        ''
+                                      await publishSoraDraft(selectedTokenId, taskId, postText || undefined, ids.generationId || undefined)
+                                      setDrafts(prev => prev.filter(x => x.id !== d.id))
+                                      alert('已提交发布，请在「已发布SORA」查看')
+                                    } catch (err: any) {
+                                      console.error(err)
+                                      alert(err?.message || '发布失败，请稍后再试')
+                                    } finally {
+                                      setPublishingId(null)
+                                    }
+                                  }}
+                                >
+                                  <IconUpload size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Remix 到视频节点" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => addDraftToCanvas(d, true)}
+                                >
+                                  <IconRepeat size={16} />
                                 </ActionIcon>
                               </Tooltip>
                               <Tooltip label="删除草稿" withArrow>
@@ -918,7 +966,7 @@ export default function AssetPanel(): JSX.Element | null {
                                       window.open(video.permalink, '_blank')
                                     }}
                                   >
-                                    <IconPlayerPlay size={16} />
+                                    <IconExternalLink size={16} />
                                   </ActionIcon>
                                 </Tooltip>
                               )}
@@ -946,11 +994,33 @@ export default function AssetPanel(): JSX.Element | null {
                                       videoUrl: video.videoUrl,
                                       thumbnailUrl: video.thumbnailUrl,
                                       prompt: video.prompt || '',
+                                      videoPostId: (video as any)?.id || (video as any)?.postId || null,
+                                      remixTargetId: (video as any)?.id || (video as any)?.postId || null,
                                     })
                                     setActivePanel(null)
                                   }}
                                 >
                                   <IconPlus size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Remix 到视频节点" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    addNode('taskNode', video.title || '已发布视频', {
+                                      kind: 'composeVideo',
+                                      source: 'sora',
+                                      prompt: video.prompt || '',
+                                      thumbnailUrl: video.thumbnailUrl,
+                                      videoUrl: video.videoUrl,
+                                      videoPostId: (video as any)?.id || (video as any)?.postId || null,
+                                      remixTargetId: (video as any)?.id || (video as any)?.postId || null,
+                                    })
+                                    setActivePanel(null)
+                                  }}
+                                >
+                                  <IconRepeat size={16} />
                                 </ActionIcon>
                               </Tooltip>
                             </Group>
@@ -1076,6 +1146,26 @@ export default function AssetPanel(): JSX.Element | null {
                                 )}
                               </div>
                               <Group justify="flex-end" gap={4} mt={4} wrap="nowrap">
+                                <Tooltip label="添加到画布（角色节点）" withArrow>
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="light"
+                                    onClick={() => {
+                                      addNode('taskNode', name, {
+                                        kind: 'composeVideo',
+                                        source: 'sora',
+                                        soraCharacterId: charId || c.user_id || c.id || null,
+                                        soraCharacterName: name,
+                                        soraCharacterAvatar: avatar,
+                                        prompt: desc || '',
+                                        remixTargetId: charId || c.user_id || c.id || null,
+                                      })
+                                      setActivePanel(null)
+                                    }}
+                                  >
+                                    <IconPlus size={16} />
+                                  </ActionIcon>
+                                </Tooltip>
                                 <Tooltip label="重命名" withArrow>
                                   <ActionIcon
                                     size="sm"
@@ -1456,4 +1546,29 @@ export default function AssetPanel(): JSX.Element | null {
       </Transition>
     </div>
   )
+}
+const getDraftTaskId = (d: any): { taskId: string | null; generationId: string | null } => {
+  if (!d) return { taskId: null, generationId: null }
+  const raw = (d as any)?.raw || {}
+  const rawDraft = raw.draft || {}
+  const generationId =
+    rawDraft.generation_id ||
+    raw.generation_id ||
+    d.generationId ||
+    d.id ||
+    raw.id ||
+    d.videoDraftId ||
+    d.videoPostId ||
+    null
+  const taskId =
+    rawDraft.task_id ||
+    raw.task_id ||
+    d.taskId ||
+    d.id ||
+    raw.id ||
+    generationId ||
+    d.videoDraftId ||
+    d.videoPostId ||
+    null
+  return { taskId, generationId }
 }
