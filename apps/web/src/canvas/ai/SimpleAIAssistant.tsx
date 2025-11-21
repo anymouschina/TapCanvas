@@ -29,17 +29,42 @@ import {
 } from '@tabler/icons-react'
 import { nanoid } from 'nanoid'
 import { useRFStore } from '../store'
-import { getDefaultModel } from '../../config/models'
+import { getDefaultModel, getModelProvider } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { functionHandlers } from '../../ai/canvasService'
 import type { FunctionResult } from '../../ai/canvasService'
 import { getAuthToken } from '../../auth/store'
+import { getFirstAvailableApiKey } from './useApiKey'
+import { listModelProviders } from '../../api/server'
+import { generateObject } from 'ai'
+import { createAnthropic } from '@ai-sdk/anthropic'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createOpenAI } from '@ai-sdk/openai'
+import { z } from 'zod'
+
+type Provider = 'anthropic' | 'google' | 'openai'
 
 interface AssistantAction {
   type: keyof typeof functionHandlers | string
   params?: Record<string, any>
   reasoning?: string
   storeResultAs?: string
+}
+
+const NODE_TYPE_MAP: Record<string, string> = {
+  text: 'text',
+  image: 'image',
+  video: 'composeVideo',
+  audio: 'audio',
+  subtitle: 'subtitle',
+  text_to_image: 'textToImage',
+  texttoimage: 'textToImage',
+  text_to_video: 'composeVideo',
+  t2i: 'textToImage',
+  t2v: 'composeVideo',
+  text_to_text: 'text',
+  textinput: 'text',
+  text_input: 'text',
 }
 
 const FALLBACK_NODE_TYPES: Array<{ keyword: string; type: string; label: string }> = [
@@ -212,8 +237,9 @@ function buildSingleNodeAction(text: string): AssistantAction[] {
   }]
 }
 
-function inferActionsFromMessage(message: string): AssistantAction[] {
-  const text = message.trim()
+function inferActionsFromMessage(message: string | { content?: string }): AssistantAction[] {
+  const raw = typeof message === 'string' ? message : (message?.content ?? '')
+  const text = String(raw || '').trim()
   if (!text) return []
 
   const workflowActions = buildWorkflowActions(text)
@@ -240,6 +266,199 @@ function normalizeActionParams(params?: Record<string, any>) {
   return params
 }
 
+const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在画布上输出可执行的动作(JSON)。
+
+可用action:
+- createNode: { type(text|image|video|audio|subtitle|textToImage|composeVideo), label?, config?, position? }
+- updateNode: { nodeId, label?, config? }
+- deleteNode: { nodeId }
+- connectNodes: { sourceNodeId, targetNodeId }
+- disconnectNodes: { edgeId }
+- getNodes: {}
+- findNodes: { label?, type? }
+- autoLayout: { layoutType: grid|horizontal|hierarchical }
+
+输出格式(JSON):
+{
+  "reply": "给用户的简短回复",
+  "plan": ["步骤1", "步骤2"],
+  "actions": [ { "type": "...", "reasoning": "为什么这一步", "params": { ... }, "storeResultAs": "可选引用名" } ]
+}
+
+要求：每次回复至少一个action；reasoning用中文；无内容可查询时先输出getNodes/ findNodes。`
+
+function parseAssistantPayload(raw: string | any): { reply: string; plan: string[]; actions: AssistantAction[] } | null {
+  try {
+    const json = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!json || typeof json !== 'object') return null
+    if (typeof json.reply !== 'string') return null
+    return {
+      reply: json.reply,
+      plan: Array.isArray(json.plan) ? json.plan.filter((p: any) => typeof p === 'string') : [],
+      actions: Array.isArray(json.actions) ? json.actions as AssistantAction[] : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function extractJsonFromReply(reply: string): { reply: string; plan?: string[]; actions?: AssistantAction[] } | null {
+  const trimmed = reply.trim()
+  const fenceMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/i)
+  const candidate = fenceMatch ? fenceMatch[1] : trimmed
+  try {
+    const obj = JSON.parse(candidate)
+    if (obj && typeof obj === 'object') {
+      const r = typeof obj.reply === 'string' ? obj.reply : reply
+      const plan = Array.isArray(obj.plan) ? obj.plan.filter((p: any) => typeof p === 'string') : undefined
+      const actions = Array.isArray(obj.actions) ? obj.actions as AssistantAction[] : undefined
+      return { reply: r, plan, actions }
+    }
+  } catch {
+    if (fenceMatch) {
+      return { reply: candidate }
+    }
+    return null
+  }
+  return null
+}
+
+function normalizeNodeType(rawType?: string): string | undefined {
+  if (!rawType) return undefined
+  const lower = rawType.toLowerCase()
+  return NODE_TYPE_MAP[lower] || rawType
+}
+
+function stripJsonBlock(text: string): string {
+  if (!text) return text
+  const fence = text.match(/```json\s*([\s\S]*?)\s*```/i)
+  if (fence) {
+    const before = text.slice(0, fence.index || 0).trim()
+    const after = text.slice((fence.index || 0) + fence[0].length).trim()
+    return [before, after].filter(Boolean).join('\n') || fence[1] || ''
+  }
+  return text
+}
+
+function normalizeActions(actions: AssistantAction[]): AssistantAction[] {
+  return actions.map(action => {
+    if (action.type === 'createNode' && action.params) {
+      const type = normalizeNodeType((action.params as any).type || (action.params as any).nodeType)
+      const normalizedParams = { ...action.params, type }
+      if (normalizedParams.config && normalizedParams.config.kind) {
+        normalizedParams.config = { ...normalizedParams.config, kind: normalizeNodeType(normalizedParams.config.kind) }
+      }
+      return { ...action, params: normalizedParams }
+    }
+    if ((action.type === 'connectNodes' || action.type === 'disconnectNodes') && action.params) {
+      const p = normalizeActionParams(action.params)
+      return { ...action, params: p }
+    }
+    return { ...action }
+  })
+}
+
+const assistantSchema = z.object({
+  reply: z.string(),
+  plan: z.array(z.string()).default([]),
+  actions: z.array(z.object({
+    type: z.string(),
+    params: z.record(z.any()).default({}),
+    reasoning: z.string().optional(),
+    storeResultAs: z.string().optional(),
+  })).default([]),
+})
+
+function buildModelClient(provider: Provider, model: string, apiKey: string, baseUrl?: string) {
+  const options = baseUrl ? { apiKey, baseURL: baseUrl } : { apiKey }
+  if (provider === 'anthropic') {
+    const client = createAnthropic(options)
+    return client(model)
+  }
+  if (provider === 'google') {
+    const name = model.startsWith('models/') ? model : `models/${model}`
+    const client = createGoogleGenerativeAI(options)
+    return client(name)
+  }
+  const client = createOpenAI(options)
+  return client(model)
+}
+
+async function callModelDirect(params: {
+  provider: Provider
+  model: string
+  apiKey: string
+  baseUrl?: string
+  messages: Array<{ role: string; content: string }>
+  temperature: number
+  systemPrompt: string
+}): Promise<{ reply: string; plan: string[]; actions: AssistantAction[] }> {
+  const { provider, model, apiKey, baseUrl, messages, temperature, systemPrompt } = params
+  try {
+    const modelClient = buildModelClient(provider, model, apiKey, baseUrl)
+  const result = await generateObject({
+    model: modelClient,
+    system: systemPrompt,
+    messages: messages.map(m => ({ role: m.role, content: m.content })) as any,
+    schema: assistantSchema,
+    temperature,
+  })
+    const normalizedActions = normalizeActions(result.object.actions || [])
+    return { reply: result.object.reply, plan: result.object.plan || [], actions: normalizedActions }
+  } catch (err) {
+    if (provider === 'anthropic') {
+      return callAnthropicRaw({ provider, model, apiKey, baseUrl, messages, temperature, systemPrompt })
+    }
+    throw err
+  }
+}
+
+async function callAnthropicRaw(params: {
+  provider: Provider
+  model: string
+  apiKey: string
+  baseUrl?: string
+  messages: Array<{ role: string; content: string }>
+  temperature: number
+  systemPrompt: string
+}): Promise<{ reply: string; plan: string[]; actions: AssistantAction[] }> {
+  const base = (params.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')
+  const url = /\/v\d+\/messages$/i.test(base) ? base : `${base}${/\/v\d+$/i.test(base) ? '' : '/v1'}/messages`
+  const payload = {
+    model: params.model,
+    system: params.systemPrompt,
+    messages: params.messages.map(m => ({ role: m.role === 'system' ? 'user' : m.role, content: [{ type: 'text', text: String(m.content) }]})),
+    max_tokens: 2000,
+    temperature: params.temperature,
+  }
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.apiKey}`,
+      'x-api-key': params.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(payload),
+  })
+  const text = await resp.text()
+  if (!resp.ok) throw new Error(text || 'Anthropic 调用失败')
+  try {
+    const json = JSON.parse(text)
+    if (Array.isArray(json?.content)) {
+      const reply = json.content.filter((c: any) => c?.type === 'text' && typeof c.text === 'string').map((c: any) => c.text).join('\n')
+      const extracted = parseAssistantPayload(json) || parseAssistantPayload(reply) || extractJsonFromReply(reply)
+      if (extracted) return { reply: extracted.reply, plan: extracted.plan || [], actions: normalizeActions(extracted.actions || []) }
+      return { reply: reply || text, plan: [], actions: [] }
+    }
+    const extracted = parseAssistantPayload(json) || extractJsonFromReply(text)
+    if (extracted) return { reply: extracted.reply, plan: extracted.plan || [], actions: normalizeActions(extracted.actions || []) }
+    return { reply: text, plan: [], actions: [] }
+  } catch {
+    return { reply: text, plan: [], actions: [] }
+  }
+}
+
 interface ExecutedAction {
   id: string
   action: AssistantAction
@@ -255,11 +474,6 @@ interface AssistantMessage {
   plan?: string[]
   actions?: ExecutedAction[]
 }
-
-const ENV_API_BASE = (import.meta as any).env?.VITE_API_BASE as string | undefined
-const DEFAULT_DEV_API_BASE = (import.meta as any).env?.DEV ? 'http://localhost:3000' : ''
-const API_BASE = ENV_API_BASE && ENV_API_BASE.length > 0 ? ENV_API_BASE : DEFAULT_DEV_API_BASE
-const AI_ENDPOINT = API_BASE ? `${API_BASE.replace(/\/$/, '')}/ai/chat` : '/api/ai/chat'
 
 interface SimpleAIAssistantProps {
   opened: boolean
@@ -332,36 +546,48 @@ export function SimpleAIAssistant({ opened, onClose, position = 'right', width =
 
     try {
       const payloadMessages = [
+        { role: 'system', content: ASSISTANT_SYSTEM_PROMPT },
         ...messages
           .filter(msg => msg.role === 'user' || msg.role === 'assistant')
           .map(msg => ({ role: msg.role, content: msg.content })),
         { role: 'user', content: trimmed },
       ]
 
-      const token = getAuthToken()
-      const response = await fetch(AI_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          messages: payloadMessages,
-          context: canvasContext,
-          temperature: 0.2,
-        })
-      })
-
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(text || 'AI服务不可用')
+      const vendor = getModelProvider(model)
+      let apiKey: string | undefined
+      let baseUrl: string | undefined
+  try {
+    const providers = await listModelProviders()
+    const p = providers.find(p => p.vendor === (vendor === 'google' ? 'gemini' : vendor))
+    if (p?.baseUrl) baseUrl = p.baseUrl
+  } catch {
+        // ignore provider fetch errors
+      }
+      try {
+        const key = await getFirstAvailableApiKey(vendor as any)
+        if (key) apiKey = key
+      } catch {
+        // ignore key lookup errors
+      }
+      if (!apiKey) {
+        throw new Error('未找到可用的 API Key，请在模型面板配置后重试')
       }
 
-      const data = await response.json() as { reply: string; plan?: string[]; actions?: AssistantAction[] }
+      const data = await callModelDirect({
+        provider: vendor as Provider,
+        model,
+        apiKey,
+        baseUrl,
+        messages: payloadMessages,
+        temperature: 0.2,
+        systemPrompt: ASSISTANT_SYSTEM_PROMPT,
+      })
+      data.reply = stripJsonBlock(data.reply)
+      // Log basic info only to help diagnose routing; do not log content
+      console.debug('[SimpleAIAssistant] direct provider=%s model=%s len=%d', vendor, model, payloadMessages.length)
       if ((!data.actions || data.actions.length === 0) && userMessage) {
         const fallback = inferActionsFromMessage(userMessage)
-        data.actions = fallback
+        data.actions = normalizeActions(fallback)
         data.plan = ([] as string[]).concat(data.plan || [])
         data.plan.unshift('⚙️ 自动根据指令生成动作序列，模型未输出tool调用')
       }

@@ -9,6 +9,7 @@ import { anthropic } from '@ai-sdk/anthropic'
 import { google } from '@ai-sdk/google'
 import { NextRequest } from 'next/server'
 import { isAnthropicModel } from '../../../config/modelSource'
+import { getModelProvider } from '../../../config/models'
 
 // 配置运行时为Edge
 export const runtime = 'edge'
@@ -16,26 +17,32 @@ export const runtime = 'edge'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { messages, model = 'gpt-4-turbo', apiKey, system, tools } = body
+    const { messages, model = 'gpt-4-turbo', apiKey, system, tools, baseUrl } = body
 
-    if (!apiKey) {
-      return Response.json(
-        { error: 'API Key is required' },
-        { status: 400 }
-      )
-    }
+    const providerFromModel = getModelProvider(model)
+    const lower = String(model || '').toLowerCase()
+    const provider =
+      baseUrl && baseUrl.toLowerCase().includes('anthropic')
+        ? 'anthropic'
+        : providerFromModel
+    const keyFromEnv = provider === 'anthropic'
+      ? process.env.ANTHROPIC_API_KEY
+      : provider === 'google'
+        ? process.env.GEMINI_API_KEY
+        : process.env.OPENAI_API_KEY
+    const finalKey = apiKey || keyFromEnv
+    if (!finalKey) return Response.json({ error: 'API key missing' }, { status: 400 })
 
     // 根据模型选择提供商
     let selectedModel
-    const lower = String(model || '').toLowerCase()
-    if (isAnthropicModel(model) || lower.includes('claude')) {
-      selectedModel = anthropic(model, { apiKey })
-    } else if (lower.startsWith('gpt-')) {
-      selectedModel = openai(model, { apiKey })
-    } else if (lower.startsWith('gemini')) {
-      selectedModel = google(model, { apiKey })
+    if (provider === 'anthropic' || isAnthropicModel(model) || lower.includes('claude') || lower.includes('glm')) {
+      selectedModel = anthropic(model, { apiKey: finalKey, baseURL: baseUrl || process.env.ANTHROPIC_BASE_URL || undefined })
+    } else if (provider === 'google' || lower.startsWith('gemini')) {
+      selectedModel = google(model, { apiKey: finalKey, baseURL: baseUrl || process.env.GEMINI_BASE_URL || undefined })
+    } else if (lower.startsWith('gpt-') || provider === 'openai') {
+      selectedModel = openai(model, { apiKey: finalKey, baseURL: baseUrl || process.env.OPENAI_BASE_URL || undefined })
     } else {
-      selectedModel = openai('gpt-3.5-turbo', { apiKey })
+      selectedModel = openai('gpt-3.5-turbo', { apiKey: finalKey })
     }
 
     // 准备消息
@@ -60,6 +67,8 @@ export async function POST(req: NextRequest) {
       maxToolRoundtrips: 3, // 允许最多3轮工具调用
       temperature: 0.7,
     })
+    // Log basic info only. Do not log message contents to avoid leaking user inputs.
+    console.debug('[ai/chat] model=%s provider=%s baseUrl=%s msgCount=%d', model, provider, baseUrl || '(default)', preparedMessages.length)
 
     return result.toAIStreamResponse()
 

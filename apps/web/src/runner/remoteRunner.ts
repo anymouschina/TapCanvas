@@ -5,6 +5,8 @@ import {
   createSoraVideo,
   listSoraPendingVideos,
   getSoraVideoDraftByTask,
+  listModelProviders,
+  listModelTokens,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -43,6 +45,60 @@ function nowLabel() {
 }
 
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
+const ANTHROPIC_VERSION = '2023-06-01'
+async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
+  const providers = await listModelProviders()
+  const provider = providers.find((p) => p.vendor === 'anthropic' || (p.baseUrl || '').toLowerCase().includes('anthropic'))
+  if (!provider) throw new Error('未找到 Anthropic 提供商配置')
+
+  const tokens = await listModelTokens(provider.id)
+  const token = tokens.find((t) => t.enabled && t.secretToken)
+  if (!token || !token.secretToken) throw new Error('未配置可用的 Anthropic 密钥')
+
+  const base = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')
+  const url = /\/v\d+\/messages$/i.test(base)
+    ? base
+    : `${base}${/\/v\d+$/i.test(base) ? '' : '/v1'}/messages`
+
+  const body: any = {
+    model: modelKey || 'claude-3.5-sonnet',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 800,
+  }
+  if (systemPrompt) body.system = systemPrompt
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token.secretToken}`,
+      'x-api-key': token.secretToken,
+      'anthropic-version': ANTHROPIC_VERSION,
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`Anthropic 调用失败: ${resp.status} ${text}`)
+  }
+
+  const json: any = await resp.json().catch(() => null)
+  const parts: string[] = []
+  if (json?.content && Array.isArray(json.content)) {
+    for (const c of json.content) {
+      if (c?.type === 'text' && typeof c.text === 'string') parts.push(c.text)
+    }
+  }
+  const textOut = parts.join('\n').trim() || json?.output_text || ''
+
+  return {
+    id: json?.id || `anth-${Date.now()}`,
+    status: 'succeeded',
+    assets: [],
+    raw: { text: textOut || 'Anthropic 调用成功', response: json },
+  }
+}
 
 function getRemixTargetIdFromNodeData(data?: any): string | null {
   if (!data) return null
@@ -232,26 +288,81 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 async function runTextTask(ctx: RunnerContext) {
   const { id, sampleCount, taskKind, kind, data, modelKey, prompt, setNodeStatus, appendLog } = ctx
   ctx.beginToken(id)
+  const runAnthropicTextTask = async (model: string | undefined, userPrompt: string, systemPrompt?: string) => {
+    const providers = await listModelProviders()
+    const provider = providers.find((p) => p.vendor === 'anthropic' || (p.baseUrl || '').toLowerCase().includes('anthropic'))
+    if (!provider) throw new Error('未找到 Anthropic 提供商配置')
+
+    const tokens = await listModelTokens(provider.id)
+    const token = tokens.find((t) => t.enabled && t.secretToken)
+    if (!token || !token.secretToken) throw new Error('未配置可用的 Anthropic 密钥')
+
+    const base = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')
+    const url = /\/v\d+\/messages$/i.test(base)
+      ? base
+      : `${base}${/\/v\d+$/i.test(base) ? '' : '/v1'}/messages`
+
+    const body: any = {
+      model: model || 'claude-3.5-sonnet',
+      messages: [{ role: 'user', content: userPrompt }],
+      max_tokens: 800,
+    }
+    if (systemPrompt) body.system = systemPrompt
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token.secretToken}`,
+        'x-api-key': token.secretToken,
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Anthropic 调用失败: ${resp.status} ${text}`)
+    }
+
+    const json: any = await resp.json().catch(() => null)
+    const parts: string[] = []
+    if (json?.content && Array.isArray(json.content)) {
+      for (const c of json.content) {
+        if (c?.type === 'text' && typeof c.text === 'string') parts.push(c.text)
+      }
+    }
+    const textOut = parts.join('\n').trim() || json?.output_text || ''
+
+    return {
+      id: json?.id || `anth-${Date.now()}`,
+      status: 'succeeded',
+      assets: [],
+      raw: { text: textOut || 'Anthropic 调用成功', response: json },
+    }
+  }
   try {
     const vendor = isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini'
     appendLog(
       id,
-      `[${nowLabel()}] 调用${vendor === 'anthropic' ? 'Claude' : 'Gemini'} 文案模型批量生成提示词 x${sampleCount}（并行）…`,
+      `[${nowLabel()}] 调用${vendor === 'anthropic' ? 'Anthropic/Claude' : 'Gemini'} 文案模型批量生成提示词 x${sampleCount}（并行）…`,
     )
 
     const indices = Array.from({ length: sampleCount }, (_, i) => i)
     const settled = await Promise.allSettled(
       indices.map(() =>
-        runTaskByVendor(vendor, {
-          kind: taskKind,
-          prompt,
-          extras: {
-            nodeKind: kind,
-            nodeId: id,
-            modelKey,
-            systemPrompt: (data as any)?.systemPrompt,
-          },
-        }),
+        vendor === 'anthropic'
+          ? runAnthropicTextTask(modelKey, prompt, (data as any)?.systemPrompt)
+          : runTaskByVendor(vendor, {
+              kind: taskKind,
+              prompt,
+              extras: {
+                nodeKind: kind,
+                nodeId: id,
+                modelKey,
+                systemPrompt: (data as any)?.systemPrompt,
+              },
+            }),
       ),
     )
 
@@ -520,8 +631,8 @@ async function runVideoTask(ctx: RunnerContext) {
       } catch (err: any) {
         if (err?.upstreamStatus === 202 || err?.status === 202) {
           appendLog(id, `[${nowLabel()}] 草稿同步：任务仍在进行中，继续等待...`)
-          return null
-        }
+  return null
+}
 
         if (err?.upstreamStatus === 404 || err?.status === 404) {
           appendLog(id, `[${nowLabel()}] 草稿同步：任务未找到（可能已失败），停止轮询`)

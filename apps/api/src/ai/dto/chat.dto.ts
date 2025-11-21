@@ -16,6 +16,9 @@ export interface ChatRequestDto {
   messages: ChatMessageDto[]
   context?: CanvasContextDto
   temperature?: number
+  apiKey?: string
+  baseUrl?: string
+  provider?: string
 }
 
 export interface AssistantActionDto {
