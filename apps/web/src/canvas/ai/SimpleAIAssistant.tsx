@@ -281,6 +281,8 @@ const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在
 - getNodes: {}
 - findNodes: { label?, type? }
 - autoLayout: { layoutType: grid|horizontal|hierarchical }
+- runDag: { concurrency?: number }
+- formatAll: {} // 全选并自动布局
 
 输出格式(JSON):
 {

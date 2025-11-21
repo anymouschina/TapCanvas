@@ -230,6 +230,39 @@ export class CanvasService {
   }
 
   /**
+   * 执行 DAG
+   */
+  static async runDag(params: { concurrency?: number } = {}): Promise<FunctionResult> {
+    try {
+      const { runDag } = useRFStore.getState()
+      await runDag(params.concurrency ?? 2)
+      return { success: true, data: { message: '已触发工作流执行' } }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '运行工作流失败'
+      }
+    }
+  }
+
+  /**
+   * 全选并自动格式化（全局 DAG 布局）
+   */
+  static async formatAll(): Promise<FunctionResult> {
+    try {
+      const { selectAll, autoLayoutAllDag } = useRFStore.getState()
+      selectAll()
+      autoLayoutAllDag()
+      return { success: true, data: { message: '已全选并自动布局' } }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '自动格式化失败'
+      }
+    }
+  }
+
+  /**
    * 获取所有节点
    */
   static async getNodes(): Promise<FunctionResult> {
@@ -371,4 +404,6 @@ export const functionHandlers = {
   getNodes: CanvasService.getNodes,
   findNodes: CanvasService.findNodes,
   autoLayout: CanvasService.autoLayout,
+  runDag: CanvasService.runDag,
+  formatAll: CanvasService.formatAll,
 } as const

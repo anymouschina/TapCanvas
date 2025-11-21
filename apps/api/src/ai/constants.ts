@@ -27,7 +27,9 @@ export const ACTION_TYPES = [
   'disconnectNodes',
   'getNodes',
   'findNodes',
-  'autoLayout'
+  'autoLayout',
+  'runDag',
+  'formatAll'
 ] as const
 
 export const PROVIDER_VENDOR_ALIASES: Record<SupportedProvider, string[]> = {
@@ -47,6 +49,8 @@ export const SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责帮助
 - getNodes: 查询当前画布状态。
 - findNodes: 根据label或type检索节点。
 - autoLayout: 对节点执行布局。参数：layoutType grid|horizontal|hierarchical
+- formatAll: 全选后自动格式化布局。无额外参数
+- runDag: 执行工作流。参数：concurrency(可选，默认2)
 
 ## 输出要求
 1. **每次回复必须至少包含一个action**。若只是需要了解画布，请调用getNodes或get_canvas_info类的操作；禁止只回复文字。

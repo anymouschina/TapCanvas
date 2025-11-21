@@ -143,6 +143,7 @@ export class AiService {
     const content = (lastUser?.content || '').toString().toLowerCase()
     const wantsImage = /文生图|图片|image|photo|帅哥|照片|图像/.test(content)
     const wantsVideo = /视频|video/.test(content)
+    const wantsFormat = /格式化|排版|布局|整理|format|layout/.test(content)
 
     if (wantsImage || wantsVideo) {
       const actions: any[] = [
@@ -173,9 +174,22 @@ export class AiService {
             sourceNodeId: '{{ref:fallback_text}}',
             targetNodeId: `{{ref:${wantsVideo ? 'fallback_video' : 'fallback_image'}}}`
           }
+        },
+        {
+          type: 'runDag',
+          reasoning: '自动执行生成流程，触发图像/视频生成',
+          params: { concurrency: 2 }
         }
       ]
       return actions
+    }
+
+    if (wantsFormat) {
+      return [{
+        type: 'formatAll',
+        reasoning: '用户希望自动格式化布局，执行全选并布局',
+        params: {}
+      }]
     }
 
     return [{
