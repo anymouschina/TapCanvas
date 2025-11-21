@@ -34,8 +34,8 @@ export class AiService {
       throw new BadRequestException('消息内容不能为空')
     }
 
-    const provider = this.resolveProvider(payload.model)
-    const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider)
+    const provider = this.resolveProvider(payload.model, payload.baseUrl, payload.provider)
+    const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, payload.apiKey, payload.baseUrl)
     const model = this.buildModel(provider, payload.model, apiKey, baseUrl)
 
     const systemPrompt = this.composeSystemPrompt(payload.context)
@@ -55,6 +55,25 @@ export class AiService {
           contextNodes: payload.context?.nodes?.length,
           attempt: attempt + 1
         })
+
+        // 对非官方 Anthropic 代理（如 GLM），直接走简化调用，避免 ai-sdk 工具/模式不兼容
+        if (this.isAnthropic(provider) && this.isCustomAnthropicBase(baseUrl)) {
+          const res = await this.callAnthropicRaw({
+            model: payload.model,
+            apiKey,
+            baseUrl: baseUrl || undefined,
+            systemPrompt,
+            messages: conversation,
+            temperature: payload.temperature ?? 0.2,
+          })
+          if (res) {
+            return {
+              reply: res.reply,
+              plan: res.plan || [],
+              actions: res.actions || [],
+            }
+          }
+        }
 
         const result = await generateObject({
           model,
@@ -89,16 +108,57 @@ export class AiService {
       }
     } catch (error) {
       this.logger.error('AI chat失败', error as any)
+      // Anthropic自定义域（如 GLM 代理）可能返回非标准JSON，尝试兜底请求
+      if (this.isAnthropic(provider) && baseUrl && this.isCustomAnthropicBase(baseUrl)) {
+        try {
+          const fallback = await this.callAnthropicRaw({
+            model: payload.model,
+            apiKey,
+            baseUrl: baseUrl || undefined,
+            systemPrompt,
+            messages: chatMessages,
+            temperature: payload.temperature ?? 0.2,
+          })
+          if (fallback) {
+            return { reply: fallback.reply, plan: fallback.plan || [], actions: fallback.actions || [] }
+          }
+        } catch (e) {
+          this.logger.error('Anthropic fallback失败', e as any)
+        }
+      }
       const message = error instanceof Error ? error.message : undefined
       throw new BadRequestException(message ? `AI助手不可用：${message}` : 'AI助手暂时不可用，请稍后再试')
     }
   }
 
-  private resolveProvider(model: string): SupportedProvider {
-    return MODEL_PROVIDER_MAP[model] || 'google'
+  private isAnthropic(provider: SupportedProvider) {
+    return provider === 'anthropic'
   }
 
-  private async resolveCredentials(userId: string, provider: SupportedProvider): Promise<{ apiKey: string; baseUrl?: string | null }> {
+  private isCustomAnthropicBase(baseUrl?: string | null) {
+    if (!baseUrl) return false
+    return !baseUrl.toLowerCase().includes('api.anthropic.com')
+  }
+
+  private resolveProvider(model: string, baseUrl?: string | null, overrideProvider?: string | null): SupportedProvider {
+    const normalizedOverride = (overrideProvider || '').toLowerCase()
+    if (normalizedOverride === 'anthropic') return 'anthropic'
+    if (normalizedOverride === 'openai') return 'openai'
+    if (normalizedOverride === 'google' || normalizedOverride === 'gemini') return 'google'
+
+    const lower = (model || '').toLowerCase()
+    if (baseUrl && baseUrl.toLowerCase().includes('anthropic')) return 'anthropic'
+    if (MODEL_PROVIDER_MAP[model]) return MODEL_PROVIDER_MAP[model]
+    if (lower.includes('claude') || lower.includes('glm')) return 'anthropic'
+    if (lower.includes('gemini')) return 'google'
+    if (lower.includes('gpt')) return 'openai'
+    return 'google'
+  }
+
+  private async resolveCredentials(userId: string, provider: SupportedProvider, overrideKey?: string, overrideBaseUrl?: string | null): Promise<{ apiKey: string; baseUrl?: string | null }> {
+    if (overrideKey) {
+      return { apiKey: overrideKey, baseUrl: overrideBaseUrl }
+    }
     const aliases = PROVIDER_VENDOR_ALIASES[provider] || [provider]
     const providerRecord = await this.prisma.modelProvider.findFirst({
       where: { ownerId: userId, vendor: { in: aliases } },
@@ -133,7 +193,7 @@ export class AiService {
       hasSharedToken: !!token.shared,
     })
 
-    return { apiKey: token.secretToken, baseUrl: providerRecord.baseUrl }
+    return { apiKey: token.secretToken, baseUrl: overrideBaseUrl ?? providerRecord.baseUrl }
   }
 
   private normalizeModelName(provider: SupportedProvider, model: string) {
@@ -168,10 +228,6 @@ export class AiService {
   }
 
   private normalizeBaseUrl(provider: SupportedProvider, baseUrl?: string | null): string | undefined {
-    if (provider === 'anthropic') {
-      return undefined
-    }
-
     const trimmed = baseUrl?.trim()
     if (!trimmed || trimmed.length === 0) {
       if (provider === 'google') {
@@ -188,6 +244,84 @@ export class AiService {
     }
 
     return normalized
+  }
+
+  private async callAnthropicRaw(params: {
+    model: string
+    apiKey: string
+    baseUrl?: string | null
+    systemPrompt: string
+    messages: CoreMessage[]
+    temperature: number
+  }): Promise<{ reply: string; plan?: string[]; actions?: any[] } | null> {
+    const url = this.buildAnthropicUrl(params.baseUrl || undefined)
+    const system = params.systemPrompt
+    const messages = params.messages.map((m) => ({
+      role: m.role,
+      content: [{ type: 'text', text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
+    }))
+    const body = {
+      model: params.model,
+      system,
+      messages,
+      max_tokens: 4096,
+      temperature: params.temperature,
+    }
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.apiKey}`,
+        'x-api-key': params.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    })
+
+    const text = await resp.text()
+    if (!resp.ok) {
+      this.logger.error('Anthropic fallback error', { status: resp.status, body: text })
+      return null
+    }
+
+    try {
+      const json = JSON.parse(text)
+      if (Array.isArray(json?.content)) {
+        const combined = json.content
+          .filter((c: any) => c?.type === 'text' && typeof c.text === 'string')
+          .map((c: any) => c.text)
+          .join('\n')
+        const parsed = this.safeParseJson(combined)
+        if (parsed) return parsed
+        return { reply: combined || '' }
+      }
+      const parsed = this.safeParseJson(json)
+      if (parsed) return parsed
+      return { reply: typeof json === 'string' ? json : JSON.stringify(json) }
+    } catch {
+      const parsed = this.safeParseJson(text)
+      if (parsed) return parsed
+      return { reply: text || '' }
+    }
+  }
+
+  private buildAnthropicUrl(baseUrl?: string | null) {
+    const base = (baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')
+    if (/\/v\d+\/messages$/i.test(base)) return base
+    return `${base}${/\/v\d+$/i.test(base) ? '' : '/v1'}/messages`
+  }
+
+  private safeParseJson(input: any): { reply: string; plan?: string[]; actions?: any[] } | null {
+    try {
+      const obj = typeof input === 'string' ? JSON.parse(input) : input
+      if (obj && typeof obj === 'object' && typeof obj.reply === 'string') {
+        return { reply: obj.reply, plan: Array.isArray(obj.plan) ? obj.plan : [], actions: Array.isArray(obj.actions) ? obj.actions : [] }
+      }
+    } catch {
+      return null
+    }
+    return null
   }
 
   private composeSystemPrompt(context?: CanvasContextDto): string {
