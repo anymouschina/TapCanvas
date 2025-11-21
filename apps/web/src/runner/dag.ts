@@ -1,5 +1,6 @@
 import type { Node, Edge } from 'reactflow'
 import { runNodeMock } from './mockRunner'
+import { runNodeRemote } from './remoteRunner'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -90,7 +91,21 @@ export async function runFlowDag(
   const done = new Set<string>()
 
   const ready: string[] = []
-  inDeg.forEach((v, k) => { if (v === 0) ready.push(k) })
+  const pushReady = (id: string) => {
+    ready.push(id)
+    // 稳定排序：先按 y 后按 x，保证视觉顺序执行
+    ready.sort((a, b) => {
+      const na = graph.nodes.get(a)
+      const nb = graph.nodes.get(b)
+      const ay = (na?.position?.y as number) ?? 0
+      const by = (nb?.position?.y as number) ?? 0
+      if (ay !== by) return ay - by
+      const ax = (na?.position?.x as number) ?? 0
+      const bx = (nb?.position?.x as number) ?? 0
+      return ax - bx
+    })
+  }
+  inDeg.forEach((v, k) => { if (v === 0) pushReady(k) })
 
   let running = 0
   const schedule = async (): Promise<void> => {
@@ -106,21 +121,33 @@ export async function runFlowDag(
         continue
       }
       running++
-      // run the node
+      // run the node（按节点类型选择真实/模拟执行）
       // eslint-disable-next-line no-void
       void (async () => {
-        await runNodeMock(id, get, set)
+        const nodeMeta = graph.nodes.get(id)
+        const kind = (nodeMeta?.data as any)?.kind
+        const shouldRemote =
+          kind === 'textToImage' ||
+          kind === 'composeVideo' ||
+          kind === 'tts' ||
+          kind === 'subtitleAlign' ||
+          kind === 'image'
+        if (shouldRemote) {
+          await runNodeRemote(id, get, set)
+        } else {
+          await runNodeMock(id, get, set)
+        }
         running--
         done.add(id)
-        const node = get().nodes.find((n: Node) => n.id === id)
-        const ok = (node?.data as any)?.status === 'success'
+        const executed = get().nodes.find((n: Node) => n.id === id)
+        const ok = (executed?.data as any)?.status === 'success'
         if (!ok) {
           // mark children as blocked
           for (const v of graph.adj.get(id) || []) blocked.add(v)
         }
         for (const v of graph.adj.get(id) || []) {
           inDeg.set(v, (inDeg.get(v) || 1) - 1)
-          if (inDeg.get(v) === 0) ready.push(v)
+          if (inDeg.get(v) === 0) pushReady(v)
         }
         await schedule()
       })()

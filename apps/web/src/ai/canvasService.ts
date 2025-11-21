@@ -235,8 +235,8 @@ export class CanvasService {
   static async runDag(params: { concurrency?: number } = {}): Promise<FunctionResult> {
     try {
       const { runDag } = useRFStore.getState()
-      await runDag(params.concurrency ?? 2)
-      return { success: true, data: { message: '已触发工作流执行' } }
+      await runDag(params.concurrency ?? 1)
+      return { success: true, data: { message: '已触发工作流执行（顺序执行）' } }
     } catch (error) {
       return {
         success: false,

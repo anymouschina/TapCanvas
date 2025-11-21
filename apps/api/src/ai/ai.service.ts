@@ -188,8 +188,8 @@ export class AiService {
         },
         {
           type: 'runDag',
-          reasoning: '自动执行生成流程，触发图像/视频生成',
-          params: { concurrency: 2 }
+          reasoning: '自动执行生成流程，触发图像/视频生成（顺序执行）',
+          params: { concurrency: 1 }
         }
       ]
       return actions
