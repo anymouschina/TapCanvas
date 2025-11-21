@@ -273,7 +273,7 @@ function normalizeActionParams(params?: Record<string, any>) {
 const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在画布上输出可执行的动作(JSON)。
 
 可用action:
-- createNode: { type(text|image|video|audio|subtitle|textToImage|composeVideo), label?, config?, position? }
+- createNode: { type(text|image|video|audio|subtitle|composeVideo), label?, config?, position? }
 - updateNode: { nodeId, label?, config? }
 - deleteNode: { nodeId }
 - connectNodes: { sourceNodeId, targetNodeId }
@@ -281,8 +281,8 @@ const ASSISTANT_SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责在
 - getNodes: {}
 - findNodes: { label?, type? }
 - autoLayout: { layoutType: grid|horizontal|hierarchical }
-- runDag: { concurrency?: number }
 - formatAll: {} // 全选并自动布局
+- runDag: { concurrency?: number } // 执行工作流
 
 输出格式(JSON):
 {

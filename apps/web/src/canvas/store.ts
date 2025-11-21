@@ -553,7 +553,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     })
     const edgesBySel = s.edges.filter(e => sel.some(n=>n.id===e.source) && sel.some(n=>n.id===e.target))
     const updated = [...s.nodes]
-    const gapX = 280, gapY = 140
+    const gapX = 320, gapY = 180
     byParent.forEach(nodesInParent => {
       const idSet = new Set(nodesInParent.map(n=>n.id))
       const adj = new Map<string,string[]>()
@@ -591,7 +591,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const byParent = new Map<string, Node[]>()
     s.nodes.forEach(n => { const p=(n.parentNode as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
     const updated = [...s.nodes]
-    const gapX = 280, gapY = 140
+    const gapX = 320, gapY = 180
     byParent.forEach(nodesInParent => {
       const idSet = new Set(nodesInParent.map(n=>n.id))
       const adj = new Map<string,string[]>()
@@ -666,7 +666,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (!byParent.has(p)) byParent.set(p, [])
       byParent.get(p)!.push(n)
     })
-    const gapX = 220, gapY = 140
+    const gapX = 260, gapY = 170
     const updated = s.nodes.map(n => {
       if (!n.selected) return n
       const parent = (n.parentNode as string) || ''
@@ -692,7 +692,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (!byParent.has(p)) byParent.set(p, [])
       byParent.get(p)!.push(n)
     })
-    const gapX = 220
+    const gapX = 260
     const updated = s.nodes.map(n => {
       if (!n.selected) return n
       const parent = (n.parentNode as string) || ''

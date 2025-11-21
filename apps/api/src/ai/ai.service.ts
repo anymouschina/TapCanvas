@@ -85,7 +85,16 @@ export class AiService {
           maxRetries: 1,
         })
 
-        const { reply, plan, actions } = result.object
+        let { reply, plan, actions } = result.object
+        // 如果模型未按 schema 输出 actions，尝试从 reply 中提取
+        if (!actions || actions.length === 0) {
+          const extracted = this.extractAssistantPayload(reply)
+          if (extracted?.actions?.length) {
+            reply = extracted.reply || reply
+            plan = extracted.plan || plan
+            actions = extracted.actions
+          }
+        }
         lastResult = { reply, plan, actions }
 
         if (actions && actions.length > 0) {
@@ -122,7 +131,9 @@ export class AiService {
             temperature: payload.temperature ?? 0.2,
           })
           if (fallback) {
-            const ensured = (fallback.actions && fallback.actions.length > 0) ? fallback.actions : this.buildFallbackActions(payload.messages)
+            const ensured = (fallback.actions && fallback.actions.length > 0)
+              ? fallback.actions
+              : (this.extractAssistantPayload(fallback.reply || '')?.actions || this.buildFallbackActions(payload.messages))
             return { reply: fallback.reply, plan: fallback.plan || [], actions: ensured }
           }
         } catch (e) {
