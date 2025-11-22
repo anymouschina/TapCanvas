@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
-import { generateObject, streamText, type CoreMessage, type ToolChoice } from 'ai'
+import { generateObject, streamText, tool, type CoreMessage, type ToolChoice } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -22,6 +22,39 @@ const assistantSchema = z.object({
     storeResultAs: z.string().optional().describe('为该action输出注册引用名称')
   })).default([]),
 })
+
+// 基础画布工具定义（服务端仅回传占位结果，具体操作由前端执行）
+const canvasTools = {
+  getNodes: tool({
+    description: '获取当前画布节点列表（由前端执行真正的读取逻辑）',
+    inputSchema: z.object({}),
+    execute: async () => ({ success: false, message: '前端未连接，无法读取画布' })
+  }),
+  createNode: tool({
+    description: '创建节点（type/label/config 由模型决定，实际创建在前端完成）',
+    inputSchema: z.object({
+      type: z.string(),
+      label: z.string().optional(),
+      config: z.record(z.any()).optional()
+    }),
+    execute: async () => ({ success: false, message: '前端未连接，无法创建节点' })
+  }),
+  connectNodes: tool({
+    description: '连接两个节点（source/target），实际连接在前端完成',
+    inputSchema: z.object({
+      sourceNodeId: z.string(),
+      targetNodeId: z.string()
+    }),
+    execute: async () => ({ success: false, message: '前端未连接，无法连接节点' })
+  }),
+  runDag: tool({
+    description: '执行当前画布工作流，真实执行在前端/客户端完成',
+    inputSchema: z.object({
+      concurrency: z.number().optional()
+    }),
+    execute: async () => ({ success: false, message: '前端未连接，无法执行工作流' })
+  })
+}
 
 @Injectable()
 export class AiService {
@@ -177,7 +210,7 @@ export class AiService {
       const streamResult = await streamText({
         model: modelClient,
         messages: preparedMessages,
-        tools: payload.tools && payload.tools.length > 0 ? (payload.tools as any) : undefined,
+        tools: payload.tools && payload.tools.length > 0 ? (payload.tools as any) : canvasTools,
         toolChoice: (payload.toolChoice ?? 'auto') as ToolChoice<any>,
         temperature: payload.temperature ?? 0.2,
         maxOutputTokens: payload.maxTokens ?? 2048,
