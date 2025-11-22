@@ -5,6 +5,7 @@
 export { AICanvasTools, aiCanvasTools } from './tools'
 export { AIAssistant, aiAssistant } from './aiAssistant'
 export type { AIMessage, ToolCall, ChatOptions } from './aiAssistant'
+export { UseChatAssistant } from './UseChatAssistant'
 export type {
   AddNodeToolParams,
   EditNodeToolParams,

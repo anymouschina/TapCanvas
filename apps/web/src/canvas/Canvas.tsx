@@ -27,7 +27,7 @@ import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
-import { SimpleAIAssistant } from './ai/SimpleAIAssistant'
+import { UseChatAssistant } from './ai/UseChatAssistant'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -745,7 +745,7 @@ function CanvasInner(): JSX.Element {
       </ActionIcon>
 
       {/* AI助手面板 */}
-      <SimpleAIAssistant
+      <UseChatAssistant
         opened={aiAssistantOpened}
         onClose={() => setAiAssistantOpened(false)}
         position="right"

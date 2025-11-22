@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
-import { generateObject, type CoreMessage } from 'ai'
+import { generateObject, streamText, type CoreMessage, type ToolChoice } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -82,6 +82,7 @@ export class AiService {
           messages: conversation,
           schema: assistantSchema,
           temperature: payload.temperature ?? 0.2,
+          headers: payload.headers,
           maxRetries: 1,
         })
 
@@ -142,6 +143,74 @@ export class AiService {
       }
       const message = error instanceof Error ? error.message : undefined
       throw new BadRequestException(message ? `AI助手不可用：${message}` : 'AI助手暂时不可用，请稍后再试')
+    }
+  }
+
+  /**
+   * 流式聊天（SSE），兼容 useChat
+   */
+  async chatStream(userId: string, payload: ChatRequestDto, res: any) {
+    if (!payload.messages?.length) {
+      throw new BadRequestException('消息内容不能为空')
+    }
+
+    const provider = this.resolveProvider(payload.model, payload.baseUrl, payload.provider)
+    const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, payload.apiKey, payload.baseUrl)
+    const modelClient = this.buildModel(provider, payload.model, apiKey, baseUrl)
+    const systemPrompt = this.composeSystemPrompt(payload.context)
+
+    const preparedMessages = [
+      ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
+      ...payload.messages.map(m => ({ role: m.role as any, content: m.content }))
+    ]
+
+    this.logger.debug('[chatStream] start', {
+      userId,
+      provider,
+      model: payload.model,
+      baseUrl: baseUrl || '(default)',
+      msgCount: payload.messages?.length || 0,
+      hasApiKey: !!apiKey,
+    })
+
+    try {
+      const streamResult = await streamText({
+        model: modelClient,
+        messages: preparedMessages,
+        tools: payload.tools && payload.tools.length > 0 ? (payload.tools as any) : undefined,
+        toolChoice: (payload.toolChoice ?? 'auto') as ToolChoice<any>,
+        temperature: payload.temperature ?? 0.2,
+        maxOutputTokens: payload.maxTokens ?? 2048,
+        headers: payload.headers,
+        onChunk: (chunk) => {
+          try {
+            const summary = { type: (chunk as any)?.type, text: (chunk as any)?.text?.slice?.(0, 120), toolCalls: (chunk as any)?.toolCalls?.length }
+            this.logger.debug('[chatStream] chunk', summary)
+          } catch (e) {
+            this.logger.debug('[chatStream] chunk (unlogged)', e as any)
+          }
+        },
+        onFinish: (info) => {
+          this.logger.debug('[chatStream] finish', {
+            finishReason: info.finishReason,
+            textLength: info.text?.length,
+            textPreview: info.text?.slice?.(0, 200),
+            stepCount: info.steps?.length
+          }, info)
+        },
+        onError: (err) => {
+          this.logger.error('[chatStream] onError', err as any)
+        }
+      })
+
+      streamResult.pipeUIMessageStreamToResponse(res as any)
+      await streamResult.consumeStream().catch(() => {})
+    } catch (error) {
+      const errObj = error as any
+      const status = errObj?.statusCode || errObj?.cause?.statusCode || errObj?.cause?.response?.status
+      const causeValue = errObj?.cause?.value || errObj?.responseBody || errObj?.requestBodyValues
+      this.logger.error('chatStream failed', { message: errObj?.message, status, cause: causeValue, url: errObj?.url })
+      res.status(status || 500).json({ error: 'chatStream failed', message: errObj?.message || 'unknown error', status })
     }
   }
 
@@ -284,13 +353,25 @@ export class AiService {
   private buildModel(provider: SupportedProvider, model: string, apiKey: string, baseUrl?: string | null) {
     const normalizedModel = this.normalizeModelName(provider, model)
     const normalizedBaseUrl = this.normalizeBaseUrl(provider, baseUrl)
-    const options = normalizedBaseUrl ? { apiKey, baseURL: normalizedBaseUrl } : { apiKey }
+    const extraHeaders =
+      provider === 'anthropic'
+        ? {
+            Authorization: `Bearer ${apiKey}`,
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          }
+        : undefined
+
+    const options = normalizedBaseUrl
+      ? { apiKey, baseURL: normalizedBaseUrl, ...(extraHeaders ? { headers: extraHeaders } : {}) }
+      : { apiKey, ...(extraHeaders ? { headers: extraHeaders } : {}) }
     switch (provider) {
       case 'openai': {
         const client = createOpenAI(options)
         return client(normalizedModel)
       }
       case 'anthropic': {
+        this.logger.debug(JSON.stringify(options),'options')
         const client = createAnthropic(options)
         return client(normalizedModel)
       }
@@ -312,6 +393,11 @@ export class AiService {
     }
 
     let normalized = trimmed.replace(/\/+$/, '')
+
+    if (provider === 'anthropic') {
+      const hasVersion = /\/v\d+($|\/)/i.test(normalized)
+      if (!hasVersion) normalized = `${normalized}/v1`
+    }
 
     if (provider === 'google') {
       normalized = normalized.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '')
