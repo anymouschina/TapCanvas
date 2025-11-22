@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { nanoid } from 'nanoid'
@@ -10,6 +10,7 @@ import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { getFirstAvailableApiKey } from './useApiKey'
 import { listModelProviders } from '../../api/server'
+import { functionHandlers } from '../../ai/canvasService'
 import type { Node, Edge } from 'reactflow'
 
 type AssistantPosition = 'right' | 'left'
@@ -123,10 +124,11 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     })
   }), [apiBase, body])
 
-  const { messages, sendMessage, status, setMessages } = useChat({
+  const { messages, sendMessage, status, setMessages, addToolResult } = useChat({
     id: chatId,
     transport: chatTransport,
   })
+  const handledToolCalls = useRef(new Set<string>())
 
   const [input, setInput] = useState('')
   const isLoading = status === 'submitted' || status === 'streaming'
@@ -149,6 +151,30 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     sendMessage({ text: input })
     setInput('')
   }
+
+  useEffect(() => {
+    const toolCalls = messages.flatMap(msg =>
+      msg.parts
+        .filter((part: any) => part.type === 'tool-call')
+        .map((part: any) => ({ toolCallId: part.toolCallId || part.id, toolName: part.toolName, input: part.input || part.arguments || {} }))
+    )
+
+    toolCalls.forEach(async (call) => {
+      if (!call.toolCallId || handledToolCalls.current.has(call.toolCallId)) return
+      handledToolCalls.current.add(call.toolCallId)
+      const handler = (functionHandlers as any)[call.toolName]
+      try {
+        if (!handler) {
+          await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText: `未找到工具：${call.toolName}` })
+          return
+        }
+        const result = await handler(call.input || {})
+        await addToolResult({ state: 'output-available', tool: call.toolName as any, toolCallId: call.toolCallId, output: result as any })
+      } catch (err) {
+        await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText: err instanceof Error ? err.message : '工具执行失败' })
+      }
+    })
+  }, [messages, addToolResult])
 
   const injectSystemPrompt = () => {
     setMessages(prev => [
