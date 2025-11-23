@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -24,11 +24,14 @@ import {
   IconChevronDown,
   IconBrain,
   IconDeviceMobile,
+  IconRefresh,
+  IconUsers,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type TaskResultDto } from '../../api/server'
 import {
   getModelLabel,
-  type NodeKind
+  getModelProvider,
+  type NodeKind,
 } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 
@@ -57,6 +60,48 @@ const genTaskNodeId = () => {
   return `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const applyMentionFallback = (text: string, mention: string, aliases: string[]) => {
+  let result = text
+  let replaced = false
+  const uniqueAliases = Array.from(new Set(aliases.filter((alias) => alias && alias.trim().length > 0)))
+  uniqueAliases.forEach((alias) => {
+    const regex = new RegExp(escapeRegExp(alias), 'gi')
+    if (regex.test(result)) {
+      result = result.replace(regex, mention)
+      replaced = true
+    }
+  })
+  if (!replaced && mention) {
+    if (!result.includes(mention)) {
+      result = result.trim().length ? `${result.trim()} ${mention}` : mention
+      replaced = true
+    }
+  }
+  return { text: result, replaced }
+}
+
+const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
+  if (!task) return ''
+  const raw = task.raw as any
+  if (raw && typeof raw.text === 'string' && raw.text.trim()) {
+    return raw.text.trim()
+  }
+  const candidates = raw?.response?.candidates
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const parts = candidates[0]?.content?.parts
+    if (Array.isArray(parts)) {
+      const combined = parts
+        .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
+        .join('')
+        .trim()
+      if (combined) return combined
+    }
+  }
+  return ''
+}
+
 type Data = {
   label: string
   kind?: string
@@ -82,6 +127,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
     targets.push({ id: 'in-audio', type: 'audio', pos: Position.Left })
     targets.push({ id: 'in-subtitle', type: 'subtitle', pos: Position.Left })
+    targets.push({ id: 'in-character', type: 'character', pos: Position.Left })
     sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
   } else if (kind === 'image') {
     targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
@@ -89,6 +135,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   } else if (kind === 'video') {
     targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
     targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
+    targets.push({ id: 'in-character', type: 'character', pos: Position.Left })
     sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
   } else if (kind === 'subflow') {
     const io = (data as any)?.io as { inputs?: { id: string; type: string; label?: string }[]; outputs?: { id: string; type: string; label?: string }[] } | undefined
@@ -100,6 +147,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     sources.push({ id: 'out-audio', type: 'audio', pos: Position.Right })
   } else if (kind === 'subtitleAlign') {
     sources.push({ id: 'out-subtitle', type: 'subtitle', pos: Position.Right })
+  } else if (kind === 'character') {
+    sources.push({ id: 'out-character', type: 'character', pos: Position.Right })
   } else {
     // generic fallback
     targets.push({ id: 'in-any', type: 'any', pos: Position.Left })
@@ -110,6 +159,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
   const openSubflow = useUIStore(s => s.openSubflow)
   const openParamFor = useUIStore(s => s.openParamFor)
+  const setActivePanel = useUIStore(s => s.setActivePanel)
   const runSelected = useRFStore(s => s.runSelected)
   const updateNodeData = useRFStore(s => s.updateNodeData)
   const addNode = useRFStore(s => s.addNode)
@@ -128,7 +178,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     (data as any)?.showSystemPrompt || false,
   )
 
-  const selectedCount = useRFStore(s => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
+  const nodesForCharacters = useRFStore(s => s.nodes)
+  const edgesForCharacters = useRFStore(s => s.edges)
+  const selectedCount = React.useMemo(() => nodesForCharacters.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0), [nodesForCharacters])
   const fileRef = React.useRef<HTMLInputElement|null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
   const soraFileId = (data as any)?.soraFileId as string | undefined
@@ -168,6 +220,17 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [videoExpanded, setVideoExpanded] = React.useState(false)
   const [videoPrimaryIndex, setVideoPrimaryIndex] = React.useState(0)
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
+  const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
+  const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
+  const [characterTokenError, setCharacterTokenError] = React.useState<string | null>(null)
+  const [characterList, setCharacterList] = React.useState<any[]>([])
+  const [characterCursor, setCharacterCursor] = React.useState<string | null>(null)
+  const [characterLoading, setCharacterLoading] = React.useState(false)
+  const [characterLoadingMore, setCharacterLoadingMore] = React.useState(false)
+  const [characterError, setCharacterError] = React.useState<string | null>(null)
+  const [characterRewriteModel, setCharacterRewriteModel] = React.useState('glm-4.6')
+  const [characterRewriteLoading, setCharacterRewriteLoading] = React.useState(false)
+  const [characterRewriteError, setCharacterRewriteError] = React.useState<string | null>(null)
   const [hovered, setHovered] = React.useState<number|null>(null)
   const [showMore, setShowMore] = React.useState(false)
   const moreRef = React.useRef<HTMLDivElement|null>(null)
@@ -210,6 +273,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           ? videoModel
           : modelKey
   const modelList = useModelOptions(kind as NodeKind)
+  const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = kind === 'composeVideo' || kind === 'video'
   const showResolutionMenu = kind === 'composeVideo' || kind === 'video' || kind === 'image'
   const showOrientationMenu = kind === 'composeVideo' || kind === 'video'
@@ -233,6 +297,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       : `${sampleCount}x`
   const summaryResolution = aspect
   const summaryExec = `${sampleCount}x`
+  React.useEffect(() => {
+    if (!rewriteModelOptions.length) return
+    if (!rewriteModelOptions.some((opt) => opt.value === characterRewriteModel)) {
+      setCharacterRewriteModel(rewriteModelOptions[0].value)
+    }
+  }, [rewriteModelOptions, characterRewriteModel])
   const runNode = () => {
     const nextPrompt = (prompt || (data as any)?.prompt || '').trim()
     const patch: any = { prompt: nextPrompt }
@@ -277,6 +347,272 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [mentionItems, setMentionItems] = React.useState<any[]>([])
   const [mentionLoading, setMentionLoading] = React.useState(false)
   const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
+  const rewriteRequestIdRef = React.useRef(0)
+  const selectedCharacterTokenId: string | null = (data as any)?.soraTokenId ?? null
+  const selectedCharacter = React.useMemo(() => {
+    const payload: any = data || {}
+    const id = payload.soraCharacterId || null
+    const usernameRaw = payload.soraCharacterUsername || ''
+    const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+    const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : '')
+    const avatar = payload.characterAvatarUrl || null
+    const cover = payload.characterCoverUrl || null
+    const description = payload.characterDescription || payload.prompt || ''
+    if (!id && !username && !displayName) return null
+    return {
+      id,
+      username,
+      displayName: displayName || (username ? `@${username}` : '角色'),
+      avatar,
+      cover,
+      description,
+    }
+  }, [data])
+  const characterPrimaryImage = React.useMemo(() => {
+    if (!selectedCharacter) return null
+    return selectedCharacter.cover || selectedCharacter.avatar || null
+  }, [selectedCharacter])
+  const characterRefs = React.useMemo(() => {
+    return nodesForCharacters
+      .filter((node) => (node.data as any)?.kind === 'character')
+      .map((node) => {
+        const payload: any = node.data || {}
+        const usernameRaw = payload.soraCharacterUsername || ''
+        const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+        const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : node.id)
+        return { nodeId: node.id, username, displayName, rawLabel: payload.label || '' }
+      })
+      .filter((ref) => ref.username || ref.displayName)
+  }, [nodesForCharacters])
+  const characterRefMap = React.useMemo(() => {
+    const map = new Map<string, { nodeId: string; username: string; displayName: string }>()
+    characterRefs.forEach((ref) => map.set(ref.nodeId, ref))
+    return map
+  }, [characterRefs])
+  const autoCharacterOptions = React.useMemo(() => {
+    if (!characterRefs.length) return []
+    const connected = new Set<string>()
+    edgesForCharacters.forEach((edge) => {
+      if (edge.target === id && characterRefMap.has(edge.source)) {
+        connected.add(edge.source)
+      }
+    })
+    return characterRefs
+      .map((ref) => ({
+        value: ref.nodeId,
+        label: ref.username ? `${ref.displayName} · @${ref.username}` : ref.displayName,
+        connected: connected.has(ref.nodeId),
+        username: ref.username,
+        displayName: ref.displayName,
+        rawLabel: ref.rawLabel,
+      }))
+      .sort((a, b) => Number(b.connected) - Number(a.connected))
+  }, [characterRefs, characterRefMap, edgesForCharacters, id])
+  const connectedCharacterOptions = React.useMemo(
+    () => autoCharacterOptions.filter((opt) => opt.connected && opt.username),
+    [autoCharacterOptions],
+  )
+const rewritePromptWithCharacters = React.useCallback(
+  async ({
+    basePrompt,
+    roles,
+    modelValue,
+  }: {
+    basePrompt: string
+    roles: Array<{ mention: string; displayName: string; aliases: string[] }>
+    modelValue: string
+  }) => {
+    const summary = roles
+      .map((role, idx) => {
+        const aliasDesc = role.aliases.length ? role.aliases.join(' / ') : '无'
+        return [
+          `角色 ${idx + 1}`,
+          `- 统一引用：${role.mention}`,
+          `- 名称：${role.displayName || role.mention}`,
+          `- 可能的别名/同音：${aliasDesc}`,
+        ].join('\n')
+      })
+      .join('\n\n')
+    const instructions = [
+      '【角色设定】',
+      summary,
+      '',
+      '【任务说明】',
+      '请在保持原文语气、内容和结构不变的前提下，完成以下操作：',
+      '1. 将所有与上述角色相关的称呼（包含别名、同音写法）替换为对应的 @username；',
+      '2. 如果某个角色在原文未出现，也请在合适的位置补上一处 @username；',
+      '3. 只输出替换后的脚本正文，不要添加解释、前缀或 Markdown；',
+      '4. 全文保持中文。',
+      '',
+      '【原始脚本】',
+      basePrompt,
+    ].join('\n')
+    const systemPrompt =
+      '你是一个提示词修订助手。请根据用户提供的角色映射，统一替换或补充脚本中的角色引用，只输出修改后的脚本文本。'
+    const provider = getModelProvider(modelValue as any)
+    const task = await runTaskByVendor('gemini', {
+      kind: 'prompt_refine',
+      prompt: instructions,
+      extras: { systemPrompt, modelKey: modelValue },
+    })
+    const text = extractTextFromTaskResult(task)
+    return text.trim()
+  },
+  [],
+)
+  const resolveCharacterMeta = React.useCallback((raw: any) => {
+    if (!raw || typeof raw !== 'object') return null
+    const profile = raw.owner_profile || raw.profile || {}
+    const usernameRaw = raw.username || profile.username || ''
+    const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+    const displayName =
+      raw.display_name ||
+      raw.displayName ||
+      profile.display_name ||
+      profile.displayName ||
+      (username ? `@${username}` : '')
+    const cover = raw.cover_image_url || raw.thumbnail_url || raw.preview_image_url || profile.cover_image_url || ''
+    const avatar = raw.profile_picture_url || profile.profile_picture_url || cover || ''
+    const description = raw.description || profile.description || ''
+    const id = raw.user_id || raw.character_id || raw.id || username || ''
+    return { id, username, displayName, cover, avatar, description }
+  }, [])
+  const handleApplyCharacterMentions = React.useCallback(async () => {
+    if (!connectedCharacterOptions.length) return
+    if (!prompt.trim()) {
+      const appended = connectedCharacterOptions
+        .map((opt) => `@${String(opt.username || '').replace(/^@/, '')}`)
+        .filter(Boolean)
+        .join(' ')
+      setPrompt(appended)
+      updateNodeData(id, { prompt: appended })
+      setCharacterRewriteError(null)
+      return
+    }
+    setCharacterRewriteError(null)
+    const roles = connectedCharacterOptions.map((opt) => {
+      const username = String(opt.username || '').replace(/^@/, '')
+      const mention = `@${username}`
+      const aliasList = [
+        opt.displayName,
+        opt.rawLabel,
+        username,
+        opt.displayName?.replace(/\s+/g, ''),
+        opt.rawLabel?.replace(/\s+/g, ''),
+      ].filter((alias): alias is string => Boolean(alias && alias.trim().length > 0))
+      return { mention, displayName: opt.displayName || mention, aliases: aliasList }
+    })
+    const currentRequestId = ++rewriteRequestIdRef.current
+    setCharacterRewriteLoading(true)
+    try {
+      let rewritten = ''
+      try {
+        rewritten = await rewritePromptWithCharacters({
+          basePrompt: prompt,
+          roles,
+          modelValue: characterRewriteModel,
+        })
+      } catch (err) {
+        console.warn('[TaskNode] rewrite via AI failed', err)
+        setCharacterRewriteError(err instanceof Error ? err.message : 'AI 替换失败，使用本地规则处理')
+      }
+      let nextText = rewritten
+      if (!nextText) {
+        nextText = roles.reduce((acc, role) => {
+          const fallback = applyMentionFallback(acc, role.mention, role.aliases)
+          return fallback.text
+        }, prompt)
+      }
+      setPrompt(nextText)
+      updateNodeData(id, { prompt: nextText })
+    } finally {
+      if (rewriteRequestIdRef.current === currentRequestId) {
+        setCharacterRewriteLoading(false)
+      }
+    }
+  }, [connectedCharacterOptions, prompt, characterRewriteModel, rewritePromptWithCharacters, id, updateNodeData])
+  const handleCopyCharacterMention = React.useCallback((username?: string | null) => {
+    if (!username) return
+    const mention = `@${username.replace(/^@/, '')}`
+    try {
+      void navigator.clipboard?.writeText(mention)
+    } catch {
+      // ignore clipboard failures
+    }
+  }, [])
+  const handleClearCharacter = React.useCallback(() => {
+    updateNodeLabel(id, '角色')
+    setPrompt('')
+    updateNodeData(id, {
+      label: '角色',
+      prompt: '',
+      soraCharacterId: null,
+      soraCharacterUsername: null,
+      characterDisplayName: null,
+      characterAvatarUrl: null,
+      characterCoverUrl: null,
+      characterDescription: null,
+    })
+  }, [id, updateNodeData, updateNodeLabel])
+  const handleSelectCharacter = React.useCallback(
+    (raw: any) => {
+      const meta = resolveCharacterMeta(raw)
+      if (!meta) return
+      const labelText = meta.displayName || (meta.username ? `@${meta.username}` : 'Sora 角色')
+      updateNodeLabel(id, labelText)
+      const nextPrompt = meta.description || ''
+      setPrompt(nextPrompt)
+      updateNodeData(id, {
+        label: labelText,
+        prompt: nextPrompt,
+        soraTokenId: selectedCharacterTokenId || null,
+        soraCharacterId: meta.id || null,
+        soraCharacterUsername: meta.username || null,
+        characterDisplayName: meta.displayName || labelText,
+        characterAvatarUrl: meta.avatar || null,
+        characterCoverUrl: meta.cover || null,
+        characterDescription: meta.description || '',
+      })
+    },
+    [id, resolveCharacterMeta, selectedCharacterTokenId, updateNodeData, updateNodeLabel],
+  )
+  const fetchCharacters = React.useCallback(
+    async (options?: { cursor?: string | null; append?: boolean }) => {
+      if (!selectedCharacterTokenId) return
+      const { cursor, append } = options || {}
+      if (append) {
+        setCharacterLoadingMore(true)
+      } else {
+        setCharacterLoading(true)
+        setCharacterError(null)
+      }
+      try {
+        const res = await listSoraCharacters(selectedCharacterTokenId, cursor || null, 30)
+        const items = Array.isArray(res?.items) ? res.items : []
+        setCharacterList((prev) => (append ? [...prev, ...items] : items))
+        setCharacterCursor(res?.cursor || null)
+      } catch (err: any) {
+        setCharacterError(err?.message || '加载角色失败')
+        if (!append) setCharacterList([])
+        setCharacterCursor(null)
+      } finally {
+        if (append) {
+          setCharacterLoadingMore(false)
+        } else {
+          setCharacterLoading(false)
+        }
+      }
+    },
+    [selectedCharacterTokenId],
+  )
+  const refreshCharacters = React.useCallback(() => {
+    if (!selectedCharacterTokenId) return
+    fetchCharacters()
+  }, [fetchCharacters, selectedCharacterTokenId])
+  const loadMoreCharacters = React.useCallback(() => {
+    if (!selectedCharacterTokenId || !characterCursor) return
+    fetchCharacters({ cursor: characterCursor, append: true })
+  }, [characterCursor, fetchCharacters, selectedCharacterTokenId])
   const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
     if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null, upstreamVideoUrl: null as string | null, upstreamSoraFileId: null as string | null }
@@ -313,6 +649,57 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
     return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
   })
+
+  React.useEffect(() => {
+    if (kind !== 'character') {
+      setCharacterTokens([])
+      setCharacterTokenError(null)
+      setCharacterTokensLoading(false)
+      return
+    }
+    let canceled = false
+    const loadTokens = async () => {
+      setCharacterTokensLoading(true)
+      setCharacterTokenError(null)
+      try {
+        const providers = await listModelProviders()
+        const sora = providers.find((p) => p.vendor === 'sora')
+        if (!sora) {
+          if (!canceled) {
+            setCharacterTokens([])
+            setCharacterTokenError('未配置 Sora Provider')
+          }
+          return
+        }
+        const tokens = await listModelTokens(sora.id)
+        if (!canceled) {
+          setCharacterTokens(tokens)
+        }
+      } catch (err: any) {
+        if (!canceled) {
+          setCharacterTokens([])
+          setCharacterTokenError(err?.message || '加载 Sora Token 失败')
+        }
+      } finally {
+        if (!canceled) {
+          setCharacterTokensLoading(false)
+        }
+      }
+    }
+    loadTokens()
+    return () => {
+      canceled = true
+    }
+  }, [kind])
+
+  React.useEffect(() => {
+    if (kind !== 'character') return
+    setCharacterError(null)
+    setCharacterList([])
+    setCharacterCursor(null)
+    if (!selectedCharacterTokenId) return
+    fetchCharacters()
+  }, [fetchCharacters, kind, selectedCharacterTokenId])
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
@@ -385,6 +772,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
+    if (kind === 'character') {
+      return [
+        { key: 'assets', label: '角色库', icon: <IconUsers size={16} />, onClick: () => setActivePanel('assets') },
+        { key: 'refresh', label: '刷新', icon: <IconRefresh size={16} />, onClick: () => refreshCharacters() },
+      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+    }
     if (kind === 'image') {
       return [
         // image 节点顶部工具条：只保留节点级的「图片编辑器」操作，避免和结果区工具条重复
@@ -396,7 +789,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
       { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [id, kind, openParamFor])
+  }, [id, kind, openParamFor, refreshCharacters, setActivePanel])
 
   const maxTools = 5
   const commonLen = 2
@@ -410,8 +803,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (kind === 'video' || kind === 'composeVideo') return Boolean((data as any)?.videoUrl)
     if (kind === 'textToImage') return Boolean((data as any)?.imageUrl)
     if (kind === 'tts') return Boolean((data as any)?.audioUrl)
+    if (kind === 'character') return Boolean(characterPrimaryImage)
     return false
-  }, [kind, imageUrl, data])
+  }, [kind, imageUrl, data, characterPrimaryImage])
 
   const connectToRight = (targetKind: string, targetLabel: string) => {
     const all = useRFStore.getState().nodes
@@ -613,12 +1007,35 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           <Paper withBorder shadow="sm" radius="xl" className="glass" p={4}>
             <Group gap={6}>
             <ActionIcon key="preview" variant="subtle" title="放大预览" onClick={()=>{
-              const url = (kind==='image'||kind==='textToImage') ? (imageUrl || (data as any)?.imageUrl) : (kind==='video'||kind==='composeVideo') ? (data as any)?.videoUrl : (kind==='tts' ? (data as any)?.audioUrl : undefined)
-              const k: any = (kind==='tts') ? 'audio' : (kind==='video'||kind==='composeVideo') ? 'video' : 'image'
+              const url =
+                kind === 'character'
+                  ? characterPrimaryImage || undefined
+                  : (kind==='image'||kind==='textToImage')
+                    ? (imageUrl || (data as any)?.imageUrl)
+                    : (kind==='video'||kind==='composeVideo')
+                      ? (data as any)?.videoUrl
+                      : (kind==='tts'
+                        ? (data as any)?.audioUrl
+                        : undefined)
+              const k: any =
+                kind === 'character'
+                  ? 'image'
+                  : (kind==='tts')
+                    ? 'audio'
+                    : (kind==='video'||kind==='composeVideo')
+                      ? 'video'
+                      : 'image'
               if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
             }}><IconMaximize size={16} /></ActionIcon>
             <ActionIcon key="download" variant="subtle" title="下载" onClick={()=>{
-              const url = (kind==='image'||kind==='textToImage') ? (imageUrl || (data as any)?.imageUrl) : (kind==='video'||kind==='composeVideo') ? (data as any)?.videoUrl : (kind==='tts' ? (data as any)?.audioUrl : undefined)
+              const url =
+                kind === 'character'
+                  ? characterPrimaryImage || undefined
+                  : (kind==='image'||kind==='textToImage')
+                    ? (imageUrl || (data as any)?.imageUrl)
+                    : (kind==='video'||kind==='composeVideo')
+                      ? (data as any)?.videoUrl
+                      : (kind==='tts' ? (data as any)?.audioUrl : undefined)
               if (!url) return
               const a = document.createElement('a')
               a.href = url
@@ -661,7 +1078,84 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           title={`输入: ${h.type}`}
         />
       ))}
-      {/* Content Area for Image/Video/Text kinds */}
+      {/* Content Area for Character/Image/Video/Text kinds */}
+      {kind === 'character' && (
+        <div style={{ position: 'relative', marginTop: 6 }}>
+          {characterPrimaryImage ? (
+            <div
+              style={{
+                borderRadius: 10,
+                overflow: 'hidden',
+                border: '1px solid rgba(148,163,184,0.5)',
+                position: 'relative',
+                background: '#050505',
+              }}
+            >
+              <img
+                src={characterPrimaryImage}
+                alt={selectedCharacter?.displayName || 'Sora 角色'}
+                style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  padding: '12px 12px 10px',
+                  background: 'linear-gradient(0deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.0) 80%)',
+                  color: '#fff',
+                }}
+              >
+                <Text size="sm" fw={600} style={{ marginBottom: 2 }}>
+                  {selectedCharacter?.displayName || 'Sora 角色'}
+                </Text>
+                {selectedCharacter?.username && (
+                  <Text size="xs" c="dimmed">
+                    @{selectedCharacter.username}
+                  </Text>
+                )}
+              </div>
+              <Button
+                size="xs"
+                variant="light"
+                style={{ position: 'absolute', top: 8, right: 8 }}
+                onClick={() => setActivePanel('assets')}
+              >
+                管理角色
+              </Button>
+            </div>
+          ) : (
+            <Paper
+              withBorder
+              radius="md"
+              p="md"
+              style={{
+                minHeight: 140,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                textAlign: 'center',
+              }}
+            >
+              <IconUsers size={28} style={{ color: 'rgba(148,163,184,0.9)' }} />
+              <Text size="sm" c="dimmed">
+                选择一个 Sora 角色，封面将显示在此处并可连接到视频节点。
+              </Text>
+              <Group gap={6}>
+                <Button size="xs" variant="light" onClick={() => setActivePanel('assets')}>
+                  打开资产面板
+                </Button>
+                <Button size="xs" variant="subtle" onClick={refreshCharacters} disabled={!selectedCharacterTokenId}>
+                  刷新角色
+                </Button>
+              </Group>
+            </Paper>
+          )}
+        </div>
+      )}
       {kind === 'image' && (
         <div style={{ position: 'relative', marginTop: 6 }}>
           {imageResults.length === 0 ? (
@@ -1224,23 +1718,28 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 </Menu.Dropdown>
               </Menu>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ActionIcon
-                size="lg"
-                variant="filled"
-                color="blue"
-                title="执行节点"
-                loading={status === 'running' || status === 'queued'}
-                onClick={runNode}
-              >
-                <IconPlayerPlay size={16} />
-              </ActionIcon>
-            </div>
+            {kind !== 'character' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ActionIcon
+                  size="lg"
+                  variant="filled"
+                  color="blue"
+                  title="执行节点"
+                  loading={status === 'running' || status === 'queued'}
+                  onClick={runNode}
+                >
+                  <IconPlayerPlay size={16} />
+                </ActionIcon>
+              </div>
+            )}
           </div>
-          <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材（暂时只支持一次生成1个视频，已知bug）' : '详情'}</Text>
+          {kind === 'character' ? (
+            <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
+          ) : (
+            <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材（暂时只支持一次生成1个视频，已知bug）' : '详情'}</Text>
+          )}
 
-          {/* Error Display - Show error messages when node status is error */}
-          {status === 'error' && (data as any)?.lastError && (
+          {kind !== 'character' && status === 'error' && (data as any)?.lastError && (
             <Paper
               withBorder
               radius="md"
@@ -1258,7 +1757,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
               <Text size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
                 {(data as any).lastError}
               </Text>
-              {/* Show quota exceeded hint if it's a 429 error */}
               {(data as any)?.httpStatus === 429 && (
                 <Text size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
                   💡 提示：API 配额已用尽，请稍后重试或升级您的服务计划
@@ -1267,374 +1765,607 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             </Paper>
           )}
 
-          {/* 系统提示词配置 - 仅对文本节点显示 */}
-          {kind === 'textToImage' && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <Text size="xs" c="dimmed">系统提示词</Text>
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  onClick={() => setShowSystemPrompt(!showSystemPrompt)}
-                >
-                  {showSystemPrompt ? '隐藏' : '显示'}
-                </Button>
-              </div>
-              {showSystemPrompt && (
-                <Textarea
-                  autosize
-                  minRows={2}
-                  maxRows={4}
-                  placeholder="输入AI的系统提示词，用于指导如何优化用户输入的提示词..."
-                  value={systemPrompt}
-                  onChange={(e) => {
-                    const value = e.currentTarget.value
-                    setSystemPrompt(value)
-                    updateNodeData(id, { systemPrompt: value })
-                  }}
-                  style={{
-                    fontSize: 11,
-                    background: 'rgba(15,23,42,0.9)',
-                    border: '1px solid rgba(148,163,184,0.5)',
-                    color: '#e5e7eb',
-                    marginBottom: 4,
-                  }}
-                />
-              )}
-              {!showSystemPrompt && (
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  onClick={() => setShowSystemPrompt(true)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '4px 6px',
-                    background: 'rgba(15,23,42,0.5)',
-                    borderRadius: 4,
-                    fontSize: 11,
-                    fontStyle: 'italic'
-                  }}
-                >
-                  {systemPrompt.length > 60 ? systemPrompt.slice(0, 60) + '...' : systemPrompt}
+          {kind === 'character' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Select
+                label="Sora Token"
+                placeholder={characterTokensLoading ? '正在加载 Token...' : characterTokens.length === 0 ? '暂无可用 Token' : '选择 Token'}
+                data={characterTokens.map((t) => ({
+                  value: t.id,
+                  label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
+                }))}
+                value={selectedCharacterTokenId || null}
+                onChange={(value) => {
+                  updateNodeData(id, { soraTokenId: value || null })
+                  setCharacterList([])
+                  setCharacterCursor(null)
+                }}
+                size="xs"
+                withinPortal
+                clearable
+                disabled={characterTokensLoading}
+              />
+              {characterTokenError && (
+                <Text size="xs" c="red">
+                  {characterTokenError}
                 </Text>
               )}
-            </div>
-          )}
-
-          {kind === 'composeVideo' && (upstreamImageUrl || upstreamText) && (
-            <div style={{ marginBottom: 8 }}>
-              {upstreamImageUrl && (
-                <div
-                  style={{
-                    position: 'relative',
-                    width: '100%',
-                    maxHeight: 180,
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                    marginBottom: upstreamText ? 4 : 0,
-                    border: '1px solid rgba(148,163,184,0.5)',
-                    background: 'rgba(15,23,42,0.9)',
-                  }}
+              <Group gap={6}>
+                <Button size="xs" variant="light" onClick={() => setActivePanel('assets')}>
+                  打开资产面板
+                </Button>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={refreshCharacters}
+                  disabled={!selectedCharacterTokenId}
+                  loading={characterLoading}
                 >
-                  <img
-                    src={upstreamImageUrl}
-                    alt="上游图片素材"
-                    style={{
-                      width: '100%',
-                      height: 'auto',
-                      maxHeight: 180,
-                      objectFit: 'contain',
-                      display: 'block',
-                      backgroundColor: 'black',
-                    }}
-                  />
-                  {/* Sora file_id indicator for upstream image */}
-                  {upstreamSoraFileId && (
+                  刷新列表
+                </Button>
+              </Group>
+              {selectedCharacter ? (
+                <Paper withBorder radius="md" p="xs">
+                  {selectedCharacter.cover && (
                     <div
                       style={{
-                        position: 'absolute',
-                        left: 8,
-                        top: 8,
-                        padding: '2px 6px',
-                        borderRadius: 4,
-                        background: 'rgba(34, 197, 94, 0.9)',
-                        color: 'white',
-                        fontSize: '10px',
-                        fontWeight: 500,
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        border: '1px solid rgba(148,163,184,0.5)',
+                        marginBottom: 6,
+                        background: 'black',
                       }}
-                      title={`Using Sora File ID: ${upstreamSoraFileId}`}
                     >
-                      ✓ Sora
+                      <img
+                        src={selectedCharacter.cover}
+                        alt={selectedCharacter.displayName}
+                        style={{ width: '100%', height: 120, objectFit: 'cover' }}
+                      />
                     </div>
+                  )}
+                  <Group gap={8} align="flex-start">
+                    {selectedCharacter.avatar && (
+                      <img
+                        src={selectedCharacter.avatar}
+                        alt={selectedCharacter.displayName}
+                        style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <Text size="sm" fw={600}>
+                        {selectedCharacter.displayName}
+                      </Text>
+                      {selectedCharacter.username && (
+                        <Text size="xs" c="dimmed">
+                          @{selectedCharacter.username}
+                        </Text>
+                      )}
+                    </div>
+                  </Group>
+                  {selectedCharacter.description && (
+                    <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+                      {selectedCharacter.description}
+                    </Text>
+                  )}
+                  <Group gap={6} mt={8}>
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => handleCopyCharacterMention(selectedCharacter.username)}
+                      disabled={!selectedCharacter.username}
+                    >
+                      复制 @ 引用
+                    </Button>
+                    <Button size="xs" variant="light" color="red" onClick={handleClearCharacter}>
+                      清除
+                    </Button>
+                  </Group>
+                </Paper>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  尚未选择角色，先选择 Token，再从下方列表或资产面板中添加。
+                </Text>
+              )}
+              <div>
+                <Group justify="space-between" mb={4}>
+                  <Text size="xs" fw={500}>
+                    可用角色
+                  </Text>
+                  {characterLoading && <Loader size="xs" />}
+                </Group>
+                {!selectedCharacterTokenId && (
+                  <Text size="xs" c="dimmed">
+                    请选择 Sora Token 以加载角色。
+                  </Text>
+                )}
+                {selectedCharacterTokenId && !characterLoading && characterList.length === 0 && (
+                  <Text size="xs" c="dimmed">
+                    暂无角色，可前往资产面板创建。
+                  </Text>
+                )}
+                {selectedCharacterTokenId && characterList.length > 0 && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                      gap: 8,
+                    }}
+                  >
+                    {characterList.map((char, idx) => {
+                      const meta = resolveCharacterMeta(char)
+                      if (!meta) return null
+                      const isActive = Boolean(selectedCharacter?.id && meta.id && selectedCharacter.id === meta.id)
+                      return (
+                        <Paper
+                          key={meta.id || meta.username || idx}
+                          withBorder
+                          radius="md"
+                          p="xs"
+                          style={{
+                            border: isActive ? '1px solid rgba(96,165,250,0.8)' : '1px solid rgba(55,65,81,0.7)',
+                            background: isActive ? 'rgba(96,165,250,0.08)' : 'rgba(15,23,42,0.4)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => handleSelectCharacter(char)}
+                        >
+                          {meta.cover && (
+                            <div
+                              style={{
+                                borderRadius: 6,
+                                overflow: 'hidden',
+                                border: '1px solid rgba(148,163,184,0.4)',
+                                marginBottom: 6,
+                                background: 'black',
+                              }}
+                            >
+                              <img
+                                src={meta.cover}
+                                alt={meta.displayName}
+                                style={{ width: '100%', height: 70, objectFit: 'cover' }}
+                              />
+                            </div>
+                          )}
+                          <Text size="xs" fw={500} lineClamp={1}>
+                            {meta.displayName || '未命名角色'}
+                          </Text>
+                          {meta.username && (
+                            <Text size="xs" c="dimmed" lineClamp={1}>
+                              @{meta.username}
+                            </Text>
+                          )}
+                          {meta.description && (
+                            <Text size="xs" c="dimmed" lineClamp={2} mt={4}>
+                              {meta.description}
+                            </Text>
+                          )}
+                          <Button
+                            size="xs"
+                            variant={isActive ? 'filled' : 'subtle'}
+                            fullWidth
+                            mt={6}
+                            onClick={(ev) => {
+                              ev.stopPropagation()
+                              handleSelectCharacter(char)
+                            }}
+                          >
+                            {isActive ? '已选择' : '选择角色'}
+                          </Button>
+                        </Paper>
+                      )
+                    })}
+                  </div>
+                )}
+                {characterCursor && (
+                  <Button size="xs" variant="light" mt={8} onClick={loadMoreCharacters} loading={characterLoadingMore}>
+                    加载更多
+                  </Button>
+                )}
+                {characterError && (
+                  <Text size="xs" c="red" mt={4}>
+                    {characterError}
+                  </Text>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* 系统提示词配置 - 仅对文本节点显示 */}
+              {kind === 'textToImage' && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <Text size="xs" c="dimmed">系统提示词</Text>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+                    >
+                      {showSystemPrompt ? '隐藏' : '显示'}
+                    </Button>
+                  </div>
+                  {showSystemPrompt && (
+                    <Textarea
+                      autosize
+                      minRows={2}
+                      maxRows={4}
+                      placeholder="输入AI的系统提示词，用于指导如何优化用户输入的提示词..."
+                      value={systemPrompt}
+                      onChange={(e) => {
+                        const value = e.currentTarget.value
+                        setSystemPrompt(value)
+                        updateNodeData(id, { systemPrompt: value })
+                      }}
+                      style={{
+                        fontSize: 11,
+                        background: 'rgba(15,23,42,0.9)',
+                        border: '1px solid rgba(148,163,184,0.5)',
+                        color: '#e5e7eb',
+                        marginBottom: 4,
+                      }}
+                    />
+                  )}
+                  {!showSystemPrompt && (
+                    <Text
+                      size="xs"
+                      c="dimmed"
+                      onClick={() => setShowSystemPrompt(true)}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        background: 'rgba(15,23,42,0.5)',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontStyle: 'italic'
+                      }}
+                    >
+                      {systemPrompt.length > 60 ? systemPrompt.slice(0, 60) + '...' : systemPrompt}
+                    </Text>
                   )}
                 </div>
               )}
-              {upstreamText && (
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  lineClamp={1}
-                  title={upstreamText || undefined}
-                >
-                  {upstreamText}
-                </Text>
+
+              {kind === 'composeVideo' && (upstreamImageUrl || upstreamText) && (
+                <div style={{ marginBottom: 8 }}>
+                  {upstreamImageUrl && (
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: '100%',
+                        maxHeight: 180,
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        marginBottom: upstreamText ? 4 : 0,
+                        border: '1px solid rgba(148,163,184,0.5)',
+                        background: 'rgba(15,23,42,0.9)',
+                      }}
+                    >
+                      <img
+                        src={upstreamImageUrl}
+                        alt="上游图片素材"
+                        style={{
+                          width: '100%',
+                          height: 'auto',
+                          maxHeight: 180,
+                          objectFit: 'contain',
+                          display: 'block',
+                          backgroundColor: 'black',
+                        }}
+                      />
+                      {upstreamSoraFileId && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 8,
+                            top: 8,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            background: 'rgba(34, 197, 94, 0.9)',
+                            color: 'white',
+                            fontSize: '10px',
+                            fontWeight: 500,
+                          }}
+                          title={`Using Sora File ID: ${upstreamSoraFileId}`}
+                        >
+                          ✓ Sora
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {upstreamText && (
+                    <Text
+                      size="xs"
+                      c="dimmed"
+                      lineClamp={1}
+                      title={upstreamText || undefined}
+                    >
+                      {upstreamText}
+                    </Text>
+                  )}
+                </div>
               )}
-            </div>
-          )}
-          <div style={{ position: 'relative' }}>
-            {/* 智能建议状态指示器 */}
-            {prompt.length >= 6 && (
-              <ActionIcon
-                variant="subtle"
-                size="xs"
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  right: 8,
-                  zIndex: 10,
-                  background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
-                  border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
-                }}
-                onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
-                title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
-              >
-                <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
-              </ActionIcon>
-            )}
-            <Textarea
-              autosize
-              minRows={2}
-              maxRows={6}
-              placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
-              value={prompt}
-              onChange={(e)=>{
-                const el = e.currentTarget
-                const v = el.value
-                setPrompt(v)
-                updateNodeData(id, { prompt: v })
 
-                const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
-                const before = v.slice(0, caret)
-                const lastAt = before.lastIndexOf('@')
-                const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
-                if (lastAt >= 0 && lastAt >= lastSpace) {
-                  const filter = before.slice(lastAt + 1)
-                  setMentionFilter(filter)
-                  setMentionOpen(true)
-                  mentionMetaRef.current = { at: lastAt, caret }
-                } else {
-                  setMentionOpen(false)
-                  setMentionFilter('')
-                  mentionMetaRef.current = null
-                }
-              }}
-              onBlur={() => {
-                setPromptSuggestions([])
-                setMentionOpen(false)
-                setMentionFilter('')
-              }}
-              onKeyDown={(e) => {
-                const isMac = navigator.platform.toLowerCase().includes('mac')
-                const mod = isMac ? e.metaKey : e.ctrlKey
+              {connectedCharacterOptions.length > 0 && (
+                <Paper withBorder radius="md" p="xs" mb="xs">
+                  <Text size="xs" fw={500} mb={4}>
+                    已连接角色：{connectedCharacterOptions.map((opt) => `@${opt.username}`).join('、')}
+                  </Text>
+                  <Group align="flex-end" gap="xs" wrap="wrap">
+                    <Select
+                      label="替换模型"
+                      size="xs"
+                      withinPortal
+                      data={rewriteModelOptions.length ? rewriteModelOptions : [{ value: 'glm-4.6', label: 'GLM-4.6' }]}
+                      value={characterRewriteModel}
+                      onChange={(value) => value && setCharacterRewriteModel(value)}
+                      style={{ minWidth: 180 }}
+                    />
+                    <Button
+                      size="xs"
+                      variant="light"
+                      loading={characterRewriteLoading}
+                      onClick={() => { void handleApplyCharacterMentions() }}
+                    >
+                      一键替换 @引用
+                    </Button>
+                  </Group>
+                  {characterRewriteError && (
+                    <Text size="xs" c="red" mt={4}>
+                      {characterRewriteError}
+                    </Text>
+                  )}
+                </Paper>
+              )}
 
-                if (e.key === 'Escape') {
-                  if (mentionOpen) {
-                    e.stopPropagation()
+              <div style={{ position: 'relative' }}>
+                {prompt.length >= 6 && (
+                  <ActionIcon
+                    variant="subtle"
+                    size="xs"
+                    style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      zIndex: 10,
+                      background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
+                      border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
+                    }}
+                    onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
+                    title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
+                  >
+                    <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
+                  </ActionIcon>
+                )}
+                <Textarea
+                  autosize
+                  minRows={2}
+                  maxRows={6}
+                  placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
+                  value={prompt}
+                  onChange={(e)=>{
+                    const el = e.currentTarget
+                    const v = el.value
+                    setPrompt(v)
+                    updateNodeData(id, { prompt: v })
+
+                    const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
+                    const before = v.slice(0, caret)
+                    const lastAt = before.lastIndexOf('@')
+                    const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
+                    if (lastAt >= 0 && lastAt >= lastSpace) {
+                      const filter = before.slice(lastAt + 1)
+                      setMentionFilter(filter)
+                      setMentionOpen(true)
+                      mentionMetaRef.current = { at: lastAt, caret }
+                    } else {
+                      setMentionOpen(false)
+                      setMentionFilter('')
+                      mentionMetaRef.current = null
+                    }
+                  }}
+                  onBlur={() => {
+                    setPromptSuggestions([])
                     setMentionOpen(false)
                     setMentionFilter('')
-                    mentionMetaRef.current = null
-                    return
-                  }
-                  // 如果没有在@选择状态，Esc键关闭建议
-                  if (!mentionOpen && promptSuggestions.length > 0) {
-                    e.preventDefault()
-                    setPromptSuggestions([])
-                    setSuggestionsEnabled(false)
-                    return
-                  }
-                }
+                  }}
+                  onKeyDown={(e) => {
+                    const isMac = navigator.platform.toLowerCase().includes('mac')
+                    const mod = isMac ? e.metaKey : e.ctrlKey
 
-                // Ctrl/Cmd + Space 激活智能建议
-                if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
-                  e.preventDefault()
-                  const value = prompt.trim()
-                  if (value.length >= 6) {
-                    setSuggestionsEnabled(true)
-                  }
-                  return
-                }
+                    if (e.key === 'Escape') {
+                      if (mentionOpen) {
+                        e.stopPropagation()
+                        setMentionOpen(false)
+                        setMentionFilter('')
+                        mentionMetaRef.current = null
+                        return
+                      }
+                      if (!mentionOpen && promptSuggestions.length > 0) {
+                        e.preventDefault()
+                        setPromptSuggestions([])
+                        setSuggestionsEnabled(false)
+                        return
+                      }
+                    }
 
-                if (!promptSuggestions.length) return
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setActiveSuggestion((idx) => (idx + 1) % promptSuggestions.length)
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setActiveSuggestion((idx) => (idx - 1 + promptSuggestions.length) % promptSuggestions.length)
-                } else if (e.key === 'Tab') {
-                  e.preventDefault()
-                  const suggestion = promptSuggestions[activeSuggestion]
-                  if (suggestion) {
-                    setPrompt(suggestion)
-                    setPromptSuggestions([])
-                    setSuggestionsEnabled(false)
-                    markDraftPromptUsed(suggestion, 'sora').catch(() => {})
-                  }
-                } else if (e.key === 'Escape') {
-                  setPromptSuggestions([])
-                  setSuggestionsEnabled(false)
-                }
-              }}
-            />
-            {/* Sora 角色提及选择 */}
-            {mentionOpen && (
-              <Paper
-                withBorder
-                shadow="sm"
-                radius="md"
-                className="glass"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  top: '100%',
-                  marginTop: 4,
-                  zIndex: 11,
-                  maxHeight: 220,
-                  overflowY: 'auto',
-                }}
-              >
-                <Text size="xs" c="dimmed" px={8} py={4}>
-                  引用角色（仅 Sora2 支持）：输入 @ 后选择
-                </Text>
-                {mentionLoading && (
-                  <Text size="xs" c="dimmed" px={8} py={4}>
-                    正在加载角色列表…
-                  </Text>
-                )}
-                {!mentionLoading && mentionItems.length === 0 && (
-                  <Text size="xs" c="dimmed" px={8} py={4}>
-                    暂无可引用角色
-                  </Text>
-                )}
-                {!mentionLoading &&
-                  mentionItems
-                    .filter((it) => {
-                      const p = (it && (it.profile as any)) || {}
-                      if (!p.can_cameo) return false
-                      const u = String(p.username || '').toLowerCase()
-                      const f = mentionFilter.trim().toLowerCase()
-                      if (!f) return true
-                      return u.includes(f)
-                    })
-                    .map((it) => {
-                      const p = (it && (it.profile as any)) || {}
-                      const username = String(p.username || '').trim()
-                      const displayName = String(p.display_name || p.displayName || '').trim()
-                      const label = username ? `@${username}` : ''
-                      const key = p.user_id || username || it.token || Math.random().toString(36).slice(2)
-                      const avatar = String(p.profile_picture_url || '')
-                      return (
-                        <div
-                          key={key}
-                          onMouseDown={(ev) => {
-                            ev.preventDefault()
-                            if (!username) return
-                            const value = prompt
-                            const meta = mentionMetaRef.current
-                            let next = value
-                            if (meta) {
-                              const { at, caret } = meta
-                              const beforeAt = value.slice(0, at)
-                              const afterCaret = value.slice(caret)
-                              next = `${beforeAt}@${username}${afterCaret}`
-                            } else {
-                              next = `${value}${value.endsWith(' ') || !value ? '' : ' '}@${username} `
-                            }
-                            setPrompt(next)
-                            updateNodeData(id, { prompt: next })
-                            setMentionOpen(false)
-                            setMentionFilter('')
-                            mentionMetaRef.current = null
-                          }}
-                          style={{
-                            padding: '4px 8px',
-                            fontSize: 12,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                          }}
-                        >
-                          {avatar && (
-                            <img
-                              src={avatar}
-                              alt={username}
-                              style={{
-                                width: 24,
-                                height: 24,
-                                borderRadius: '50%',
-                                objectFit: 'cover',
-                                flexShrink: 0,
-                              }}
-                            />
-                          )}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ color: '#e5e7eb' }}>{label}</span>
-                            {displayName && (
-                              <span style={{ color: 'rgba(156,163,175,0.9)', fontSize: 11 }}>
-                                {displayName}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-              </Paper>
-            )}
-
-            {/* 历史提示词 / 语义提示词建议（与 @ 角色提及互斥展示） */}
-            {!mentionOpen && promptSuggestions.length > 0 && (
-              <Paper
-                withBorder
-                shadow="sm"
-                radius="md"
-                className="glass"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  bottom: '100%',
-                  marginBottom: 4,
-                  zIndex: 10,
-                  maxHeight: 180,
-                  overflowY: 'auto',
-                }}
-              >
-                {promptSuggestions.map((s, idx) => (
-                  <div
-                    key={`${idx}-${s.slice(0,16)}`}
-                    onMouseDown={(e) => {
+                    if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
                       e.preventDefault()
-                      setPrompt(s)
+                      const value = prompt.trim()
+                      if (value.length >= 6) {
+                        setSuggestionsEnabled(true)
+                      }
+                      return
+                    }
+
+                    if (!promptSuggestions.length) return
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setActiveSuggestion((idx) => (idx + 1) % promptSuggestions.length)
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setActiveSuggestion((idx) => (idx - 1 + promptSuggestions.length) % promptSuggestions.length)
+                    } else if (e.key === 'Tab') {
+                      e.preventDefault()
+                      const suggestion = promptSuggestions[activeSuggestion]
+                      if (suggestion) {
+                        setPrompt(suggestion)
+                        setPromptSuggestions([])
+                        setSuggestionsEnabled(false)
+                        markDraftPromptUsed(suggestion, 'sora').catch(() => {})
+                      }
+                    } else if (e.key === 'Escape') {
                       setPromptSuggestions([])
-                      markDraftPromptUsed(s, 'sora').catch(() => {})
-                    }}
-                    onMouseEnter={() => setActiveSuggestion(idx)}
+                      setSuggestionsEnabled(false)
+                    }
+                  }}
+                />
+                {mentionOpen && (
+                  <Paper
+                    withBorder
+                    shadow="sm"
+                    radius="md"
+                    className="glass"
                     style={{
-                      padding: '4px 8px',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      background: idx === activeSuggestion ? 'rgba(148,163,184,0.28)' : 'transparent',
-                      color: '#e5e7eb',
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      top: '100%',
+                      marginTop: 4,
+                      zIndex: 11,
+                      maxHeight: 220,
+                      overflowY: 'auto',
                     }}
                   >
-                    {s}
-                  </div>
-                ))}
-              </Paper>
-            )}
-          </div>
+                    <Text size="xs" c="dimmed" px={8} py={4}>
+                      引用角色（仅 Sora2 支持）：输入 @ 后选择
+                    </Text>
+                    {mentionLoading && (
+                      <Text size="xs" c="dimmed" px={8} py={4}>
+                        正在加载角色列表…
+                      </Text>
+                    )}
+                    {!mentionLoading && mentionItems.length === 0 && (
+                      <Text size="xs" c="dimmed" px={8} py={4}>
+                        暂无可引用角色
+                      </Text>
+                    )}
+                    {!mentionLoading &&
+                      mentionItems
+                        .filter((it) => {
+                          const p = (it && (it.profile as any)) || {}
+                          if (!p.can_cameo) return false
+                          const u = String(p.username || '').toLowerCase()
+                          const f = mentionFilter.trim().toLowerCase()
+                          if (!f) return true
+                          return u.includes(f)
+                        })
+                        .map((it) => {
+                          const p = (it && (it.profile as any)) || {}
+                          const username = String(p.username || '').trim()
+                          const displayName = String(p.display_name || p.displayName || '').trim()
+                          const label = username ? `@${username}` : ''
+                          const key = p.user_id || username || it.token || Math.random().toString(36).slice(2)
+                          const avatar = String(p.profile_picture_url || '')
+                          return (
+                            <div
+                              key={key}
+                              onMouseDown={(ev) => {
+                                ev.preventDefault()
+                                if (!username) return
+                                const value = prompt
+                                const meta = mentionMetaRef.current
+                                let next = value
+                                if (meta) {
+                                  const { at, caret } = meta
+                                  const beforeAt = value.slice(0, at)
+                                  const afterCaret = value.slice(caret)
+                                  next = `${beforeAt}@${username}${afterCaret}`
+                                } else {
+                                  next = `${value}${value.endsWith(' ') || !value ? '' : ' '}@${username} `
+                                }
+                                setPrompt(next)
+                                updateNodeData(id, { prompt: next })
+                                setMentionOpen(false)
+                                setMentionFilter('')
+                                mentionMetaRef.current = null
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: 12,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                              }}
+                            >
+                              {avatar && (
+                                <img
+                                  src={avatar}
+                                  alt={username}
+                                  style={{
+                                    width: 24,
+                                    height: 24,
+                                    borderRadius: '50%',
+                                    objectFit: 'cover',
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                <span style={{ color: '#e5e7eb' }}>{label}</span>
+                                {displayName && (
+                                  <span style={{ color: 'rgba(156,163,175,0.9)', fontSize: 11 }}>
+                                    {displayName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                  </Paper>
+                )}
+
+                {!mentionOpen && promptSuggestions.length > 0 && (
+                  <Paper
+                    withBorder
+                    shadow="sm"
+                    radius="md"
+                    className="glass"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: '100%',
+                      marginBottom: 4,
+                      zIndex: 10,
+                      maxHeight: 180,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {promptSuggestions.map((s, idx) => (
+                      <div
+                        key={`${idx}-${s.slice(0,16)}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setPrompt(s)
+                          setPromptSuggestions([])
+                          markDraftPromptUsed(s, 'sora').catch(() => {})
+                        }}
+                        onMouseEnter={() => setActiveSuggestion(idx)}
+                        style={{
+                          padding: '4px 8px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          background: idx === activeSuggestion ? 'rgba(148,163,184,0.28)' : 'transparent',
+                          color: '#e5e7eb',
+                        }}
+                      >
+                        {s}
+                      </div>
+                    ))}
+                  </Paper>
+                )}
+              </div>
+            </>
+          )}
           {kind === 'textToImage' && textResults.length > 0 && (
             <Paper
               withBorder
@@ -2054,4 +2785,3 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     </div>
   )
 }
-

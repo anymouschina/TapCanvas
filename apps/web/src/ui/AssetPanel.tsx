@@ -1270,13 +1270,16 @@ export default function AssetPanel(): JSX.Element | null {
                                     variant="light"
                                     onClick={() => {
                                       addNode('taskNode', name, {
-                                        kind: 'composeVideo',
+                                        kind: 'character',
                                         source: 'sora',
+                                        soraTokenId: selectedTokenId || null,
                                         soraCharacterId: charId || c.user_id || c.id || null,
-                                        soraCharacterName: name,
-                                        soraCharacterAvatar: avatar,
+                                        soraCharacterUsername: c.username || c.owner_profile?.username || '',
+                                        characterDisplayName: name,
+                                        characterAvatarUrl: avatar,
+                                        characterCoverUrl: c.cover_image_url || c.thumbnail_url || c.preview_image_url || null,
+                                        characterDescription: desc || '',
                                         prompt: desc || '',
-                                        remixTargetId: charId || c.user_id || c.id || null,
                                       })
                                       setActivePanel(null)
                                     }}

@@ -1,6 +1,6 @@
 import React from 'react'
 import { Paper, Title, Stack, Button, Transition } from '@mantine/core'
-import { IconTypography, IconPhoto, IconVideo } from '@tabler/icons-react'
+import { IconTypography, IconPhoto, IconVideo, IconUser } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { $ } from '../canvas/i18n'
@@ -43,6 +43,7 @@ export default function AddNodePanel(): JSX.Element | null {
                   <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'textToImage' }); setActivePanel(null) }}>{$('文本')}</Button>
                   <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', 'Image', { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
                   <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode', '视频', { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
+                  <Button variant="light" leftSection={<IconUser size={16} />} onClick={() => { addNode('taskNode', '角色', { kind: 'character' }); setActivePanel(null) }}>{$('角色')}</Button>
                 </Stack>
               </div>
             </Paper>

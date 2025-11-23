@@ -66,23 +66,39 @@ export class AICanvasTools {
       const { type, label, position, config } = params
       const store = this.getStore()
 
+      const kindAliases: Record<string, string> = {
+        text: NODE_KINDS.TEXT,
+        textToImage: 'textToImage',
+        image: NODE_KINDS.IMAGE,
+        video: 'composeVideo',
+        composeVideo: 'composeVideo',
+        audio: NODE_KINDS.AUDIO,
+        subtitle: NODE_KINDS.SUBTITLE,
+        character: 'character',
+      }
+
+      const resolvedType = Object.values(NODE_TYPES).includes(type as any) ? type : NODE_TYPES.TASK
+      const aliasKind = !Object.values(NODE_TYPES).includes(type as any) ? kindAliases[type] : undefined
+
       // 验证节点类型
-      if (!Object.values(NODE_TYPES).includes(type as any)) {
+      if (!Object.values(NODE_TYPES).includes(resolvedType as any)) {
         return {
           success: false,
-          error: `无效的节点类型: ${type}。支持的类型: ${Object.values(NODE_TYPES).join(', ')}`
+          error: `无效的节点类型: ${type}。支持的类型: ${Object.values(NODE_TYPES).join(', ')} 或别名 ${Object.keys(kindAliases).join(', ')}`
         }
       }
 
       const normalizedKind = (() => {
-        const rawKind = config?.kind
+        const rawKind = config?.kind ?? aliasKind
         if (rawKind === 'video') return NODE_KINDS.VIDEO?.replace('video', 'composeVideo') || 'composeVideo'
         if (rawKind === undefined) return NODE_KINDS.TEXT
         return rawKind
       })()
 
+      const fallbackLabel = label || `新建${aliasKind || resolvedType}`
+
       // 添加节点到画布
-      store.addNode(type, label || `新建${type}`, {
+      store.addNode(resolvedType, fallbackLabel, {
         kind: normalizedKind,
         ...config
       })

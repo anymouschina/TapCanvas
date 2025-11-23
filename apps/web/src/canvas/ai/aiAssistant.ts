@@ -47,7 +47,7 @@ export class AIAssistant {
 3. find_nodes / get_canvas_info
 
 节点类型：taskNode / groupNode / ioNode
-节点种类（仅限）：text / image / composeVideo / audio / subtitle / subflow
+节点种类（仅限）：text / image / composeVideo / audio / subtitle / subflow / character
 
 分镜与提示词规则（务必执行）：
 - 视频风格：默认 2D 动画、中式（国风/水墨），除非用户另有要求。
@@ -62,6 +62,7 @@ export class AIAssistant {
 禁止事项：
 - 不创建“合成/汇总/最终输出”节点；不触发 runDag；只生成分镜/场景节点。
 - 不使用未支持的节点类型或 video（请用 composeVideo）。
+- 当用户要求创建/引用角色、演员或 Sora 人物卡时，优先添加 kind=character 的节点，并在需要时将角色通过 @username 引用到后续节点。
 
 工作原则：先看画布，再操作；只产出支持的节点；操作后反馈；失败给出原因+修复建议；中文回复，简洁专业。`
   }
@@ -328,7 +329,9 @@ export class AIAssistant {
       '文本': 'text',
       '图像': 'image',
       '视频': 'composeVideo',
-      '音频': 'audio'
+      '音频': 'audio',
+      '角色': 'character',
+      '人物': 'character'
     }
 
     for (const [key, value] of Object.entries(typePatterns)) {
@@ -355,6 +358,7 @@ export class AIAssistant {
     if (message.includes('图像')) config.kind = 'image'
     if (message.includes('视频')) config.kind = 'composeVideo'
     if (message.includes('音频')) config.kind = 'audio'
+    if (message.includes('角色') || message.includes('人物')) config.kind = 'character'
 
     if (config.kind) {
       config.kind = normalizeKind(config.kind)
