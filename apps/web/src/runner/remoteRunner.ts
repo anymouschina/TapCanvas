@@ -63,7 +63,7 @@ async function runAnthropicTextTask(modelKey: string | undefined, prompt: string
   const body: any = {
     model: modelKey || 'claude-3.5-sonnet',
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 800,
+    max_tokens: 4096,
   }
   if (systemPrompt) body.system = systemPrompt
 
@@ -305,7 +305,7 @@ async function runTextTask(ctx: RunnerContext) {
     const body: any = {
       model: model || 'claude-3.5-sonnet',
       messages: [{ role: 'user', content: userPrompt }],
-      max_tokens: 800,
+      max_tokens: 4096,
     }
     if (systemPrompt) body.system = systemPrompt
 

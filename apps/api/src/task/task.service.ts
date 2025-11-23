@@ -4,13 +4,14 @@ import type { AnyTaskRequest, ProviderAdapter, ProviderContext, TaskResult } fro
 import { soraAdapter } from './adapters/sora.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
 import { qwenAdapter } from './adapters/qwen.adapter'
+import { anthropicAdapter } from './adapters/anthropic.adapter'
 
 @Injectable()
 export class TaskService {
   private readonly adapters: ProviderAdapter[]
 
   constructor(private readonly prisma: PrismaService) {
-    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter]
+    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter]
   }
 
   private async buildContextForProvider(

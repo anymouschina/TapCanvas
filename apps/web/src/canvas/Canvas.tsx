@@ -123,9 +123,9 @@ function CanvasInner(): JSX.Element {
 
   const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
     if (!sourceKind || !targetKind) return true
-    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image','video'].includes(sourceKind)
+    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image','video','character'].includes(sourceKind)
     if (targetKind === 'image') return ['image','textToImage'].includes(sourceKind)
-    if (targetKind === 'video') return ['image','composeVideo','video'].includes(sourceKind)
+    if (targetKind === 'video') return ['image','composeVideo','video','character'].includes(sourceKind)
     return true
   }, [])
 

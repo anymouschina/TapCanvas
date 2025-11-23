@@ -43,6 +43,7 @@ export const NODE_KINDS = {
   IMAGE: 'image',
   VIDEO: 'video',
   AUDIO: 'audio',
+  CHARACTER: 'character',
   SUBTITLE: 'subtitle',
   SUBFLOW: 'subflow',
   RUN: 'run',

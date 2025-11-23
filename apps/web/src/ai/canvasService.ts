@@ -68,7 +68,8 @@ export class CanvasService {
       video: 'composeVideo',
       composeVideo: 'composeVideo',
       audio: 'audio',
-      subtitle: 'subtitle'
+      subtitle: 'subtitle',
+      character: 'character',
     }
 
     if (logicalKinds[rawType]) {
@@ -100,6 +101,8 @@ export class CanvasService {
         return '音频节点'
       case 'subtitle':
         return '字幕节点'
+      case 'character':
+        return '角色节点'
       default:
         return type
     }

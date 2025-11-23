@@ -32,6 +32,7 @@ export type NodeKind =
   | 'composeVideo'
   | 'audio'
   | 'subtitle'
+  | 'character'
 
 export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
   switch (kind) {
@@ -42,6 +43,8 @@ export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
     case 'composeVideo':
     case 'video':
       return VIDEO_MODELS
+    case 'character':
+      return TEXT_MODELS
     case 'text':
     default:
       return TEXT_MODELS

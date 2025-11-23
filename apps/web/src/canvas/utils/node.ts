@@ -194,6 +194,8 @@ export function getNodeInputTypes(node: Node<NodeData>): string[] {
       return ['video'];
     case NODE_KINDS.AUDIO:
       return ['audio'];
+    case NODE_KINDS.CHARACTER:
+      return [];
     case NODE_KINDS.SUBTITLE:
       return ['subtitle'];
     case NODE_KINDS.VIDEO_MERGE:
@@ -226,6 +228,8 @@ export function getNodeOutputTypes(node: Node<NodeData>): string[] {
       return ['image'];
     case NODE_KINDS.VIDEO:
       return ['video'];
+    case NODE_KINDS.CHARACTER:
+      return ['text'];
     case NODE_KINDS.AUDIO:
       return ['audio'];
     case NODE_KINDS.SUBTITLE:
@@ -289,6 +293,7 @@ export function getNodeDisplayText(node: Node<NodeData>): string {
     [NODE_KINDS.IMAGE]: 'Image',
     [NODE_KINDS.VIDEO]: 'Video',
     [NODE_KINDS.AUDIO]: 'Audio',
+    [NODE_KINDS.CHARACTER]: 'Character',
     [NODE_KINDS.SUBTITLE]: 'Subtitle',
     [NODE_KINDS.SUBFLOW]: 'Subflow',
     [NODE_KINDS.RUN]: 'Run',
