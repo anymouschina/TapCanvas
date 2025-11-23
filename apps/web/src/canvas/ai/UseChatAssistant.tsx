@@ -91,6 +91,8 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     provider: getModelProvider(model),
     apiKey,
     baseUrl,
+    clientToolExecution: true,
+    maxToolRoundtrips: 4,
   }), [model, canvasContext, apiKey, baseUrl])
 
   const chatId = useMemo(() => nanoid(), [])

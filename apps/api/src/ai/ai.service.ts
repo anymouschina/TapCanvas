@@ -24,37 +24,80 @@ const assistantSchema = z.object({
 })
 
 // 基础画布工具定义（服务端仅回传占位结果，具体操作由前端执行）
-const canvasTools = {
-  getNodes: tool({
+// 基础画布工具定义（默认不在服务端执行，由前端通过 UI stream 接管）
+const canvasToolSchemas = {
+  getNodes: {
     description: '获取当前画布节点列表（由前端执行真正的读取逻辑）',
-    inputSchema: z.object({}),
-    execute: async () => ({ success: false, message: '前端未连接，无法读取画布' })
-  }),
-  createNode: tool({
+    inputSchema: z.object({})
+  },
+  createNode: {
     description: '创建节点（type/label/config 由模型决定，实际创建在前端完成）',
     inputSchema: z.object({
       type: z.string(),
       label: z.string().optional(),
-      config: z.record(z.any()).optional()
-    }),
-    execute: async () => ({ success: false, message: '前端未连接，无法创建节点' })
-  }),
-  connectNodes: tool({
+      config: z.record(z.any()).optional(),
+      position: z.object({ x: z.number(), y: z.number() }).optional()
+    })
+  },
+  connectNodes: {
     description: '连接两个节点（source/target），实际连接在前端完成',
     inputSchema: z.object({
       sourceNodeId: z.string(),
       targetNodeId: z.string()
-    }),
-    execute: async () => ({ success: false, message: '前端未连接，无法连接节点' })
-  }),
-  runDag: tool({
+    })
+  },
+  runDag: {
     description: '执行当前画布工作流，真实执行在前端/客户端完成',
     inputSchema: z.object({
       concurrency: z.number().optional()
-    }),
-    execute: async () => ({ success: false, message: '前端未连接，无法执行工作流' })
-  })
-}
+    })
+  },
+  formatAll: {
+    description: '全选并自动布局',
+    inputSchema: z.object({})
+  },
+  findNodes: {
+    description: '根据标签或类型查找节点（前端执行）',
+    inputSchema: z.object({
+      label: z.string().optional(),
+      type: z.string().optional()
+    })
+  },
+  deleteNode: {
+    description: '删除指定节点（前端执行）',
+    inputSchema: z.object({
+      nodeId: z.string()
+    })
+  },
+  updateNode: {
+    description: '更新节点配置（前端执行）',
+    inputSchema: z.object({
+      nodeId: z.string(),
+      label: z.string().optional(),
+      config: z.record(z.any()).optional()
+    })
+  },
+  disconnectNodes: {
+    description: '断开节点连接（前端执行）',
+    inputSchema: z.object({
+      edgeId: z.string()
+    })
+  },
+} as const
+
+// 客户端执行模式：仅提供工具 schema，实际执行交由前端 useChat 工具调用
+const canvasToolsForClient = canvasToolSchemas
+
+// 兜底服务端模式：如果未开启客户端执行，则返回占位结果避免异常
+const canvasToolsWithServerFallback = Object.fromEntries(
+  Object.entries(canvasToolSchemas).map(([name, def]) => [
+    name,
+    tool({
+      ...def,
+      execute: async () => ({ success: false, message: '前端未连接，无法执行画布操作' })
+    })
+  ])
+)
 
 @Injectable()
 export class AiService {
@@ -191,6 +234,8 @@ export class AiService {
     const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, payload.apiKey, payload.baseUrl)
     const modelClient = this.buildModel(provider, payload.model, apiKey, baseUrl)
     const systemPrompt = this.composeSystemPrompt(payload.context)
+    const tools = this.resolveTools(payload)
+    const toolChoice = this.normalizeToolChoice(payload.toolChoice, tools)
 
     const preparedMessages = [
       ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
@@ -210,8 +255,9 @@ export class AiService {
       const streamResult = await streamText({
         model: modelClient,
         messages: preparedMessages,
-        tools: payload.tools && payload.tools.length > 0 ? (payload.tools as any) : canvasTools,
-        toolChoice: (payload.toolChoice ?? 'auto') as ToolChoice<any>,
+        tools,
+        toolChoice,
+        // maxToolRoundtrips: payload.maxToolRoundtrips ?? 4,
         temperature: payload.temperature ?? 0.2,
         maxOutputTokens: payload.maxTokens ?? 2048,
         headers: payload.headers,
@@ -245,6 +291,38 @@ export class AiService {
       this.logger.error('chatStream failed', { message: errObj?.message, status, cause: causeValue, url: errObj?.url })
       res.status(status || 500).json({ error: 'chatStream failed', message: errObj?.message || 'unknown error', status })
     }
+  }
+
+  /**
+   * 根据请求决定使用的工具集：
+   * - 客户端执行模式（clientToolExecution=true）：仅下发 schema，由前端 useChat 执行
+   * - 默认模式：使用服务端兜底占位工具，避免缺少工具定义
+   * - 自定义：如果 payload.tools 提供了对象映射，则优先使用
+   */
+  private resolveTools(payload: ChatRequestDto) {
+    const provided = this.normalizeTools(payload.tools)
+    if (provided) return provided
+    return payload.clientToolExecution ? canvasToolsForClient : canvasToolsWithServerFallback
+  }
+
+  private normalizeToolChoice<TTools extends Record<string, any>>(choice: ChatRequestDto['toolChoice'], tools: TTools): ToolChoice<TTools> {
+    if (!choice) return 'auto'
+    if (choice === 'auto' || choice === 'none' || choice === 'required') return choice
+    if (choice.type === 'tool') {
+      const toolName = (choice as any).toolName ?? (choice as any).name
+      if (toolName && toolName in tools) {
+        return { type: 'tool', toolName: toolName as any }
+      }
+    }
+    return 'auto'
+  }
+
+  private normalizeTools(tools: ChatRequestDto['tools']) {
+    if (!tools) return null
+    if (typeof tools === 'object' && !Array.isArray(tools) && Object.keys(tools).length > 0) {
+      return tools
+    }
+    return null
   }
 
   private isAnthropic(provider: SupportedProvider) {

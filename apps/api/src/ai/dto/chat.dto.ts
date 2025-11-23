@@ -19,7 +19,8 @@ export interface ChatRequestDto {
   apiKey?: string
   baseUrl?: string
   provider?: string
-  tools?: any[]
+  tools?: Record<string, any>
+  clientToolExecution?: boolean
   toolChoice?: 'auto' | 'none' | 'required' | { type: 'tool', name: string }
   maxToolRoundtrips?: number
   maxTokens?: number
