@@ -1,6 +1,6 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react'
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
 import { ActionIcon, Badge, Box, Button, Group, Paper, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
 import { IconX, IconSparkles, IconSend } from '@tabler/icons-react'
@@ -12,6 +12,7 @@ import { getFirstAvailableApiKey } from './useApiKey'
 import { listModelProviders } from '../../api/server'
 import { functionHandlers } from '../../ai/canvasService'
 import type { Node, Edge } from 'reactflow'
+import { subscribeToolEvents, type ToolEventMessage } from '../../api/toolEvents'
 
 type AssistantPosition = 'right' | 'left'
 
@@ -34,6 +35,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [baseUrl, setBaseUrl] = useState<string | undefined>()
   const textModelOptions = useModelOptions('text')
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+  const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
 
   useEffect(() => {
     if (textModelOptions.length && !textModelOptions.find(option => option.value === model)) {
@@ -98,42 +100,118 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const chatId = useMemo(() => nanoid(), [])
 
   const chatTransport = useMemo(() => new DefaultChatTransport({
-    api: `${apiBase.replace(/\/$/, '')}/ai/chat/stream`,
+    api: `${apiRoot}/ai/chat/stream`,
     streamProtocol: 'sse',
-    // 将 UI 消息转换为后端需要的 { role, content } 结构，附带当前模型/上下文
-    prepareSendMessagesRequest: ({ messages }) => ({
-      headers: {
-        'Content-Type': 'application/json',
-        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {})
-      },
-      body: {
-        ...body,
-        messages: messages.map(msg => ({
-          role: msg.role,
-          content: msg.parts
-            .map(part => {
-              if (part.type === 'text') return part.text
-              if (part.type === 'reasoning') return part.text || ''
-              if (part.type === 'data') return typeof part.data === 'string' ? part.data : JSON.stringify(part.data)
-              if (part.type === 'tool-call') return `调用工具：${part.toolName}`
-              if (part.type === 'tool-result') return `工具结果：${part.toolName}`
-              return ''
-            })
-            .filter(Boolean)
-            .join('\n')
-        })),
+    prepareSendMessagesRequest: ({ messages }) => {
+      const serializedMessages = messages.map(({ id: _id, ...rest }) => ({
+        role: rest.role,
+        metadata: rest.metadata,
+        parts: (rest.parts || []).map(part => {
+          if (part.type === 'data') {
+            if (typeof part.data === 'string') return part
+            try {
+              return { ...part, data: JSON.stringify(part.data) }
+            } catch {
+              return { ...part, data: String(part.data) }
+            }
+          }
+          return part
+        })
+      }))
+      return {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {})
+        },
+        body: {
+          ...body,
+          messages: serializedMessages,
+        }
       }
-    })
-  }), [apiBase, body])
+    }
+  }), [apiRoot, body])
+
+  const parseJsonIfNeeded = (value: any) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value)
+      } catch {
+        return value
+      }
+    }
+    if (value == null) return {}
+    return value
+  }
 
   const { messages, sendMessage, status, setMessages, addToolResult } = useChat({
     id: chatId,
     transport: chatTransport,
+    sendAutomaticallyWhen: ({ messages }) => lastAssistantMessageIsCompleteWithToolCalls({ messages })
   })
   const handledToolCalls = useRef(new Set<string>())
+  const resolveToolName = (part: any) => {
+    if (part?.toolName) return part.toolName
+    if (typeof part?.type === 'string' && part.type.startsWith('tool-')) {
+      return part.type.slice('tool-'.length)
+    }
+    return undefined
+  }
+
+  const isToolCallPart = (part: any) => {
+    if (!part) return false
+    const { state } = part
+    if (state === 'input-streaming') return false
+    if (part.type === 'tool-input-available') return true
+    if (part.type === 'tool-call' || part.type === 'dynamic-tool') return true
+    if (typeof part.type === 'string') {
+      const type = part.type
+      if (type === 'tool-result') return false
+      if (type.startsWith('tool-input')) return type.endsWith('available')
+      if (type.startsWith('tool-')) return true
+    }
+    return Boolean(part.toolName && part.toolCallId)
+  }
 
   const [input, setInput] = useState('')
   const isLoading = status === 'submitted' || status === 'streaming'
+
+  const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
+    try {
+      const token = getAuthToken()
+      await fetch(`${apiRoot}/ai/tools/result`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      })
+    } catch (err) {
+      console.warn('[UseChatAssistant] report tool result failed', err)
+    }
+  }, [apiRoot])
+
+  const runToolHandler = useCallback(async (call: { toolCallId?: string; toolName?: string; input?: any }) => {
+    const toolName = call.toolName
+    if (!toolName) {
+      console.warn('[UseChatAssistant] tool call missing name', call)
+      return { errorText: '未提供工具名称' }
+    }
+    const handler = (functionHandlers as any)[toolName]
+    if (!handler) {
+      console.warn('[UseChatAssistant] handler not found', toolName)
+      return { errorText: `未找到工具：${toolName}` }
+    }
+    console.debug('[UseChatAssistant] executing tool', { toolName, toolCallId: call.toolCallId, input: call.input })
+    try {
+      const result = await handler(call.input || {})
+      console.debug('[UseChatAssistant] tool completed', { toolName, toolCallId: call.toolCallId, result })
+      return { output: result }
+    } catch (err) {
+      console.error('[UseChatAssistant] tool failed', toolName, err)
+      return { errorText: err instanceof Error ? err.message : '工具执行失败' }
+    }
+  }, [])
 
   const stringifyMessage = (msg: UIMessage) => msg.parts
     .map(part => {
@@ -157,26 +235,55 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   useEffect(() => {
     const toolCalls = messages.flatMap(msg =>
       msg.parts
-        .filter((part: any) => part.type === 'tool-call')
-        .map((part: any) => ({ toolCallId: part.toolCallId || part.id, toolName: part.toolName, input: part.input || part.arguments || {} }))
+        .filter((part: any) => isToolCallPart(part))
+        .map((part: any) => {
+          const parsedInput = parseJsonIfNeeded(part.input ?? part.arguments ?? {})
+          const hasPayload = parsedInput && typeof parsedInput === 'object' && Object.keys(parsedInput).length > 0
+          const ready = part.state === 'input-available' || part.type === 'tool-input-available' || hasPayload
+          if (!ready) return null
+          return {
+            toolCallId: part.toolCallId || part.id,
+            toolName: resolveToolName(part),
+            input: parsedInput
+          }
+        })
+        .filter(Boolean)
     )
-
+    if (toolCalls.length) {
+      console.debug('[UseChatAssistant] detected tool calls', toolCalls)
+    }
     toolCalls.forEach(async (call) => {
       if (!call.toolCallId || handledToolCalls.current.has(call.toolCallId)) return
       handledToolCalls.current.add(call.toolCallId)
-      const handler = (functionHandlers as any)[call.toolName]
-      try {
-        if (!handler) {
-          await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText: `未找到工具：${call.toolName}` })
-          return
-        }
-        const result = await handler(call.input || {})
-        await addToolResult({ state: 'output-available', tool: call.toolName as any, toolCallId: call.toolCallId, output: result as any })
-      } catch (err) {
-        await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText: err instanceof Error ? err.message : '工具执行失败' })
+      const { output, errorText } = await runToolHandler(call)
+      if (errorText) {
+        await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText })
+      } else {
+        await addToolResult({ state: 'output-available', tool: call.toolName as any, toolCallId: call.toolCallId, output: output as any })
+      }
+      await reportToolResult({ toolCallId: call.toolCallId, toolName: call.toolName, output, errorText })
+    })
+  }, [messages, addToolResult, runToolHandler, reportToolResult])
+
+  useEffect(() => {
+    const token = getAuthToken()
+    if (!token) return
+    const unsubscribe = subscribeToolEvents({
+      url: `${apiRoot}/ai/tool-events`,
+      token,
+      onEvent: async (event: ToolEventMessage) => {
+        if (event.type !== 'tool-call') return
+        if (!event.toolCallId || handledToolCalls.current.has(event.toolCallId)) return
+        handledToolCalls.current.add(event.toolCallId)
+        const normalizedInput = parseJsonIfNeeded(event.input)
+        const { output, errorText } = await runToolHandler({ ...event, input: normalizedInput })
+        await reportToolResult({ toolCallId: event.toolCallId, toolName: event.toolName, output, errorText })
       }
     })
-  }, [messages, addToolResult])
+    return () => {
+      unsubscribe()
+    }
+  }, [apiRoot, runToolHandler, reportToolResult])
 
   const injectSystemPrompt = () => {
     setMessages(prev => [

@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
-import { generateObject, streamText, tool, type CoreMessage, type ToolChoice } from 'ai'
+import { convertToCoreMessages, generateObject, streamText, tool, type CoreMessage, type ToolChoice } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { z } from 'zod'
 import { ACTION_TYPES, SYSTEM_PROMPT, MODEL_PROVIDER_MAP, PROVIDER_VENDOR_ALIASES, type SupportedProvider } from './constants'
-import type { ChatRequestDto, ChatResponseDto, CanvasContextDto } from './dto/chat.dto'
+import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
+import { ToolEventsService } from './tool-events.service'
 
 const actionEnum = z.enum(ACTION_TYPES)
 
@@ -103,7 +104,10 @@ const canvasToolsWithServerFallback = Object.fromEntries(
 export class AiService {
   private readonly logger = new Logger(AiService.name)
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly toolEvents: ToolEventsService,
+  ) {}
 
   async chat(userId: string, payload: ChatRequestDto): Promise<ChatResponseDto> {
     if (!payload.messages?.length) {
@@ -184,7 +188,7 @@ export class AiService {
 
         conversation.push({
           role: 'user',
-          content: `${reminder}\n用户原始意图：${payload.messages[payload.messages.length - 1]?.content || ''}`
+          content: `${reminder}\n用户原始意图：${this.getLastUserMessageText(payload.messages)}`
         })
       }
 
@@ -237,9 +241,10 @@ export class AiService {
     const tools = this.resolveTools(payload)
     const toolChoice = this.normalizeToolChoice(payload.toolChoice, tools)
 
+    const chatMessages = this.normalizeMessages(payload.messages)
     const preparedMessages = [
       ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
-      ...payload.messages.map(m => ({ role: m.role as any, content: m.content }))
+      ...chatMessages
     ]
 
     this.logger.debug('[chatStream] start', {
@@ -265,6 +270,7 @@ export class AiService {
           try {
             const summary = { type: (chunk as any)?.type, text: (chunk as any)?.text?.slice?.(0, 120), toolCalls: (chunk as any)?.toolCalls?.length }
             this.logger.debug('[chatStream] chunk', summary)
+            this.emitToolCallEvents(userId, chunk as any)
           } catch (e) {
             this.logger.debug('[chatStream] chunk (unlogged)', e as any)
           }
@@ -291,6 +297,27 @@ export class AiService {
       this.logger.error('chatStream failed', { message: errObj?.message, status, cause: causeValue, url: errObj?.url })
       res.status(status || 500).json({ error: 'chatStream failed', message: errObj?.message || 'unknown error', status })
     }
+  }
+
+  subscribeToolEvents(userId: string) {
+    return this.toolEvents.stream(userId)
+  }
+
+  async handleToolResult(userId: string, payload: ToolResultDto) {
+    this.logger.debug('[toolResult] received', {
+      userId,
+      toolCallId: payload.toolCallId,
+      toolName: payload.toolName,
+      hasOutput: payload.output !== undefined,
+      hasError: !!payload.errorText,
+    })
+    this.toolEvents.emit(userId, {
+      type: 'tool-result',
+      toolCallId: payload.toolCallId,
+      toolName: payload.toolName,
+      output: payload.output,
+      errorText: payload.errorText,
+    })
   }
 
   /**
@@ -330,8 +357,9 @@ export class AiService {
   }
 
   private buildFallbackActions(messages: ChatRequestDto['messages']): any[] {
-    const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const content = (lastUser?.content || '').toString().toLowerCase()
+    const lastUser = [...(messages || [])].reverse().find(m => m.role === 'user')
+    const lastUserText = this.extractMessageText(lastUser)
+    const content = lastUserText.toLowerCase()
     const wantsImage = /文生图|图片|image|photo|帅哥|照片|图像/.test(content)
     const wantsVideo = /视频|video/.test(content)
     const wantsFormat = /格式化|排版|布局|整理|format|layout/.test(content)
@@ -345,7 +373,7 @@ export class AiService {
           params: {
             type: 'text',
             label: '提示词',
-            config: { kind: 'text', prompt: lastUser?.content || '请输入描述' }
+            config: { kind: 'text', prompt: lastUserText || '请输入描述' }
           }
         },
         {
@@ -355,7 +383,7 @@ export class AiService {
           params: {
             type: wantsVideo ? 'composeVideo' : 'image',
             label: wantsVideo ? '文生视频' : '文生图',
-            config: { kind: wantsVideo ? 'composeVideo' : 'image', prompt: lastUser?.content || '内容' }
+            config: { kind: wantsVideo ? 'composeVideo' : 'image', prompt: lastUserText || '内容' }
           }
         },
         {
@@ -650,10 +678,69 @@ export class AiService {
   }
 
   private normalizeMessages(messages: ChatRequestDto['messages']): CoreMessage[] {
-    // ai-sdk CoreMessage 不支持 system 角色；将 system 合并为 user，避免下游 provider 校验失败
-    return messages.map(msg => ({
-      role: msg.role === 'assistant' ? 'assistant' : 'user',
-      content: msg.content,
-    }))
+    if (!messages?.length) return []
+    const uiMessages = messages.map(message => this.mapToUiMessage(message))
+    return convertToCoreMessages(uiMessages as any)
+  }
+
+  private emitToolCallEvents(userId: string, chunk: any) {
+    if (!chunk?.toolCalls?.length) return
+    chunk.toolCalls
+      .filter((call: any) => !call?.providerExecuted)
+      .forEach((call: any) => {
+        if (!call.toolCallId || !call.toolName) return
+        this.toolEvents.emit(userId, {
+          type: 'tool-call',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          input: call.args || call.input || {},
+          providerExecuted: !!call.providerExecuted,
+        })
+      })
+  }
+
+  private mapToUiMessage(message: ChatMessageDto) {
+    const hasParts = Array.isArray((message as any)?.parts) && (message as any).parts.length > 0
+    const fallbackText = typeof message.content === 'string' ? message.content : ''
+    const parts = hasParts ? (message.parts as any[]) : [{ type: 'text', text: fallbackText }]
+    const metadata = (message as any)?.metadata
+    return {
+      role: (message.role || 'user') as 'system' | 'user' | 'assistant',
+      parts,
+      ...(metadata ? { metadata } : {})
+    }
+  }
+
+  private extractMessageText(message?: ChatMessageDto | null): string {
+    if (!message) return ''
+    if (typeof message.content === 'string' && message.content.length > 0) {
+      return message.content
+    }
+    if (Array.isArray((message as any)?.parts)) {
+      return (message.parts as any[])
+        .map((part: any) => {
+          if (part?.type === 'text' || part?.type === 'reasoning') {
+            return part.text || ''
+          }
+          if (part?.type === 'tool-result') {
+            if (typeof part.output === 'string') return part.output
+            try {
+              return JSON.stringify(part.output)
+            } catch {
+              return ''
+            }
+          }
+          return ''
+        })
+        .filter(Boolean)
+        .join('\n')
+    }
+    return ''
+  }
+
+  private getLastUserMessageText(messages?: ChatRequestDto['messages']): string {
+    if (!messages || messages.length === 0) return ''
+    const lastUser = [...messages].reverse().find(msg => msg.role === 'user')
+    return this.extractMessageText(lastUser || messages[messages.length - 1])
   }
 }

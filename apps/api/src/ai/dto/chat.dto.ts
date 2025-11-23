@@ -2,7 +2,9 @@ export type ChatRole = 'system' | 'user' | 'assistant'
 
 export interface ChatMessageDto {
   role: ChatRole
-  content: string
+  content?: string
+  parts?: Array<Record<string, any>>
+  metadata?: Record<string, any>
 }
 
 export interface CanvasContextDto {
@@ -37,4 +39,11 @@ export interface ChatResponseDto {
   reply: string
   plan: string[]
   actions: AssistantActionDto[]
+}
+
+export interface ToolResultDto {
+  toolCallId: string
+  toolName: string
+  output?: any
+  errorText?: string
 }

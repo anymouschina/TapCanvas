@@ -1,7 +1,7 @@
-import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common'
+import { Body, Controller, Post, Req, Res, Sse, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '../auth/jwt.guard'
 import { AiService } from './ai.service'
-import type { ChatRequestDto } from './dto/chat.dto'
+import type { ChatRequestDto, ToolResultDto } from './dto/chat.dto'
 import type { Response } from 'express'
 
 @UseGuards(JwtGuard)
@@ -20,5 +20,16 @@ export class AiController {
   @Post('chat/stream')
   async chatStream(@Body() body: ChatRequestDto, @Req() req: any, @Res() res: Response) {
     await this.aiService.chatStream(String(req.user.sub), body, res)
+  }
+
+  @Sse('tool-events')
+  toolEvents(@Req() req: any) {
+    return this.aiService.subscribeToolEvents(String(req.user.sub))
+  }
+
+  @Post('tools/result')
+  async toolResult(@Body() body: ToolResultDto, @Req() req: any) {
+    await this.aiService.handleToolResult(String(req.user.sub), body)
+    return { success: true }
   }
 }

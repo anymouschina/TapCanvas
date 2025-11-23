@@ -18,6 +18,7 @@ export class CanvasService {
     position?: { x: number; y: number }
   }): Promise<FunctionResult> {
     try {
+      console.debug('[CanvasService] createNode input', params)
       const store = useRFStore.getState()
       const prevIds = new Set(store.nodes.map(node => node.id))
       const { addNode } = store
@@ -26,6 +27,7 @@ export class CanvasService {
       const position = params.position || CanvasService.generateDefaultPosition()
 
       const normalized = CanvasService.normalizeNodeParams(params)
+      console.debug('[CanvasService] normalized node params', normalized)
 
       // 调用store方法创建节点
       addNode(normalized.nodeType, normalized.label, {
