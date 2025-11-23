@@ -40,6 +40,12 @@ TapCanvas's visual canvas interface demonstrates powerful AI creation workflow c
 
 ## 📅 Changelog
 
+- **2025-11-23**: Completed the full loop of "AI assistant emits tool-call → client executes canvas tools → result is pushed back and the LLM continues responding". The Dark Assistant now subscribes to `/ai/tool-events`, runs the corresponding `CanvasService` handler, and reports results via `/ai/tools/result`. See the workflow demo below:
+  - Intelligent node generation: ![2025-11-23-ai](assets/2025-11-23-ai.jpg)
+  - Highlights:
+    - Backend SSE pushes `tool-call`; the client waits for `tool-input-available` before executing to ensure complete parameters.
+    - `CanvasService` maps logical types (e.g., `video` → `composeVideo`) so the canvas shows the supported node types instantly.
+    - After sending `tool-result`, `UseChatAssistant` automatically issues the next `/ai/chat/stream` request, letting the LLM acknowledge tool status and continue the conversation.
 - **2025-11-21**: Added a new set of feature screenshots covering assets/drafts/published works and role creation, located at `assets/2025-11-21-*.jpg`.
   - Assets & drafts: ![2025-11-21-drafts](assets/2025-11-21-drafts.jpg)
   - Role list: ![2025-11-21-role](assets/2025-11-21-role.jpg)

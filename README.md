@@ -41,6 +41,12 @@ TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：
 
 ## 📅 更新日志
 
+- **2025-11-23**：完成「AI 助手触发 → 客户端执行画布工具 → 结果回传并继续对话」的闭环。现在暗夜助手会订阅 `/ai/tool-events`，自动创建/连接节点，并把执行结果通过 `/ai/tools/result` 回推服务端。配套交互示例见下图：
+  - 智能节点生成示例：![2025-11-23-ai](assets/2025-11-23-ai.jpg)
+  - 功能亮点：
+    - 后端 SSE 推送 `tool-call`，前端自动解析 `tool-input-available` 后再执行，确保节点参数完整；
+    - `CanvasService` 按类型映射出真正支持的节点（如 `video` → `composeVideo`），画布实时刷新；
+    - `UseChatAssistant` 在 tool-result 回传后会继续发起下一轮 `/ai/chat/stream`，让 LLM 得知工具状态并给出反馈。
 - **2025-11-21**：新增一组最新功能配图，覆盖资产/草稿/已发布作品与角色创建流程，文件位于 `assets/2025-11-21-*.jpg`（含 AI 概览、草稿列表、角色面板与角色创建）。
   - 资产与草稿：![2025-11-21-drafts](assets/2025-11-21-drafts.jpg)
   - 角色列表：![2025-11-21-role](assets/2025-11-21-role.jpg)

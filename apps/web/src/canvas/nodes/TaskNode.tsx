@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -541,6 +541,33 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       setUploading(false)
     }
   }
+    const defaultLabel = React.useMemo(() => {
+    if (kind === 'composeVideo' || kind === 'video') return '文生视频'
+    if (kind === 'image' || kind === 'textToImage') return kind === 'image' ? '图像节点' : '文本提示'
+    if (kind === 'audio') return '音频节点'
+    if (kind === 'subtitle') return '字幕节点'
+    return 'Task'
+  }, [kind])
+  const currentLabel = React.useMemo(() => {
+    const text = (data?.label ?? '').trim()
+    return text || defaultLabel
+  }, [data?.label, defaultLabel])
+  const [labelDraft, setLabelDraft] = React.useState(currentLabel)
+  const labelInputRef = React.useRef<HTMLInputElement | null>(null)
+  React.useEffect(() => {
+    setLabelDraft(currentLabel)
+  }, [currentLabel])
+  React.useEffect(() => {
+    if (editing && labelInputRef.current) {
+      labelInputRef.current.focus()
+      labelInputRef.current.select()
+    }
+  }, [editing])
+  const commitLabel = React.useCallback(() => {
+    const next = (labelDraft || '').trim() || defaultLabel
+    updateNodeLabel(id, next)
+    setEditing(false)
+  }, [labelDraft, defaultLabel, id, updateNodeLabel])
 
   return (
     <div style={{
@@ -552,7 +579,33 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }}>
       {/* Title */}
       <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>
-        {data?.label ?? (kind === 'image' ? 'Image' : kind === 'textToImage' ? 'Text' : 'Task')}
+        {editing ? (
+          <TextInput
+            ref={labelInputRef}
+            size="xs"
+            value={labelDraft}
+            onChange={(e) => setLabelDraft(e.currentTarget.value)}
+            onBlur={commitLabel}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                commitLabel()
+              } else if (e.key === 'Escape') {
+                setLabelDraft(currentLabel)
+                setEditing(false)
+              }
+            }}
+          />
+        ) : (
+          <Group justify="space-between" gap={4}>
+            <span onDoubleClick={() => setEditing(true)} title="Double-click to rename">
+              {currentLabel}
+            </span>
+            <ActionIcon size="sm" variant="subtle" color="gray" title="Rename" onClick={() => setEditing(true)}>
+              <IconBrush size={12} />
+            </ActionIcon>
+          </Group>
+        )}
       </div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
@@ -2001,3 +2054,4 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     </div>
   )
 }
+
