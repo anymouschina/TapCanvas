@@ -228,7 +228,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterLoading, setCharacterLoading] = React.useState(false)
   const [characterLoadingMore, setCharacterLoadingMore] = React.useState(false)
   const [characterError, setCharacterError] = React.useState<string | null>(null)
-  const [characterRewriteModel, setCharacterRewriteModel] = React.useState('glm-4.6')
+  const persistedCharacterRewriteModel = (data as any)?.characterRewriteModel
+  const [characterRewriteModel, setCharacterRewriteModel] = React.useState<string>(() => {
+    const stored = persistedCharacterRewriteModel
+    return typeof stored === 'string' && stored.trim() ? stored : 'glm-4.6'
+  })
   const [characterRewriteLoading, setCharacterRewriteLoading] = React.useState(false)
   const [characterRewriteError, setCharacterRewriteError] = React.useState<string | null>(null)
   const [hovered, setHovered] = React.useState<number|null>(null)
@@ -298,11 +302,23 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const summaryResolution = aspect
   const summaryExec = `${sampleCount}x`
   React.useEffect(() => {
+    if (typeof persistedCharacterRewriteModel === 'string' && persistedCharacterRewriteModel.trim() && persistedCharacterRewriteModel !== characterRewriteModel) {
+      setCharacterRewriteModel(persistedCharacterRewriteModel)
+    }
+  }, [persistedCharacterRewriteModel, characterRewriteModel])
+  React.useEffect(() => {
     if (!rewriteModelOptions.length) return
     if (!rewriteModelOptions.some((opt) => opt.value === characterRewriteModel)) {
-      setCharacterRewriteModel(rewriteModelOptions[0].value)
+      const fallback = rewriteModelOptions[0].value
+      setCharacterRewriteModel(fallback)
+      updateNodeData(id, { characterRewriteModel: fallback })
     }
-  }, [rewriteModelOptions, characterRewriteModel])
+  }, [rewriteModelOptions, characterRewriteModel, updateNodeData, id])
+  const handleRewriteModelChange = React.useCallback((value: string | null) => {
+    if (!value) return
+    setCharacterRewriteModel(value)
+    updateNodeData(id, { characterRewriteModel: value })
+  }, [id, updateNodeData])
   const runNode = () => {
     const nextPrompt = (prompt || (data as any)?.prompt || '').trim()
     const patch: any = { prompt: nextPrompt }
@@ -443,14 +459,18 @@ const rewritePromptWithCharacters = React.useCallback(
       '2. 如果某个角色在原文未出现，也请在合适的位置补上一处 @username；',
       '3. 只输出替换后的脚本正文，不要添加解释、前缀或 Markdown；',
       '4. 全文保持中文。',
-      '',
+      '5. 替换后 @username 的前后需要留有一个空格',
       '【原始脚本】',
       basePrompt,
     ].join('\n')
     const systemPrompt =
       '你是一个提示词修订助手。请根据用户提供的角色映射，统一替换或补充脚本中的角色引用，只输出修改后的脚本文本。'
     const provider = getModelProvider(modelValue as any)
-    const task = await runTaskByVendor('gemini', {
+    if (!['google', 'anthropic'].includes(provider)) {
+      throw new Error('当前模型暂未接入自动替换接口，请选择 Gemini 或 GLM 系列模型')
+    }
+    const vendor = provider === 'google' ? 'gemini' : 'anthropic'
+    const task = await runTaskByVendor(vendor, {
       kind: 'prompt_refine',
       prompt: instructions,
       extras: { systemPrompt, modelKey: modelValue },
@@ -2095,7 +2115,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       withinPortal
                       data={rewriteModelOptions.length ? rewriteModelOptions : [{ value: 'glm-4.6', label: 'GLM-4.6' }]}
                       value={characterRewriteModel}
-                      onChange={(value) => value && setCharacterRewriteModel(value)}
+                      onChange={handleRewriteModelChange}
                       style={{ minWidth: 180 }}
                     />
                     <Button

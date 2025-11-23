@@ -34,7 +34,7 @@ export class TaskService {
 
     let apiKey = ''
 
-    if (adapter.name === 'gemini' || adapter.name === 'qwen') {
+    if (adapter.name === 'gemini' || adapter.name === 'qwen' || adapter.name === 'anthropic') {
       // 优先使用当前用户自己的 Token，其次使用共享 Token（若存在）
       const owned = await this.prisma.modelToken.findFirst({
         where: {
