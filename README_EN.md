@@ -44,6 +44,7 @@ TapCanvas's visual canvas interface demonstrates powerful AI creation workflow c
   - A character node lets you pick a Sora token, browse roles (cover, username, description), copy `@username`, or clear the binding without leaving the canvas.
   - The "Add to canvas" button inside the Assets panel now drops a `kind=character` node and pre-fills username/cover/description automatically.
   - Every prompt-based node exposes an “Auto reference role” dropdown that prioritizes linked character nodes and injects the corresponding `@username` into the prompt.
+- **2025-11-25**: Prompts can now automatically replace character names with the role-card `@username`. When a flow has character nodes, downstream video/text nodes can run “auto replace @mentions” (Gemini / GLM) and sync the rewritten prompt to Sora. Screenshot: ![2025-11-24-auto-role-username](assets/2025-11-24-auto-role-username.jpg)
 - **2025-11-23**: Completed the full loop of "AI assistant emits tool-call → client executes canvas tools → result is pushed back and the LLM continues responding". The Dark Assistant now subscribes to `/ai/tool-events`, runs the corresponding `CanvasService` handler, and reports results via `/ai/tools/result`. See the workflow demo below:
   - Intelligent node generation: ![2025-11-23-ai](assets/2025-11-23-ai.jpg)
   - Highlights:

@@ -1,4 +1,5 @@
 # TapCanvas
+
 **Language:** 中文 | [English](README_EN.md)
 
 **可视化 AI 创作画布（零 GPU）**
@@ -41,10 +42,7 @@ TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：
 
 ## 📅 更新日志
 
-- **2025-11-24**：新增「角色节点」与「自动引用角色」功能，画布内即可管理并复用 Sora 角色。
-  - 角色节点支持选择 Sora Token、加载角色列表、预览封面/描述，并可一键复制 `@username` 或清除绑定。
-  - 资产面板的「添加到画布」按钮现在直接创建 `kind=character` 节点，自动带入用户名、封面与简介。
-  - 所有提示词节点新增「自动引用角色」下拉框，可优先选择已连线的角色，并自动把 `@角色名` 注入提示词。
+- **2025-11-24**：提示词支持“自动用角色卡 username 替换人物名称”。当同一工作流存在角色节点时，视频/文本节点可一键替换全部 `@` 引用，并将结果同步给 Sora 提示词（支持 Gemini / GLM 模型）。效果示例：![2025-11-24-auto-role-username](assets/2025-11-24-auto-role-username.jpg)
 - **2025-11-23**：完成「AI 助手触发 → 客户端执行画布工具 → 结果回传并继续对话」的闭环。现在暗夜助手会订阅 `/ai/tool-events`，自动创建/连接节点，并把执行结果通过 `/ai/tools/result` 回推服务端。配套交互示例见下图：
   - 智能节点生成示例：![2025-11-23-ai](assets/2025-11-23-ai.jpg)
   - 功能亮点：
@@ -67,11 +65,11 @@ TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：
 
 不同 AI 模型支持不同的节点类型，请正确配置：
 
-| 节点类型 | 支持的模型 | 功能说明 |
-|---------|-----------|----------|
-| **🎬 Video 节点** | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | 图生视频、文生视频、视频合成、动画制作 |
-| **🖼️ Image 节点** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图像生成、多种分辨率、风格转换 |
-| **📝 Text 节点** | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat | 文本生成、提示词优化、智能建议、内容创作 |
+| 节点类型                  | 支持的模型                                                                                                                                                                        | 功能说明                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **🎬 Video 节点**   | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion           | 图生视频、文生视频、视频合成、动画制作   |
+| **🖼️ Image 节点** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图像生成、多种分辨率、风格转换   |
+| **📝 Text 节点**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                  | 文本生成、提示词优化、智能建议、内容创作 |
 
 ### 配置步骤
 
@@ -81,6 +79,7 @@ TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：
 4. **测试连接**：确保每个模型都能正常调用
 
 > 💡 **提示**：只有正确配置了模型，对应的节点才能正常工作。例如：
+>
 > - 想要生成视频？→ 必须配置 **Sora 2**、**Runway** 或 **Pika** 等视频模型
 > - 想要生成图片？→ 必须配置 **Qwen**、**DALL-E**、**Stable Diffusion** 或 **FLUX** 等图像模型
 > - 想要优化提示词？→ 必须配置 **Gemini**、**Claude**、**GPT** 或 **DeepSeek** 等文本模型
@@ -88,11 +87,13 @@ TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：
 ### 🎯 推荐配置组合
 
 **新手推荐配置**：
+
 - 📝 **Text**: Gemini 2.5 Flash（性价比高）
 - 🖼️ **Image**: Qwen Image Plus 或 FLUX.1 Pro（质量好）
 - 🎬 **Video**: Sora 2（功能最强）
 
 **专业级配置**：
+
 - 📝 **Text**: Gemini 2.5 Pro 或 Claude 3.5 Sonnet
 - 🖼️ **Image**: DALL-E 3 或 Midjourney V6
 - 🎬 **Video**: Runway Gen-3 或 Pika Labs V2
@@ -120,6 +121,7 @@ pnpm dev:api    # API 服务 (http://localhost:3001)
 ```
 
 **管理界面访问：**
+
 - 数据库管理：http://localhost:8080 (Adminer)
 - Redis 管理：http://localhost:8081 (Redis Commander)
 
@@ -172,6 +174,7 @@ SORA_API_KEY="your_sora_api_key"
 ```
 
 **重要提示：**
+
 - ⚠️ **不要将真实的 `.env` 文件提交到 Git** (已配置在 `.gitignore` 中)
 - 🔑 所有 API 密钥都需要在对应平台注册获取
 - 📝 项目提供两个 `.env.example` 模板：根目录和 `apps/api/` 目录
@@ -181,6 +184,7 @@ SORA_API_KEY="your_sora_api_key"
 - 🔐 **已移除敏感文件**：原 `apps/api/.env` 文件（含真实密钥）已从项目中移除
 
 **获取 API 密钥：**
+
 1. **GitHub OAuth**: https://github.com/settings/applications/new
 2. **Hugging Face**: https://huggingface.co/settings/tokens
 3. **Silicon Flow**: https://siliconflow.cn
@@ -412,25 +416,26 @@ export default {
 
 Worker 脚本中的域名映射如下：
 
-| 代理域名 | 真实域名 | 用途 |
-|---------|---------|------|
-| `sora2.beqlee.icu` | `sora.chatgpt.com` | Sora API |
-| `videos.beqlee.icu` | `videos.openai.com` | OpenAI Videos API |
-| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API |
+| 代理域名                          | 真实域名                              | 用途              |
+| --------------------------------- | ------------------------------------- | ----------------- |
+| `sora2.beqlee.icu`              | `sora.chatgpt.com`                  | Sora API          |
+| `videos.beqlee.icu`             | `videos.openai.com`                 | OpenAI Videos API |
+| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API        |
 
 ### 故障排除
 
 #### 常见问题
 
 1. **Worker 返回 403 错误**
+
    - 检查 Durable Object 是否正确绑定
    - 确认 Variable name 为 `MY_DURABLE_OBJECT`
-
 2. **请求超时**
+
    - 检查 Worker 的执行时间限制
    - 考虑升级到付费计划获得更长的执行时间
-
 3. **部分请求失败**
+
    - 检查上游服务是否正常运行
    - 查看 Worker 的日志信息
 
@@ -539,24 +544,25 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 ### 🤖 AI 模型集成
 
 - **文本生成**：
+
   - **Gemini 2.5 Flash / Pro**：先进的文本生成模型
   - **智能提示词优化**：自动优化和改进输入提示词
   - **文本增强**：支持文本续写和风格转换
-
 - **图像生成**：
+
   - **Qwen Image Plus**：高性能图像生成模型
   - **多分辨率支持**：16:9、1:1、9:16 三种常用比例
   - **批量生成**：支持1-5张图片同时生成
   - **文生图**：从文本描述生成高质量图像
-
 - **视频生成**：
+
   - **Sora 2**：OpenAI 最新视频生成模型
   - **角色引用**：支持@提及功能，精确控制视频角色
   - **多时长选项**：支持10秒、15秒视频生成
   - **图生视频**：从静态图像生成动态视频
   - **文生视频**：直接从文本生成视频内容
-
 - **模型管理**：
+
   - **灵活配置**：支持自定义模型端点和参数
   - **多提供商**：可集成不同AI模型提供商
   - **API密钥管理**：安全的密钥存储和管理
