@@ -65,6 +65,14 @@ export class SoraService {
         params,
       })
       const data = res.data as any
+      this.logger.log('getPublishedVideos upstream response', {
+        userId,
+        tokenId,
+        status: res.status,
+        itemCount: Array.isArray(data?.items) ? data.items.length : null,
+        cursor: data?.cursor ?? null,
+        res:data.items.length,
+      })
       const rawItems: any[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
       // 获取视频代理域名配置
       const videoProxyBase = await this.resolveBaseUrl(token, 'videos', 'https://videos.openai.com')

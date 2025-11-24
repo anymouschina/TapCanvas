@@ -64,8 +64,15 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 - 镜 2：2-7s 中景，两人对话（提示词：`@heng` 与 `@keng` 在咖啡店交谈，温暖灯光）
 - 镜 3：7-10s 拉远收束（提示词：广角，夕阳，电影感）
 
+#### Storyboard 使用截图
+
+| 规划镜头列表 | Scene 详情浮层 | 运行日志与结果 |
+| --- | --- | --- |
+| ![Storyboard 总览](assets/2025-11-24-storyboard.jpg) | ![Storyboard 弹层](assets/2025-11-24-storyboard-1.jpg) | ![Storyboard 运行结果](assets/2025-11-24-storyboard-2.pic.jpg) |
+
 ## 📅 更新日志
 
+- **2025-11-24**：添加最新 Storyboard 使用截图（`assets/2025-11-24-storyboard*.jpg`），展示镜头列表、Scene 编辑浮层与生成后的视频结果，帮助团队快速理解 25s 多镜头能力。
 - **2025-11-24**：提示词支持“自动用角色卡 username 替换人物名称”。当同一工作流存在角色节点时，视频/文本节点可一键替换全部 `@` 引用，并将结果同步给 Sora 提示词（支持 Gemini / GLM 模型）。效果示例：![2025-11-24-auto-role-username](assets/2025-11-24-auto-role-username.jpg)
 - **2025-11-23**：完成「AI 助手触发 → 客户端执行画布工具 → 结果回传并继续对话」的闭环。现在暗夜助手会订阅 `/ai/tool-events`，自动创建/连接节点，并把执行结果通过 `/ai/tools/result` 回推服务端。配套交互示例见下图：
   - 智能节点生成示例：![2025-11-23-ai](assets/2025-11-23-ai.jpg)
