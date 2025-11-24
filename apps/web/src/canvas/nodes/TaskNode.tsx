@@ -54,6 +54,7 @@ import {
   STORYBOARD_DEFAULT_DURATION,
   enforceStoryboardTotalLimit,
 } from './storyboardUtils'
+import { getTaskNodeSchema, type TaskNodeHandlesConfig } from './taskNodeSchema'
 import { toast } from '../../ui/toast'
 
 const RESOLUTION_OPTIONS = [
@@ -140,6 +141,15 @@ const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
   return ''
 }
 
+const isDynamicHandlesConfig = (
+  handles?: TaskNodeHandlesConfig | null,
+): handles is { dynamic: true } => Boolean(handles && 'dynamic' in handles && handles.dynamic)
+
+const isStaticHandlesConfig = (
+  handles?: TaskNodeHandlesConfig | null,
+): handles is Exclude<TaskNodeHandlesConfig, { dynamic: true }> =>
+  Boolean(handles && (!('dynamic' in handles) || !handles.dynamic))
+
 type Data = {
   label: string
   kind?: string
@@ -157,41 +167,47 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     status === 'queued' ? '#f59e0b' : 'rgba(127,127,127,.6)'
 
   const kind = data?.kind
-  const isStoryboardNode = kind === 'storyboard'
-  const isComposerNode = kind === 'composeVideo' || isStoryboardNode
-  const isVideoNode = kind === 'video' || isComposerNode
+  const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
+  const schemaFeatures = React.useMemo(() => new Set(schema.features), [schema])
+  const isStoryboardNode = schema.category === 'storyboard'
+  const isComposerNode = schema.category === 'composer' || isStoryboardNode
+  const isVideoNode = schemaFeatures.has('video') || isComposerNode
+  const isImageNode = schema.category === 'image'
+  const isTextToImageNode = kind === 'textToImage'
+  const isCharacterNode = schema.category === 'character'
+  const isAudioNode = kind === 'tts'
   const targets: { id: string; type: string; pos: Position }[] = []
   const sources: { id: string; type: string; pos: Position }[] = []
-
-  if (isComposerNode) {
-    targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
-    targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
-    targets.push({ id: 'in-audio', type: 'audio', pos: Position.Left })
-    targets.push({ id: 'in-subtitle', type: 'subtitle', pos: Position.Left })
-    targets.push({ id: 'in-character', type: 'character', pos: Position.Left })
-    sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
-  } else if (kind === 'image') {
-    targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
-    sources.push({ id: 'out-image', type: 'image', pos: Position.Right })
-  } else if (kind === 'video') {
-    targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
-    targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
-    targets.push({ id: 'in-character', type: 'character', pos: Position.Left })
-    sources.push({ id: 'out-video', type: 'video', pos: Position.Right })
-  } else if (kind === 'subflow') {
-    const io = (data as any)?.io as { inputs?: { id: string; type: string; label?: string }[]; outputs?: { id: string; type: string; label?: string }[] } | undefined
-    if (io?.inputs?.length) io.inputs.forEach((p, idx) => targets.push({ id: `in-${p.type}`, type: p.type, pos: Position.Left }))
-    if (io?.outputs?.length) io.outputs.forEach((p, idx) => sources.push({ id: `out-${p.type}`, type: p.type, pos: Position.Right }))
-  } else if (kind === 'textToImage') {
-    sources.push({ id: 'out-image', type: 'image', pos: Position.Right })
-  } else if (kind === 'tts') {
-    sources.push({ id: 'out-audio', type: 'audio', pos: Position.Right })
-  } else if (kind === 'subtitleAlign') {
-    sources.push({ id: 'out-subtitle', type: 'subtitle', pos: Position.Right })
-  } else if (kind === 'character') {
-    sources.push({ id: 'out-character', type: 'character', pos: Position.Right })
+  const schemaHandles = schema.handles
+  if (isDynamicHandlesConfig(schemaHandles)) {
+    if (kind === 'subflow') {
+      const io = (data as any)?.io as {
+        inputs?: { id: string; type: string; label?: string }[]
+        outputs?: { id: string; type: string; label?: string }[]
+      } | undefined
+      if (io?.inputs?.length) {
+        io.inputs.forEach((p) => targets.push({ id: `in-${p.type}`, type: p.type, pos: Position.Left }))
+      }
+      if (io?.outputs?.length) {
+        io.outputs.forEach((p) => sources.push({ id: `out-${p.type}`, type: p.type, pos: Position.Right }))
+      }
+    }
+  } else if (isStaticHandlesConfig(schemaHandles)) {
+    schemaHandles.targets?.forEach((handle) => {
+      targets.push({
+        id: handle.id,
+        type: handle.type,
+        pos: handle.position ?? Position.Left,
+      })
+    })
+    schemaHandles.sources?.forEach((handle) => {
+      sources.push({
+        id: handle.id,
+        type: handle.type,
+        pos: handle.position ?? Position.Right,
+      })
+    })
   } else {
-    // generic fallback
     targets.push({ id: 'in-any', type: 'any', pos: Position.Left })
     sources.push({ id: 'out-any', type: 'any', pos: Position.Right })
   }
@@ -404,9 +420,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   )
 
   const activeModelKey =
-    kind === 'textToImage'
+    isTextToImageNode
       ? modelKey
-      : kind === 'image'
+      : isImageNode
         ? imageModel
         : isVideoNode
           ? videoModel
@@ -414,7 +430,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const modelList = useModelOptions(kind as NodeKind)
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = isVideoNode
-  const showResolutionMenu = isVideoNode || kind === 'image'
+  const showResolutionMenu = isVideoNode || isImageNode
   const showOrientationMenu = isVideoNode
   React.useEffect(() => {
     if (!modelList.some((m) => m.value === activeModelKey) && modelList.length) {
@@ -475,16 +491,16 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.storyboard = nextPrompt
     }
     patch.prompt = nextPrompt
-    if (kind === 'image' || isComposerNode) {
+    if (isImageNode || isComposerNode) {
       patch.aspect = aspect
     }
-    if (kind === 'textToImage') {
+    if (isTextToImageNode) {
       patch.geminiModel = modelKey
       patch.sampleCount = sampleCount
       patch.systemPrompt = systemPrompt
       patch.showSystemPrompt = showSystemPrompt
     }
-    if (kind === 'image') {
+    if (isImageNode) {
       patch.imageModel = imageModel
       patch.sampleCount = sampleCount
     }
@@ -498,14 +514,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         patch.inpaintFileId = upstreamSoraFileId
       }
     }
-    if (kind === 'video') {
+    if (schema.kind === 'video') {
       patch.orientation = orientation
       // Include upstream Sora file_id if available
       if (upstreamSoraFileId) {
         patch.inpaintFileId = upstreamSoraFileId
       }
     }
-    if (kind === 'image') {
+    if (isImageNode) {
       setPrompt(nextPrompt)
     }
     updateNodeData(id, patch)
@@ -1127,13 +1143,13 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
-    if (kind === 'character') {
+    if (isCharacterNode) {
       return [
         { key: 'assets', label: '角色库', icon: <IconUsers size={16} />, onClick: () => setActivePanel('assets') },
         { key: 'refresh', label: '刷新', icon: <IconRefresh size={16} />, onClick: () => refreshCharacters() },
       ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
     }
-    if (kind === 'image') {
+    if (isImageNode) {
       return [
         // image 节点顶部工具条：只保留节点级的「图片编辑器」操作，避免和结果区工具条重复
         { key: 'editor', label: '图片编辑器', icon: <IconPhotoEdit size={16} />, onClick: () => {} },
@@ -1144,7 +1160,7 @@ const rewritePromptWithCharacters = React.useCallback(
       { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
       { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [id, kind, openParamFor, refreshCharacters, setActivePanel])
+  }, [id, isCharacterNode, isImageNode, openParamFor, refreshCharacters, setActivePanel])
 
   const maxTools = 5
   const commonLen = 2
@@ -1154,13 +1170,13 @@ const rewritePromptWithCharacters = React.useCallback(
   const extraDefs = uniqueDefs.slice(maxUniqueVisible)
 
   const hasContent = React.useMemo(() => {
-    if (kind === 'image') return Boolean(imageUrl)
+    if (isImageNode) return Boolean(imageUrl)
     if (isVideoNode) return Boolean((data as any)?.videoUrl)
-    if (kind === 'textToImage') return Boolean((data as any)?.imageUrl)
+    if (isTextToImageNode) return Boolean((data as any)?.imageUrl)
     if (kind === 'tts') return Boolean((data as any)?.audioUrl)
-    if (kind === 'character') return Boolean(characterPrimaryImage)
+    if (isCharacterNode) return Boolean(characterPrimaryImage)
     return false
-  }, [kind, imageUrl, data, characterPrimaryImage])
+  }, [isImageNode, isVideoNode, isTextToImageNode, imageUrl, data, kind, characterPrimaryImage])
 
   const connectToRight = (targetKind: string, targetLabel: string) => {
     const all = useRFStore.getState().nodes
@@ -1195,7 +1211,7 @@ const rewritePromptWithCharacters = React.useCallback(
     })
   }
 
-  const fixedWidth = (kind === 'image' || kind === 'textToImage') ? 320 : undefined
+  const fixedWidth = (isImageNode || isTextToImageNode) ? 320 : undefined
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
   const hasAiText = lastText.trim().length > 0
 
@@ -1291,8 +1307,8 @@ const rewritePromptWithCharacters = React.useCallback(
     }
   }
     const defaultLabel = React.useMemo(() => {
-    if (isComposerNode || kind === 'video') return '文生视频'
-    if (kind === 'image' || kind === 'textToImage') return kind === 'image' ? '图像节点' : '文本提示'
+    if (isComposerNode || schema.kind === 'video') return '文生视频'
+    if (isImageNode || isTextToImageNode) return isImageNode ? '图像节点' : '文本提示'
     if (kind === 'audio') return '音频节点'
     if (kind === 'subtitle') return '字幕节点'
     return 'Task'
@@ -1368,34 +1384,32 @@ const rewritePromptWithCharacters = React.useCallback(
             <Group gap={6}>
             <ActionIcon key="preview" variant="subtle" title="放大预览" onClick={()=>{
               const url =
-                kind === 'character'
+                isCharacterNode
                   ? characterPrimaryImage || undefined
-                  : (kind==='image'||kind==='textToImage')
+                  : (isImageNode || isTextToImageNode)
                     ? (imageUrl || (data as any)?.imageUrl)
-                    : (isVideoNode)
+                    : isVideoNode
                       ? (data as any)?.videoUrl
-                      : (kind==='tts'
-                        ? (data as any)?.audioUrl
-                        : undefined)
+                      : (isAudioNode ? (data as any)?.audioUrl : undefined)
               const k: any =
-                kind === 'character'
+                isCharacterNode
                   ? 'image'
-                  : (kind==='tts')
+                  : isAudioNode
                     ? 'audio'
-                    : (isVideoNode)
+                    : isVideoNode
                       ? 'video'
                       : 'image'
               if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
             }}><IconMaximize size={16} /></ActionIcon>
             <ActionIcon key="download" variant="subtle" title="下载" onClick={()=>{
               const url =
-                kind === 'character'
+                isCharacterNode
                   ? characterPrimaryImage || undefined
-                  : (kind==='image'||kind==='textToImage')
+                  : (isImageNode || isTextToImageNode)
                     ? (imageUrl || (data as any)?.imageUrl)
-                    : (isVideoNode)
+                    : isVideoNode
                       ? (data as any)?.videoUrl
-                      : (kind==='tts' ? (data as any)?.audioUrl : undefined)
+                      : (isAudioNode ? (data as any)?.audioUrl : undefined)
               if (!url) return
               const a = document.createElement('a')
               a.href = url
@@ -1439,7 +1453,7 @@ const rewritePromptWithCharacters = React.useCallback(
         />
       ))}
       {/* Content Area for Character/Image/Video/Text kinds */}
-      {kind === 'character' && (
+      {isCharacterNode && (
         <div style={{ position: 'relative', marginTop: 6 }}>
           {characterPrimaryImage ? (
             <div
@@ -1516,7 +1530,7 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       )}
-      {kind === 'image' && (
+      {isImageNode && (
         <div style={{ position: 'relative', marginTop: 6 }}>
           {imageResults.length === 0 ? (
             <>
@@ -2078,7 +2092,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Menu.Dropdown>
               </Menu>
             </div>
-            {kind !== 'character' && (
+            {!isCharacterNode && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {isRunning && (
                   <ActionIcon
@@ -2105,13 +2119,13 @@ const rewritePromptWithCharacters = React.useCallback(
               </div>
             )}
           </div>
-          {kind === 'character' ? (
+          {isCharacterNode ? (
             <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
           ) : (
-            <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
+            <Text size="xs" c="dimmed" mb={6}>{isTextToImageNode ? '文本提示词' : isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
           )}
 
-          {kind !== 'character' && status === 'error' && (data as any)?.lastError && (
+          {!isCharacterNode && status === 'error' && (data as any)?.lastError && (
             <Paper
               withBorder
               radius="md"
@@ -2137,7 +2151,7 @@ const rewritePromptWithCharacters = React.useCallback(
             </Paper>
           )}
 
-          {kind === 'character' ? (
+          {isCharacterNode ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <Select
                 label="Sora Token"
