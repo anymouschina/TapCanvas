@@ -30,6 +30,7 @@ export type NodeKind =
   | 'image'
   | 'video'
   | 'composeVideo'
+  | 'storyboard'
   | 'audio'
   | 'subtitle'
   | 'character'
@@ -41,6 +42,7 @@ export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
     case 'image':
       return IMAGE_MODELS
     case 'composeVideo':
+    case 'storyboard':
     case 'video':
       return VIDEO_MODELS
     case 'character':

@@ -129,6 +129,7 @@ export async function runFlowDag(
         const shouldRemote =
           kind === 'textToImage' ||
           kind === 'composeVideo' ||
+          kind === 'storyboard' ||
           kind === 'tts' ||
           kind === 'subtitleAlign' ||
           kind === 'image'

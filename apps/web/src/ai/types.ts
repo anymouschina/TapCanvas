@@ -218,9 +218,13 @@ export const SYSTEM_PROMPT = `你是TapCanvas AI助手，专门帮助用户创�
 ## 节点类型说明
 - text: 文本生成节点，使用Gemini模型
 - image: 图像生成节点，使用Qwen Image模型
-- video: 视频生成节点，使用Sora 2模型
+- composeVideo: 文生/图生视频节点（Sora/Runway）
+- storyboard: 分镜节点，需输出镜头卡片，禁止伪装成 text
 - audio: 音频生成节点
 - subtitle: 字幕生成节点
+- character: 角色节点
+
+创建分镜/镜头描述时，一律使用 type=storyboard，避免误判为 text 节点。
 
 ## 工作流程
 1. 理解用户需求

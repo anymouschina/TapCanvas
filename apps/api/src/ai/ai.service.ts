@@ -32,7 +32,7 @@ const canvasToolSchemas = {
     inputSchema: z.object({})
   },
   createNode: {
-    description: '创建节点（type/label/config 由模型决定，实际创建在前端完成）',
+    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成）',
     inputSchema: z.object({
       type: z.string(),
       label: z.string().optional(),

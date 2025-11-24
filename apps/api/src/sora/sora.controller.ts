@@ -163,6 +163,10 @@ export class SoraController {
       size?: string
       n_frames?: number
       remixTargetId?: string
+      inpaintFileId?: string
+      imageUrl?: string
+      operation?: string
+      title?: string
     },
     @Req() req: any,
   ) {
@@ -178,6 +182,8 @@ export class SoraController {
         size: body.size,
         n_frames: body.n_frames,
         remixTargetId: body.remixTargetId,
+        operation: body.operation,
+        title: body.title,
       }
     })
 

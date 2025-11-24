@@ -67,6 +67,7 @@ export class CanvasService {
       image: 'image',
       video: 'composeVideo',
       composeVideo: 'composeVideo',
+      storyboard: 'storyboard',
       audio: 'audio',
       subtitle: 'subtitle',
       character: 'character',
@@ -96,6 +97,7 @@ export class CanvasService {
         return '文生图'
       case 'video':
       case 'composeVideo':
+      case 'storyboard':
         return '文生视频'
       case 'audio':
         return '音频节点'

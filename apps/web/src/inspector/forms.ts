@@ -35,6 +35,7 @@ export function defaultsFor(kind?: string) {
     case 'textToImage':
       return { prompt: '', steps: 30, seed: undefined, aspect: '16:9' }
     case 'composeVideo':
+    case 'storyboard':
       return { storyboard: '', duration: 30, fps: 24, remixTargetId: undefined }
     case 'tts':
       return { text: '', voice: 'female', speed: 1 }

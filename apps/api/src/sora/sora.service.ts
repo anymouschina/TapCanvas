@@ -802,6 +802,8 @@ export class SoraService {
       inpaintFileId?: string | null
       imageUrl?: string | null
       remixTargetId?: string | null
+      operation?: string | null
+      title?: string | null
     },
     triedTokenIds: string[] = [],
   ): Promise<any> {
@@ -1247,7 +1249,7 @@ export class SoraService {
     const body: any = {
       kind: 'video',
       prompt: payload.prompt,
-      title: null,
+      title: payload.title ?? null,
       // 使用用户请求的orientation，但如果有问题会回退到portrait
       orientation: payload.orientation || 'portrait',
       size: payload.size || 'small',
@@ -1265,6 +1267,9 @@ export class SoraService {
       audio_transcript: null,
       video_caption: null,
       storyboard_id: null,
+    }
+    if (payload.operation) {
+      body.operation = payload.operation
     }
 
     // 详细记录最终发送给Sora的请求体

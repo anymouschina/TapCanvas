@@ -123,9 +123,10 @@ function CanvasInner(): JSX.Element {
 
   const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
     if (!sourceKind || !targetKind) return true
-    if (targetKind === 'composeVideo') return ['textToImage','tts','subtitleAlign','composeVideo','image','video','character'].includes(sourceKind)
+    const isStoryboardTarget = targetKind === 'storyboard'
+    if (targetKind === 'composeVideo' || isStoryboardTarget) return ['textToImage','tts','subtitleAlign','composeVideo','storyboard','image','video','character'].includes(sourceKind)
     if (targetKind === 'image') return ['image','textToImage'].includes(sourceKind)
-    if (targetKind === 'video') return ['image','composeVideo','video','character'].includes(sourceKind)
+    if (targetKind === 'video') return ['image','composeVideo','storyboard','video','character'].includes(sourceKind)
     return true
   }, [])
 
@@ -699,8 +700,8 @@ function CanvasInner(): JSX.Element {
             const tType = tHandle.toString().startsWith('in-') ? tHandle.toString().slice(3).split('-')[0] : undefined
             if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) {
               let crossAllowed = sType === 'video' && tType === 'subtitle'
-              const sourceIsVideoKind = ['video', 'composeVideo'].includes(sKind || '')
-              const targetIsVideoKind = ['video', 'composeVideo'].includes(tKind || '')
+              const sourceIsVideoKind = ['video', 'composeVideo', 'storyboard'].includes(sKind || '')
+              const targetIsVideoKind = ['video', 'composeVideo', 'storyboard'].includes(tKind || '')
               if (!crossAllowed && sType === 'video' && sourceIsVideoKind && targetIsVideoKind) {
                 crossAllowed = true
               }
@@ -889,6 +890,7 @@ function CanvasInner(): JSX.Element {
                 <Divider my={2} />
                 <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }); setMenu(null) }}>新建 text</Button>
                 <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'video', { kind: 'composeVideo' }); setMenu(null) }}>新建 video</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '分镜', { kind: 'storyboard' }); setMenu(null) }}>新建 storyboard</Button>
               </>
             )}
             {menu.type === 'node' && menu.id && (() => {

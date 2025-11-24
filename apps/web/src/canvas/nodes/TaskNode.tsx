@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -27,6 +27,9 @@ import {
   IconDeviceMobile,
   IconRefresh,
   IconUsers,
+  IconPlus,
+  IconTrash,
+  IconMovie,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type TaskResultDto } from '../../api/server'
 import {
@@ -35,6 +38,23 @@ import {
   type NodeKind,
 } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
+import {
+  StoryboardScene,
+  createScene,
+  normalizeStoryboardScenes,
+  serializeStoryboardScenes,
+  STORYBOARD_FRAMING_OPTIONS,
+  STORYBOARD_MOVEMENT_OPTIONS,
+  STORYBOARD_DURATION_STEP,
+  STORYBOARD_MIN_DURATION,
+  STORYBOARD_MAX_DURATION,
+  STORYBOARD_MAX_TOTAL_DURATION,
+  totalStoryboardDuration,
+  scenesAreEqual,
+  STORYBOARD_DEFAULT_DURATION,
+  enforceStoryboardTotalLimit,
+} from './storyboardUtils'
+import { toast } from '../../ui/toast'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -136,10 +156,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     status === 'queued' ? '#f59e0b' : 'rgba(127,127,127,.6)'
 
   const kind = data?.kind
+  const isStoryboardNode = kind === 'storyboard'
+  const isComposerNode = kind === 'composeVideo' || isStoryboardNode
+  const isVideoNode = kind === 'video' || isComposerNode
   const targets: { id: string; type: string; pos: Position }[] = []
   const sources: { id: string; type: string; pos: Position }[] = []
 
-  if (kind === 'composeVideo') {
+  if (isComposerNode) {
     targets.push({ id: 'in-image', type: 'image', pos: Position.Left })
     targets.push({ id: 'in-video', type: 'video', pos: Position.Left })
     targets.push({ id: 'in-audio', type: 'audio', pos: Position.Left })
@@ -187,8 +210,87 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
+  const [storyboardScenes, setStoryboardScenes] = React.useState<StoryboardScene[]>(() =>
+    isStoryboardNode
+      ? enforceStoryboardTotalLimit(
+          normalizeStoryboardScenes(
+            (data as any)?.storyboardScenes,
+            (data as any)?.storyboard || (data as any)?.prompt || '',
+          ),
+        )
+      : [],
+  )
+  const [storyboardNotes, setStoryboardNotes] = React.useState<string>(() =>
+    isStoryboardNode ? ((data as any)?.storyboardNotes || '') : '',
+  )
+  const [storyboardTitle, setStoryboardTitle] = React.useState<string>(() =>
+    isStoryboardNode ? ((data as any)?.storyboardTitle || data?.label || '') : '',
+  )
+  const lastStoryboardSerializedRef = React.useRef<string | null>(null)
 
   // 文本节点的系统提示词状态
+  const rawStoryboardScenes = (data as any)?.storyboardScenes
+  const rawStoryboardString = (data as any)?.storyboard || (data as any)?.prompt || ''
+  const rawStoryboardNotes = (data as any)?.storyboardNotes || ''
+  const rawStoryboardTitle = (data as any)?.storyboardTitle || data?.label || ''
+
+  React.useEffect(() => {
+    if (!isStoryboardNode) return
+    const normalized = enforceStoryboardTotalLimit(
+      normalizeStoryboardScenes(rawStoryboardScenes, rawStoryboardString),
+    )
+    if (!scenesAreEqual(normalized, storyboardScenes)) {
+      setStoryboardScenes(normalized)
+    }
+    if (rawStoryboardNotes !== storyboardNotes) {
+      setStoryboardNotes(rawStoryboardNotes)
+    }
+    if (rawStoryboardTitle !== storyboardTitle) {
+      setStoryboardTitle(rawStoryboardTitle)
+    }
+  }, [
+    isStoryboardNode,
+    rawStoryboardScenes,
+    rawStoryboardString,
+    rawStoryboardNotes,
+    rawStoryboardTitle,
+    storyboardScenes,
+    storyboardNotes,
+    storyboardTitle,
+  ])
+
+  React.useEffect(() => {
+    if (!isStoryboardNode) return
+    const serialized = serializeStoryboardScenes(storyboardScenes, {
+      title: storyboardTitle,
+      notes: storyboardNotes,
+    })
+    if (lastStoryboardSerializedRef.current !== serialized) {
+      lastStoryboardSerializedRef.current = serialized
+      if (prompt !== serialized) {
+        setPrompt(serialized)
+      }
+      updateNodeData(id, {
+        storyboardScenes,
+        storyboardNotes,
+        storyboardTitle,
+        storyboard: serialized,
+        prompt: serialized,
+      })
+    }
+  }, [id, isStoryboardNode, storyboardScenes, storyboardNotes, storyboardTitle, prompt, updateNodeData])
+
+  React.useEffect(() => {
+    if (!isStoryboardNode) {
+      lastStoryboardSerializedRef.current = null
+    }
+  }, [isStoryboardNode])
+
+  const storyboardTotalDuration = React.useMemo(
+    () => (isStoryboardNode ? totalStoryboardDuration(storyboardScenes) : 0),
+    [isStoryboardNode, storyboardScenes],
+  )
+
   const [systemPrompt, setSystemPrompt] = React.useState<string>(
     (data as any)?.systemPrompt || '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。',
   )
@@ -302,14 +404,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       ? modelKey
       : kind === 'image'
         ? imageModel
-        : kind === 'composeVideo' || kind === 'video'
+        : isVideoNode
           ? videoModel
           : modelKey
   const modelList = useModelOptions(kind as NodeKind)
   const rewriteModelOptions = useModelOptions('text')
-  const showTimeMenu = kind === 'composeVideo' || kind === 'video'
-  const showResolutionMenu = kind === 'composeVideo' || kind === 'video' || kind === 'image'
-  const showOrientationMenu = kind === 'composeVideo' || kind === 'video'
+  const showTimeMenu = isVideoNode
+  const showResolutionMenu = isVideoNode || kind === 'image'
+  const showOrientationMenu = isVideoNode
   React.useEffect(() => {
     if (!modelList.some((m) => m.value === activeModelKey) && modelList.length) {
       const first = modelList[0].value
@@ -325,7 +427,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [activeModelKey, modelList, id])
   const summaryModelLabel = getModelLabel(kind, activeModelKey)
   const summaryDuration =
-    kind === 'composeVideo' || kind === 'video'
+    isVideoNode
       ? `${videoDuration}s`
       : `${sampleCount}x`
   const summaryResolution = aspect
@@ -349,9 +451,20 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     updateNodeData(id, { characterRewriteModel: value })
   }, [id, updateNodeData])
   const runNode = () => {
-    const nextPrompt = (prompt || (data as any)?.prompt || '').trim()
-    const patch: any = { prompt: nextPrompt }
-    if (kind === 'image' || kind === 'composeVideo') {
+    let nextPrompt = (prompt || (data as any)?.prompt || '').trim()
+    const patch: any = {}
+    if (isStoryboardNode) {
+      nextPrompt = serializeStoryboardScenes(storyboardScenes, {
+        title: storyboardTitle,
+        notes: storyboardNotes,
+      })
+      patch.storyboardScenes = storyboardScenes
+      patch.storyboardNotes = storyboardNotes
+      patch.storyboardTitle = storyboardTitle
+      patch.storyboard = nextPrompt
+    }
+    patch.prompt = nextPrompt
+    if (kind === 'image' || isComposerNode) {
       patch.aspect = aspect
     }
     if (kind === 'textToImage') {
@@ -364,7 +477,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.imageModel = imageModel
       patch.sampleCount = sampleCount
     }
-    if (kind === 'composeVideo') {
+    if (isComposerNode) {
       patch.sampleCount = sampleCount
       patch.videoModel = videoModel
       patch.videoDurationSeconds = videoDuration
@@ -534,17 +647,10 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [])
   const handleApplyCharacterMentions = React.useCallback(async () => {
     if (!connectedCharacterOptions.length) return
-    if (!prompt.trim()) {
-      const appended = connectedCharacterOptions
-        .map((opt) => `@${String(opt.username || '').replace(/^@/, '')}`)
-        .filter(Boolean)
-        .join(' ')
-      setPrompt(appended)
-      updateNodeData(id, { prompt: appended })
-      setCharacterRewriteError(null)
-      return
-    }
-    setCharacterRewriteError(null)
+    const mentionList = connectedCharacterOptions
+      .map((opt) => `@${String(opt.username || '').replace(/^@/, '')}`)
+      .filter(Boolean)
+    const appendedMentions = mentionList.join(' ')
     const roles = connectedCharacterOptions.map((opt) => {
       const username = String(opt.username || '').replace(/^@/, '')
       const mention = `@${username}`
@@ -557,35 +663,113 @@ const rewritePromptWithCharacters = React.useCallback(
       ].filter((alias): alias is string => Boolean(alias && alias.trim().length > 0))
       return { mention, displayName: opt.displayName || mention, aliases: aliasList }
     })
+
+    if (isStoryboardNode) {
+      if (!storyboardScenes.length) {
+        applyStoryboardChange(() => [createScene({ description: appendedMentions })])
+        setCharacterRewriteError(null)
+        return
+      }
+      const allEmpty = storyboardScenes.every((scene) => !scene.description.trim())
+      if (allEmpty) {
+        applyStoryboardChange((prev) => {
+      if (!prev.length) return [createScene({ description: appendedMentions })]
+      const [first, ...rest] = prev
+      return [
+            {
+              ...first,
+              description: appendedMentions || first.description,
+            },
+            ...rest,
+          ]
+        })
+        setCharacterRewriteError(null)
+        return
+      }
+    } else if (!prompt.trim()) {
+      if (appendedMentions) {
+        setPrompt(appendedMentions)
+        updateNodeData(id, { prompt: appendedMentions })
+      }
+      setCharacterRewriteError(null)
+      return
+    }
+
+    setCharacterRewriteError(null)
     const currentRequestId = ++rewriteRequestIdRef.current
     setCharacterRewriteLoading(true)
     try {
-      let rewritten = ''
-      try {
-        rewritten = await rewritePromptWithCharacters({
-          basePrompt: prompt,
-          roles,
-          modelValue: characterRewriteModel,
-        })
-      } catch (err) {
-        console.warn('[TaskNode] rewrite via AI failed', err)
-        setCharacterRewriteError(err instanceof Error ? err.message : 'AI 替换失败，使用本地规则处理')
+      if (isStoryboardNode) {
+        let aiFailed = false
+        const updatedScenes: StoryboardScene[] = []
+        for (const scene of storyboardScenes) {
+          const base = scene.description || ''
+          if (!base.trim()) {
+            updatedScenes.push(scene)
+            continue
+          }
+          let rewritten = ''
+          try {
+            rewritten = await rewritePromptWithCharacters({
+              basePrompt: base,
+              roles,
+              modelValue: characterRewriteModel,
+            })
+          } catch (err) {
+            aiFailed = true
+            console.warn('[TaskNode] rewrite via AI failed', err)
+          }
+          let nextText = (rewritten || '').trim()
+          if (!nextText) {
+            nextText = roles.reduce((acc, role) => {
+              const fallback = applyMentionFallback(acc, role.mention, role.aliases)
+              return fallback.text
+            }, base).trim()
+          }
+          updatedScenes.push({ ...scene, description: nextText })
+        }
+        if (aiFailed) {
+          setCharacterRewriteError('AI 替换失败，已使用本地规则处理')
+        }
+        applyStoryboardChange(() => updatedScenes)
+      } else {
+        let rewritten = ''
+        try {
+          rewritten = await rewritePromptWithCharacters({
+            basePrompt: prompt,
+            roles,
+            modelValue: characterRewriteModel,
+          })
+        } catch (err) {
+          console.warn('[TaskNode] rewrite via AI failed', err)
+          setCharacterRewriteError(err instanceof Error ? err.message : 'AI 替换失败，使用本地规则处理')
+        }
+        let nextText = (rewritten || '').trim()
+        if (!nextText) {
+          nextText = roles.reduce((acc, role) => {
+            const fallback = applyMentionFallback(acc, role.mention, role.aliases)
+            return fallback.text
+          }, prompt)
+        }
+        setPrompt(nextText)
+        updateNodeData(id, { prompt: nextText })
       }
-      let nextText = rewritten
-      if (!nextText) {
-        nextText = roles.reduce((acc, role) => {
-          const fallback = applyMentionFallback(acc, role.mention, role.aliases)
-          return fallback.text
-        }, prompt)
-      }
-      setPrompt(nextText)
-      updateNodeData(id, { prompt: nextText })
     } finally {
       if (rewriteRequestIdRef.current === currentRequestId) {
         setCharacterRewriteLoading(false)
       }
     }
-  }, [connectedCharacterOptions, prompt, characterRewriteModel, rewritePromptWithCharacters, id, updateNodeData])
+  }, [
+    connectedCharacterOptions,
+    prompt,
+    characterRewriteModel,
+    rewritePromptWithCharacters,
+    id,
+    updateNodeData,
+    isStoryboardNode,
+    storyboardScenes,
+    applyStoryboardChange,
+  ])
   const handleCopyCharacterMention = React.useCallback((username?: string | null) => {
     if (!username) return
     const mention = `@${username.replace(/^@/, '')}`
@@ -700,14 +884,14 @@ const rewritePromptWithCharacters = React.useCallback(
     if (skind === 'image' || skind === 'textToImage') {
       uImg = (sd.imageUrl as string | undefined) || null
       uSoraFileId = (sd.soraFileId as string | undefined) || null
-    } else if ((skind === 'video' || skind === 'composeVideo') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+    } else if ((skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
       // 对于video节点，优先获取主视频的缩略图作为上游图片
       uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
     }
 
     // 获取最新的主视频 URL
     let uVideo = null
-    if (skind === 'video' || skind === 'composeVideo') {
+    if (skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') {
       if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
         uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
       } else {
@@ -868,7 +1052,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const hasContent = React.useMemo(() => {
     if (kind === 'image') return Boolean(imageUrl)
-    if (kind === 'video' || kind === 'composeVideo') return Boolean((data as any)?.videoUrl)
+    if (isVideoNode) return Boolean((data as any)?.videoUrl)
     if (kind === 'textToImage') return Boolean((data as any)?.imageUrl)
     if (kind === 'tts') return Boolean((data as any)?.audioUrl)
     if (kind === 'character') return Boolean(characterPrimaryImage)
@@ -1003,8 +1187,97 @@ const rewritePromptWithCharacters = React.useCallback(
       setUploading(false)
     }
   }
+  const clampStoryboardDuration = React.useCallback((value: number): number => {
+    if (Number.isNaN(value)) return STORYBOARD_DEFAULT_DURATION
+    return Math.min(STORYBOARD_MAX_DURATION, Math.max(STORYBOARD_MIN_DURATION, value))
+  }, [])
+
+  const notifyStoryboardLimit = React.useCallback(() => {
+    toast('分镜总时长上限为 25 秒，请调整各镜头时长', 'error')
+  }, [])
+
+  const applyStoryboardChange = React.useCallback(
+    (mutator: (prev: StoryboardScene[]) => StoryboardScene[]) => {
+      setStoryboardScenes((prev) => {
+        const next = mutator(prev)
+        if (next === prev) return prev
+        const total = totalStoryboardDuration(next)
+        if (total > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
+          notifyStoryboardLimit()
+          return prev
+        }
+        return next
+      })
+    },
+    [notifyStoryboardLimit],
+  )
+
+  const updateStoryboardScene = React.useCallback(
+    (sceneId: string, patch: Partial<StoryboardScene>) => {
+      applyStoryboardChange((prev) =>
+        prev.map((scene) =>
+          scene.id === sceneId
+            ? {
+                ...scene,
+                ...patch,
+                duration:
+                  typeof patch.duration === 'number'
+                    ? clampStoryboardDuration(patch.duration)
+                    : scene.duration,
+              }
+            : scene,
+        ),
+      )
+    },
+    [applyStoryboardChange, clampStoryboardDuration],
+  )
+
+  const handleAddScene = React.useCallback(() => {
+    applyStoryboardChange((prev) => {
+      const remaining = STORYBOARD_MAX_TOTAL_DURATION - totalStoryboardDuration(prev)
+      if (remaining <= 0) {
+        notifyStoryboardLimit()
+        return prev
+      }
+      const duration = Math.min(STORYBOARD_DEFAULT_DURATION, remaining)
+      return [...prev, createScene({ duration })]
+    })
+  }, [applyStoryboardChange, notifyStoryboardLimit])
+
+  const handleRemoveScene = React.useCallback(
+    (sceneId: string) => {
+      applyStoryboardChange((prev) => {
+        const filtered = prev.filter((scene) => scene.id !== sceneId)
+        if (filtered.length === 0) {
+          return [
+            createScene({
+              duration: Math.min(STORYBOARD_DEFAULT_DURATION, STORYBOARD_MAX_TOTAL_DURATION),
+            }),
+          ]
+        }
+        return filtered
+      })
+    },
+    [applyStoryboardChange],
+  )
+
+  const handleSceneDurationDelta = React.useCallback(
+    (sceneId: string, delta: number) => {
+      applyStoryboardChange((prev) =>
+        prev.map((scene) =>
+          scene.id === sceneId
+            ? {
+                ...scene,
+                duration: clampStoryboardDuration(scene.duration + delta),
+              }
+            : scene,
+        ),
+      )
+    },
+    [applyStoryboardChange, clampStoryboardDuration],
+  )
     const defaultLabel = React.useMemo(() => {
-    if (kind === 'composeVideo' || kind === 'video') return '文生视频'
+    if (isComposerNode || kind === 'video') return '文生视频'
     if (kind === 'image' || kind === 'textToImage') return kind === 'image' ? '图像节点' : '文本提示'
     if (kind === 'audio') return '音频节点'
     if (kind === 'subtitle') return '字幕节点'
@@ -1085,7 +1358,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   ? characterPrimaryImage || undefined
                   : (kind==='image'||kind==='textToImage')
                     ? (imageUrl || (data as any)?.imageUrl)
-                    : (kind==='video'||kind==='composeVideo')
+                    : (isVideoNode)
                       ? (data as any)?.videoUrl
                       : (kind==='tts'
                         ? (data as any)?.audioUrl
@@ -1095,7 +1368,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   ? 'image'
                   : (kind==='tts')
                     ? 'audio'
-                    : (kind==='video'||kind==='composeVideo')
+                    : (isVideoNode)
                       ? 'video'
                       : 'image'
               if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
@@ -1106,7 +1379,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   ? characterPrimaryImage || undefined
                   : (kind==='image'||kind==='textToImage')
                     ? (imageUrl || (data as any)?.imageUrl)
-                    : (kind==='video'||kind==='composeVideo')
+                    : (isVideoNode)
                       ? (data as any)?.videoUrl
                       : (kind==='tts' ? (data as any)?.audioUrl : undefined)
               if (!url) return
@@ -1416,7 +1689,7 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       )}
-      {(kind === 'video' || kind === 'composeVideo') && (
+      {isVideoNode && (
         <div
           style={{
             marginTop: 6,
@@ -1821,7 +2094,7 @@ const rewritePromptWithCharacters = React.useCallback(
           {kind === 'character' ? (
             <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
           ) : (
-            <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : kind === 'composeVideo' ? '视频提示词与素材（暂时只支持一次生成1个视频，已知bug）' : '详情'}</Text>
+            <Text size="xs" c="dimmed" mb={6}>{kind === 'textToImage' ? '文本提示词' : isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
           )}
 
           {kind !== 'character' && status === 'error' && (data as any)?.lastError && (
@@ -2108,7 +2381,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 </div>
               )}
 
-              {kind === 'composeVideo' && (upstreamImageUrl || upstreamText) && (
+              {isComposerNode && (upstreamImageUrl || upstreamText) && (
                 <div style={{ marginBottom: 8 }}>
                   {upstreamImageUrl && (
                     <div
@@ -2206,7 +2479,144 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Paper>
               )}
 
-              <div style={{ position: 'relative' }}>
+              {isStoryboardNode ? (
+                <Stack gap="xs">
+                  <TextInput
+                    label="分镜标题"
+                    placeholder="例如：武侠对决 · 紫禁之巅"
+                    value={storyboardTitle}
+                    onChange={(e) => setStoryboardTitle(e.currentTarget.value)}
+                    size="xs"
+                  />
+                  <Stack gap="xs">
+                    {storyboardScenes.map((scene, idx) => (
+                      <Paper
+                        key={scene.id}
+                        withBorder
+                        radius="md"
+                        p="xs"
+                        style={{ background: 'rgba(15,23,42,0.65)', borderColor: 'rgba(148,163,184,0.35)' }}
+                      >
+                        <Group justify="space-between" align="flex-start" mb={6}>
+                          <div>
+                            <Text size="sm" fw={600}>{`Scene ${idx + 1}`}</Text>
+                            <Text size="xs" c="dimmed">
+                              镜头描述与台词
+                            </Text>
+                          </div>
+                          <Group gap={4}>
+                            <Badge color="blue" variant="light">
+                              {scene.duration.toFixed(1)}s
+                            </Badge>
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              onClick={() => handleSceneDurationDelta(scene.id, 15)}
+                              disabled={scene.duration >= STORYBOARD_MAX_DURATION}
+                            >
+                              +15s
+                            </Button>
+                            <ActionIcon
+                              size="sm"
+                              variant="subtle"
+                              color="red"
+                              onClick={() => handleRemoveScene(scene.id)}
+                              disabled={storyboardScenes.length === 1}
+                              title="删除该 Scene"
+                            >
+                              <IconTrash size={14} />
+                            </ActionIcon>
+                          </Group>
+                        </Group>
+                        <Textarea
+                          autosize
+                          minRows={3}
+                          maxRows={6}
+                          placeholder="描写镜头构图、动作、情绪、台词，以及需要引用的 @角色……"
+                          value={scene.description}
+                          onChange={(e) =>
+                            updateStoryboardScene(scene.id, { description: e.currentTarget.value })
+                          }
+                        />
+                        <Group gap="xs" mt={6} align="flex-end" wrap="wrap">
+                          <Select
+                            label="镜头景别"
+                            placeholder="可选"
+                            data={STORYBOARD_FRAMING_OPTIONS}
+                            value={scene.framing || null}
+                            onChange={(value) =>
+                              updateStoryboardScene(scene.id, {
+                                framing: (value as StoryboardScene['framing']) || undefined,
+                              })
+                            }
+                            size="xs"
+                            withinPortal
+                            clearable
+                            style={{ minWidth: 120 }}
+                          />
+                          <Select
+                            label="镜头运动"
+                            placeholder="可选"
+                            data={STORYBOARD_MOVEMENT_OPTIONS}
+                            value={scene.movement || null}
+                            onChange={(value) =>
+                              updateStoryboardScene(scene.id, {
+                                movement: (value as StoryboardScene['movement']) || undefined,
+                              })
+                            }
+                            size="xs"
+                            withinPortal
+                            clearable
+                            style={{ minWidth: 120 }}
+                          />
+                          <NumberInput
+                            label="时长 (秒)"
+                            size="xs"
+                            min={STORYBOARD_MIN_DURATION}
+                            max={STORYBOARD_MAX_DURATION}
+                            step={STORYBOARD_DURATION_STEP}
+                            value={scene.duration}
+                            onChange={(value) => {
+                              const next = typeof value === 'number' ? value : Number(value) || scene.duration
+                              updateStoryboardScene(scene.id, { duration: next })
+                            }}
+                            style={{ width: 120 }}
+                          />
+                        </Group>
+                      </Paper>
+                    ))}
+                  </Stack>
+                  <Button
+                    variant="light"
+                    size="xs"
+                    leftSection={<IconPlus size={14} />}
+                    onClick={handleAddScene}
+                  >
+                    添加 Scene
+                  </Button>
+                  <Textarea
+                    label="全局风格 / 备注"
+                    autosize
+                    minRows={2}
+                    maxRows={4}
+                    placeholder="补充整体风格、镜头节奏、素材要求，或写下 Sora 需要遵循的额外说明。"
+                    value={storyboardNotes}
+                    onChange={(e) => setStoryboardNotes(e.currentTarget.value)}
+                  />
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">
+                      当前共 {storyboardScenes.length} 个镜头。You're using {storyboardScenes.length} video gens with current settings.
+                    </Text>
+                    <Text
+                      size="xs"
+                      c={storyboardTotalDuration > STORYBOARD_MAX_TOTAL_DURATION ? 'red.4' : 'dimmed'}
+                    >
+                      总时长 {storyboardTotalDuration.toFixed(1)}s / {STORYBOARD_MAX_TOTAL_DURATION}s
+                    </Text>
+                  </Group>
+                </Stack>
+              ) : (
+                <div style={{ position: 'relative' }}>
                 {prompt.length >= 6 && (
                   <ActionIcon
                     variant="subtle"
@@ -2454,7 +2864,8 @@ const rewritePromptWithCharacters = React.useCallback(
                     ))}
                   </Paper>
                 )}
-              </div>
+                </div>
+              )}
             </>
           )}
           {kind === 'textToImage' && textResults.length > 0 && (
@@ -2707,7 +3118,7 @@ const rewritePromptWithCharacters = React.useCallback(
       )}
 
       {/* Video results modal: select primary video + fullscreen preview */}
-      {(kind === 'video' || kind === 'composeVideo') && videoExpanded && (
+      {isVideoNode && videoExpanded && (
         <Modal
           opened={videoExpanded}
           onClose={() => setVideoExpanded(false)}
@@ -2719,21 +3130,26 @@ const rewritePromptWithCharacters = React.useCallback(
         >
           <Stack gap="sm">
             {videoResults.length === 0 ? (
-              <div
-                style={{
-                  padding: '40px 20px',
-                  textAlign: 'center',
-                  color: 'rgba(226,232,240,0.7)',
-                }}
-              >
-                <IconVideo size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                <Text size="sm" c="dimmed">
-                  暂无视频生成历史
-                </Text>
-                <Text size="xs" c="dimmed" mt={4}>
-                  生成视频后，这里将显示所有历史记录，你可以选择效果最好的作为主视频
-                </Text>
-              </div>
+              (() => {
+                const VideoHistoryIcon = isStoryboardNode ? IconMovie : IconVideo
+                return (
+                <div
+                  style={{
+                    padding: '40px 20px',
+                    textAlign: 'center',
+                    color: 'rgba(226,232,240,0.7)',
+                  }}
+                >
+                  <VideoHistoryIcon size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
+                  <Text size="sm" c="dimmed">
+                    暂无视频生成历史
+                  </Text>
+                  <Text size="xs" c="dimmed" mt={4}>
+                    生成视频后，这里将显示所有历史记录，你可以选择效果最好的作为主视频
+                  </Text>
+                </div>
+                )
+              })()
             ) : (
               <>
                 <Text size="xs" c="dimmed">

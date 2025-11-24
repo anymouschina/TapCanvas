@@ -38,6 +38,29 @@ Through visual workflows, we not only lower the barrier to AI video creation but
 
 TapCanvas's visual canvas interface demonstrates powerful AI creation workflow capabilities: starting from text prompts, generating images and videos through intelligent connections, achieving the complete transformation from creative ideas to finished works.
 
+### 🤖 Auto Role Mentions
+
+![Auto Role Mentions](assets/2025-11-24-auto-role-username.jpg)
+
+- Once a flow is connected to character nodes, any downstream text/video node can trigger **Auto Replace Mentions**: an LLM rewrites the prompt so every character reference becomes the role card’s `@username`, keeping at least one space on both sides to avoid malformed tokens.
+- Multiple inbound characters are processed in a single run (Gemini / GLM), and the rewritten result is synced back to the Sora prompt so every shot stays consistent.
+- If a referenced character never appears in the script, the rewrite pass inserts one `@username` automatically, preventing Sora from rejecting the job due to missing cameos.
+
+### 🎬 Storyboard Workflow
+
+Sora 2’s storyboard mode lets you spell out an entire video shot-by-shot: each entry includes duration, framing, action, dialogue, camera motion, and a dedicated prompt so you can render every beat separately and edit later. Recommended approach:
+
+1. **Define total duration** – Sora 2 typically outputs ~10 s per shot, so plan 2–4 beats for a short clip.
+2. **Break down shots** – For every shot, note the index, duration, camera type (close/mid/wide), action, emotion, and transitions.
+3. **Write per-shot prompts** – Prefix with style (e.g., `2d Japanese anime`), and reference character nodes via `@heng`, `@keng`. For live-action cameos, upload role cards/photos on the web UI.
+4. **Mind Sora limits** – App builds are capped at 10 s (no orientation toggle, ~30 runs/day). If cameo uploads fail, switch proxies or use sketch-style prompts to avoid copyright filters.
+5. **Post-processing** – Download and edit locally, or publish then use Remix for fine tweaks.
+
+Example storyboard:
+- Shot 1 (0–2 s close-up): protagonist shocked (`2d Japanese anime`, `@heng` face highlight, slow push-in)
+- Shot 2 (2–7 s mid shot): two characters chatting (`@heng` & `@keng` in a café, warm lighting)
+- Shot 3 (7–10 s wide): pull-back ending (wide angle, sunset, cinematic tone)
+
 ## 📅 Changelog
 
 - **2025-11-24**: Introduced the new **Character Node** and **Auto Mention** workflow so Sora characters can be managed directly on the canvas.

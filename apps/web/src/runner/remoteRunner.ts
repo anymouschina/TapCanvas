@@ -11,6 +11,12 @@ import {
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
 import { isAnthropicModel } from '../config/modelSource'
+import {
+  normalizeStoryboardScenes,
+  serializeStoryboardScenes,
+  totalStoryboardDuration,
+  STORYBOARD_MAX_TOTAL_DURATION,
+} from '../canvas/nodes/storyboardUtils'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -199,7 +205,7 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
 
 function resolveTaskKind(kind: string): TaskKind {
   if (kind === 'image') return 'text_to_image'
-  if (kind === 'composeVideo' || kind === 'video') return 'text_to_video'
+  if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') return 'text_to_video'
   return 'prompt_refine'
 }
 
@@ -209,7 +215,7 @@ function buildPromptFromState(
   state: any,
   id: string,
 ): string {
-  if (kind === 'image' || kind === 'composeVideo' || kind === 'video') {
+  if (kind === 'image' || kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
     const edges = (state.edges || []) as any[]
     const inbound = edges.filter((e) => e.target === id)
     let upstreamPrompt = ''
@@ -236,7 +242,7 @@ function buildPromptFromState(
 
 function computeSampleMeta(kind: string, data: any) {
   const isImageTask = kind === 'image'
-  const isVideoTask = kind === 'composeVideo' || kind === 'video'
+  const isVideoTask = kind === 'composeVideo' || kind === 'storyboard' || kind === 'video'
   const isTextTask = kind === 'textToImage'
   const rawSampleCount = typeof data.sampleCount === 'number' ? data.sampleCount : 1
   const supportsSamples = isImageTask || isVideoTask || isTextTask
@@ -441,6 +447,28 @@ async function runTextTask(ctx: RunnerContext) {
 async function runVideoTask(ctx: RunnerContext) {
   const { id, data, state, prompt, kind, setNodeStatus, appendLog, isCanceled } = ctx
   try {
+    const isStoryboard = kind === 'storyboard'
+    const storyboardRawText = isStoryboard
+      ? ((data as any)?.storyboard as string) || prompt
+      : ''
+    const storyboardScenesData = isStoryboard
+      ? normalizeStoryboardScenes((data as any)?.storyboardScenes, storyboardRawText)
+      : null
+    const storyboardNotes = isStoryboard ? (data as any)?.storyboardNotes || '' : ''
+    const storyboardTitle = isStoryboard ? (data as any)?.storyboardTitle || (data as any)?.label || '' : ''
+    if (isStoryboard) {
+      const storyboardTotal = totalStoryboardDuration(storyboardScenesData || [])
+      if (storyboardTotal > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
+        const msg = '分镜总时长不能超过 25 秒，请调整各镜头时长'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        ctx.endRunToken(id)
+        return
+      }
+    }
+    const effectivePrompt = isStoryboard
+      ? serializeStoryboardScenes(storyboardScenesData || [], { title: storyboardTitle, notes: storyboardNotes })
+      : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
     const videoDurationSeconds: number =
@@ -485,7 +513,7 @@ async function runVideoTask(ctx: RunnerContext) {
             let primaryMediaUrl = null
             if (skind === 'image' || skind === 'textToImage') {
               primaryMediaUrl = (sd.imageUrl as string | undefined) || null
-            } else if (skind === 'video' || skind === 'composeVideo') {
+            } else if (skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') {
               if (
                 sd.videoResults &&
                 sd.videoResults.length > 0 &&
@@ -512,7 +540,7 @@ async function runVideoTask(ctx: RunnerContext) {
 
     const preferredTokenId = (data as any)?.videoTokenId as string | undefined
     const res = await createSoraVideo({
-      prompt,
+      prompt: effectivePrompt,
       orientation,
       size: 'small',
       n_frames: nFrames,
@@ -520,6 +548,8 @@ async function runVideoTask(ctx: RunnerContext) {
       imageUrl: imageUrlForUpload,
       remixTargetId,
       tokenId: preferredTokenId || undefined,
+      operation: isStoryboard ? 'storyboard' : undefined,
+      title: storyboardTitle || undefined,
     })
     const usedTokenId = (res as any).__usedTokenId as string | undefined
     const switchedTokenIds = (res as any).__switchedFromTokenIds as string[] | undefined
@@ -552,7 +582,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoTaskId: taskId || null,
       videoInpaintFileId: inpaintFileId || null,
       videoOrientation: orientation,
-      videoPrompt: prompt,
+      videoPrompt: effectivePrompt,
       videoDurationSeconds,
       videoTokenId: usedTokenId || null,
       videoModel: generatedModel,
@@ -576,7 +606,7 @@ async function runVideoTask(ctx: RunnerContext) {
         videoTaskId: null,
         videoInpaintFileId: inpaintFileId || null,
         videoOrientation: orientation,
-        videoPrompt: prompt,
+        videoPrompt: effectivePrompt,
         videoDurationSeconds,
         videoTokenId: usedTokenId || null,
       })
@@ -777,7 +807,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoTaskId: taskId,
       videoInpaintFileId: inpaintFileId || null,
       videoOrientation: orientation,
-      videoPrompt: prompt,
+        videoPrompt: effectivePrompt,
       videoDurationSeconds,
       videoUrl: videoUrl ? rewriteSoraVideoResourceUrl(videoUrl) : (data as any)?.videoUrl || null,
       videoThumbnailUrl: thumbnailUrl ? rewriteSoraVideoResourceUrl(thumbnailUrl) : (data as any)?.videoThumbnailUrl || null,

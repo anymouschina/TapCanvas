@@ -38,7 +38,7 @@ export default function ParamModal(): JSX.Element {
               <Select mt={8} label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={form.aspect||'16:9'} onChange={(v)=>setField('aspect', v||'16:9')} />
             </>
           )}
-          {kind === 'composeVideo' && (
+          {(kind === 'composeVideo' || kind === 'storyboard') && (
             <>
               <Textarea label="分镜/脚本" autosize minRows={4} value={form.storyboard||''} onChange={(e)=>setField('storyboard', e.currentTarget.value)} />
               <Group grow mt={8}>
@@ -71,4 +71,3 @@ export default function ParamModal(): JSX.Element {
     </Modal>
   )
 }
-

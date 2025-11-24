@@ -545,6 +545,8 @@ export async function createSoraVideo(payload: {
   inpaintFileId?: string | null
   imageUrl?: string | null
   remixTargetId?: string | null
+  operation?: string | null
+  title?: string | null
 }): Promise<any> {
   const body: any = {
     prompt: payload.prompt,
@@ -566,6 +568,12 @@ export async function createSoraVideo(payload: {
   }
   if (payload.tokenId) {
     body.tokenId = payload.tokenId
+  }
+  if (payload.operation) {
+    body.operation = payload.operation
+  }
+  if (payload.title) {
+    body.title = payload.title
   }
 
   const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({

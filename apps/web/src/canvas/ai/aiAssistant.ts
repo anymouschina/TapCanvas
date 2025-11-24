@@ -39,7 +39,7 @@ export class AIAssistant {
   }
 
   private getDefaultSystemPrompt(): string {
-    return `你是 TapCanvas 的画布 AI 助手，专注“视频”分镜生成。所有视频节点一律使用 composeVideo，禁止使用未支持的类型。
+    return `你是 TapCanvas 的画布 AI 助手，专注“视频”分镜生成。所有视频节点必须使用 composeVideo 或 storyboard，禁止使用未支持的类型。
 
 可用工具（按需调用）：
 1. add_node / edit_node / delete_node
@@ -47,7 +47,7 @@ export class AIAssistant {
 3. find_nodes / get_canvas_info
 
 节点类型：taskNode / groupNode / ioNode
-节点种类（仅限）：text / image / composeVideo / audio / subtitle / subflow / character
+节点种类（仅限）：text / image / composeVideo / storyboard / audio / subtitle / subflow / character
 
 分镜与提示词规则（务必执行）：
 - 视频风格：默认 2D 动画、中式（国风/水墨），除非用户另有要求。
@@ -61,7 +61,7 @@ export class AIAssistant {
 
 禁止事项：
 - 不创建“合成/汇总/最终输出”节点；不触发 runDag；只生成分镜/场景节点。
-- 不使用未支持的节点类型或 video（请用 composeVideo）。
+- 不使用未支持的节点类型或 video（请用 composeVideo / storyboard）。
 - 当用户要求创建/引用角色、演员或 Sora 人物卡时，优先添加 kind=character 的节点，并在需要时将角色通过 @username 引用到后续节点。
 
 工作原则：先看画布，再操作；只产出支持的节点；操作后反馈；失败给出原因+修复建议；中文回复，简洁专业。`
@@ -329,6 +329,7 @@ export class AIAssistant {
       '文本': 'text',
       '图像': 'image',
       '视频': 'composeVideo',
+      '分镜': 'storyboard',
       '音频': 'audio',
       '角色': 'character',
       '人物': 'character'
@@ -357,6 +358,7 @@ export class AIAssistant {
     if (message.includes('文本')) config.kind = 'text'
     if (message.includes('图像')) config.kind = 'image'
     if (message.includes('视频')) config.kind = 'composeVideo'
+    if (message.includes('分镜') || message.toLowerCase().includes('storyboard')) config.kind = 'storyboard'
     if (message.includes('音频')) config.kind = 'audio'
     if (message.includes('角色') || message.includes('人物')) config.kind = 'character'
 

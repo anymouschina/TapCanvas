@@ -25,7 +25,7 @@ export default function NodeInspector(): JSX.Element {
   const form = useForm<any>({
     resolver: zodResolver(
       kind === 'textToImage' ? textToImageSchema :
-      kind === 'composeVideo' ? composeVideoSchema :
+      (kind === 'composeVideo' || kind === 'storyboard') ? composeVideoSchema :
       kind === 'tts' ? ttsSchema :
       kind === 'subtitleAlign' ? subtitleAlignSchema :
       textToImageSchema
@@ -36,7 +36,7 @@ export default function NodeInspector(): JSX.Element {
   const [soraTokens, setSoraTokens] = React.useState<ModelTokenDto[]>([])
   const [loadingSoraTokens, setLoadingSoraTokens] = React.useState(false)
   const [soraTokenError, setSoraTokenError] = React.useState<string | null>(null)
-  const showTokenSelector = kind === 'video' || kind === 'composeVideo'
+  const showTokenSelector = kind === 'video' || kind === 'composeVideo' || kind === 'storyboard'
   const currentTokenId = (selected?.data as any)?.videoTokenId as string | undefined
   const openModelPanel = () => useUIStore.getState().setActivePanel('models')
 
@@ -205,7 +205,7 @@ export default function NodeInspector(): JSX.Element {
         </form>
       )}
 
-      {kind === 'composeVideo' && (
+      {(kind === 'composeVideo' || kind === 'storyboard') && (
         <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
           <Textarea label="分镜/脚本" autosize minRows={4} {...form.register('storyboard')} error={form.formState.errors.storyboard?.message as any} />
           <Group grow mt={8}>
