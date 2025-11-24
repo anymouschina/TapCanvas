@@ -61,8 +61,15 @@ Example storyboard:
 - Shot 2 (2–7 s mid shot): two characters chatting (`@heng` & `@keng` in a café, warm lighting)
 - Shot 3 (7–10 s wide): pull-back ending (wide angle, sunset, cinematic tone)
 
+#### Storyboard in Action
+
+| Timeline overview | Scene editor drawer | Generation progress |
+| --- | --- | --- |
+| ![Storyboard Overview](assets/2025-11-24-storyboard.jpg) | ![Storyboard Drawer](assets/2025-11-24-storyboard-1.jpg) | ![Storyboard Result](assets/2025-11-24-storyboard-2.pic.jpg) |
+
 ## 📅 Changelog
 
+- **2025-11-24**: Added the latest Storyboard usage screenshots (`assets/2025-11-24-storyboard*.jpg`) showcasing the scene list, editing drawer, and run result so the team can quickly understand the 25-second multi-shot workflow.
 - **2025-11-24**: Introduced the new **Character Node** and **Auto Mention** workflow so Sora characters can be managed directly on the canvas.
   - A character node lets you pick a Sora token, browse roles (cover, username, description), copy `@username`, or clear the binding without leaving the canvas.
   - The "Add to canvas" button inside the Assets panel now drops a `kind=character` node and pre-fills username/cover/description automatically.
