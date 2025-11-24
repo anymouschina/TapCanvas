@@ -1231,17 +1231,6 @@ export class SoraService {
       )
     }
 
-    // Remix 模式下不允许角色 / 图片
-    if (hasRemix && (hasImage || hasRole)) {
-      throw new HttpException(
-        {
-          message: '视频 Remix 模式暂不支持图片或角色引用，请移除图片和 @角色，仅基于原视频进行提示词修改。',
-          upstreamStatus: 400,
-        },
-        HttpStatus.BAD_REQUEST,
-      )
-    }
-
     // 图生视频模式下（有有效 inpaintFileId）不允许携带角色引用（@xxx）
     if (hasImage && !hasRemix && hasRole) {
       throw new HttpException(
