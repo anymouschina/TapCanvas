@@ -14,6 +14,7 @@ import {
   IconAdjustments,
   IconUpload,
   IconPlayerPlay,
+  IconPlayerStop,
   IconTexture,
   IconVideo,
   IconArrowRight,
@@ -62,6 +63,16 @@ const genTaskNodeId = () => {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+const formatMentionInsertion = (full: string, offset: number, matchLength: number, mention: string) => {
+  const prevChar = offset > 0 ? full[offset - 1] : ''
+  const nextChar = offset + matchLength < full.length ? full[offset + matchLength] : ''
+  const needsLeadingSpace = prevChar ? !/\s/.test(prevChar) : false
+  const needsTrailingSpace = nextChar ? !/\s/.test(nextChar) : false
+  const leading = needsLeadingSpace ? ' ' : ''
+  const trailing = needsTrailingSpace ? ' ' : ''
+  return `${leading}${mention}${trailing}`
+}
+
 const applyMentionFallback = (text: string, mention: string, aliases: string[]) => {
   let result = text
   let replaced = false
@@ -69,13 +80,19 @@ const applyMentionFallback = (text: string, mention: string, aliases: string[]) 
   uniqueAliases.forEach((alias) => {
     const regex = new RegExp(escapeRegExp(alias), 'gi')
     if (regex.test(result)) {
-      result = result.replace(regex, mention)
+      result = result.replace(regex, (match, offset, full) => {
+        const source = typeof full === 'string' ? full : result
+        const off = typeof offset === 'number' ? offset : 0
+        return formatMentionInsertion(source, off, match.length, mention)
+      })
       replaced = true
     }
   })
   if (!replaced && mention) {
     if (!result.includes(mention)) {
-      result = result.trim().length ? `${result.trim()} ${mention}` : mention
+      const trimmedEnd = result.replace(/\s+$/, '')
+      const needsSpaceBefore = trimmedEnd.length > 0 && !/\s$/.test(trimmedEnd)
+      result = `${trimmedEnd}${needsSpaceBefore ? ' ' : ''}${mention} `
       replaced = true
     }
   }
@@ -161,6 +178,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openParamFor = useUIStore(s => s.openParamFor)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const runSelected = useRFStore(s => s.runSelected)
+  const cancelNodeExecution = useRFStore(s => s.cancelNode)
+  const setNodeStatus = useRFStore(s => s.setNodeStatus)
   const updateNodeData = useRFStore(s => s.updateNodeData)
   const addNode = useRFStore(s => s.addNode)
   const addEdge = useRFStore(s => s.onConnect)
@@ -217,8 +236,18 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     return single ? [single] : []
   }, [data, videoUrl, videoThumbnailUrl, videoTitle])
 
+  const persistedVideoPrimaryIndexRaw = (data as any)?.videoPrimaryIndex
+  const persistedVideoPrimaryIndex = typeof persistedVideoPrimaryIndexRaw === 'number' ? persistedVideoPrimaryIndexRaw : null
   const [videoExpanded, setVideoExpanded] = React.useState(false)
-  const [videoPrimaryIndex, setVideoPrimaryIndex] = React.useState(0)
+  const [videoPrimaryIndex, setVideoPrimaryIndex] = React.useState<number>(() => (persistedVideoPrimaryIndex !== null ? persistedVideoPrimaryIndex : 0))
+  React.useEffect(() => {
+    const total = videoResults.length
+    const clamped =
+      persistedVideoPrimaryIndex !== null && total > 0
+        ? Math.max(0, Math.min(total - 1, persistedVideoPrimaryIndex))
+        : persistedVideoPrimaryIndex ?? 0
+    setVideoPrimaryIndex((prev) => (prev === clamped ? prev : clamped))
+  }, [persistedVideoPrimaryIndex, videoResults.length])
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
@@ -424,9 +453,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       }))
       .sort((a, b) => Number(b.connected) - Number(a.connected))
   }, [characterRefs, characterRefMap, edgesForCharacters, id])
-  const connectedCharacterOptions = React.useMemo(
-    () => autoCharacterOptions.filter((opt) => opt.connected && opt.username),
-    [autoCharacterOptions],
+  const connectedCharacterOptions = React.useMemo(() => {
+    const withUsername = autoCharacterOptions.filter((opt) => opt.username)
+    const direct = withUsername.filter((opt) => opt.connected)
+    return direct.length > 0 ? direct : withUsername
+  }, [autoCharacterOptions])
+  const isUsingWorkflowCharacters = React.useMemo(
+    () => connectedCharacterOptions.length > 0 && connectedCharacterOptions.every((opt) => !opt.connected),
+    [connectedCharacterOptions],
   )
 const rewritePromptWithCharacters = React.useCallback(
   async ({
@@ -459,12 +493,13 @@ const rewritePromptWithCharacters = React.useCallback(
       '2. 如果某个角色在原文未出现，也请在合适的位置补上一处 @username；',
       '3. 只输出替换后的脚本正文，不要添加解释、前缀或 Markdown；',
       '4. 全文保持中文。',
-      '5. 替换后 @username 的前后需要留有一个空格',
+      '5. 确保每个 @username 前后至少保留一个空格，避免紧贴其他字符。',
+      '',
       '【原始脚本】',
       basePrompt,
     ].join('\n')
     const systemPrompt =
-      '你是一个提示词修订助手。请根据用户提供的角色映射，统一替换或补充脚本中的角色引用，只输出修改后的脚本文本。'
+      '你是一个提示词修订助手。请根据用户提供的角色映射，统一替换或补充脚本中的角色引用，只输出修改后的脚本文本。务必确保每个 @username 前后至少保留一个空格。'
     const provider = getModelProvider(modelValue as any)
     if (!['google', 'anthropic'].includes(provider)) {
       throw new Error('当前模型暂未接入自动替换接口，请选择 Gemini 或 GLM 系列模型')
@@ -574,6 +609,19 @@ const rewritePromptWithCharacters = React.useCallback(
       characterDescription: null,
     })
   }, [id, updateNodeData, updateNodeLabel])
+  const handleSetPrimaryVideo = React.useCallback((idx: number) => {
+    const target = videoResults[idx]
+    if (!target) return
+    setVideoPrimaryIndex(idx)
+    updateNodeData(id, {
+      videoPrimaryIndex: idx,
+      videoUrl: target.url,
+      videoThumbnailUrl: target.thumbnailUrl,
+      videoTitle: target.title,
+      videoDuration: target.duration,
+    })
+    setVideoExpanded(false)
+  }, [id, updateNodeData, videoResults])
   const handleSelectCharacter = React.useCallback(
     (raw: any) => {
       const meta = resolveCharacterMeta(raw)
@@ -982,6 +1030,11 @@ const rewritePromptWithCharacters = React.useCallback(
     updateNodeLabel(id, next)
     setEditing(false)
   }, [labelDraft, defaultLabel, id, updateNodeLabel])
+  const handleCancelRun = React.useCallback(() => {
+    cancelNodeExecution(id)
+    setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+  }, [cancelNodeExecution, id, setNodeStatus])
+  const isRunning = status === 'running' || status === 'queued'
 
   return (
     <div style={{
@@ -1740,12 +1793,24 @@ const rewritePromptWithCharacters = React.useCallback(
             </div>
             {kind !== 'character' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {isRunning && (
+                  <ActionIcon
+                    size="lg"
+                    variant="light"
+                    color="red"
+                    title="停止当前任务"
+                    onClick={handleCancelRun}
+                  >
+                    <IconPlayerStop size={16} />
+                  </ActionIcon>
+                )}
                 <ActionIcon
                   size="lg"
                   variant="filled"
                   color="blue"
                   title="执行节点"
-                  loading={status === 'running' || status === 'queued'}
+                  loading={isRunning}
+                  disabled={isRunning}
                   onClick={runNode}
                 >
                   <IconPlayerPlay size={16} />
@@ -2106,8 +2171,14 @@ const rewritePromptWithCharacters = React.useCallback(
               {connectedCharacterOptions.length > 0 && (
                 <Paper withBorder radius="md" p="xs" mb="xs">
                   <Text size="xs" fw={500} mb={4}>
-                    已连接角色：{connectedCharacterOptions.map((opt) => `@${opt.username}`).join('、')}
+                    {isUsingWorkflowCharacters ? '可用角色：' : '已连接角色：'}
+                    {connectedCharacterOptions.map((opt) => `@${opt.username}`).join('、')}
                   </Text>
+                  {isUsingWorkflowCharacters && (
+                    <Text size="xs" c="dimmed" mb={4}>
+                      当前节点未直接连接角色，已自动引用同一工作流中的全部角色。
+                    </Text>
+                  )}
                   <Group align="flex-end" gap="xs" wrap="wrap">
                     <Select
                       label="替换模型"
@@ -2770,14 +2841,7 @@ const rewritePromptWithCharacters = React.useCallback(
                               size="xs"
                               variant="subtle"
                               onClick={() => {
-                                setVideoPrimaryIndex(idx)
-                                updateNodeData(id, {
-                                  videoUrl: video.url,
-                                  videoThumbnailUrl: video.thumbnailUrl,
-                                  videoTitle: video.title,
-                                  videoDuration: video.duration
-                                })
-                                setVideoExpanded(false)
+                                handleSetPrimaryVideo(idx)
                               }}
                             >
                               设为主视频

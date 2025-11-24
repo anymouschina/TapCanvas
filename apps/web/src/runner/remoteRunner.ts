@@ -698,11 +698,21 @@ async function runVideoTask(ctx: RunnerContext) {
           continue
         }
 
-        progress = Math.min(90, progress + 5)
+        const serverProgress =
+          typeof found.progress_pct === 'number'
+            ? Math.round(Number(found.progress_pct) * 100)
+            : null
+        const nextProgress =
+          serverProgress !== null
+            ? Math.min(95, Math.max(progress, Math.max(5, serverProgress)))
+            : Math.min(90, progress + 5)
+        progress = nextProgress
         setNodeStatus(id, 'running', { progress })
         appendLog(
           id,
-          `[${nowLabel()}] Sora 视频任务排队中（位置：${found.queue_position ?? '未知'}）`,
+          `[${nowLabel()}] Sora 视频任务排队中（位置：${found.queue_position ?? '未知'}${
+            serverProgress !== null ? `，进度：${Math.round(serverProgress)}%` : ''
+          }）`,
         )
 
         await syncDraftVideo(false)
@@ -725,6 +735,10 @@ async function runVideoTask(ctx: RunnerContext) {
     const duration = finalDraft?.duration
 
     let updatedVideoResults = (data.videoResults as any[] | undefined) || []
+    const previousPrimaryIndex =
+      typeof (data as any)?.videoPrimaryIndex === 'number'
+        ? Math.max(0, (data as any).videoPrimaryIndex as number)
+        : null
     if (videoUrl) {
       const rewrittenUrl = rewriteSoraVideoResourceUrl(videoUrl)
       const rewrittenThumb = rewriteSoraVideoResourceUrl(thumbnailUrl)
@@ -739,6 +753,14 @@ async function runVideoTask(ctx: RunnerContext) {
           model: generatedModel,
         },
       ]
+    }
+    let nextPrimaryIndex = previousPrimaryIndex ?? 0
+    if (updatedVideoResults.length === 0) {
+      nextPrimaryIndex = 0
+    } else if (videoUrl) {
+      nextPrimaryIndex = updatedVideoResults.length - 1
+    } else if (previousPrimaryIndex !== null) {
+      nextPrimaryIndex = Math.min(updatedVideoResults.length - 1, previousPrimaryIndex)
     }
 
     setNodeStatus(id, 'success', {
@@ -766,6 +788,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoModel: generatedModel,
       videoTokenId: usedTokenId || null,
       videoResults: updatedVideoResults,
+      videoPrimaryIndex: nextPrimaryIndex,
     })
 
     appendLog(
