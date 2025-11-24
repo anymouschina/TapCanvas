@@ -62,10 +62,11 @@ const RESOLUTION_OPTIONS = [
   { value: '9:16', label: '9:16' },
 ]
 
-const DURATION_OPTIONS = [
+const BASE_DURATION_OPTIONS = [
   { value: '10', label: '10s' },
   { value: '15', label: '15s' },
 ]
+const STORYBOARD_DURATION_OPTION = { value: '25', label: '25s' }
 
 const ORIENTATION_OPTIONS = [
   { value: 'landscape', label: '横屏' },
@@ -236,6 +237,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   React.useEffect(() => {
     if (!isStoryboardNode) return
+    if (rawStoryboardString && rawStoryboardString === lastStoryboardSerializedRef.current) {
+      return
+    }
     const normalized = enforceStoryboardTotalLimit(
       normalizeStoryboardScenes(rawStoryboardScenes, rawStoryboardString),
     )
@@ -267,18 +271,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     })
     if (lastStoryboardSerializedRef.current !== serialized) {
       lastStoryboardSerializedRef.current = serialized
-      if (prompt !== serialized) {
-        setPrompt(serialized)
-      }
       updateNodeData(id, {
         storyboardScenes,
         storyboardNotes,
         storyboardTitle,
         storyboard: serialized,
-        prompt: serialized,
       })
     }
-  }, [id, isStoryboardNode, storyboardScenes, storyboardNotes, storyboardTitle, prompt, updateNodeData])
+  }, [id, isStoryboardNode, storyboardScenes, storyboardNotes, storyboardTitle, updateNodeData])
 
   React.useEffect(() => {
     if (!isStoryboardNode) {
@@ -392,9 +392,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
   const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
   const [videoModel, setVideoModel] = React.useState<string>((data as any)?.videoModel || 'sora-2')
-  const [videoDuration, setVideoDuration] = React.useState<number>(
-    (data as any)?.videoDurationSeconds === 15 ? 15 : 10,
-  )
+  const [videoDuration, setVideoDuration] = React.useState<number>(() => {
+    const raw = Number((data as any)?.videoDurationSeconds)
+    if (!Number.isNaN(raw) && raw > 0) {
+      return raw
+    }
+    return isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 10
+  })
   const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>(
     (data as any)?.orientation || 'landscape'
   )
@@ -432,6 +436,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       : `${sampleCount}x`
   const summaryResolution = aspect
   const summaryExec = `${sampleCount}x`
+  const durationOptions = React.useMemo(
+    () =>
+      isStoryboardNode
+        ? [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
+        : BASE_DURATION_OPTIONS,
+    [isStoryboardNode],
+  )
   React.useEffect(() => {
     if (typeof persistedCharacterRewriteModel === 'string' && persistedCharacterRewriteModel.trim() && persistedCharacterRewriteModel !== characterRewriteModel) {
       setCharacterRewriteModel(persistedCharacterRewriteModel)
@@ -575,6 +586,97 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     () => connectedCharacterOptions.length > 0 && connectedCharacterOptions.every((opt) => !opt.connected),
     [connectedCharacterOptions],
   )
+
+  const clampStoryboardDuration = React.useCallback((value: number): number => {
+    if (Number.isNaN(value)) return STORYBOARD_DEFAULT_DURATION
+    return Math.min(STORYBOARD_MAX_DURATION, Math.max(STORYBOARD_MIN_DURATION, value))
+  }, [])
+
+  const notifyStoryboardLimit = React.useCallback(() => {
+    toast('分镜总时长上限为 25 秒，请调整各镜头时长', 'error')
+  }, [])
+
+  const applyStoryboardChange = React.useCallback(
+    (mutator: (prev: StoryboardScene[]) => StoryboardScene[]) => {
+      setStoryboardScenes((prev) => {
+        const next = mutator(prev)
+        if (next === prev) return prev
+        const total = totalStoryboardDuration(next)
+        if (total > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
+          notifyStoryboardLimit()
+          return prev
+        }
+        return next
+      })
+    },
+    [notifyStoryboardLimit],
+  )
+
+  const updateStoryboardScene = React.useCallback(
+    (sceneId: string, patch: Partial<StoryboardScene>) => {
+      applyStoryboardChange((prev) =>
+        prev.map((scene) =>
+          scene.id === sceneId
+            ? {
+                ...scene,
+                ...patch,
+                duration:
+                  typeof patch.duration === 'number'
+                    ? clampStoryboardDuration(patch.duration)
+                    : scene.duration,
+              }
+            : scene,
+        ),
+      )
+    },
+    [applyStoryboardChange, clampStoryboardDuration],
+  )
+
+  const handleAddScene = React.useCallback(() => {
+    applyStoryboardChange((prev) => {
+      const remaining = STORYBOARD_MAX_TOTAL_DURATION - totalStoryboardDuration(prev)
+      if (remaining <= 0) {
+        notifyStoryboardLimit()
+        return prev
+      }
+      const duration = Math.min(STORYBOARD_DEFAULT_DURATION, remaining)
+      return [...prev, createScene({ duration })]
+    })
+  }, [applyStoryboardChange, notifyStoryboardLimit])
+
+  const handleRemoveScene = React.useCallback(
+    (sceneId: string) => {
+      applyStoryboardChange((prev) => {
+        const filtered = prev.filter((scene) => scene.id !== sceneId)
+        if (filtered.length === 0) {
+          return [
+            createScene({
+              duration: Math.min(STORYBOARD_DEFAULT_DURATION, STORYBOARD_MAX_TOTAL_DURATION),
+            }),
+          ]
+        }
+        return filtered
+      })
+    },
+    [applyStoryboardChange],
+  )
+
+  const handleSceneDurationDelta = React.useCallback(
+    (sceneId: string, delta: number) => {
+      applyStoryboardChange((prev) =>
+        prev.map((scene) =>
+          scene.id === sceneId
+            ? {
+                ...scene,
+                duration: clampStoryboardDuration(scene.duration + delta),
+              }
+            : scene,
+        ),
+      )
+    },
+    [applyStoryboardChange, clampStoryboardDuration],
+  )
+
 const rewritePromptWithCharacters = React.useCallback(
   async ({
     basePrompt,
@@ -628,6 +730,7 @@ const rewritePromptWithCharacters = React.useCallback(
   },
   [],
 )
+
   const resolveCharacterMeta = React.useCallback((raw: any) => {
     if (!raw || typeof raw !== 'object') return null
     const profile = raw.owner_profile || raw.profile || {}
@@ -1187,95 +1290,6 @@ const rewritePromptWithCharacters = React.useCallback(
       setUploading(false)
     }
   }
-  const clampStoryboardDuration = React.useCallback((value: number): number => {
-    if (Number.isNaN(value)) return STORYBOARD_DEFAULT_DURATION
-    return Math.min(STORYBOARD_MAX_DURATION, Math.max(STORYBOARD_MIN_DURATION, value))
-  }, [])
-
-  const notifyStoryboardLimit = React.useCallback(() => {
-    toast('分镜总时长上限为 25 秒，请调整各镜头时长', 'error')
-  }, [])
-
-  const applyStoryboardChange = React.useCallback(
-    (mutator: (prev: StoryboardScene[]) => StoryboardScene[]) => {
-      setStoryboardScenes((prev) => {
-        const next = mutator(prev)
-        if (next === prev) return prev
-        const total = totalStoryboardDuration(next)
-        if (total > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
-          notifyStoryboardLimit()
-          return prev
-        }
-        return next
-      })
-    },
-    [notifyStoryboardLimit],
-  )
-
-  const updateStoryboardScene = React.useCallback(
-    (sceneId: string, patch: Partial<StoryboardScene>) => {
-      applyStoryboardChange((prev) =>
-        prev.map((scene) =>
-          scene.id === sceneId
-            ? {
-                ...scene,
-                ...patch,
-                duration:
-                  typeof patch.duration === 'number'
-                    ? clampStoryboardDuration(patch.duration)
-                    : scene.duration,
-              }
-            : scene,
-        ),
-      )
-    },
-    [applyStoryboardChange, clampStoryboardDuration],
-  )
-
-  const handleAddScene = React.useCallback(() => {
-    applyStoryboardChange((prev) => {
-      const remaining = STORYBOARD_MAX_TOTAL_DURATION - totalStoryboardDuration(prev)
-      if (remaining <= 0) {
-        notifyStoryboardLimit()
-        return prev
-      }
-      const duration = Math.min(STORYBOARD_DEFAULT_DURATION, remaining)
-      return [...prev, createScene({ duration })]
-    })
-  }, [applyStoryboardChange, notifyStoryboardLimit])
-
-  const handleRemoveScene = React.useCallback(
-    (sceneId: string) => {
-      applyStoryboardChange((prev) => {
-        const filtered = prev.filter((scene) => scene.id !== sceneId)
-        if (filtered.length === 0) {
-          return [
-            createScene({
-              duration: Math.min(STORYBOARD_DEFAULT_DURATION, STORYBOARD_MAX_TOTAL_DURATION),
-            }),
-          ]
-        }
-        return filtered
-      })
-    },
-    [applyStoryboardChange],
-  )
-
-  const handleSceneDurationDelta = React.useCallback(
-    (sceneId: string, delta: number) => {
-      applyStoryboardChange((prev) =>
-        prev.map((scene) =>
-          scene.id === sceneId
-            ? {
-                ...scene,
-                duration: clampStoryboardDuration(scene.duration + delta),
-              }
-            : scene,
-        ),
-      )
-    },
-    [applyStoryboardChange, clampStoryboardDuration],
-  )
     const defaultLabel = React.useMemo(() => {
     if (isComposerNode || kind === 'video') return '文生视频'
     if (kind === 'image' || kind === 'textToImage') return kind === 'image' ? '图像节点' : '文本提示'
@@ -1936,7 +1950,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    {DURATION_OPTIONS.map((option) => (
+                    {durationOptions.map((option) => (
                       <Menu.Item
                         key={option.value}
                         onClick={() => {
