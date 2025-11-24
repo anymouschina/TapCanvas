@@ -471,9 +471,16 @@ async function runVideoTask(ctx: RunnerContext) {
       : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
-    const videoDurationSeconds: number =
-      (data as any)?.videoDurationSeconds === 15 ? 15 : 10
-    const nFrames = videoDurationSeconds === 15 ? 450 : 300
+    let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
+    if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
+      videoDurationSeconds = isStoryboard ? STORYBOARD_MAX_TOTAL_DURATION : 10
+    }
+    if (isStoryboard) {
+      videoDurationSeconds = Math.min(videoDurationSeconds, STORYBOARD_MAX_TOTAL_DURATION)
+    } else {
+      videoDurationSeconds = Math.min(videoDurationSeconds, 15)
+    }
+    const nFrames = Math.round(Math.max(videoDurationSeconds, 1) * 30)
     const getCurrentVideoTokenId = () =>
       (ctx.getState().nodes.find((n: Node) => n.id === id)?.data as any)
         ?.videoTokenId as string | undefined
