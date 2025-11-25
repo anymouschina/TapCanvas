@@ -369,15 +369,33 @@ export class MyDurableObject extends DurableObject {
     super(ctx, env);
   }
 
+  /**
+   * 你可在 Durable Object 内实现 fetch 来响应 Worker 的 stub 调用
+   */
   async fetch(request) {
-    // 转发逻辑：从 Durable Object 接收 request，转发至上游
+    const url = new URL(request.url);
+  
+    // 检查请求的 User-Agent 是否为 curl
+    const userAgent = request.headers.get("User-Agent") || "";
+    if (userAgent.includes("curl")) {
+      return new Response("Access denied for curl requests.", { status: 403 });
+    }
 
-    // 域名映射：将代理域名映射到真实域名
-    const upstream = new URL(request.url
-      .replace('sora2.beqlee.icu', 'sora.chatgpt.com')
-      .replace('videos.beqlee.icu', 'videos.openai.com')
-      .replace('generativelanguage.beqlee.icu', 'generativelanguage.googleapis.com')
-    );
+    // 检查请求的 accept 是否包含 text/html 或其他 HTML 相关内容
+    const acceptHeader = request.headers.get("accept") || "";
+    if (acceptHeader.includes("text/html") || acceptHeader.includes("application/xhtml+xml")) {
+      // 检查请求路径，如果是单独的 HTML 页面（例如 index.html），拒绝访问
+      if (url.pathname.endsWith(".html") && url.pathname === "/index.html") {
+        return new Response("Access to HTML resources is forbidden.", { status: 403 });
+      }
+    }
+
+    // 转发逻辑：从 Durable Object 接收 request，转发至上游
+    const upstream = new URL(request.url.replace('sora2.beqlee.icu','sora.chatgpt.com').replace('videos.beqlee.icu','videos.openai.com').replace('generativelanguage.beqlee.icu','generativelanguage.googleapis.com'));
+  
+    if (request.url.length < 25) {
+      return;
+    }
 
     const forwardedReq = new Request(upstream.toString(), {
       method: request.method,
@@ -389,15 +407,23 @@ export class MyDurableObject extends DurableObject {
     const upstreamResp = await fetch(forwardedReq);
 
     const ct = upstreamResp.headers.get("content-type") || "";
+
+    // 如果返回的内容是 HTML，禁止访问
+    if (ct.includes("text/html")) {
+      return new Response("Access to HTML resources is forbidden.", { status: 403 });
+    }
+
+    // 如果是 JSON 类型处理 JSON 数据
     if (ct.includes("application/json")) {
       const data = await upstreamResp.json();
-      const result = { ok: true, data };
+      const result = data;
       return new Response(JSON.stringify(result, null, 2), {
         status: upstreamResp.status,
         headers: { "content-type": "application/json; charset=utf-8" }
       });
     }
 
+    // 对于其他类型的响应，直接返回原始响应
     return new Response(upstreamResp.body, {
       status: upstreamResp.status,
       headers: upstreamResp.headers
@@ -407,13 +433,17 @@ export class MyDurableObject extends DurableObject {
 
 export default {
   async fetch(request, env, ctx) {
+    // Worker fetch handler：将请求传给 Durable Object
     const url = new URL(request.url);
-    const id = env.MY_DURABLE_OBJECT.idFromName("singleton");
+    // 使用 DurableObjectNamespace 绑定名称 “MY_DURABLE_OBJECT”
+    const id = env.MY_DURABLE_OBJECT.idFromName("singleton"); // 或者基于路径名用 idFromName(url.pathname)
     const stub = env.MY_DURABLE_OBJECT.get(id);
+    // 转发请求 to Durable Object
     const resp = await stub.fetch(request);
     return resp;
   }
 };
+
 ```
 
 #### 4. 绑定 Durable Object
