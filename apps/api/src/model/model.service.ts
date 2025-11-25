@@ -9,6 +9,7 @@ export interface ModelExportData {
     name: string
     vendor: string
     baseUrl?: string | null
+    sharedBaseUrl?: boolean
     tokens: Array<{
       id: string
       label: string
@@ -45,15 +46,26 @@ export class ModelService {
     })
   }
 
-  upsertProvider(input: { id?: string; name: string; vendor: string; baseUrl?: string | null }, userId: string) {
+  upsertProvider(input: { id?: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }, userId: string) {
     if (input.id) {
       return this.prisma.modelProvider.update({
         where: { id: input.id },
-        data: { name: input.name, vendor: input.vendor, baseUrl: input.baseUrl || null },
+        data: {
+          name: input.name,
+          vendor: input.vendor,
+          baseUrl: input.baseUrl || null,
+          sharedBaseUrl: input.sharedBaseUrl ?? false,
+        },
       })
     }
     return this.prisma.modelProvider.create({
-      data: { name: input.name, vendor: input.vendor, baseUrl: input.baseUrl || null, ownerId: userId },
+      data: {
+        name: input.name,
+        vendor: input.vendor,
+        baseUrl: input.baseUrl || null,
+        sharedBaseUrl: input.sharedBaseUrl ?? false,
+        ownerId: userId,
+      },
     })
   }
 
@@ -95,8 +107,11 @@ export class ModelService {
   }
 
   deleteToken(id: string, userId: string) {
-    return this.prisma.modelToken.delete({
-      where: { id },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.taskTokenMapping.deleteMany({ where: { tokenId: id } })
+      return tx.modelToken.delete({
+        where: { id },
+      })
     })
   }
 
@@ -167,6 +182,7 @@ export class ModelService {
         name: provider.name,
         vendor: provider.vendor,
         baseUrl: provider.baseUrl,
+        sharedBaseUrl: provider.sharedBaseUrl,
         tokens: provider.tokens,
         endpoints: provider.endpoints
       }))
@@ -198,13 +214,15 @@ export class ModelService {
             let providerId: string
 
             if (existingProvider) {
-              // 更新现有提供商的baseUrl（如果不同）
-              if (existingProvider.baseUrl !== providerData.baseUrl) {
+              const nextBase = providerData.baseUrl || null
+              const nextShared = providerData.sharedBaseUrl ?? false
+              if (
+                existingProvider.baseUrl !== nextBase ||
+                existingProvider.sharedBaseUrl !== nextShared
+              ) {
                 await tx.modelProvider.update({
                   where: { id: existingProvider.id },
-                  data: {
-                    baseUrl: providerData.baseUrl || null
-                  }
+                  data: { baseUrl: nextBase, sharedBaseUrl: nextShared }
                 })
                 result.imported.providers++
               } else {
@@ -218,6 +236,7 @@ export class ModelService {
                   name: providerData.name,
                   vendor: providerData.vendor,
                   baseUrl: providerData.baseUrl || null,
+                  sharedBaseUrl: providerData.sharedBaseUrl ?? false,
                   ownerId: userId
                 }
               })
