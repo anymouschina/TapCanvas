@@ -1,12 +1,31 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import { MantineProvider, localStorageColorSchemeManager, useMantineColorScheme, createTheme } from '@mantine/core'
+import { MantineProvider, MantineThemeProvider, localStorageColorSchemeManager, useMantineColorScheme, createTheme, type MantineColorScheme } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './dark.css'
 import './light.css'
+
+const COLOR_SCHEME_STORAGE_KEY = 'tapcanvas-color-scheme'
+const DEFAULT_COLOR_SCHEME: MantineColorScheme = 'dark'
+const colorSchemeManager = localStorageColorSchemeManager({ key: COLOR_SCHEME_STORAGE_KEY })
+
+function primeColorSchemeAttribute() {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return
+
+  try {
+    const stored = colorSchemeManager.get(DEFAULT_COLOR_SCHEME)
+    const prefersDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
+    const computed = stored === 'auto' ? (prefersDark ? 'dark' : 'light') : stored
+    document.documentElement.setAttribute('data-mantine-color-scheme', computed)
+  } catch {
+    document.documentElement.setAttribute('data-mantine-color-scheme', DEFAULT_COLOR_SCHEME)
+  }
+}
+
+primeColorSchemeAttribute()
 
 const baseTheme = {
   defaultRadius: 'sm',
@@ -21,14 +40,8 @@ function DynamicThemeProvider({ children }: { children: React.ReactNode }) {
     primaryShade: { light: 6, dark: 4 }
   }), [colorScheme])
 
-  return (
-    <MantineProvider theme={theme}>
-      {children}
-    </MantineProvider>
-  )
+  return <MantineThemeProvider theme={theme}>{children}</MantineThemeProvider>
 }
-
-const colorSchemeManager = localStorageColorSchemeManager({ key: 'tapcanvas-color-scheme' })
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root container not found')
@@ -36,7 +49,7 @@ const root = createRoot(container)
 
 root.render(
   <React.StrictMode>
-    <MantineProvider colorSchemeManager={colorSchemeManager} defaultColorScheme="dark">
+    <MantineProvider colorSchemeManager={colorSchemeManager} defaultColorScheme={DEFAULT_COLOR_SCHEME}>
       <DynamicThemeProvider>
         <Notifications position="top-right" zIndex={2000} />
         <App />
