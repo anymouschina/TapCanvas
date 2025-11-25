@@ -24,6 +24,7 @@ import {
   IconClock,
   IconChevronDown,
   IconBrain,
+  IconBulb,
   IconDeviceMobile,
   IconRefresh,
   IconUsers,
@@ -31,7 +32,7 @@ import {
   IconTrash,
   IconMovie,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type TaskResultDto } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto, type TaskResultDto } from '../../api/server'
 import {
   getModelLabel,
   getModelProvider,
@@ -55,6 +56,7 @@ import {
   enforceStoryboardTotalLimit,
 } from './storyboardUtils'
 import { getTaskNodeSchema, type TaskNodeHandlesConfig } from './taskNodeSchema'
+import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 
 const RESOLUTION_OPTIONS = [
@@ -437,6 +439,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [activeSuggestion, setActiveSuggestion] = React.useState(0)
   const suggestionsAllowed = promptSuggestMode !== 'off'
   const [suggestionsEnabled, setSuggestionsEnabled] = React.useState(() => suggestionsAllowed)
+  const [promptSamplesOpen, setPromptSamplesOpen] = React.useState(false)
   const suggestTimeout = React.useRef<number | null>(null)
   const lastResult = (data as any)?.lastResult as { preview?: { type?: string; value?: string } } | undefined
   const lastText =
@@ -523,6 +526,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (!value) return
     setCharacterRewriteModel(value)
     updateNodeData(id, { characterRewriteModel: value })
+  }, [id, updateNodeData])
+
+  const handleApplyPromptSample = React.useCallback((sample: PromptSampleDto) => {
+    if (!sample?.prompt) return
+    setPrompt(sample.prompt)
+    updateNodeData(id, { prompt: sample.prompt })
+    setPromptSamplesOpen(false)
   }, [id, updateNodeData])
   const runNode = () => {
     let nextPrompt = (prompt || (data as any)?.prompt || '').trim()
@@ -2659,24 +2669,43 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Stack>
               ) : (
                 <div style={{ position: 'relative' }}>
-                {prompt.length >= 6 && suggestionsAllowed && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    zIndex: 10,
+                    display: 'flex',
+                    gap: 6,
+                  }}
+                >
                   <ActionIcon
                     variant="subtle"
                     size="xs"
+                    onClick={() => setPromptSamplesOpen(true)}
+                    title="打开提示词案例库"
                     style={{
-                      position: 'absolute',
-                      top: 8,
-                      right: 8,
-                      zIndex: 10,
-                      background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
-                      border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
+                      border: '1px solid transparent',
+                      background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
                     }}
-                    onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
-                    title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
                   >
-                    <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
+                    <IconBulb size={12} style={{ color: nodeShellText }} />
                   </ActionIcon>
-                )}
+                  {prompt.length >= 6 && suggestionsAllowed && (
+                    <ActionIcon
+                      variant="subtle"
+                      size="xs"
+                      style={{
+                        background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
+                        border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
+                      }}
+                      onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
+                      title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
+                    >
+                      <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
+                    </ActionIcon>
+                  )}
+                </div>
                 <Textarea
                   autosize
                   minRows={2}
@@ -3050,6 +3079,13 @@ const rewritePromptWithCharacters = React.useCallback(
           </Stack>
         </Modal>
       )}
+
+      <PromptSampleDrawer
+        opened={promptSamplesOpen}
+        nodeKind={kind}
+        onClose={() => setPromptSamplesOpen(false)}
+        onApplySample={handleApplyPromptSample}
+      />
 
       {/* 图片结果弹窗：选择主图 + 全屏预览 */}
       {kind === 'image' && imageResults.length > 1 && (
