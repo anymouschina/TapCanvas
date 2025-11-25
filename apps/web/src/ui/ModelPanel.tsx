@@ -106,7 +106,13 @@ export default function ModelPanel(): JSX.Element | null {
             const providerTokens = await listModelTokens(provider.id)
             await Promise.all(providerTokens.map((token) => deleteModelToken(token.id).catch(() => {})))
             if (provider.baseUrl) {
-              await upsertModelProvider({ id: provider.id, name: provider.name, vendor: provider.vendor, baseUrl: null })
+              await upsertModelProvider({
+                id: provider.id,
+                name: provider.name,
+                vendor: provider.vendor,
+                baseUrl: null,
+                sharedBaseUrl: false,
+              })
             }
           } catch (err) {
             console.warn('Failed clearing provider', provider.name, err)
@@ -119,6 +125,7 @@ export default function ModelPanel(): JSX.Element | null {
       setQwenTokens([])
       setGeminiBaseUrl('')
       setAnthropicBaseUrl('')
+      setAnthropicBaseShared(false)
       setVideosEndpoint(null)
       setVideoEndpoint(null)
       setSoraEndpoint(null)
@@ -234,6 +241,15 @@ export default function ModelPanel(): JSX.Element | null {
             setVideosEndpoint(soraEpsByKey['videos'] || null)
             setVideoEndpoint(soraEpsByKey['video'] || null)
             setSoraEndpoint(soraEpsByKey['sora'] || null)
+            setVideosUrl(soraEpsByKey['videos']?.baseUrl || '')
+            setVideoUrl(soraEpsByKey['video']?.baseUrl || '')
+            setSoraUrl(soraEpsByKey['sora']?.baseUrl || '')
+            setVideosShared(!!soraEpsByKey['videos']?.shared)
+            setVideoShared(!!soraEpsByKey['video']?.shared)
+            setSoraShared(!!soraEpsByKey['sora']?.shared)
+            useUIStore.getState().setSoraVideoBaseUrl(soraEpsByKey['videos']?.baseUrl || null)
+            const soraTokens = await listModelTokens(sora.id)
+            setTokens(soraTokens)
 
             // 刷新Gemini数据
             let gemini = ps.find((p) => p.vendor === 'gemini')
@@ -253,6 +269,7 @@ export default function ModelPanel(): JSX.Element | null {
             if (anthropic) {
               setAnthropicProvider(anthropic)
               setAnthropicBaseUrl(anthropic.baseUrl || '')
+              setAnthropicBaseShared(!!anthropic.sharedBaseUrl)
               const anthropicTokenData = await listModelTokens(anthropic.id)
               setAnthropicTokens(anthropicTokenData)
             }
@@ -327,6 +344,7 @@ export default function ModelPanel(): JSX.Element | null {
   const [geminiShared, setGeminiShared] = React.useState(false)
   const [anthropicProvider, setAnthropicProvider] = React.useState<ModelProviderDto | null>(null)
   const [anthropicBaseUrl, setAnthropicBaseUrl] = React.useState('')
+  const [anthropicBaseShared, setAnthropicBaseShared] = React.useState(false)
   const [anthropicTokens, setAnthropicTokens] = React.useState<ModelTokenDto[]>([])
   const [anthropicModalOpen, setAnthropicModalOpen] = React.useState(false)
   const [anthropicEditingToken, setAnthropicEditingToken] = React.useState<ModelTokenDto | null>(null)
@@ -389,6 +407,7 @@ export default function ModelPanel(): JSX.Element | null {
         }
         setAnthropicProvider(anthropic)
         setAnthropicBaseUrl(anthropic.baseUrl || '')
+        setAnthropicBaseShared(!!anthropic.sharedBaseUrl)
         const aTokens = await listModelTokens(anthropic.id)
         setAnthropicTokens(aTokens)
 
@@ -837,9 +856,37 @@ export default function ModelPanel(): JSX.Element | null {
                             name: anthropicProvider.name,
                             vendor: anthropicProvider.vendor,
                             baseUrl: anthropicBaseUrl.trim() || null,
+                            sharedBaseUrl: anthropicBaseShared,
                           })
                           setAnthropicProvider(saved)
                           setAnthropicBaseUrl(saved.baseUrl || '')
+                          setAnthropicBaseShared(!!saved.sharedBaseUrl)
+                        }}
+                      />
+                      <Switch
+                        size="xs"
+                        mt={4}
+                        label="将此 Base URL 作为共享配置（团队可复用同一代理域名）"
+                        checked={anthropicBaseShared}
+                        onChange={async (e) => {
+                          const next = e.currentTarget.checked
+                          setAnthropicBaseShared(next)
+                          if (!anthropicProvider) return
+                          try {
+                            const saved = await upsertModelProvider({
+                              id: anthropicProvider.id,
+                              name: anthropicProvider.name,
+                              vendor: anthropicProvider.vendor,
+                              baseUrl: anthropicBaseUrl.trim() || null,
+                              sharedBaseUrl: next,
+                            })
+                            setAnthropicProvider(saved)
+                            setAnthropicBaseUrl(saved.baseUrl || '')
+                            setAnthropicBaseShared(!!saved.sharedBaseUrl)
+                          } catch (err) {
+                            console.error('Failed to toggle Anthropic base URL share', err)
+                            setAnthropicBaseShared(!next)
+                          }
                         }}
                       />
                     </div>
@@ -1306,7 +1353,27 @@ export default function ModelPanel(): JSX.Element | null {
                         mt={4}
                         label="将 videos 域名作为共享配置"
                         checked={videosShared}
-                        onChange={(e) => setVideosShared(e.currentTarget.checked)}
+                        onChange={async (e) => {
+                          const next = e.currentTarget.checked
+                          setVideosShared(next)
+                          if (!soraProvider) return
+                          const url = videosUrl.trim()
+                          if (!url) return
+                          try {
+                            const saved = await upsertModelEndpoint({
+                              id: videosEndpoint?.id,
+                              providerId: soraProvider.id,
+                              key: 'videos',
+                              label: 'videos 域名',
+                              baseUrl: url,
+                              shared: next,
+                            })
+                            setVideosEndpoint(saved)
+                          } catch (err) {
+                            console.error('Failed to toggle videos shared flag', err)
+                            setVideosShared(!next)
+                          }
+                        }}
                       />
                     </div>
                     <div>
@@ -1333,7 +1400,27 @@ export default function ModelPanel(): JSX.Element | null {
                         mt={4}
                         label="将 video 域名作为共享配置"
                         checked={videoShared}
-                        onChange={(e) => setVideoShared(e.currentTarget.checked)}
+                        onChange={async (e) => {
+                          const next = e.currentTarget.checked
+                          setVideoShared(next)
+                          if (!soraProvider) return
+                          const url = videoUrl.trim()
+                          if (!url) return
+                          try {
+                            const saved = await upsertModelEndpoint({
+                              id: videoEndpoint?.id,
+                              providerId: soraProvider.id,
+                              key: 'video',
+                              label: 'video 域名',
+                              baseUrl: url,
+                              shared: next,
+                            })
+                            setVideoEndpoint(saved)
+                          } catch (err) {
+                            console.error('Failed to toggle video shared flag', err)
+                            setVideoShared(!next)
+                          }
+                        }}
                       />
                     </div>
                     <div>
@@ -1360,7 +1447,27 @@ export default function ModelPanel(): JSX.Element | null {
                         mt={4}
                         label="将 sora 域名作为共享配置"
                         checked={soraShared}
-                        onChange={(e) => setSoraShared(e.currentTarget.checked)}
+                        onChange={async (e) => {
+                          const next = e.currentTarget.checked
+                          setSoraShared(next)
+                          if (!soraProvider) return
+                          const url = soraUrl.trim()
+                          if (!url) return
+                          try {
+                            const saved = await upsertModelEndpoint({
+                              id: soraEndpoint?.id,
+                              providerId: soraProvider.id,
+                              key: 'sora',
+                              label: 'sora 域名',
+                              baseUrl: url,
+                              shared: next,
+                            })
+                            setSoraEndpoint(saved)
+                          } catch (err) {
+                            console.error('Failed to toggle sora shared flag', err)
+                            setSoraShared(!next)
+                          }
+                        }}
                       />
                     </div>
                   </Stack>
