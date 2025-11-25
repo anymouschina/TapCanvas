@@ -10,7 +10,7 @@ function withAuth(init?: RequestInit): RequestInit {
 
 export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }
 export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string; isPublic?: boolean; owner?: string; ownerName?: string }
-export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null }
+export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }
 export type ModelTokenDto = {
   id: string
   providerId: string
@@ -142,7 +142,7 @@ export async function listModelProviders(): Promise<ModelProviderDto[]> {
   return r.json()
 }
 
-export async function upsertModelProvider(payload: { id?: string; name: string; vendor: string; baseUrl?: string | null }): Promise<ModelProviderDto> {
+export async function upsertModelProvider(payload: { id?: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }): Promise<ModelProviderDto> {
   const r = await fetch(`${API_BASE}/models/providers`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

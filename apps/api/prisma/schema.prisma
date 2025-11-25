@@ -85,6 +85,7 @@ model ModelProvider {
   name      String
   vendor    String        // e.g. "sora", "openai", "custom"
   baseUrl   String?       // custom domain / endpoint for this vendor
+  sharedBaseUrl Boolean   @default(false)
   ownerId   String
   owner     User          @relation(fields: [ownerId], references: [id])
   createdAt DateTime      @default(now())

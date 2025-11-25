@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { ACTION_TYPES, SYSTEM_PROMPT, MODEL_PROVIDER_MAP, PROVIDER_VENDOR_ALIASES, type SupportedProvider } from './constants'
 import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
 import { ToolEventsService } from './tool-events.service'
+import type { ModelProvider, ModelToken } from '@prisma/client'
 
 const actionEnum = z.enum(ACTION_TYPES)
 
@@ -443,21 +444,19 @@ export class AiService {
       return { apiKey: overrideKey, baseUrl: overrideBaseUrl }
     }
     const aliases = PROVIDER_VENDOR_ALIASES[provider] || [provider]
-    const providerRecord = await this.prisma.modelProvider.findFirst({
+    let providerRecord = await this.prisma.modelProvider.findFirst({
       where: { ownerId: userId, vendor: { in: aliases } },
       orderBy: { createdAt: 'asc' },
     })
 
-    if (!providerRecord) {
-      throw new BadRequestException(`未配置${provider} Provider，请在模型面板中新增 vendor 为 ${aliases.join('/')} 的配置`) 
-    }
+    let token = providerRecord
+      ? await this.prisma.modelToken.findFirst({
+        where: { providerId: providerRecord.id, userId, enabled: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      : null
 
-    let token = await this.prisma.modelToken.findFirst({
-      where: { providerId: providerRecord.id, userId, enabled: true },
-      orderBy: { createdAt: 'asc' },
-    })
-
-    if (!token) {
+    if (!token && providerRecord) {
       token = await this.prisma.modelToken.findFirst({
         where: { providerId: providerRecord.id, shared: true, enabled: true },
         orderBy: { createdAt: 'asc' },
@@ -465,18 +464,32 @@ export class AiService {
     }
 
     if (!token) {
+      const sharedToken = await this.findSharedTokenForVendor(aliases)
+      if (sharedToken) {
+        token = sharedToken
+        providerRecord = sharedToken.provider
+      }
+    }
+
+    if (!providerRecord) {
+      throw new BadRequestException(`未配置${provider} Provider，请在模型面板中新增 vendor 为 ${aliases.join('/')} 的配置`) 
+    }
+
+    if (!token) {
       throw new BadRequestException(`未找到可用的${provider} API Key，请在模型面板中添加`) 
     }
+
+    const resolvedBaseUrl = providerRecord.baseUrl || (await this.resolveSharedBaseUrl(provider))
 
     this.logger.debug('Resolved provider credentials', {
       userId,
       providerVendor: providerRecord.vendor,
       providerId: providerRecord.id,
-      baseUrl: providerRecord.baseUrl,
+      baseUrl: resolvedBaseUrl,
       hasSharedToken: !!token.shared,
     })
 
-    return { apiKey: token.secretToken, baseUrl: overrideBaseUrl ?? providerRecord.baseUrl }
+    return { apiKey: token.secretToken, baseUrl: overrideBaseUrl ?? resolvedBaseUrl }
   }
 
   private normalizeModelName(provider: SupportedProvider, model: string) {
@@ -742,5 +755,35 @@ export class AiService {
     if (!messages || messages.length === 0) return ''
     const lastUser = [...messages].reverse().find(msg => msg.role === 'user')
     return this.extractMessageText(lastUser || messages[messages.length - 1])
+  }
+
+  private async findSharedTokenForVendor(aliases: string[]): Promise<(ModelToken & { provider: ModelProvider }) | null> {
+    const now = new Date()
+    return this.prisma.modelToken.findFirst({
+      where: {
+        shared: true,
+        enabled: true,
+        provider: { vendor: { in: aliases } },
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+      },
+      include: { provider: true },
+      orderBy: { updatedAt: 'asc' },
+    })
+  }
+
+  private async resolveSharedBaseUrl(provider: SupportedProvider): Promise<string | null> {
+    const aliases = PROVIDER_VENDOR_ALIASES[provider] || [provider]
+    const shared = await this.prisma.modelProvider.findFirst({
+      where: {
+        vendor: { in: aliases },
+        sharedBaseUrl: true,
+        baseUrl: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    })
+    return shared?.baseUrl ?? null
   }
 }

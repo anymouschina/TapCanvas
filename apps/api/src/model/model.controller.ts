@@ -24,7 +24,7 @@ export class ModelController {
   }
 
   @Post('providers')
-  upsertProvider(@Body() body: { id?: string; name: string; vendor: string; baseUrl?: string | null }, @Req() req: any) {
+  upsertProvider(@Body() body: { id?: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }, @Req() req: any) {
     return this.service.upsertProvider(body, String(req.user.sub))
   }
 
