@@ -188,9 +188,24 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
   const summaryBarBackground = isDarkUi ? theme.colors.dark[8] : theme.colors.gray[0]
   const summaryBarBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.1) : theme.colors.gray[3]}`
-  const summaryChipBackground = isDarkUi ? rgba(theme.white, 0.05) : rgba(theme.colors.gray[1], 0.8)
-  const summaryChipBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.15) : theme.colors.gray[3]}`
-  const summaryChipColor = nodeShellText
+  const summaryChipAccent = theme.colors.violet?.[5] || theme.colors.blue[5]
+  const summaryChipBackground = isDarkUi ? rgba(summaryChipAccent, 0.4) : rgba(summaryChipAccent, 0.1)
+  const summaryChipBorder = `1px solid ${isDarkUi ? rgba(summaryChipAccent, 0.85) : rgba(summaryChipAccent, 0.4)}`
+  const summaryChipShadow = isDarkUi ? '0 12px 25px rgba(0, 0, 0, 0.45)' : '0 6px 16px rgba(84, 58, 255, 0.12)'
+  const summaryChipColor = isDarkUi ? theme.white : summaryChipAccent
+  const summaryChipStyles = React.useMemo(() => ({
+    background: summaryChipBackground,
+    borderRadius: 999,
+    border: summaryChipBorder,
+    color: summaryChipColor,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 10px',
+    boxShadow: summaryChipShadow,
+    transition: 'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease'
+  }), [summaryChipBackground, summaryChipBorder, summaryChipColor, summaryChipShadow])
   const galleryCardBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.95) : theme.white
   const galleryBorderDefault = `1px solid ${isDarkUi ? rgba(theme.white, 0.2) : theme.colors.gray[3]}`
   const galleryBorderActive = `2px solid ${isDarkUi ? theme.colors.blue[4] : theme.colors.blue[6]}`
@@ -1942,15 +1957,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   <button
                     type="button"
                     style={{
-                      background: summaryChipBackground,
-                      borderRadius: 999,
-                      border: summaryChipBorder,
-                      padding: '4px 10px',
-                      color: summaryChipColor,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
+                      ...summaryChipStyles,
                       minWidth: 150,
                     }}
                   >
@@ -1981,22 +1988,14 @@ const rewritePromptWithCharacters = React.useCallback(
               </Menu>
               {showTimeMenu && (
                 <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                  <Menu.Target>
-                    <button
-                      type="button"
-                      style={{
-                        background: summaryChipBackground,
-                        borderRadius: 999,
-                        border: summaryChipBorder,
-                        padding: '4px 10px',
-                        color: nodeShellText,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        minWidth: 100,
-                      }}
-                    >
+                <Menu.Target>
+                  <button
+                    type="button"
+                    style={{
+                      ...summaryChipStyles,
+                      minWidth: 100,
+                    }}
+                  >
                       <IconClock size={14} />
                       <span>{summaryDuration}</span>
                       <IconArrowRight size={12} />
@@ -2020,22 +2019,14 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
               {showResolutionMenu && (
                 <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                  <Menu.Target>
-                    <button
-                      type="button"
-                      style={{
-                        background: summaryChipBackground,
-                        borderRadius: 999,
-                        border: summaryChipBorder,
-                        padding: '4px 10px',
-                        color: nodeShellText,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        minWidth: 120,
-                      }}
-                    >
+                <Menu.Target>
+                  <button
+                    type="button"
+                    style={{
+                      ...summaryChipStyles,
+                      minWidth: 120,
+                    }}
+                  >
                       <IconDeviceTv size={14} />
                       <span>{summaryResolution}</span>
                       <IconArrowRight size={12} />
@@ -2058,22 +2049,14 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
               {showOrientationMenu && (
                 <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                  <Menu.Target>
-                    <button
-                      type="button"
-                      style={{
-                        background: summaryChipBackground,
-                        borderRadius: 999,
-                        border: summaryChipBorder,
-                        padding: '4px 10px',
-                        color: nodeShellText,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        minWidth: 100,
-                      }}
-                    >
+                <Menu.Target>
+                  <button
+                    type="button"
+                    style={{
+                      ...summaryChipStyles,
+                      minWidth: 100,
+                    }}
+                  >
                       <IconDeviceMobile size={14} />
                       <span>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
                       <IconArrowRight size={12} />
@@ -2096,18 +2079,10 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                    <button
-                      type="button"
-                      style={{
-                        background: summaryChipBackground,
-                        borderRadius: 999,
-                        border: summaryChipBorder,
-                        padding: '4px 10px',
-                        color: nodeShellText,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
+                  <button
+                    type="button"
+                    style={{
+                      ...summaryChipStyles,
                       minWidth: 80,
                     }}
                   >
