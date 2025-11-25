@@ -806,7 +806,13 @@ function CanvasInner(): JSX.Element {
                     return { nodes: [n1, n2, n3], edges: [e1, e2], nextId: s.nextId + 3 }
                   })
                 }}>{$('创建示例工作流')}</Button>
-                <Button size="sm" variant="subtle" onClick={() => { toast($('支持拖拽模板/资产到画布'),'success') }}>{$('了解更多')}</Button>
+                <Button
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => window.open('https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b', '_blank', 'noopener')}
+                >
+                  {$('了解更多')}
+                </Button>
               </Group>
               <Text size="xs" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.8 }}>提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
             </Stack>
