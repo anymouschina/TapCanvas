@@ -213,6 +213,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const galleryBorderActive = `2px solid ${isDarkUi ? theme.colors.blue[4] : theme.colors.blue[6]}`
   const suggestionHighlight = isDarkUi ? rgba(theme.colors.gray[4], 0.35) : rgba(theme.colors.blue[2], 0.35)
   const placeholderIconColor = nodeShellText
+  // 主题适配的深色内容块背景
+  const darkContentBackground = isDarkUi ? rgba(theme.colors.dark[8], 0.9) : rgba(theme.colors.gray[1], 0.95)
+  const darkContentBorder = isDarkUi ? rgba(theme.colors.gray[6], 0.7) : rgba(theme.colors.gray[4], 0.7)
+  const darkCardShadow = isDarkUi ? '0 10px 25px rgba(0, 0, 0, 0.55)' : '0 4px 12px rgba(0, 0, 0, 0.1)'
+  const lightContentBackground = isDarkUi ? rgba(theme.colors.dark[8], 0.4) : rgba(theme.colors.gray[2], 0.8)
+  const lightContentBorder = isDarkUi ? rgba(theme.colors.gray[6], 0.7) : rgba(theme.colors.gray[4], 0.7)
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
@@ -221,7 +227,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isComposerNode = schema.category === 'composer' || isStoryboardNode
   const isVideoNode = schemaFeatures.has('video') || isComposerNode
   const isImageNode = schema.category === 'image'
-  const isTextToImageNode = kind === 'textToImage'
+  const isTextToImageNode = kind === 'textToImage' || kind === 'coverImage'
   const isCharacterNode = schema.category === 'character'
   const isAudioNode = kind === 'tts'
   const targets: { id: string; type: string; pos: Position }[] = []
@@ -1050,14 +1056,14 @@ const rewritePromptWithCharacters = React.useCallback(
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
     const uText =
-      skind === 'textToImage' || skind === 'image'
+      skind === 'textToImage' || skind === 'coverImage' || skind === 'image'
         ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
         : null
 
     // 获取最新的主图片 URL
     let uImg = null
     let uSoraFileId = null
-    if (skind === 'image' || skind === 'textToImage') {
+    if (skind === 'image' || skind === 'textToImage' || skind === 'coverImage') {
       uImg = (sd.imageUrl as string | undefined) || null
       uSoraFileId = (sd.soraFileId as string | undefined) || null
     } else if ((skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
@@ -1653,8 +1659,8 @@ const rewritePromptWithCharacters = React.useCallback(
                     width: '100%',
                     borderRadius: 10,
                     height: '100%',
-                    background: 'rgba(15,23,42,0.9)',
-                    border: '1px solid rgba(55,65,81,0.7)',
+                    background: darkContentBackground,
+                    border: `1px solid ${darkContentBorder}`,
                     transform: 'translate(4px, 4px)',
                     zIndex: 0,
                   }}
@@ -1665,7 +1671,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   position: 'relative',
                   borderRadius: 10,
                   overflow: 'hidden',
-                  boxShadow: '0 10px 25px rgba(0,0,0,.55)',
+                  boxShadow: darkCardShadow,
                   border: '1px solid rgba(148,163,184,0.8)',
                   background: mediaFallbackSurface,
                 }}
@@ -2312,8 +2318,8 @@ const rewritePromptWithCharacters = React.useCallback(
                           radius="md"
                           p="xs"
                           style={{
-                            border: isActive ? '1px solid rgba(96,165,250,0.8)' : '1px solid rgba(55,65,81,0.7)',
-                            background: isActive ? 'rgba(96,165,250,0.08)' : 'rgba(15,23,42,0.4)',
+                            border: isActive ? `1px solid ${theme.colors.blue[6]}` : `1px solid ${lightContentBorder}`,
+                            background: isActive ? rgba(theme.colors.blue[6], 0.15) : lightContentBackground,
                             cursor: 'pointer',
                           }}
                           onClick={() => handleSelectCharacter(char)}
@@ -2445,7 +2451,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         overflow: 'hidden',
                         marginBottom: upstreamText ? 4 : 0,
                         border: '1px solid rgba(148,163,184,0.5)',
-                        background: 'rgba(15,23,42,0.9)',
+                        background: darkContentBackground,
                       }}
                     >
                       <img
@@ -2547,7 +2553,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         withBorder
                         radius="md"
                         p="xs"
-                        style={{ background: 'rgba(15,23,42,0.65)', borderColor: 'rgba(148,163,184,0.35)' }}
+                        style={{ background: lightContentBackground, borderColor: lightContentBorder }}
                       >
                         <Group justify="space-between" align="flex-start" mb={6}>
                           <div>
@@ -2949,7 +2955,7 @@ const rewritePromptWithCharacters = React.useCallback(
               style={{
                 maxHeight: 160,
                 overflowY: 'auto',
-                background: 'rgba(15,23,42,0.9)',
+                background: darkContentBackground,
               }}
             >
               <Group justify="space-between" mb={4}>
@@ -2983,7 +2989,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       display: 'flex',
                       alignItems: 'flex-start',
                       gap: 6,
-                      background: 'rgba(15,23,42,0.9)',
+                      background: darkContentBackground,
                     }}
                   >
                     <Text
@@ -3049,7 +3055,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     radius="md"
                     p="xs"
                     style={{
-                      background: 'rgba(15,23,42,0.95)',
+                      background: darkContentBackground,
                     }}
                   >
                     <Group justify="space-between" mb={4}>

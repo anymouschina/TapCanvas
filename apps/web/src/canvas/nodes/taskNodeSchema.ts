@@ -179,6 +179,17 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
     },
   },
+  coverImage: {
+    kind: 'coverImage',
+    category: 'image',
+    icon: IconPhoto,
+    label: '封面生成',
+    features: ['prompt', 'image', 'imageResults', 'sampleCount', 'aspect', 'modelSelect', 'systemPrompt'],
+    handles: {
+      targets: [{ id: 'in-text', type: 'text', position: TARGET }],
+      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
+    },
+  },
   tts: {
     kind: 'tts',
     category: 'audio',
