@@ -3,10 +3,6 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.8.1",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "scripts": {
     "tap": "node packages/cli/bin/tapcanvas.js",
     "dev:web": "pnpm --filter @tapcanvas/web dev",
