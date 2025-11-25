@@ -18,7 +18,7 @@
     "@mantine/hooks": "^7.13.1",
     "@mantine/modals": "^8.3.8",
     "@mantine/notifications": "^7.13.1",
-    "@nanostores/react": "github:ai/react",
+    "@nanostores/react": "git+https://github.com/ai/react.git#a6ad745cc307881916944ee4d6ba04bdda978dc6",
     "@tabler/icons-react": "^3.19.0",
     "ai": "^5.0.97",
     "framer-motion": "^12.23.24",
