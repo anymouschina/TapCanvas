@@ -28,6 +28,7 @@ export type NodeKind =
   | 'text'
   | 'textToImage'
   | 'image'
+  | 'coverImage'
   | 'video'
   | 'composeVideo'
   | 'storyboard'
@@ -38,6 +39,7 @@ export type NodeKind =
 export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
   switch (kind) {
     case 'textToImage':
+    case 'coverImage':
       return TEXT_MODELS
     case 'image':
       return IMAGE_MODELS
