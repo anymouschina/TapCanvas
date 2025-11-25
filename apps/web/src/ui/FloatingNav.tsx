@@ -1,5 +1,5 @@
 import React from 'react'
-import { ActionIcon, Paper, Stack, Avatar, Badge } from '@mantine/core'
+import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme } from '@mantine/core'
 import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders, IconSettings } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useAuth } from '../auth/store'
@@ -46,6 +46,11 @@ const animationStyles = `
 
 export default function FloatingNav(): JSX.Element {
   const { setActivePanel, setPanelAnchorY } = useUIStore()
+  const { colorScheme } = useMantineColorScheme()
+  const isDark = colorScheme === 'dark'
+  const addButtonBackground = isDark ? 'rgba(15,23,42,0.85)' : '#ffffff'
+  const addButtonColor = isDark ? '#f8fafc' : '#0b0b0d'
+  const addButtonShadow = isDark ? '0 6px 16px rgba(0,0,0,0.45)' : '0 10px 20px rgba(15,23,42,0.12)'
 
   // 注入CSS样式
   React.useEffect(() => {
@@ -88,8 +93,9 @@ export default function FloatingNav(): JSX.Element {
               radius={999}
               className="floating-nav-add"
               style={{
-                background: '#fff',
-                color: '#0b0b0d',
+                background: addButtonBackground,
+                color: addButtonColor,
+                boxShadow: addButtonShadow,
               }}
               onMouseEnter={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();

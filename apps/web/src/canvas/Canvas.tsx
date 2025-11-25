@@ -18,7 +18,7 @@ import IONode from './nodes/IONode'
 import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
-import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip } from '@mantine/core'
+import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import { IconBrandGithub, IconRobot } from '@tabler/icons-react'
 import { getCurrentLanguage, setLanguage, $ } from './i18n'
 import TypedEdge from './edges/TypedEdge'
@@ -58,6 +58,16 @@ function CanvasInner(): JSX.Element {
   const runSelected = useRFStore(s => s.runSelected)
   const cancelNode = useRFStore(s => s.cancelNode)
   const rf = useReactFlow()
+  const theme = useMantineTheme()
+  const { colorScheme } = useMantineColorScheme()
+  const isDarkCanvas = colorScheme === 'dark'
+  const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
+  const backgroundGridColor = isDarkCanvas ? theme.colors.dark[5] : theme.colors.gray[2]
+  const connectionStrokeColor = isDarkCanvas ? theme.colors.violet[4] : theme.colors.violet[6]
+  const edgeMarkerColor = isDarkCanvas ? theme.colors.gray[6] : theme.colors.gray[5]
+  const emptyGuideBackground = isDarkCanvas ? rgba(theme.colors.dark[7], 0.9) : rgba(theme.white, 0.95)
+  const emptyGuideTextColor = isDarkCanvas ? theme.white : theme.colors.dark[6]
+  const selectionBorderColor = rgba(isDarkCanvas ? theme.white : theme.colors.gray[6], isDarkCanvas ? 0.35 : 0.5)
   const [connectingType, setConnectingType] = useState<string | null>(null)
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
@@ -717,13 +727,13 @@ function CanvasInner(): JSX.Element {
         }}
         snapToGrid
         snapGrid={[16, 16]}
-        defaultEdgeOptions={{ animated: true, type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any, style: { strokeWidth: 3 }, interactionWidth: 24, markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280', width: 16, height: 16 } }}
+        defaultEdgeOptions={{ animated: true, type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any, style: { strokeWidth: 3 }, interactionWidth: 24, markerEnd: { type: MarkerType.ArrowClosed, color: edgeMarkerColor, width: 16, height: 16 } }}
         connectionLineType={ConnectionLineType.SmoothStep}
-        connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 3 }}
+        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 3 }}
       >
         <MiniMap style={{ width: 160, height: 110 }} />
         <Controls position="bottom-left" />
-        <Background gap={16} size={1} color="#2a2f3a" />
+        <Background gap={16} size={1} color={backgroundGridColor} />
       </ReactFlow>
 
       {/* AI助手按钮 */}
@@ -779,9 +789,9 @@ function CanvasInner(): JSX.Element {
       {/* Empty canvas guide */}
       {nodes.length === 0 && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-          <Paper withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: 'rgba(15,16,20,.9)' }}>
-            <Stack gap={8}>
-              <Text c="dimmed">{$('快速开始')}</Text>
+          <Paper withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: emptyGuideBackground, color: emptyGuideTextColor }}>
+            <Stack gap={8} style={{ color: emptyGuideTextColor }}>
+              <Text c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
               <Group gap={8} style={{ flexWrap: 'nowrap' }}>
                 <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }) }}>{$('新建 text')}</Button>
                 <Button size="sm" variant="light" onClick={() => {
@@ -798,7 +808,7 @@ function CanvasInner(): JSX.Element {
                 }}>{$('创建示例工作流')}</Button>
                 <Button size="sm" variant="subtle" onClick={() => { toast($('支持拖拽模板/资产到画布'),'success') }}>{$('了解更多')}</Button>
               </Group>
-              <Text size="xs" c="dimmed">提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
+              <Text size="xs" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.8 }}>提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
             </Stack>
           </Paper>
         </div>
@@ -815,7 +825,7 @@ function CanvasInner(): JSX.Element {
               width: groupRectFlow.w * (viewport.zoom || 1),
               height: groupRectFlow.h * (viewport.zoom || 1),
               borderRadius: 12,
-              border: '1px dashed rgba(148,163,184,0.35)',
+              border: `1px dashed ${selectionBorderColor}`,
               background: 'transparent',
               pointerEvents: 'none'
             }}

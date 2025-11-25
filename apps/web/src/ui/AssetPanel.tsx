@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center, Modal, TextInput } from '@mantine/core'
+import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center, Modal, TextInput, useMantineColorScheme } from '@mantine/core'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
@@ -33,7 +33,12 @@ import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExtern
 import { VideoTrimModal } from './VideoTrimModal'
 
 function PlaceholderImage({ label }: { label: string }) {
-  const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='#1f2937'/><stop offset='100%' stop-color='#0b0b0d'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='#e5e7eb' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`) 
+  const { colorScheme } = useMantineColorScheme()
+  const isDark = colorScheme === 'dark'
+  const start = isDark ? '#1f2937' : '#cfd8e3'
+  const end = isDark ? '#0b0b0d' : '#f8fafc'
+  const textColor = isDark ? '#e5e7eb' : '#0f172a'
+  const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='${start}'/><stop offset='100%' stop-color='${end}'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='${textColor}' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`) 
   return <Image src={`data:image/svg+xml;charset=UTF-8,${svg}`} alt={label} radius="sm" />
 }
 

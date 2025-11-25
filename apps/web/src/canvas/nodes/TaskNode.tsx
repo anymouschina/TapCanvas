@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -165,6 +165,37 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     status === 'canceled' ? '#475569' :
     status === 'running' ? '#8b5cf6' :
     status === 'queued' ? '#f59e0b' : 'rgba(127,127,127,.6)'
+  const { colorScheme } = useMantineColorScheme()
+  const theme = useMantineTheme()
+  const isDarkUi = colorScheme === 'dark'
+  const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
+  const nodeShellBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.9) : theme.white
+  const nodeShellBorder = `1px solid ${isDarkUi ? theme.colors.dark[4] : theme.colors.gray[3]}`
+  const nodeShellText = isDarkUi ? theme.white : theme.colors.dark[7]
+  const nodeShellMuted = isDarkUi ? theme.colors.gray[4] : theme.colors.gray[6]
+  const quickActionBackgroundActive = isDarkUi ? rgba(theme.white, 0.08) : rgba(theme.colors.gray[1], 0.8)
+  const quickActionIconColor = nodeShellMuted
+  const quickActionIconActive = nodeShellText
+  const quickActionHint = nodeShellMuted
+  const quickActionDividerColor = rgba(nodeShellText, 0.65)
+  const mediaCardBackground = isDarkUi ? theme.colors.dark[8] : theme.white
+  const mediaOverlayBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.85) : rgba(theme.colors.gray[0], 0.95)
+  const mediaOverlayText = nodeShellText
+  const overlayCardBorder = `1px solid ${isDarkUi ? theme.colors.gray[4] : theme.colors.gray[3]}`
+  const subtleOverlayBackground = isDarkUi ? rgba(theme.colors.dark[5], 0.6) : rgba(theme.colors.gray[3], 0.3)
+  const mediaFallbackSurface = isDarkUi ? theme.colors.dark[9] : theme.colors.gray[0]
+  const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[6]
+  const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
+  const summaryBarBackground = isDarkUi ? theme.colors.dark[8] : theme.colors.gray[0]
+  const summaryBarBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.1) : theme.colors.gray[3]}`
+  const summaryChipBackground = isDarkUi ? rgba(theme.white, 0.05) : rgba(theme.colors.gray[1], 0.8)
+  const summaryChipBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.15) : theme.colors.gray[3]}`
+  const summaryChipColor = nodeShellText
+  const galleryCardBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.95) : theme.white
+  const galleryBorderDefault = `1px solid ${isDarkUi ? rgba(theme.white, 0.2) : theme.colors.gray[3]}`
+  const galleryBorderActive = `2px solid ${isDarkUi ? theme.colors.blue[4] : theme.colors.blue[6]}`
+  const suggestionHighlight = isDarkUi ? rgba(theme.colors.gray[4], 0.35) : rgba(theme.colors.blue[2], 0.35)
+  const placeholderIconColor = nodeShellText
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
@@ -1341,14 +1372,15 @@ const rewritePromptWithCharacters = React.useCallback(
 
   return (
     <div style={{
-      border: '1px solid rgba(127,127,127,.35)',
+      border: nodeShellBorder,
       borderRadius: 12,
       padding: '10px 12px',
-      background: 'rgba(127,127,127,.08)',
+      background: nodeShellBackground,
+      color: nodeShellText,
       width: fixedWidth
     }}>
       {/* Title */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e7eb', marginBottom: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: nodeShellText, marginBottom: 6 }}>
         {editing ? (
           <TextInput
             ref={labelInputRef}
@@ -1418,7 +1450,7 @@ const rewritePromptWithCharacters = React.useCallback(
               a.click()
               a.remove()
             }}><IconDownload size={16} /></ActionIcon>
-            {visibleDefs.length > 0 && <span style={{ color: 'rgba(229,231,235,.65)', padding: '0 6px', userSelect: 'none' }}>|</span>}
+            {visibleDefs.length > 0 && <span style={{ color: quickActionDividerColor, padding: '0 6px', userSelect: 'none' }}>|</span>}
             {visibleDefs.map(d => (
               <Button key={d.key} size="xs" variant="subtle" leftSection={d.icon} onClick={d.onClick}>{d.label}</Button>
             ))}
@@ -1462,7 +1494,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 overflow: 'hidden',
                 border: '1px solid rgba(148,163,184,0.5)',
                 position: 'relative',
-                background: '#050505',
+                background: mediaCardBackground,
               }}
             >
               <img
@@ -1514,7 +1546,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 textAlign: 'center',
               }}
             >
-              <IconUsers size={28} style={{ color: 'rgba(148,163,184,0.9)' }} />
+              <IconUsers size={28} style={{ color: placeholderIconColor }} />
               <Text size="sm" c="dimmed">
                 选择一个 Sora 角色，封面将显示在此处并可连接到视频节点。
               </Text>
@@ -1551,19 +1583,19 @@ const rewritePromptWithCharacters = React.useCallback(
                       style={{
                         cursor: 'pointer',
                         padding: '8px 10px', borderRadius: 6,
-                        background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                        background: active ? quickActionBackgroundActive : 'transparent',
                         transition: 'background .12s ease, opacity .12s ease',
                         opacity: dimOthers ? 0.8 : 1,
                       }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ color: active ? '#ffffff' : '#cbd5e1' }}>{row.icon}</div>
-                        <div style={{ flex: 1, color: '#e5e7eb', fontSize: 13 }}>{row.label}</div>
-                        <div style={{ color: active ? '#ffffff' : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
+                        <div style={{ color: active ? quickActionIconActive : quickActionIconColor }}>{row.icon}</div>
+                        <div style={{ flex: 1, color: nodeShellText, fontSize: 13 }}>{row.label}</div>
+                        <div style={{ color: active ? quickActionIconActive : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
                           <IconArrowRight size={14} />
                         </div>
                       </div>
                       {active && idx === 0 && (
-                        <div style={{ marginLeft: 36, marginTop: 4, color: '#9ca3af', fontSize: 11 }}>
+                        <div style={{ marginLeft: 36, marginTop: 4, color: quickActionHint, fontSize: 11 }}>
                           图片大小不能超过30MB
                         </div>
                       )}
@@ -1603,7 +1635,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   overflow: 'hidden',
                   boxShadow: '0 10px 25px rgba(0,0,0,.55)',
                   border: '1px solid rgba(148,163,184,0.8)',
-                  background: 'black',
+                  background: mediaFallbackSurface,
                 }}
               >
                 <img
@@ -1629,7 +1661,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     <div style={{
                       width: 14,
                       height: 14,
-                      border: '2px solid #ffffff',
+                      border: `2px solid ${nodeShellText}`,
                       borderTop: '2px solid transparent',
                       borderRadius: '50%',
                       animation: 'spin 1s linear infinite',
@@ -1640,18 +1672,18 @@ const rewritePromptWithCharacters = React.useCallback(
                 </ActionIcon>
                 {/* Sora file_id indicator */}
                 {soraFileId && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 8,
-                      top: 8,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: 'rgba(34, 197, 94, 0.9)',
-                      color: 'white',
-                      fontSize: '10px',
-                      fontWeight: 500,
-                    }}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 8,
+                        top: 8,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        background: 'rgba(34, 197, 94, 0.9)',
+                        color: theme.white,
+                        fontSize: '10px',
+                        fontWeight: 500,
+                      }}
                     title={`Sora File ID: ${soraFileId}`}
                   >
                     ✓ Sora
@@ -1669,8 +1701,8 @@ const rewritePromptWithCharacters = React.useCallback(
                       padding: '2px 8px',
                       borderRadius: 999,
                       border: 'none',
-                      background: 'rgba(15,23,42,0.85)',
-                      color: '#e5e7eb',
+                      background: mediaOverlayBackground,
+                      color: mediaOverlayText,
                       fontSize: 11,
                       display: 'flex',
                       alignItems: 'center',
@@ -1704,9 +1736,9 @@ const rewritePromptWithCharacters = React.useCallback(
                 maxHeight: 80,
                 borderRadius: 8,
                 border: '1px dashed rgba(148,163,184,0.6)',
-                background: 'rgba(15,23,42,0.6)',
+                background: subtleOverlayBackground,
                 padding: '6px 8px',
-                color: '#e5e7eb',
+                color: mediaOverlayText,
                 fontSize: 12,
                 whiteSpace: 'pre-wrap',
                 overflowY: 'auto',
@@ -1725,12 +1757,12 @@ const rewritePromptWithCharacters = React.useCallback(
             minHeight: 160,
             borderRadius: 10,
             border: '1px solid rgba(148,163,184,0.6)',
-            background: 'rgba(15,23,42,0.85)',
+            background: mediaOverlayBackground,
             padding: 8,
             display: 'flex',
             flexDirection: 'column',
             gap: 6,
-            color: '#e5e7eb',
+            color: mediaOverlayText,
           }}
         >
           {/* Video results toolbar */}
@@ -1766,7 +1798,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 width: '100%',
                 height: 160,
                 objectFit: 'cover',
-                backgroundColor: '#0f172a',
+                backgroundColor: videoSurface,
               }}
             />
           ) : (
@@ -1778,7 +1810,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'rgba(226,232,240,0.75)',
+                color: mediaFallbackText,
                 fontSize: 12,
               }}
             >
@@ -1799,10 +1831,10 @@ const rewritePromptWithCharacters = React.useCallback(
               style={{
                 width: 296,
                 borderRadius: 10,
-                border: '1px solid rgba(148,163,184,0.6)',
-                background: 'rgba(15,23,42,0.85)',
+                border: overlayCardBorder,
+                background: mediaOverlayBackground,
                 padding: '8px 10px',
-                color: '#e5e7eb',
+                color: mediaOverlayText,
                 fontSize: 13,
                 display: 'flex',
                 flexDirection: 'column',
@@ -1831,10 +1863,10 @@ const rewritePromptWithCharacters = React.useCallback(
                 minHeight: 80,
                 maxHeight: 140,
                 borderRadius: 10,
-                border: '1px solid rgba(148,163,184,0.6)',
-                background: 'rgba(15,23,42,0.85)',
+                border: overlayCardBorder,
+                background: mediaOverlayBackground,
                 padding: '8px 10px',
-                color: '#e5e7eb',
+                color: mediaOverlayText,
                 fontSize: 13,
                 display: 'flex',
                 alignItems: 'flex-start',
@@ -1886,7 +1918,7 @@ const rewritePromptWithCharacters = React.useCallback(
         >
           <div
             style={{
-              background: '#050b16',
+              background: summaryBarBackground,
               borderRadius: 8,
               padding: '6px 10px',
               display: 'flex',
@@ -1894,7 +1926,7 @@ const rewritePromptWithCharacters = React.useCallback(
               justifyContent: 'space-between',
               gap: 6,
               marginBottom: 8,
-              border: '1px solid rgba(255,255,255,0.08)',
+              border: summaryBarBorder,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1903,11 +1935,11 @@ const rewritePromptWithCharacters = React.useCallback(
                   <button
                     type="button"
                     style={{
-                      background: 'rgba(255,255,255,0.05)',
+                      background: summaryChipBackground,
                       borderRadius: 999,
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: summaryChipBorder,
                       padding: '4px 10px',
-                      color: '#e5e7eb',
+                      color: summaryChipColor,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -1946,11 +1978,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     <button
                       type="button"
                       style={{
-                        background: 'rgba(255,255,255,0.04)',
+                        background: summaryChipBackground,
                         borderRadius: 999,
-                        border: '1px solid rgba(255,255,255,0.12)',
+                        border: summaryChipBorder,
                         padding: '4px 10px',
-                        color: '#fef3c7',
+                        color: nodeShellText,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -1985,11 +2017,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     <button
                       type="button"
                       style={{
-                        background: 'rgba(255,255,255,0.04)',
+                        background: summaryChipBackground,
                         borderRadius: 999,
-                        border: '1px solid rgba(255,255,255,0.12)',
+                        border: summaryChipBorder,
                         padding: '4px 10px',
-                        color: '#bfdbfe',
+                        color: nodeShellText,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -2023,11 +2055,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     <button
                       type="button"
                       style={{
-                        background: 'rgba(255,255,255,0.04)',
+                        background: summaryChipBackground,
                         borderRadius: 999,
-                        border: '1px solid rgba(255,255,255,0.12)',
+                        border: summaryChipBorder,
                         padding: '4px 10px',
-                        color: '#fde68a',
+                        color: nodeShellText,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -2057,14 +2089,14 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
-                    type="button"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      borderRadius: 999,
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      padding: '4px 10px',
-                      color: '#a5f3fc',
+                    <button
+                      type="button"
+                      style={{
+                        background: summaryChipBackground,
+                        borderRadius: 999,
+                        border: summaryChipBorder,
+                        padding: '4px 10px',
+                        color: nodeShellText,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -2199,7 +2231,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         overflow: 'hidden',
                         border: '1px solid rgba(148,163,184,0.5)',
                         marginBottom: 6,
-                        background: 'black',
+                        background: mediaFallbackSurface,
                       }}
                     >
                       <img
@@ -2301,7 +2333,7 @@ const rewritePromptWithCharacters = React.useCallback(
                                 overflow: 'hidden',
                                 border: '1px solid rgba(148,163,184,0.4)',
                                 marginBottom: 6,
-                                background: 'black',
+                                background: mediaFallbackSurface,
                               }}
                             >
                               <img
@@ -2382,9 +2414,9 @@ const rewritePromptWithCharacters = React.useCallback(
                       }}
                       style={{
                         fontSize: 11,
-                        background: 'rgba(15,23,42,0.9)',
-                        border: '1px solid rgba(148,163,184,0.5)',
-                        color: '#e5e7eb',
+                        background: mediaOverlayBackground,
+                        border: overlayCardBorder,
+                        color: mediaOverlayText,
                         marginBottom: 4,
                       }}
                     />
@@ -2397,7 +2429,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       style={{
                         cursor: 'pointer',
                         padding: '4px 6px',
-                        background: 'rgba(15,23,42,0.5)',
+                        background: subtleOverlayBackground,
                         borderRadius: 4,
                         fontSize: 11,
                         fontStyle: 'italic'
@@ -2433,7 +2465,7 @@ const rewritePromptWithCharacters = React.useCallback(
                           maxHeight: 180,
                           objectFit: 'contain',
                           display: 'block',
-                          backgroundColor: 'black',
+                          backgroundColor: mediaFallbackSurface,
                         }}
                       />
                       {upstreamSoraFileId && (
@@ -2839,9 +2871,9 @@ const rewritePromptWithCharacters = React.useCallback(
                                 />
                               )}
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                <span style={{ color: '#e5e7eb' }}>{label}</span>
+                                <span style={{ color: nodeShellText }}>{label}</span>
                                 {displayName && (
-                                  <span style={{ color: 'rgba(156,163,175,0.9)', fontSize: 11 }}>
+                                  <span style={{ color: nodeShellMuted, fontSize: 11 }}>
                                     {displayName}
                                   </span>
                                 )}
@@ -2883,8 +2915,8 @@ const rewritePromptWithCharacters = React.useCallback(
                           padding: '4px 8px',
                           fontSize: 12,
                           cursor: 'pointer',
-                          background: idx === activeSuggestion ? 'rgba(148,163,184,0.28)' : 'transparent',
-                          color: '#e5e7eb',
+                          background: idx === activeSuggestion ? suggestionHighlight : 'transparent',
+                          color: nodeShellText,
                         }}
                       >
                         {s}
@@ -3073,7 +3105,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       radius="md"
                       p="xs"
                       style={{
-                        background: 'rgba(15,23,42,0.95)',
+                        background: galleryCardBackground,
                       }}
                     >
                       <div
@@ -3081,10 +3113,10 @@ const rewritePromptWithCharacters = React.useCallback(
                           borderRadius: 8,
                           overflow: 'hidden',
                           border: isPrimary
-                            ? '2px solid rgba(96,165,250,0.9)'
-                            : '1px solid rgba(55,65,81,0.7)',
+                            ? galleryBorderActive
+                            : galleryBorderDefault,
                           marginBottom: 6,
-                          background: 'black',
+                          background: mediaFallbackSurface,
                         }}
                       >
                         <img
@@ -3165,7 +3197,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   style={{
                     padding: '40px 20px',
                     textAlign: 'center',
-                    color: 'rgba(226,232,240,0.7)',
+                    color: mediaFallbackText,
                   }}
                 >
                   <VideoHistoryIcon size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
@@ -3205,7 +3237,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       radius="md"
                       p="xs"
                       style={{
-                        background: 'rgba(15,23,42,0.95)',
+                        background: galleryCardBackground,
                       }}
                     >
                       <div
@@ -3213,10 +3245,10 @@ const rewritePromptWithCharacters = React.useCallback(
                           borderRadius: 8,
                           overflow: 'hidden',
                           border: isPrimary
-                            ? '2px solid rgba(96,165,250,0.9)'
-                            : '1px solid rgba(55,65,81,0.7)',
+                            ? galleryBorderActive
+                            : galleryBorderDefault,
                           marginBottom: 6,
-                          background: 'black',
+                          background: mediaFallbackSurface,
                           position: 'relative',
                         }}
                       >
@@ -3241,17 +3273,17 @@ const rewritePromptWithCharacters = React.useCallback(
                           }}
                         />
                         {video.duration && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              bottom: 4,
-                              right: 4,
-                              background: 'rgba(0,0,0,0.7)',
-                              color: 'white',
-                              fontSize: '10px',
-                              padding: '2px 6px',
-                              borderRadius: 4,
-                            }}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 4,
+                            right: 4,
+                            background: 'rgba(0,0,0,0.7)',
+                            color: theme.white,
+                            fontSize: '10px',
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                          }}
                           >
                             {Math.round(video.duration)}s
                           </div>

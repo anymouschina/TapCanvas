@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, Group, Paper, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { ActionIcon, Badge, Box, Button, Group, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme } from '@mantine/core'
 import { IconX, IconSparkles, IconSend } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
@@ -36,6 +36,30 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const textModelOptions = useModelOptions('text')
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
+  const { colorScheme } = useMantineColorScheme()
+  const isDarkUi = colorScheme === 'dark'
+  const panelBackground = isDarkUi
+    ? 'linear-gradient(145deg, rgba(5,7,16,0.95), rgba(12,17,32,0.9), rgba(8,14,28,0.95))'
+    : 'linear-gradient(145deg, rgba(248,250,252,0.98), rgba(237,242,255,0.95))'
+  const panelBorder = isDarkUi ? '1px solid rgba(82, 152, 255, 0.25)' : '1px solid rgba(148, 163, 184, 0.4)'
+  const panelShadow = isDarkUi ? '0 0 45px rgba(46,133,255,0.25)' : '0 18px 32px rgba(15,23,42,0.12)'
+  const headerBackground = isDarkUi
+    ? 'linear-gradient(120deg, rgba(15,23,42,0.9), rgba(10,12,24,0.6))'
+    : 'linear-gradient(120deg, rgba(226,232,240,0.92), rgba(248,250,252,0.85))'
+  const headerBorder = isDarkUi ? '1px solid rgba(82,152,255,0.25)' : '1px solid rgba(148,163,184,0.4)'
+  const headerTextColor = isDarkUi ? '#eff6ff' : '#0f172a'
+  const sparklesColor = isDarkUi ? '#a5b4fc' : '#6366f1'
+  const logBackground = isDarkUi ? 'rgba(15,23,42,0.8)' : 'rgba(248,250,252,0.9)'
+  const logBorder = isDarkUi ? '1px solid rgba(59,130,246,0.25)' : '1px solid rgba(148,163,184,0.35)'
+  const messageBackground = isDarkUi ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.04)'
+  const messageBorder = isDarkUi ? '1px solid rgba(59,130,246,0.12)' : '1px solid rgba(148,163,184,0.25)'
+  const messageTextColor = isDarkUi ? '#f8fafc' : '#0f172a'
+  const footerBackground = isDarkUi ? 'rgba(8,10,20,0.85)' : 'rgba(248,250,252,0.96)'
+  const footerBorder = isDarkUi ? '1px solid rgba(15,118,110,0.2)' : '1px solid rgba(148,163,184,0.35)'
+  const inputBackground = isDarkUi ? 'rgba(15,23,42,0.7)' : '#ffffff'
+  const inputBorder = isDarkUi ? 'rgba(99,102,241,0.4)' : 'rgba(148,163,184,0.5)'
+  const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
+  const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
 
   useEffect(() => {
     if (textModelOptions.length && !textModelOptions.find(option => option.value === model)) {
@@ -317,19 +341,19 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         h="100%"
         shadow="xl"
         style={{
-          background: 'linear-gradient(145deg, rgba(5,7,16,0.95), rgba(12,17,32,0.9), rgba(8,14,28,0.95))',
-          border: '1px solid rgba(82, 152, 255, 0.25)',
-          boxShadow: '0 0 45px rgba(46,133,255,0.25)',
+          background: panelBackground,
+          border: panelBorder,
+          boxShadow: panelShadow,
           overflow: 'hidden',
           backdropFilter: 'blur(18px)'
         }}
       >
-        <Box px="lg" py="md" style={{ borderBottom: '1px solid rgba(82,152,255,0.25)', background: 'linear-gradient(120deg, rgba(15,23,42,0.9), rgba(10,12,24,0.6))' }}>
+        <Box px="lg" py="md" style={{ borderBottom: headerBorder, background: headerBackground }}>
           <Group justify="space-between" align="center">
             <Group gap="sm">
               <Badge color="violet" variant="light" size="sm" radius="sm">流式</Badge>
-              <IconSparkles size={16} color="#a5b4fc" />
-              <Text fw={600} fz="lg" c="#eff6ff">暗夜AI助手</Text>
+              <IconSparkles size={16} color={sparklesColor} />
+              <Text fw={600} fz="lg" c={headerTextColor}>暗夜AI助手</Text>
             </Group>
             <Group gap="xs">
               <Select
@@ -341,8 +365,17 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                 withinPortal
               />
               <Tooltip label="关闭">
-                <ActionIcon variant="subtle" color="gray" onClick={onClose}>
-                  <IconX size={16} />
+                <ActionIcon
+                  variant="subtle"
+                  color={isDarkUi ? 'gray' : 'dark'}
+                  onClick={onClose}
+                  styles={{
+                    root: {
+                      color: closeIconColor
+                    }
+                  }}
+                >
+                  <IconX size={16} color={closeIconColor} />
                 </ActionIcon>
               </Tooltip>
             </Group>
@@ -355,16 +388,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
               height: '100%',
               overflow: 'auto',
               padding: 12,
-              background: 'rgba(15,23,42,0.8)',
+              background: logBackground,
               borderRadius: 8,
-              border: '1px solid rgba(59,130,246,0.25)'
+              border: logBorder
             }}
           >
             <Stack gap="sm">
               {messages.map(msg => (
-                <Box key={msg.id} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 8, padding: 10, border: '1px solid rgba(59,130,246,0.12)' }}>
+                <Box key={msg.id} style={{ background: messageBackground, borderRadius: 8, padding: 10, border: messageBorder }}>
                   <Text c="dimmed" size="xs">{msg.role}</Text>
-                  <Text size="sm" c="#f8fafc" style={{ whiteSpace: 'pre-wrap' }}>{stringifyMessage(msg)}</Text>
+                  <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>{stringifyMessage(msg)}</Text>
                 </Box>
               ))}
               {messages.length === 0 && (
@@ -374,7 +407,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           </Box>
         </Box>
 
-        <Box px="lg" py="md" style={{ background: 'rgba(8,10,20,0.85)', borderTop: '1px solid rgba(15,118,110,0.2)' }}>
+        <Box px="lg" py="md" style={{ background: footerBackground, borderTop: footerBorder }}>
           <form
             onSubmit={onSubmit}
           >
@@ -391,7 +424,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                     onSubmit()
                   }
                 }}
-                styles={{ input: { background: 'rgba(15,23,42,0.7)', borderColor: 'rgba(99,102,241,0.4)', color: '#f8fafc' } }}
+                styles={{ input: { background: inputBackground, borderColor: inputBorder, color: inputColor } }}
               />
               <Group justify="space-between">
                 <Button

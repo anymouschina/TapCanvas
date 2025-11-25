@@ -1,6 +1,6 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader, Popover } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader, Popover, useMantineColorScheme } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, deleteProject, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
@@ -16,6 +16,18 @@ export default function ProjectPanel(): JSX.Element | null {
   const currentProject = useUIStore(s => s.currentProject)
   const setCurrentProject = useUIStore(s => s.setCurrentProject)
   const mounted = active === 'project'
+  const { colorScheme } = useMantineColorScheme()
+  const isDarkTheme = colorScheme === 'dark'
+  const projectCardBorder = isDarkTheme ? '1px solid rgba(59, 130, 246, 0.1)' : '1px solid rgba(148, 163, 184, 0.35)'
+  const projectCardBackground = isDarkTheme ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.92)'
+  const projectCardHoverBackground = isDarkTheme ? 'rgba(15, 23, 42, 0.8)' : '#f4f7ff'
+  const projectCardHoverBorder = isDarkTheme ? '#3b82f6' : '#2563eb'
+  const projectCardHoverShadow = isDarkTheme ? '0 4px 20px rgba(59, 130, 246, 0.15)' : '0 10px 24px rgba(15, 23, 42, 0.12)'
+  const accentHoverColor = isDarkTheme ? '#60a5fa' : '#2563eb'
+  const publicBadgeShadow = isDarkTheme ? '0 2px 8px rgba(34, 197, 94, 0.15)' : '0 2px 8px rgba(16, 185, 129, 0.3)'
+  const togglePublicBorder = isDarkTheme ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(16, 185, 129, 0.35)'
+  const togglePrivateBorder = isDarkTheme ? '1px solid rgba(107, 114, 128, 0.2)' : '1px solid rgba(148, 163, 184, 0.35)'
+  const deleteActionBorder = isDarkTheme ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(248, 113, 113, 0.45)'
   const [myProjects, setMyProjects] = React.useState<ProjectDto[]>([])
   const [publicProjects, setPublicProjects] = React.useState<ProjectDto[]>([])
   const [loading, setLoading] = React.useState(false)
@@ -337,7 +349,7 @@ export default function ProjectPanel(): JSX.Element | null {
                       <motion.span
                         initial={{ opacity: 0.7 }}
                         animate={activeTab === 'my' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
-                        whileHover={{ scale: 1.05, color: '#60a5fa' }}
+                        whileHover={{ scale: 1.05, color: accentHoverColor }}
                         transition={{ duration: 0.2 }}
                       >
                         {$('我的项目')}
@@ -358,7 +370,7 @@ export default function ProjectPanel(): JSX.Element | null {
                         <motion.span
                           initial={{ opacity: 0.7 }}
                           animate={activeTab === 'public' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
-                          whileHover={{ scale: 1.05, color: '#60a5fa' }}
+                          whileHover={{ scale: 1.05, color: accentHoverColor }}
                           transition={{ duration: 0.2 }}
                         >
                           {$('公开项目')}
@@ -419,18 +431,18 @@ export default function ProjectPanel(): JSX.Element | null {
                           }}
                           whileHover={{
                             scale: 1.005,
-                            boxShadow: "0 4px 20px rgba(59, 130, 246, 0.15)",
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(15, 23, 42, 0.8)'
+                            boxShadow: projectCardHoverShadow,
+                            borderColor: projectCardHoverBorder,
+                            backgroundColor: projectCardHoverBackground
                           }}
                           style={{
-                            border: '1px solid rgba(59, 130, 246, 0.1)',
+                            border: projectCardBorder,
                             borderRadius: 8,
                             cursor: 'pointer',
                             transition: 'all 0.15s ease',
                             margin: '6px 12px',
                             padding: '2px 0',
-                            backgroundColor: 'rgba(15, 23, 42, 0.6)'
+                            backgroundColor: projectCardBackground
                           }}
                         >
                           <Group justify="space-between" p="sm" gap="md">
@@ -469,7 +481,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                       color="green"
                                       variant="light"
                                       style={{
-                                        boxShadow: '0 2px 8px rgba(34, 197, 94, 0.15)'
+                                        boxShadow: publicBadgeShadow
                                       }}
                                     >
                                       {$('公开')}
@@ -519,7 +531,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                     color={p.isPublic ? 'green' : 'gray'}
                                     onClick={async () => handleTogglePublic(p, !p.isPublic)}
                                     style={{
-                                      border: p.isPublic ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(107, 114, 128, 0.2)'
+                                      border: p.isPublic ? togglePublicBorder : togglePrivateBorder
                                     }}
                                   >
                                     {p.isPublic ? <IconWorld size={14} /> : <IconWorldOff size={14} />}
@@ -556,7 +568,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                         onClick={() => openDeletePopover(p.id)}
                                         loading={deletingProjectId === p.id}
                                         style={{
-                                          border: '1px solid rgba(239, 68, 68, 0.2)'
+                                          border: deleteActionBorder
                                         }}
                                       >
                                         <IconTrash size={14} />
@@ -710,18 +722,18 @@ export default function ProjectPanel(): JSX.Element | null {
                                 }}
                                 whileHover={{
                                   scale: 1.005,
-                                  boxShadow: "0 4px 20px rgba(59, 130, 246, 0.15)",
-                                  borderColor: '#3b82f6',
-                                  backgroundColor: 'rgba(15, 23, 42, 0.8)'
+                                  boxShadow: projectCardHoverShadow,
+                                  borderColor: projectCardHoverBorder,
+                                  backgroundColor: projectCardHoverBackground
                                 }}
                                 style={{
-                                  border: '1px solid rgba(59, 130, 246, 0.1)',
+                                  border: projectCardBorder,
                                   borderRadius: 8,
                                   cursor: 'pointer',
                                   transition: 'all 0.15s ease',
                                   margin: '6px 12px',
                                   padding: '2px 0',
-                                  backgroundColor: 'rgba(15, 23, 42, 0.6)'
+                                  backgroundColor: projectCardBackground
                                 }}
                               >
                                 <Group justify="space-between" p="xs">

@@ -1,7 +1,7 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconBrandGithub, IconLanguage } from '@tabler/icons-react'
+import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { useRFStore } from './canvas/store'
@@ -28,6 +28,7 @@ import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 
 export default function App(): JSX.Element {
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const addNode = useRFStore((s) => s.addNode)
   const subflowNodeId = useUIStore(s => s.subflowNodeId)
   const closeSubflow = useUIStore(s => s.closeSubflow)
@@ -240,6 +241,13 @@ export default function App(): JSX.Element {
           <Group gap="xs">
             <TextInput size="xs" placeholder={$('项目名')} value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
             <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving}>{$('保存')}</Button>
+            <ActionIcon
+              variant="subtle"
+              aria-label={colorScheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              onClick={() => toggleColorScheme()}
+            >
+              {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+            </ActionIcon>
             {/* 历史入口迁移到左侧浮动菜单 */}
             <ActionIcon
               variant="subtle"

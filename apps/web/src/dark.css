@@ -4,33 +4,33 @@
   --mantine-color-dimmed: #9ca3af;        /* 次级文字 */
   --mantine-color-default: #0f1014;       /* 组件背景 */
   --mantine-color-default-hover: #13151c; /* 悬停 */
-  --mantine-color-gray-6: #1f2430;       /* 边框色 */
+  --mantine-color-gray-6: #1f2430;        /* 边框色 */
   --mantine-color-gray-7: #0f1014;
 }
 
 /* AppShell 区块边框更克制 */
-.mantine-AppShell-header { border-bottom: none !important; background: transparent !important; }
-.mantine-AppShell-navbar { border-right: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
-.mantine-AppShell-aside { border-left: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
-.mantine-AppShell-main { background: var(--mantine-color-body) !important; }
+:root[data-mantine-color-scheme="dark"] .mantine-AppShell-header { border-bottom: none !important; background: transparent !important; }
+:root[data-mantine-color-scheme="dark"] .mantine-AppShell-navbar { border-right: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
+:root[data-mantine-color-scheme="dark"] .mantine-AppShell-aside { border-left: 1px solid var(--mantine-color-gray-6) !important; background: #0f1014 !important; }
+:root[data-mantine-color-scheme="dark"] .mantine-AppShell-main { background: var(--mantine-color-body) !important; }
 
 /* 通用按钮低饱和度 */
 button { color: var(--mantine-color-text); }
 
 /* Button 边框弱化（outline / light）*/
-.mantine-Button-root[data-variant="outline"] {
+:root[data-mantine-color-scheme="dark"] .mantine-Button-root[data-variant="outline"] {
   border-color: rgba(255,255,255,.14) !important;
   background: rgba(255,255,255,.02) !important;
 }
-.mantine-Button-root[data-variant="outline"]:hover {
+:root[data-mantine-color-scheme="dark"] .mantine-Button-root[data-variant="outline"]:hover {
   border-color: rgba(255,255,255,.20) !important;
   background: rgba(255,255,255,.04) !important;
 }
-.mantine-Button-root[data-variant="light"] {
+:root[data-mantine-color-scheme="dark"] .mantine-Button-root[data-variant="light"] {
   border-color: rgba(255,255,255,.08) !important;
   background: rgba(255,255,255,.03) !important;
 }
-.mantine-Button-root[data-variant="light"]:hover {
+:root[data-mantine-color-scheme="dark"] .mantine-Button-root[data-variant="light"]:hover {
   border-color: rgba(255,255,255,.12) !important;
   background: rgba(255,255,255,.05) !important;
 }
@@ -39,11 +39,11 @@ button { color: var(--mantine-color-text); }
 }
 
 /* Paper withBorder 边框也更柔和 */
-.mantine-Paper-root[data-with-border] {
+:root[data-mantine-color-scheme="dark"] .mantine-Paper-root[data-with-border] {
   border-color: rgba(255,255,255,.12) !important;
 }
 
-.glass {
+:root[data-mantine-color-scheme="dark"] .glass {
   /* 与控件栏一致的 OKLCH 毛玻璃底色 */
   background: oklch(21% 0.006 285.885 / 0.92) !important;
   backdrop-filter: blur(8px) !important;
@@ -52,7 +52,7 @@ button { color: var(--mantine-color-text); }
 
 
 /* 面板小三角指示（指向左侧图标） */
-.panel-arrow {
+:root[data-mantine-color-scheme="dark"] .panel-arrow {
   position: absolute;
   left: -8px;
   top: 50%;
@@ -65,54 +65,54 @@ button { color: var(--mantine-color-text); }
 }
 
 /* React Flow 细节暗色化与弱化 */
-.react-flow__controls {
+:root[data-mantine-color-scheme="dark"] .react-flow__controls {
   background: rgba(15,16,20,0.6) !important;
   border: 1px solid rgba(255,255,255,0.10) !important;
   backdrop-filter: blur(6px) !important;
   -webkit-backdrop-filter: blur(6px) !important;
 }
-.react-flow__controls-button {
+:root[data-mantine-color-scheme="dark"] .react-flow__controls-button {
   background: transparent !important;
   border-top: 1px solid rgba(255,255,255,0.08) !important;
   color: #ffffff !important;
 }
-.react-flow__controls-button:hover { background: rgba(255,255,255,0.06) !important; }
-.react-flow__controls-button svg { stroke: #ffffff !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__controls-button:hover { background: rgba(255,255,255,0.06) !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__controls-button svg { stroke: #ffffff !important; }
 
-.react-flow__minimap { background: #0f1014 !important; border: 1px solid rgba(255,255,255,0.08) !important; }
-.react-flow__minimap-mask { fill: rgba(255,255,255,0.03) !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__minimap { background: #0f1014 !important; border: 1px solid rgba(255,255,255,0.08) !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__minimap-mask { fill: rgba(255,255,255,0.03) !important; }
 
 /* 选择框与句柄更柔和 */
-.react-flow__selection {
+:root[data-mantine-color-scheme="dark"] .react-flow__selection {
   background: rgba(59,130,246,0.12) !important;
   border: 1px solid rgba(59,130,246,0.35) !important;
 }
-.react-flow__handle {
+:root[data-mantine-color-scheme="dark"] .react-flow__handle {
   width: 8px; height: 8px;
   background: #1a1d24 !important;
   border: 1px solid rgba(255,255,255,0.18) !important;
 }
-.react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
-.react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
-.react-flow__edge:hover .react-flow__edge-path { opacity: 1; }
+:root[data-mantine-color-scheme="dark"] .react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
+:root[data-mantine-color-scheme="dark"] .react-flow__edge:hover .react-flow__edge-path { opacity: 1; }
 
 /* 滚动条弱化 */
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 8px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
-*::-webkit-scrollbar-track { background: transparent; }
+:root[data-mantine-color-scheme="dark"] *::-webkit-scrollbar { width: 8px; height: 8px; }
+:root[data-mantine-color-scheme="dark"] *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 8px; }
+:root[data-mantine-color-scheme="dark"] *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+:root[data-mantine-color-scheme="dark"] *::-webkit-scrollbar-track { background: transparent; }
 
 /* Thinner scrollbars inside floating panels */
-[data-ux-panel] { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent; }
-[data-ux-panel] *::-webkit-scrollbar { width: 6px; height: 6px; }
-[data-ux-panel] *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 8px; }
-[data-ux-panel] *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
-[data-ux-panel] *::-webkit-scrollbar-track { background: transparent; }
+:root[data-mantine-color-scheme="dark"] [data-ux-panel] { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent; }
+:root[data-mantine-color-scheme="dark"] [data-ux-panel] *::-webkit-scrollbar { width: 6px; height: 6px; }
+:root[data-mantine-color-scheme="dark"] [data-ux-panel] *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 8px; }
+:root[data-mantine-color-scheme="dark"] [data-ux-panel] *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+:root[data-mantine-color-scheme="dark"] [data-ux-panel] *::-webkit-scrollbar-track { background: transparent; }
 
 /* 紧凑模式：整体减小控件尺寸与间距 */
 [data-compact="true"] .mantine-Button-root { padding: 4px 8px !important; }
-[data-compact="true"] .mantine-NumberInput-input, 
-[data-compact="true"] .mantine-TextInput-input, 
+[data-compact="true"] .mantine-NumberInput-input,
+[data-compact="true"] .mantine-TextInput-input,
 [data-compact="true"] textarea { padding: 6px 8px !important; }
 [data-compact="true"] .mantine-Stack-root { gap: 6px !important; }
 [data-compact="true"] .mantine-Group-root { gap: 6px !important; }
