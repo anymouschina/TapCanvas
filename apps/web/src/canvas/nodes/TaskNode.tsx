@@ -173,8 +173,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
   const nodeShellBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.9) : theme.white
   const nodeShellBorder = `1px solid ${isDarkUi ? theme.colors.dark[4] : theme.colors.gray[3]}`
-  const nodeShellText = isDarkUi ? theme.white : theme.colors.dark[7]
-  const nodeShellMuted = isDarkUi ? theme.colors.gray[4] : theme.colors.gray[6]
+  const nodeShellText = isDarkUi ? theme.white : theme.colors.gray[8] // 使用更深的颜色提高日间模式对比度
+  const nodeShellMuted = isDarkUi ? theme.colors.gray[4] : theme.colors.gray[7] // 提高日间模式下次要文本的对比度
   const quickActionBackgroundActive = isDarkUi ? rgba(theme.white, 0.08) : rgba(theme.colors.gray[1], 0.8)
   const quickActionIconColor = nodeShellMuted
   const quickActionIconActive = nodeShellText
@@ -186,7 +186,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const overlayCardBorder = `1px solid ${isDarkUi ? theme.colors.gray[4] : theme.colors.gray[3]}`
   const subtleOverlayBackground = isDarkUi ? rgba(theme.colors.dark[5], 0.6) : rgba(theme.colors.gray[3], 0.3)
   const mediaFallbackSurface = isDarkUi ? theme.colors.dark[9] : theme.colors.gray[0]
-  const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[6]
+  const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[7] // 提高日间模式下媒体回退文本的对比度
   const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
   const summaryBarBackground = isDarkUi ? theme.colors.dark[8] : theme.colors.gray[0]
   const summaryBarBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.1) : theme.colors.gray[3]}`
@@ -194,7 +194,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const summaryChipBackground = isDarkUi ? rgba(summaryChipAccent, 0.4) : rgba(summaryChipAccent, 0.1)
   const summaryChipBorder = `1px solid ${isDarkUi ? rgba(summaryChipAccent, 0.85) : rgba(summaryChipAccent, 0.4)}`
   const summaryChipShadow = isDarkUi ? '0 12px 25px rgba(0, 0, 0, 0.45)' : '0 6px 16px rgba(84, 58, 255, 0.12)'
-  const summaryChipColor = isDarkUi ? theme.white : summaryChipAccent
+  const summaryChipColor = theme.white // 在日间和dark模式下都使用白色文字，保持一致
   const summaryChipStyles = React.useMemo(() => ({
     background: summaryChipBackground,
     borderRadius: 999,
