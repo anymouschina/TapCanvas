@@ -1,6 +1,9 @@
 # TapCanvas
+
 **Language:** [中文](README.md) | English
 **Visual AI Creation Canvas (Zero GPU Required)**
+
+source docs : [deepwiki](https://deepwiki.com/anymouschina/TapCanvas)
 
 ## 📝 Introduction
 
@@ -57,14 +60,15 @@ Sora 2’s storyboard mode lets you spell out an entire video shot-by-shot: each
 5. **Post-processing** – Download and edit locally, or publish then use Remix for fine tweaks.
 
 Example storyboard:
+
 - Shot 1 (0–2 s close-up): protagonist shocked (`2d Japanese anime`, `@heng` face highlight, slow push-in)
 - Shot 2 (2–7 s mid shot): two characters chatting (`@heng` & `@keng` in a café, warm lighting)
 - Shot 3 (7–10 s wide): pull-back ending (wide angle, sunset, cinematic tone)
 
 #### Storyboard in Action
 
-| Timeline overview | Scene editor drawer | Generation progress |
-| --- | --- | --- |
+| Timeline overview                                      | Scene editor drawer                                    | Generation progress                                        |
+| ------------------------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
 | ![Storyboard Overview](assets/2025-11-24-storyboard.jpg) | ![Storyboard Drawer](assets/2025-11-24-storyboard-1.jpg) | ![Storyboard Result](assets/2025-11-24-storyboard-2.pic.jpg) |
 
 ## 📅 Changelog
@@ -97,11 +101,11 @@ Example storyboard:
 
 Different AI models support different node types. Please configure them correctly:
 
-| Node Type | Supported Models | Function Description |
-|-----------|----------------|---------------------|
-| **🎬 Video Node** | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | Image-to-Video, Text-to-Video, Video Composition, Animation Creation |
-| **🖼️ Image Node** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | Text-to-Image, Image Generation, Multiple Resolutions, Style Transfer |
-| **📝 Text Node** | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat | Text Generation, Prompt Optimization, Smart Suggestions, Content Creation |
+| Node Type                 | Supported Models                                                                                                                                                                  | Function Description                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **🎬 Video Node**   | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion           | Image-to-Video, Text-to-Video, Video Composition, Animation Creation      |
+| **🖼️ Image Node** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | Text-to-Image, Image Generation, Multiple Resolutions, Style Transfer     |
+| **📝 Text Node**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                  | Text Generation, Prompt Optimization, Smart Suggestions, Content Creation |
 
 ### Configuration Steps
 
@@ -111,6 +115,7 @@ Different AI models support different node types. Please configure them correctl
 4. **Test Connection**: Ensure each model can be called normally
 
 > 💡 **Tip**: Only nodes with correctly configured models can work properly. For example:
+>
 > - Want to generate videos? → Must configure **Sora 2**, **Runway** or **Pika** video models
 > - Want to generate images? → Must configure **Qwen**, **DALL-E**, **Stable Diffusion** or **FLUX** image models
 > - Want to optimize prompts? → Must configure **Gemini**, **Claude**, **GPT** or **DeepSeek** text models
@@ -118,11 +123,13 @@ Different AI models support different node types. Please configure them correctl
 ### 🎯 Recommended Configuration Combinations
 
 **Beginner Recommended Setup**:
+
 - 📝 **Text**: Gemini 2.5 Flash (Cost-effective)
 - 🖼️ **Image**: Qwen Image Plus or FLUX.1 Pro (High quality)
 - 🎬 **Video**: Sora 2 (Most powerful)
 
 **Professional Setup**:
+
 - 📝 **Text**: Gemini 2.5 Pro or Claude 3.5 Sonnet
 - 🖼️ **Image**: DALL-E 3 or Midjourney V6
 - 🎬 **Video**: Runway Gen-3 or Pika Labs V2
@@ -150,6 +157,7 @@ pnpm dev:api    # API service (http://localhost:3001)
 ```
 
 **Management Interface Access:**
+
 - Database Management: http://localhost:8080 (Adminer)
 - Redis Management: http://localhost:8081 (Redis Commander)
 
@@ -202,6 +210,7 @@ SORA_API_KEY="your_sora_api_key"
 ```
 
 **Important Notes:**
+
 - ⚠️ **Do not commit real .env file to Git** (configured in .gitignore)
 - 🔑 All API keys need to be registered and obtained from corresponding platforms
 - 📝 Project provides two .env.example templates: root directory and apps/api/ directory
@@ -211,6 +220,7 @@ SORA_API_KEY="your_sora_api_key"
 - 🔐 **Sensitive Files Removed**: Original apps/api/.env file (with real keys) has been removed from project
 
 **Get API Keys:**
+
 1. **GitHub OAuth**: https://github.com/settings/applications/new
 2. **Hugging Face**: https://huggingface.co/settings/tokens
 3. **Silicon Flow**: https://siliconflow.cn
@@ -442,25 +452,26 @@ In TapCanvas's model configuration, update the endpoint URL to your Worker addre
 
 Domain mapping in the Worker script:
 
-| Proxy Domain | Real Domain | Purpose |
-|-------------|------------|---------|
-| `sora2.beqlee.icu` | `sora.chatgpt.com` | Sora API |
-| `videos.beqlee.icu` | `videos.openai.com` | OpenAI Videos API |
-| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API |
+| Proxy Domain                      | Real Domain                           | Purpose           |
+| --------------------------------- | ------------------------------------- | ----------------- |
+| `sora2.beqlee.icu`              | `sora.chatgpt.com`                  | Sora API          |
+| `videos.beqlee.icu`             | `videos.openai.com`                 | OpenAI Videos API |
+| `generativelanguage.beqlee.icu` | `generativelanguage.googleapis.com` | Gemini API        |
 
 ### Troubleshooting
 
 #### Common Issues
 
 1. **Worker returns 403 error**
+
    - Check if Durable Object is correctly bound
    - Confirm Variable name is `MY_DURABLE_OBJECT`
-
 2. **Request timeout**
+
    - Check Worker execution time limit
    - Consider upgrading to paid plan for longer execution time
-
 3. **Partial request failures**
+
    - Check if upstream services are running normally
    - View Worker log information
 
@@ -509,17 +520,20 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 ### 🤖 AI Model Integration
 
 **Text Generation**:
+
 - **Gemini 2.5 Flash / Pro**: Advanced text generation models
 - **Intelligent Prompt Optimization**: Automatically optimize and improve input prompts
 - **Text Enhancement**: Support text continuation and style conversion
 
 **Image Generation**:
+
 - **Qwen Image Plus**: High-performance image generation model
 - **Multi-Resolution Support**: 16:9, 1:1, 9:16 three common aspect ratios
 - **Batch Generation**: Support 1-5 images generated simultaneously
 - **Text-to-Image**: Generate high-quality images from text descriptions
 
 **Video Generation**:
+
 - **Sora 2**: OpenAI's latest video generation model
 - **Character References**: Support @mention functionality for precise video character control
 - **Multiple Duration Options**: Support 10s, 15s video generation
@@ -527,6 +541,7 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 - **Text-to-Video**: Directly generate video content from text
 
 **Model Management**:
+
 - **Flexible Configuration**: Support custom model endpoints and parameters
 - **Multiple Providers**: Integrate different AI model providers
 - **API Key Management**: Secure key storage and management
@@ -534,21 +549,25 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 ### 🛠️ Advanced Editing Features
 
 **Template System**:
+
 - Browse and reference workflow templates from server
 - Support public workflows and personal workflows
 - Drag templates to canvas for quick creation
 
 **Asset Library**:
+
 - Manage personal creation material assets
 - Sora draft support and asset management
 - Support asset reuse in workflows
 
 **Intelligent Assistance**:
+
 - Intelligent connection type matching, preventing incorrect connections
 - Node auto-layout algorithm support
 - Right-click menu shortcut operations
 
 **Model Configuration**:
+
 - AI model parameter configuration interface
 - Support multiple AI model switching
 
@@ -570,15 +589,18 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 ### ⌨️ Quick Operations
 
 **Keyboard Shortcuts**:
+
 - `Delete/Backspace`: Delete selected nodes or edges
 - Double-click blank area: Exit to upper level in focus mode
 
 **Right-Click Menus**:
+
 - Node right-click: Run, stop, copy, delete, rename and other operations
 - Edge right-click: Delete connection
 - Canvas right-click: Continue creation from image/text
 
 **Drag Operations**:
+
 - Drag templates/assets to canvas for quick node creation
 - Support image file drag-and-drop upload
 
