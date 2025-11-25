@@ -24,7 +24,7 @@ interface UseChatAssistantProps {
 }
 
 /**
- * 暗夜AI助手（流式版），基于 ai/react 的 useChat。
+ * 暗夜AI助手（流式版），基于 @ai-sdk/react 的 useChat。
  * 匹配原 SimpleAIAssistant 的弹窗行为，使用后端 /ai/chat SSE。
  */
 export function UseChatAssistant({ opened, onClose, position = 'right', width = 420 }: UseChatAssistantProps) {
