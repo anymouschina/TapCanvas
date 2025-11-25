@@ -10,6 +10,8 @@
 
 TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持直接 Remix 链式调用，实现多账号共享，让用户能够完美留下自己的创作痕迹。但我们的远不止于此：
 
+[📘 使用指引（飞书文档）](https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b)
+
 **🎨 创新的可视化工作流**
 
 - 首创将复杂AI创作流程转化为直观的节点连线操作

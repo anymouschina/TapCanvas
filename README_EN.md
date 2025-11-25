@@ -5,6 +5,8 @@
 
 source docs : [deepwiki](https://deepwiki.com/anymouschina/TapCanvas)
 
+[📘 Usage Guide (Feishu Wiki)](https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b)
+
 ## 📝 Introduction
 
 The TapCanvas project is specially optimized for Sora 2 with dedicated canvas capabilities, supporting direct Remix chain calls and multi-account sharing, enabling users to perfectly preserve their creative footprints. But our vision extends far beyond this:
