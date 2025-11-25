@@ -183,7 +183,7 @@ importers:
         specifier: ^7.13.1
         version: 7.17.8(@mantine/core@7.17.8(@mantine/hooks@7.17.8(react@18.3.1))(@types/react@18.3.26)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@nanostores/react':
-        specifier: github:ai/react
+        specifier: git+https://github.com/ai/react.git#a6ad745cc307881916944ee4d6ba04bdda978dc6
         version: git+https://git@github.com:ai/react.git#a6ad745cc307881916944ee4d6ba04bdda978dc6(nanostores@1.1.0)(react@18.3.1)
       '@tabler/icons-react':
         specifier: ^3.19.0
