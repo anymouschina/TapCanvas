@@ -183,8 +183,15 @@ export default function AssetPanel(): JSX.Element | null {
               setSoraPublishedUsingShared(false)
             }
           } else {
-            setPublishedVideos([])
-            setSoraPublishedUsingShared(false)
+            try {
+              const data = await listSoraPublishedVideos(undefined, 8)
+              setPublishedVideos(data.items || [])
+              setSoraPublishedUsingShared(true)
+            } catch (err: any) {
+              console.error(err)
+              setPublishedVideos([])
+              setSoraPublishedUsingShared(false)
+            }
           }
         } else if (tab === 'sora-characters') {
           if (activeTokenId) {
@@ -330,10 +337,10 @@ export default function AssetPanel(): JSX.Element | null {
   }
 
   const ensurePublishedForPick = async () => {
-    if (!selectedTokenId || publishedVideos.length > 0 || publishedLoading) return
+    if (publishedVideos.length > 0 || publishedLoading) return
     try {
       setPickCharLoading(true)
-      const data = await listSoraPublishedVideos(selectedTokenId, 12)
+      const data = await listSoraPublishedVideos(selectedTokenId || undefined, 12)
       setPublishedVideos(data.items || [])
     } catch (err: any) {
       console.error(err)
@@ -1018,7 +1025,18 @@ export default function AssetPanel(): JSX.Element | null {
                               setPublishedLoading(false)
                             }
                           } else {
-                            setPublishedVideos([])
+                            setPublishedLoading(true)
+                            try {
+                              const data = await listSoraPublishedVideos(undefined, 8)
+                              setPublishedVideos(data.items || [])
+                              setSoraPublishedUsingShared(true)
+                            } catch (err: any) {
+                              console.error(err)
+                              setPublishedVideos([])
+                              setSoraPublishedUsingShared(false)
+                            } finally {
+                              setPublishedLoading(false)
+                            }
                           }
                         }}
                       />
