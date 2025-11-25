@@ -6,6 +6,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { z } from 'zod'
 import { ACTION_TYPES, SYSTEM_PROMPT, MODEL_PROVIDER_MAP, PROVIDER_VENDOR_ALIASES, type SupportedProvider } from './constants'
+import { PROMPT_SAMPLES, formatPromptSample, matchPromptSamples, type PromptSample } from './prompt-samples'
 import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
 import { ToolEventsService } from './tool-events.service'
 import type { ModelProvider, ModelToken } from '@prisma/client'
@@ -119,7 +120,8 @@ export class AiService {
     const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, payload.apiKey, payload.baseUrl)
     const model = this.buildModel(provider, payload.model, apiKey, baseUrl)
 
-    const systemPrompt = this.composeSystemPrompt(payload.context)
+    const lastUserText = this.getLastUserMessageText(payload.messages)
+    const systemPrompt = this.composeSystemPrompt(payload.context, lastUserText)
     const chatMessages = this.normalizeMessages(payload.messages)
 
     try {
@@ -189,7 +191,7 @@ export class AiService {
 
         conversation.push({
           role: 'user',
-          content: `${reminder}\n用户原始意图：${this.getLastUserMessageText(payload.messages)}`
+          content: `${reminder}\n用户原始意图：${lastUserText}`
         })
       }
 
@@ -238,7 +240,8 @@ export class AiService {
     const provider = this.resolveProvider(payload.model, payload.baseUrl, payload.provider)
     const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, payload.apiKey, payload.baseUrl)
     const modelClient = this.buildModel(provider, payload.model, apiKey, baseUrl)
-    const systemPrompt = this.composeSystemPrompt(payload.context)
+    const lastUserText = this.getLastUserMessageText(payload.messages)
+    const systemPrompt = this.composeSystemPrompt(payload.context, lastUserText)
     const tools = this.resolveTools(payload)
     const toolChoice = this.normalizeToolChoice(payload.toolChoice, tools)
 
@@ -321,6 +324,27 @@ export class AiService {
     })
   }
 
+  listPromptSamples(query?: string, nodeKind?: string) {
+    const normalizedKind = this.normalizePromptSampleKind(nodeKind)
+    const normalizedQuery = (query || '').trim()
+    const limit = 12
+
+    const baseList = normalizedKind ? PROMPT_SAMPLES.filter((s) => s.nodeKind === normalizedKind) : PROMPT_SAMPLES
+
+    if (!normalizedQuery) {
+      return { samples: baseList.slice(0, limit) }
+    }
+
+    const matched = matchPromptSamples(normalizedQuery, limit * 2)
+    const filteredMatched = normalizedKind ? matched.filter((s) => s.nodeKind === normalizedKind) : matched
+
+    if (filteredMatched.length > 0) {
+      return { samples: filteredMatched.slice(0, limit) }
+    }
+
+    return { samples: baseList.slice(0, limit) }
+  }
+
   /**
    * 根据请求决定使用的工具集：
    * - 客户端执行模式（clientToolExecution=true）：仅下发 schema，由前端 useChat 执行
@@ -351,6 +375,22 @@ export class AiService {
       return tools
     }
     return null
+  }
+
+  private normalizePromptSampleKind(kind?: string | null): PromptSample['nodeKind'] | undefined {
+    if (!kind) return undefined
+    switch (kind) {
+      case 'image':
+      case 'textToImage':
+        return 'image'
+      case 'composeVideo':
+      case 'video':
+        return 'composeVideo'
+      case 'storyboard':
+        return 'storyboard'
+      default:
+        return undefined
+    }
   }
 
   private isAnthropic(provider: SupportedProvider) {
@@ -661,30 +701,37 @@ export class AiService {
     return null
   }
 
-  private composeSystemPrompt(context?: CanvasContextDto): string {
-    if (!context) {
-      return SYSTEM_PROMPT
-    }
-
+  private composeSystemPrompt(context?: CanvasContextDto, latestUserText?: string): string {
     const pieces: string[] = [SYSTEM_PROMPT]
-    const summary = context.summary ? JSON.stringify(context.summary) : ''
 
-    if (summary) {
-      pieces.push(`当前画布概要：${summary}`)
+    if (context) {
+      const summary = context.summary ? JSON.stringify(context.summary) : ''
+
+      if (summary) {
+        pieces.push(`当前画布概要：${summary}`)
+      }
+
+      if (context.nodes?.length) {
+        const preview = context.nodes.slice(0, 8).map((node, index) => {
+          const label = node.label || node.data?.label || node.id
+          const kind = node.kind || node.data?.kind
+          return `${index + 1}. ${label} (${kind || node.type || 'unknown'})`
+        })
+        pieces.push(`节点示例：\n${preview.join('\n')}`)
+      }
+
+      if (context.edges?.length) {
+        const preview = context.edges.slice(0, 6).map(edge => `${edge.source} -> ${edge.target}`)
+        pieces.push(`连接示例：${preview.join(', ')}`)
+      }
     }
 
-    if (context.nodes?.length) {
-      const preview = context.nodes.slice(0, 8).map((node, index) => {
-        const label = node.label || node.data?.label || node.id
-        const kind = node.kind || node.data?.kind
-        return `${index + 1}. ${label} (${kind || node.type || 'unknown'})`
-      })
-      pieces.push(`节点示例：\n${preview.join('\n')}`)
-    }
-
-    if (context.edges?.length) {
-      const preview = context.edges.slice(0, 6).map(edge => `${edge.source} -> ${edge.target}`)
-      pieces.push(`连接示例：${preview.join(', ')}`)
+    if (latestUserText && latestUserText.trim()) {
+      const samples = matchPromptSamples(latestUserText, 3)
+      if (samples.length) {
+        const formatted = samples.map(formatPromptSample).join('\n\n')
+        pieces.push(`提示词案例匹配（根据用户意图自动挑选）：\n${formatted}`)
+      }
     }
 
     return pieces.join('\n\n')

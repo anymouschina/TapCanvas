@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, Res, Sse, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Post, Query, Req, Res, Sse, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '../auth/jwt.guard'
 import { AiService } from './ai.service'
 import type { ChatRequestDto, ToolResultDto } from './dto/chat.dto'
@@ -20,6 +20,11 @@ export class AiController {
   @Post('chat/stream')
   async chatStream(@Body() body: ChatRequestDto, @Req() req: any, @Res() res: Response) {
     await this.aiService.chatStream(String(req.user.sub), body, res)
+  }
+
+  @Get('prompt-samples')
+  listPromptSamples(@Query('q') q?: string, @Query('nodeKind') nodeKind?: string) {
+    return this.aiService.listPromptSamples(q, nodeKind)
   }
 
   @Sse('tool-events')

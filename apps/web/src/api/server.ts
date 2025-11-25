@@ -29,6 +29,30 @@ export type ModelEndpointDto = {
   shared?: boolean
 }
 
+export type PromptSampleDto = {
+  id: string
+  scene: string
+  commandType: string
+  title: string
+  nodeKind: 'image' | 'composeVideo' | 'storyboard'
+  prompt: string
+  description?: string
+  inputHint?: string
+  outputNote?: string
+  keywords: string[]
+}
+
+export async function fetchPromptSamples(params?: { query?: string; nodeKind?: string }): Promise<{ samples: PromptSampleDto[] }> {
+  const qs = new URLSearchParams()
+  if (params?.query) qs.set('q', params.query)
+  if (params?.nodeKind) qs.set('nodeKind', params.nodeKind)
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/ai/prompt-samples?${query}` : `${API_BASE}/ai/prompt-samples`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) throw new Error(`fetch prompt samples failed: ${r.status}`)
+  return r.json()
+}
+
 export async function listServerFlows(): Promise<FlowDto[]> {
   const r = await fetch(`${API_BASE}/flows`, withAuth())
   if (!r.ok) throw new Error(`list flows failed: ${r.status}`)
