@@ -35,8 +35,8 @@ type UIState = {
   setDirty: (v: boolean) => void
   currentProject: { id?: string|null; name: string } | null
   setCurrentProject: (p: { id?: string|null; name: string } | null) => void
-  promptSuggestMode: 'history' | 'semantic'
-  setPromptSuggestMode: (m: 'history' | 'semantic') => void
+  promptSuggestMode: 'off' | 'history' | 'semantic'
+  setPromptSuggestMode: (m: 'off' | 'history' | 'semantic') => void
   soraVideoBaseUrl: string | null
   setSoraVideoBaseUrl: (url: string | null) => void
   // AI Chat
@@ -82,7 +82,7 @@ export const useUIStore = create<UIState>((set) => ({
   setDirty: (v) => set({ isDirty: v }),
   currentProject: null,
   setCurrentProject: (p) => set({ currentProject: p }),
-  promptSuggestMode: 'history',
+  promptSuggestMode: 'off',
   setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
   soraVideoBaseUrl: null,
   setSoraVideoBaseUrl: (url) => set({ soraVideoBaseUrl: url }),

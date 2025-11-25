@@ -94,6 +94,49 @@ export default function ModelPanel(): JSX.Element | null {
     }
   }
 
+  const handleClearAll = async () => {
+    if (clearingAll) return
+    if (!window.confirm('确定要清空所有模型配置吗？此操作不可撤销。')) return
+    setClearingAll(true)
+    try {
+      const providerList = providers.length ? providers : await listModelProviders()
+      await Promise.all(
+        providerList.map(async (provider) => {
+          try {
+            const providerTokens = await listModelTokens(provider.id)
+            await Promise.all(providerTokens.map((token) => deleteModelToken(token.id).catch(() => {})))
+            if (provider.baseUrl) {
+              await upsertModelProvider({ id: provider.id, name: provider.name, vendor: provider.vendor, baseUrl: null })
+            }
+          } catch (err) {
+            console.warn('Failed clearing provider', provider.name, err)
+          }
+        })
+      )
+      setTokens([])
+      setGeminiTokens([])
+      setAnthropicTokens([])
+      setQwenTokens([])
+      setGeminiBaseUrl('')
+      setAnthropicBaseUrl('')
+      setVideosEndpoint(null)
+      setVideoEndpoint(null)
+      setSoraEndpoint(null)
+      setVideosUrl('')
+      setVideoUrl('')
+      setSoraUrl('')
+      notifications.show({ color: 'green', title: '已清空', message: '所有模型配置与密钥已清空' })
+    } catch (error) {
+      notifications.show({
+        color: 'red',
+        title: '清空失败',
+        message: error instanceof Error ? error.message : '未知错误'
+      })
+    } finally {
+      setClearingAll(false)
+    }
+  }
+
   // 导入模型配置
   const handleImport = async (file: File) => {
     console.log('Import triggered for file:', file.name, 'Size:', file.size)
@@ -188,7 +231,7 @@ export default function ModelPanel(): JSX.Element | null {
             const soraEndpoints = await listModelEndpoints(sora.id)
             const soraEpsByKey: Record<string, ModelEndpointDto> = {}
             soraEndpoints.forEach((e) => (soraEpsByKey[e.key] = e))
-            setSoraEndpoint(soraEpsByKey['videos'] || null)
+            setVideosEndpoint(soraEpsByKey['videos'] || null)
             setVideoEndpoint(soraEpsByKey['video'] || null)
             setSoraEndpoint(soraEpsByKey['sora'] || null)
 
@@ -253,6 +296,7 @@ export default function ModelPanel(): JSX.Element | null {
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const mounted = active === 'models'
   const [providers, setProviders] = React.useState<ModelProviderDto[]>([])
+  const [clearingAll, setClearingAll] = React.useState(false)
   const [soraProvider, setSoraProvider] = React.useState<ModelProviderDto | null>(null)
   const [tokens, setTokens] = React.useState<ModelTokenDto[]>([])
   const [modalOpen, setModalOpen] = React.useState(false)
@@ -512,14 +556,19 @@ export default function ModelPanel(): JSX.Element | null {
     setQwenTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
-  const handleShareAllTokens = async (sharedFlag: boolean) => {
-    if (!soraProvider || tokens.length === 0) return
+  const bulkShareTokens = async (
+    provider: ModelProviderDto | null,
+    list: ModelTokenDto[],
+    sharedFlag: boolean,
+    setter: React.Dispatch<React.SetStateAction<ModelTokenDto[]>>
+  ) => {
+    if (!provider || list.length === 0) return
     const updated: ModelTokenDto[] = []
-    for (const t of tokens) {
+    for (const t of list) {
       try {
         const saved = await upsertModelToken({
           id: t.id,
-          providerId: soraProvider.id,
+          providerId: provider.id,
           label: t.label,
           secretToken: t.secretToken,
           userAgent: t.userAgent ?? null,
@@ -531,14 +580,19 @@ export default function ModelPanel(): JSX.Element | null {
         updated.push(t)
       }
     }
-    setTokens(updated)
+    setter(updated)
   }
+
+  const handleShareAllTokens = (sharedFlag: boolean) => bulkShareTokens(soraProvider, tokens, sharedFlag, setTokens)
+  const handleShareAllGeminiTokens = (sharedFlag: boolean) => bulkShareTokens(geminiProvider, geminiTokens, sharedFlag, setGeminiTokens)
+  const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(anthropicProvider, anthropicTokens, sharedFlag, setAnthropicTokens)
+  const handleShareAllQwenTokens = (sharedFlag: boolean) => bulkShareTokens(qwenProvider, qwenTokens, sharedFlag, setQwenTokens)
 
   // 计算安全的最大高度
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 7000 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
@@ -612,6 +666,17 @@ export default function ModelPanel(): JSX.Element | null {
                     >
                       <IconUpload size={16} />
                     </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="一键清空所有模型配置">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      loading={clearingAll}
+                      onClick={handleClearAll}
+                    >
+                      清空
+                    </Button>
                   </Tooltip>
                   <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
                     关闭
@@ -781,9 +846,21 @@ export default function ModelPanel(): JSX.Element | null {
                   </Stack>
                   <Group justify="space-between">
                     <Title order={5}>已保存的 Claude Key</Title>
-                    <Button size="xs" onClick={openAnthropicModalForNew}>
-                      新增密钥
-                    </Button>
+                    <Group gap="xs">
+                      {anthropicTokens.length > 0 && (
+                        <>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(true)}>
+                            全部共享
+                          </Button>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(false)}>
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" onClick={openAnthropicModalForNew}>
+                        新增密钥
+                      </Button>
+                    </Group>
                   </Group>
                   {anthropicTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
                   <Stack gap="xs">
@@ -909,9 +986,21 @@ export default function ModelPanel(): JSX.Element | null {
                   </Stack>
                   <Group justify="space-between">
                     <Title order={5}>已保存的 Gemini Key</Title>
-                    <Button size="xs" onClick={openGeminiModalForNew}>
-                      新增 Key
-                    </Button>
+                    <Group gap="xs">
+                      {geminiTokens.length > 0 && (
+                        <>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(true)}>
+                            全部共享
+                          </Button>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(false)}>
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" onClick={openGeminiModalForNew}>
+                        新增 Key
+                      </Button>
+                    </Group>
                   </Group>
                   <Stack gap="xs">
                     {geminiTokens.map((t) => (
@@ -1072,9 +1161,21 @@ export default function ModelPanel(): JSX.Element | null {
                   </Group>
                   <Group justify="space-between">
                     <Title order={5}>已保存的 Qwen Key</Title>
-                    <Button size="xs" onClick={openQwenModalForNew}>
-                      新增 Key
-                    </Button>
+                    <Group gap="xs">
+                      {qwenTokens.length > 0 && (
+                        <>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(true)}>
+                            全部共享
+                          </Button>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(false)}>
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" onClick={openQwenModalForNew}>
+                        新增 Key
+                      </Button>
+                    </Group>
                   </Group>
                   <Stack gap="xs">
                     {qwenTokens.map((t) => (

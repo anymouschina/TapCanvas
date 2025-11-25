@@ -552,7 +552,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                   shadow="md"
                                   radius="md"
                                   withinPortal
-                                  dropdownProps={{ style: { zIndex: 9000 } }}
+                                  dropdownProps={{ withinPortal: true, zIndex: 9000 }}
                                   closeOnClickOutside
                                 >
                                   <Popover.Target>

@@ -417,11 +417,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [showMore, setShowMore] = React.useState(false)
   const moreRef = React.useRef<HTMLDivElement|null>(null)
 
+  const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
   const [promptSuggestions, setPromptSuggestions] = React.useState<string[]>([])
   const [activeSuggestion, setActiveSuggestion] = React.useState(0)
-  const [suggestionsEnabled, setSuggestionsEnabled] = React.useState(false)
+  const suggestionsAllowed = promptSuggestMode !== 'off'
+  const [suggestionsEnabled, setSuggestionsEnabled] = React.useState(() => suggestionsAllowed)
   const suggestTimeout = React.useRef<number | null>(null)
-  const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
   const lastResult = (data as any)?.lastResult as { preview?: { type?: string; value?: string } } | undefined
   const lastText =
     lastResult && lastResult.preview && lastResult.preview.type === 'text'
@@ -1119,12 +1120,18 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [showMore])
 
   React.useEffect(() => {
+    if (!suggestionsAllowed && suggestionsEnabled) {
+      setSuggestionsEnabled(false)
+    }
+  }, [suggestionsAllowed, suggestionsEnabled])
+
+  React.useEffect(() => {
     if (suggestTimeout.current) {
       window.clearTimeout(suggestTimeout.current)
       suggestTimeout.current = null
     }
     const value = prompt.trim()
-    if (!value || value.length < 6 || !suggestionsEnabled) {
+    if (!value || value.length < 6 || !suggestionsEnabled || !suggestionsAllowed) {
       setPromptSuggestions([])
       setActiveSuggestion(0)
       return
@@ -1146,7 +1153,7 @@ const rewritePromptWithCharacters = React.useCallback(
         suggestTimeout.current = null
       }
     }
-  }, [prompt, suggestionsEnabled])
+  }, [prompt, suggestionsEnabled, suggestionsAllowed, promptSuggestMode])
 
   // 输入 @ 时，通过后端转发 Sora search_mentions 接口获取可引用角色（Sora2）
   React.useEffect(() => {
@@ -2677,7 +2684,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Stack>
               ) : (
                 <div style={{ position: 'relative' }}>
-                {prompt.length >= 6 && (
+                {prompt.length >= 6 && suggestionsAllowed && (
                   <ActionIcon
                     variant="subtle"
                     size="xs"
@@ -2749,6 +2756,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
                     if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
                       e.preventDefault()
+                      if (!suggestionsAllowed) return
                       const value = prompt.trim()
                       if (value.length >= 6) {
                         setSuggestionsEnabled(true)

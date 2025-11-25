@@ -15,7 +15,7 @@ export default function AddNodePanel(): JSX.Element | null {
   const mounted = active === 'add'
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 120 : 64), zIndex: 6001 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 120 : 64), zIndex: 200 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>

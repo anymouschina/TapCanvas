@@ -40,7 +40,7 @@ export default function TemplatePanel(): JSX.Element | null {
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 6001 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 200 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>

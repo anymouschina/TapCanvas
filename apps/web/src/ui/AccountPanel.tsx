@@ -17,7 +17,7 @@ export default function AccountPanel(): JSX.Element | null {
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 6001 }} data-ux-panel>
+    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 200 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div style={styles}>
@@ -59,8 +59,9 @@ export default function AccountPanel(): JSX.Element | null {
                     <SegmentedControl
                       size="xs"
                       value={promptSuggestMode}
-                      onChange={(v) => setPromptSuggestMode(v as 'history' | 'semantic')}
+                      onChange={(v) => setPromptSuggestMode(v as 'off' | 'history' | 'semantic')}
                       data={[
+                        { label: '关闭', value: 'off' },
                         { label: '历史匹配', value: 'history' },
                         { label: '语义匹配', value: 'semantic' },
                       ]}
