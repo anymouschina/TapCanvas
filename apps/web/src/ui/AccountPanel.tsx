@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Group, Title, Transition, Button, Avatar, Text, Stack, Divider, SegmentedControl } from '@mantine/core'
+import { Paper, Group, Title, Transition, Button, Avatar, Text, Stack, Divider, SegmentedControl, useMantineColorScheme } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { useAuth } from '../auth/store'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
@@ -13,6 +13,7 @@ export default function AccountPanel(): JSX.Element | null {
   const mounted = active === 'account'
   const user = useAuth(s => s.user)
   const clear = useAuth(s => s.clear)
+  const { colorScheme } = useMantineColorScheme()
   if (!mounted) return null
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
@@ -55,15 +56,15 @@ export default function AccountPanel(): JSX.Element | null {
                   <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
                   <Divider label="提示词自动补全" labelPosition="left" my={8} />
                   <Stack gap={4}>
-                    <Text size="xs" c="dimmed">补全模式</Text>
+                    <Text size="xs" c={colorScheme === 'dark' ? '#cbd5f5' : '#1f2937'}>补全模式</Text>
                     <SegmentedControl
                       size="xs"
                       value={promptSuggestMode}
                       onChange={(v) => setPromptSuggestMode(v as 'off' | 'history' | 'semantic')}
                       data={[
-                        { label: '关闭', value: 'off' },
-                        { label: '历史匹配', value: 'history' },
-                        { label: '语义匹配', value: 'semantic' },
+                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>关闭</span>, value: 'off' },
+                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>历史匹配</span>, value: 'history' },
+                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>语义匹配</span>, value: 'semantic' },
                       ]}
                     />
                   </Stack>

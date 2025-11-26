@@ -12,7 +12,7 @@ const DEFAULT_MODEL = 'gpt-4o-mini'
 
 type OpenAIContentPart =
   | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'image_url'; image_url: { url: string } | string }
 
 type OpenAIMessage = {
   role: string
@@ -47,10 +47,21 @@ function normalizeMessageContent(content: string | OpenAIContentPart[]): OpenAIC
   return content
 }
 
+function convertPartForResponses(part: OpenAIContentPart): OpenAIContentPart {
+  if (part.type === 'text') {
+    return { type: 'input_text', text: (part as any).text ?? '' } as any
+  }
+  if (part.type === 'image_url') {
+    const source = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url
+    return { type: 'input_image', image_url: source || '' } as any
+  }
+  return part
+}
+
 function convertMessagesToResponseInput(messages: OpenAIMessage[]) {
   return messages.map((msg) => ({
     role: msg.role,
-    content: normalizeMessageContent(msg.content),
+    content: normalizeMessageContent(msg.content).map(convertPartForResponses),
   }))
 }
 
@@ -200,6 +211,14 @@ async function callOpenAIChat(
     const msg =
       (res.data && (res.data.error?.message || res.data.message)) ||
       `OpenAI chat completion failed with status ${res.status}`
+    // eslint-disable-next-line no-console
+    console.error('callOpenAIChat error', {
+      url,
+      useResponses,
+      status: res.status,
+      response: res.data,
+      body,
+    })
     const err = new Error(msg)
     ;(err as any).status = res.status
     ;(err as any).response = res.data

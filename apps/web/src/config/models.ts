@@ -9,6 +9,7 @@ export interface ModelOption {
 }
 
 export const TEXT_MODELS: ModelOption[] = [
+  { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
   { value: 'glm-4.6', label: 'GLM-4.6 (Claude兼容)' },
   { value: 'glm-4.5', label: 'GLM-4.5' },
   { value: 'glm-4.5-air', label: 'GLM-4.5-Air' },
@@ -65,6 +66,7 @@ export function getDefaultModel(kind?: NodeKind): string {
 export type AIProvider = 'openai' | 'anthropic' | 'google'
 
 export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
+  'gpt-5.1-codex': 'openai',
   'glm-4.6': 'anthropic',
   'glm-4.5': 'anthropic',
   'glm-4.5-air': 'anthropic',
