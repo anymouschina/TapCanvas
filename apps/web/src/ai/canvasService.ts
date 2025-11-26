@@ -63,7 +63,6 @@ export class CanvasService {
 
     const logicalKinds: Record<string, string> = {
       text: 'text',
-      textToImage: 'textToImage',
       image: 'image',
       video: 'composeVideo',
       composeVideo: 'composeVideo',
@@ -91,10 +90,8 @@ export class CanvasService {
     switch (type) {
       case 'text':
         return '文本提示'
-      case 'textToImage':
-        return '文生图提示'
       case 'image':
-        return '文生图'
+        return '图像生成'
       case 'video':
       case 'composeVideo':
       case 'storyboard':

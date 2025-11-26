@@ -227,7 +227,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isComposerNode = schema.category === 'composer' || isStoryboardNode
   const isVideoNode = schemaFeatures.has('video') || isComposerNode
   const isImageNode = schema.category === 'image'
-  const isTextToImageNode = kind === 'textToImage' || kind === 'coverImage'
   const isCharacterNode = schema.category === 'character'
   const isAudioNode = kind === 'tts'
   const targets: { id: string; type: string; pos: Position }[] = []
@@ -475,10 +474,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     (data as any)?.orientation || 'landscape'
   )
 
-  const activeModelKey =
-    isTextToImageNode
-      ? modelKey
-      : isImageNode
+  const activeModelKey = isImageNode
         ? imageModel
         : isVideoNode
           ? videoModel
@@ -556,12 +552,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     patch.prompt = nextPrompt
     if (isImageNode || isComposerNode) {
       patch.aspect = aspect
-    }
-    if (isTextToImageNode) {
-      patch.geminiModel = modelKey
-      patch.sampleCount = sampleCount
-      patch.systemPrompt = systemPrompt
-      patch.showSystemPrompt = showSystemPrompt
     }
     if (isImageNode) {
       patch.imageModel = imageModel
@@ -1056,14 +1046,14 @@ const rewritePromptWithCharacters = React.useCallback(
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
     const uText =
-      skind === 'textToImage' || skind === 'coverImage' || skind === 'image'
+      skind === 'image'
         ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
         : null
 
     // 获取最新的主图片 URL
     let uImg = null
     let uSoraFileId = null
-    if (skind === 'image' || skind === 'textToImage' || skind === 'coverImage') {
+    if (skind === 'image') {
       uImg = (sd.imageUrl as string | undefined) || null
       uSoraFileId = (sd.soraFileId as string | undefined) || null
     } else if ((skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
@@ -1241,11 +1231,10 @@ const rewritePromptWithCharacters = React.useCallback(
   const hasContent = React.useMemo(() => {
     if (isImageNode) return Boolean(imageUrl)
     if (isVideoNode) return Boolean((data as any)?.videoUrl)
-    if (isTextToImageNode) return Boolean((data as any)?.imageUrl)
     if (kind === 'tts') return Boolean((data as any)?.audioUrl)
     if (isCharacterNode) return Boolean(characterPrimaryImage)
     return false
-  }, [isImageNode, isVideoNode, isTextToImageNode, imageUrl, data, kind, characterPrimaryImage])
+  }, [isImageNode, isVideoNode, imageUrl, data, kind, characterPrimaryImage])
 
   const connectToRight = (targetKind: string, targetLabel: string) => {
     const all = useRFStore.getState().nodes
@@ -1280,36 +1269,12 @@ const rewritePromptWithCharacters = React.useCallback(
     })
   }
 
-  const fixedWidth = (isImageNode || isTextToImageNode) ? 320 : undefined
+  const fixedWidth = isImageNode ? 320 : undefined
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
   const hasAiText = lastText.trim().length > 0
 
   const edgeRoute = useUIStore(s => s.edgeRoute)
 
-  const connectImageToText = () => {
-    const all = useRFStore.getState().nodes
-    const self = all.find((n: any) => n.id === id)
-    if (!self) return
-    const pos = { x: self.position.x + 260, y: self.position.y }
-    const basePrompt = ((self.data as any)?.prompt as string | undefined) || lastText || ''
-    useRFStore.setState((s: any) => {
-      const newId = genTaskNodeId()
-      const nodeData: any = { label: '继续', kind: 'textToImage' }
-      if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt.trim()
-      const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
-      const edgeId = `e-${id}-${newId}-${Date.now().toString(36)}`
-      const edge: any = {
-        id: edgeId,
-        source: id,
-        target: newId,
-        sourceHandle: 'out-image',
-        targetHandle: 'in-any',
-        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-        animated: true,
-      }
-      return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
-    })
-  }
   const connectFromText = (targetKind: 'image' | 'video') => {
     const all = useRFStore.getState().nodes
     const self = all.find((n: any) => n.id === id)
@@ -1377,7 +1342,7 @@ const rewritePromptWithCharacters = React.useCallback(
   }
     const defaultLabel = React.useMemo(() => {
     if (isComposerNode || schema.kind === 'video') return '文生视频'
-    if (isImageNode || isTextToImageNode) return isImageNode ? '图像节点' : '文本提示'
+    if (isImageNode) return '图像节点'
     if (kind === 'audio') return '音频节点'
     if (kind === 'subtitle') return '字幕节点'
     return 'Task'
@@ -1456,7 +1421,7 @@ const rewritePromptWithCharacters = React.useCallback(
               const url =
                 isCharacterNode
                   ? characterPrimaryImage || undefined
-                  : (isImageNode || isTextToImageNode)
+                  : (isImageNode)
                     ? (imageUrl || (data as any)?.imageUrl)
                     : isVideoNode
                       ? (data as any)?.videoUrl
@@ -1475,7 +1440,7 @@ const rewritePromptWithCharacters = React.useCallback(
               const url =
                 isCharacterNode
                   ? characterPrimaryImage || undefined
-                  : (isImageNode || isTextToImageNode)
+                  : (isImageNode )
                     ? (imageUrl || (data as any)?.imageUrl)
                     : isVideoNode
                       ? (data as any)?.videoUrl
@@ -1610,8 +1575,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
                   { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
                   { label: '图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
-                  { label: '反推提示词', icon: <IconAdjustments size={16} />, onClick: () => connectImageToText() },
-                ].map((row, idx) => {
+                                                                          ].map((row, idx) => {
                   const active = hovered === idx
                   const dimOthers = hovered !== null && hovered !== idx
                   return (
@@ -1862,64 +1826,7 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       )}
-      {kind === 'textToImage' && (
-        <div style={{ marginTop: 6 }}>
-          {!(hasPrompt || hasAiText) ? (
-            <div
-              style={{
-                width: 296,
-                borderRadius: 10,
-                border: overlayCardBorder,
-                background: mediaOverlayBackground,
-                padding: '8px 10px',
-                color: mediaOverlayText,
-                fontSize: 13,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-              }}
-            >
-              <Button
-                size="xs"
-                variant="subtle"
-                onClick={() => connectFromText('image')}
-              >
-                文生图
-              </Button>
-              <Button
-                size="xs"
-                variant="subtle"
-                onClick={() => connectFromText('video')}
-              >
-                文生视频
-              </Button>
-            </div>
-          ) : (
-            <div
-              style={{
-                width: 296,
-                minHeight: 80,
-                maxHeight: 140,
-                borderRadius: 10,
-                border: overlayCardBorder,
-                background: mediaOverlayBackground,
-                padding: '8px 10px',
-                color: mediaOverlayText,
-                fontSize: 13,
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'flex-start',
-                whiteSpace: 'pre-wrap',
-                overflowY: 'auto',
-                overflowX: 'hidden',
-              }}
-            >
-              {(prompt || (data as any)?.prompt) || lastText}
-            </div>
-          )}
-        </div>
-      )}
-      {/* remove bottom kind text for all nodes */}
+            {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
       {status === 'running' && (
         <div style={{ marginTop: 6, height: 6, background: 'rgba(127,127,127,.25)', borderRadius: 4 }}>
@@ -2152,7 +2059,7 @@ const rewritePromptWithCharacters = React.useCallback(
           {isCharacterNode ? (
             <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
           ) : (
-            <Text size="xs" c="dimmed" mb={6}>{isTextToImageNode ? '文本提示词' : isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
+            <Text size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
           )}
 
           {!isCharacterNode && status === 'error' && (data as any)?.lastError && (
@@ -2385,60 +2292,6 @@ const rewritePromptWithCharacters = React.useCallback(
             </div>
           ) : (
             <>
-              {/* 系统提示词配置 - 仅对文本节点显示 */}
-              {kind === 'textToImage' && (
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <Text size="xs" c="dimmed">系统提示词</Text>
-                    <Button
-                      size="compact-xs"
-                      variant="subtle"
-                      onClick={() => setShowSystemPrompt(!showSystemPrompt)}
-                    >
-                      {showSystemPrompt ? '隐藏' : '显示'}
-                    </Button>
-                  </div>
-                  {showSystemPrompt && (
-                    <Textarea
-                      autosize
-                      minRows={2}
-                      maxRows={4}
-                      placeholder="输入AI的系统提示词，用于指导如何优化用户输入的提示词..."
-                      value={systemPrompt}
-                      onChange={(e) => {
-                        const value = e.currentTarget.value
-                        setSystemPrompt(value)
-                        updateNodeData(id, { systemPrompt: value })
-                      }}
-                      style={{
-                        fontSize: 11,
-                        background: mediaOverlayBackground,
-                        border: overlayCardBorder,
-                        color: mediaOverlayText,
-                        marginBottom: 4,
-                      }}
-                    />
-                  )}
-                  {!showSystemPrompt && (
-                    <Text
-                      size="xs"
-                      c="dimmed"
-                      onClick={() => setShowSystemPrompt(true)}
-                      style={{
-                        cursor: 'pointer',
-                        padding: '4px 6px',
-                        background: subtleOverlayBackground,
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontStyle: 'italic'
-                      }}
-                    >
-                      {systemPrompt.length > 60 ? systemPrompt.slice(0, 60) + '...' : systemPrompt}
-                    </Text>
-                  )}
-                </div>
-              )}
-
               {isComposerNode && (upstreamImageUrl || upstreamText) && (
                 <div style={{ marginBottom: 8 }}>
                   {upstreamImageUrl && (
@@ -2946,146 +2799,8 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
             </>
           )}
-          {kind === 'textToImage' && textResults.length > 0 && (
-            <Paper
-              withBorder
-              radius="md"
-              p="xs"
-              mt="xs"
-              style={{
-                maxHeight: 160,
-                overflowY: 'auto',
-                background: darkContentBackground,
-              }}
-            >
-              <Group justify="space-between" mb={4}>
-                <Text size="xs" c="dimmed">
-                  AI 输出（文生文）
-                </Text>
-                {textResults.length > 1 && (
-                  <Button
-                    size="xs"
-                    variant="subtle"
-                    onClick={() => setCompareOpen(true)}
-                  >
-                    对比
-                  </Button>
-                )}
-              </Group>
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
-                {textResults.map((r, idx) => (
-                  <div
-                    key={`${idx}-${r.text.slice(0, 16)}`}
-                    style={{
-                      borderRadius: 6,
-                      border: '1px solid rgba(148,163,184,0.5)',
-                      padding: '4px 6px',
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 6,
-                      background: darkContentBackground,
-                    }}
-                  >
-                    <Text
-                      size="xs"
-                      style={{
-                        whiteSpace: 'pre-wrap',
-                        flex: 1,
-                      }}
-                    >
-                      {r.text}
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      onClick={() => {
-                        const t = r.text
-                        setPrompt(t)
-                        updateNodeData(id, { prompt: t })
-                      }}
-                    >
-                      应用
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </Paper>
-          )}
         </Paper>
       </NodeToolbar>
-
-      {/* 文案对比弹窗 */}
-      {kind === 'textToImage' && (
-        <Modal
-          opened={compareOpen}
-          onClose={() => setCompareOpen(false)}
-          title="对比生成的提示词"
-          centered
-          size="lg"
-          withinPortal
-          zIndex={8000}
-        >
-          <Stack gap="sm">
-            <Text size="xs" c="dimmed">
-              点击「应用为当前提示词」可以将该版本填入上方输入框。
-            </Text>
-            <div
-              style={{
-                maxHeight: '50vh',
-                overflowY: 'auto',
-              }}
-            >
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                  gap: 12,
-                }}
-              >
-                {textResults.map((r, idx) => (
-                  <Paper
-                    key={`${idx}-${r.text.slice(0, 16)}`}
-                    withBorder
-                    radius="md"
-                    p="xs"
-                    style={{
-                      background: darkContentBackground,
-                    }}
-                  >
-                    <Group justify="space-between" mb={4}>
-                      <Text size="xs" c="dimmed">
-                        版本 {idx + 1}
-                      </Text>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        onClick={() => {
-                          const t = r.text
-                          setPrompt(t)
-                          updateNodeData(id, { prompt: t })
-                          setCompareOpen(false)
-                        }}
-                      >
-                        应用为当前提示词
-                      </Button>
-                    </Group>
-                    <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                      {r.text}
-                    </Text>
-                  </Paper>
-                ))}
-              </div>
-            </div>
-          </Stack>
-        </Modal>
-      )}
-
       <PromptSampleDrawer
         opened={promptSamplesOpen}
         nodeKind={kind}

@@ -78,7 +78,7 @@ export async function runNodeMock(id: string, get: Getter, set: Setter) {
 }
 
 function makePreview(kind: string, text: string) {
-  if (kind === 'textToImage' || kind === 'composeVideo' || kind === 'storyboard') {
+  if (kind === 'composeVideo' || kind === 'storyboard') {
     const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><rect width='100%' height='100%' fill='#111827'/><text x='50%' y='50%' fill='#e5e7eb' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${text}</text></svg>`)
     return { type: 'image', src: `data:image/svg+xml;charset=UTF-8,${svg}` }
   }
