@@ -40,7 +40,7 @@ export default function AddNodePanel(): JSX.Element | null {
               <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
                 <Title order={6} mb={8}>{$('添加节点')}</Title>
                 <Stack gap={8}>
-                  <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'textToImage' }); setActivePanel(null) }}>{$('文本')}</Button>
+                  {/* <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'text' }); setActivePanel(null) }}>{$('文本')}</Button> */}
                   <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', 'Image', { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
                   <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode', '视频', { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
                   <Button variant="light" leftSection={<IconMovie size={16} />} onClick={() => { addNode('taskNode', '分镜', { kind: 'storyboard' }); setActivePanel(null) }}>{$('分镜beta')}</Button>

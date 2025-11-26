@@ -97,7 +97,7 @@ export function useModelOptions(kind?: NodeKind): ModelOption[] {
   }, [baseOptions])
 
   useEffect(() => {
-    if (kind && kind !== 'text' && kind !== 'textToImage') return
+    if (kind && kind !== 'text') return
     let canceled = false
     getAnthropicModelOptions()
       .then((remote) => {

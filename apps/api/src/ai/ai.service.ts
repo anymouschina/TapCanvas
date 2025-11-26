@@ -34,7 +34,7 @@ const canvasToolSchemas = {
     inputSchema: z.object({})
   },
   createNode: {
-    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成）',
+    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成），跟图片有关的节点就是image,视频就是video节点，提示词直接传入 prompt 就行，支持文生图，文生视频',
     inputSchema: z.object({
       type: z.string(),
       label: z.string().optional(),
@@ -255,6 +255,7 @@ export class AiService {
       userId,
       provider,
       model: payload.model,
+      tools,
       baseUrl: baseUrl || '(default)',
       msgCount: payload.messages?.length || 0,
       hasApiKey: !!apiKey,
@@ -381,7 +382,6 @@ export class AiService {
     if (!kind) return undefined
     switch (kind) {
       case 'image':
-      case 'textToImage':
         return 'image'
       case 'composeVideo':
       case 'video':

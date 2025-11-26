@@ -2,7 +2,7 @@ import type { Edge, Node } from 'reactflow'
 import { getAuthToken } from '../auth/store'
 // self-import guard: only used for type re-export in the same module
 
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+export const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
 function withAuth(init?: RequestInit): RequestInit {
   const t = getAuthToken()
   return { ...(init || {}), headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } }

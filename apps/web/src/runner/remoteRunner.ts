@@ -41,7 +41,6 @@ interface RunnerContext extends RunnerHandlers {
   supportsSamples: boolean
   isImageTask: boolean
   isVideoTask: boolean
-  isTextTask: boolean
   modelKey?: string
   getState: Getter
 }
@@ -169,7 +168,7 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
   const kind: string = data.kind || 'task'
   const taskKind = resolveTaskKind(kind)
   const prompt = buildPromptFromState(kind, data, state, id)
-  const { sampleCount, supportsSamples, isImageTask, isVideoTask, isTextTask } =
+  const { sampleCount, supportsSamples, isImageTask, isVideoTask } =
     computeSampleMeta(kind, data)
   const handlers: RunnerHandlers = {
     setNodeStatus: state.setNodeStatus as RunnerHandlers['setNodeStatus'],
@@ -196,7 +195,6 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
     supportsSamples,
     isImageTask,
     isVideoTask,
-    isTextTask,
     modelKey,
     getState: get,
     ...handlers,
@@ -224,7 +222,7 @@ function buildPromptFromState(
       const src = (state.nodes as Node[]).find((n: Node) => n.id === lastEdge.source)
       const sd: any = src?.data || {}
       const skind: string | undefined = sd.kind
-      if (skind === 'textToImage' || skind === 'image') {
+      if (skind === 'image') {
         upstreamPrompt =
           (sd.prompt as string | undefined) ||
           ''
@@ -243,14 +241,13 @@ function buildPromptFromState(
 function computeSampleMeta(kind: string, data: any) {
   const isImageTask = kind === 'image'
   const isVideoTask = kind === 'composeVideo' || kind === 'storyboard' || kind === 'video'
-  const isTextTask = kind === 'textToImage'
-  const rawSampleCount = typeof data.sampleCount === 'number' ? data.sampleCount : 1
-  const supportsSamples = isImageTask || isVideoTask || isTextTask
+    const rawSampleCount = typeof data.sampleCount === 'number' ? data.sampleCount : 1
+  const supportsSamples = isImageTask || isVideoTask
   const sampleCount = supportsSamples
     ? Math.max(1, Math.min(5, Math.floor(rawSampleCount || 1)))
     : 1
 
-  return { sampleCount, supportsSamples, isImageTask, isVideoTask, isTextTask }
+  return { sampleCount, supportsSamples, isImageTask, isVideoTask }
 }
 
 function ensurePrompt(ctx: RunnerContext): boolean {
@@ -278,11 +275,7 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
 
   beginQueuedRun(ctx)
 
-  if (ctx.isTextTask) {
-    await runTextTask(ctx)
-    return
-  }
-
+  
   if (ctx.isVideoTask) {
     await runVideoTask(ctx)
     return
@@ -851,7 +844,6 @@ async function runGenericTask(ctx: RunnerContext) {
     appendLog,
     isCanceled,
     isImageTask,
-    isTextTask,
     kind,
     prompt,
   } = ctx
@@ -911,14 +903,14 @@ async function runGenericTask(ctx: RunnerContext) {
       }
 
       const textOut = (res.raw && (res.raw.text as string)) || ''
-      if (isTextTask && textOut.trim()) {
+      if (textOut.trim()) {
         allTexts.push(textOut.trim())
       }
 
       const imageAssets = (res.assets || []).filter(
         (a: any) => a.type === 'image',
       )
-      if (isImageTask && imageAssets.length) {
+      if (imageAssets.length) {
         allImageAssets.push(...imageAssets.map((a: any) => ({ url: a.url })))
       }
 
@@ -951,7 +943,7 @@ async function runGenericTask(ctx: RunnerContext) {
         imageResults: merged,
       }
     }
-    if (isTextTask && allTexts.length) {
+    if (allTexts.length) {
       const existingTexts =
         (data.textResults as { text: string }[] | undefined) || []
       const mergedTexts = [

@@ -68,7 +68,6 @@ export class AICanvasTools {
 
       const kindAliases: Record<string, string> = {
         text: NODE_KINDS.TEXT,
-        textToImage: 'textToImage',
         image: NODE_KINDS.IMAGE,
         video: 'composeVideo',
         composeVideo: 'composeVideo',
