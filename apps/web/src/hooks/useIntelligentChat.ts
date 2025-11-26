@@ -5,9 +5,10 @@ import type {
   ExecutionPlan,
   UseIntelligentChatOptions,
   UseIntelligentChatReturn,
-  IntelligentChatMessage,
-  CanvasWebSocketEvent
+  IntelligentChatMessage
 } from '../types/canvas-intelligence'
+import { subscribeToolEvents, mapToolEventToCanvasOperation, extractThinkingEvent } from '../api/toolEvents'
+import { getAuthToken } from '../auth/store'
 
 export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntelligentChatReturn => {
   const {
@@ -28,71 +29,6 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
   const [intelligentMode, setIntelligentMode] = useState(initialIntelligentMode)
   const [enableThinking, setEnableThinking] = useState(initialEnableThinking)
 
-  const wsRef = useRef<WebSocket | null>(null)
-  const sessionIdRef = useRef<string>(generateSessionId())
-
-  // 生成会话ID
-  function generateSessionId(): string {
-    return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-  }
-
-  // 初始化WebSocket连接
-  useEffect(() => {
-    if (!userId) return
-
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ai/tool-events?userId=${userId}`
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      console.log('Intelligent chat WebSocket connected')
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const data: CanvasWebSocketEvent = JSON.parse(event.data)
-
-        switch (data.type) {
-          case 'thinking-event':
-            handleThinkingEvent(data.payload)
-            break
-
-          case 'canvas.operation':
-            handleCanvasOperation(data)
-            break
-
-          case 'canvas.layout.apply':
-            handleLayoutOperation(data)
-            break
-
-          case 'canvas.optimization.analyze':
-            handleOptimizationOperation(data)
-            break
-
-          default:
-            console.log('Unknown WebSocket event type:', data.type)
-        }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error)
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
-      setError(new Error('WebSocket连接失败'))
-    }
-
-    ws.onclose = () => {
-      console.log('WebSocket connection closed')
-    }
-
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close()
-      }
-    }
-  }, [userId])
-
   // 处理思考事件
   const handleThinkingEvent = useCallback((event: ThinkingEvent) => {
     setThinkingEvents(prev => [...prev, event])
@@ -102,32 +38,40 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     }
   }, [onThinkingEvent])
 
-  // 处理画布操作
-  const handleCanvasOperation = useCallback((data: any) => {
-    if (onOperationExecuted) {
-      onOperationExecuted(data.payload)
-    }
-  }, [onOperationExecuted])
+  const sessionIdRef = useRef<string>(generateSessionId())
 
-  // 处理布局操作
-  const handleLayoutOperation = useCallback((data: any) => {
-    if (onOperationExecuted) {
-      onOperationExecuted({
-        type: 'layout',
-        payload: data.payload
-      })
-    }
-  }, [onOperationExecuted])
+  // 生成会话ID
+  function generateSessionId(): string {
+    return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  }
 
-  // 处理优化操作
-  const handleOptimizationOperation = useCallback((data: any) => {
-    if (onOperationExecuted) {
-      onOperationExecuted({
-        type: 'optimization',
-        payload: data.payload
-      })
+  // 订阅工具事件
+  useEffect(() => {
+    if (!userId) return
+    const token = getAuthToken()
+    if (!token) return
+
+    const unsubscribe = subscribeToolEvents({
+      url: '/api/ai/tool-events',
+      token,
+      onEvent: (event) => {
+        const thinking = extractThinkingEvent(event)
+        if (thinking) {
+          handleThinkingEvent(thinking)
+          return
+        }
+
+        const normalizedOperation = mapToolEventToCanvasOperation(event)
+        if (normalizedOperation && onOperationExecuted) {
+          onOperationExecuted(normalizedOperation)
+        }
+      }
+    })
+
+    return () => {
+      unsubscribe()
     }
-  }, [onOperationExecuted])
+  }, [userId, handleThinkingEvent, onOperationExecuted])
 
   // 发送消息
   const sendMessage = useCallback(async (message: string, options?: any) => {
@@ -147,11 +91,12 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     setMessages(prev => [...prev, userMessage])
 
     try {
+      const token = getAuthToken()
       const requestOptions = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           messages: [{ role: 'user', content: message.trim() }],
@@ -287,13 +232,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     setMessages(prev => [...prev, assistantMessage])
     setThinkingEvents(response.thinkingEvents)
 
-    // 执行返回的actions
-    if (response.actions && onOperationExecuted) {
-      response.actions.forEach((action: any) => {
-        onOperationExecuted(action)
-      })
-    }
-  }, [onOperationExecuted])
+  }, [])
 
   // 清理会话
   const clearSession = useCallback(() => {

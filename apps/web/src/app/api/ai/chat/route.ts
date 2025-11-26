@@ -14,6 +14,16 @@ import { getModelProvider } from '../../../config/models'
 // 配置运行时为Edge
 export const runtime = 'edge'
 
+const normalizeOpenAIBaseUrl = (input?: string | null): string | undefined => {
+  const envBase = input?.trim() || process.env.OPENAI_BASE_URL?.trim()
+  if (!envBase) return undefined
+  let normalized = envBase.replace(/\/+$/, '')
+  if (!/\/v\d+(?:\/|$)/i.test(normalized)) {
+    normalized = `${normalized}/v1`
+  }
+  return normalized
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -40,7 +50,7 @@ export async function POST(req: NextRequest) {
     } else if (provider === 'google' || lower.startsWith('gemini')) {
       selectedModel = google(model, { apiKey: finalKey, baseURL: baseUrl || process.env.GEMINI_BASE_URL || undefined })
     } else if (lower.startsWith('gpt-') || provider === 'openai') {
-      selectedModel = openai(model, { apiKey: finalKey, baseURL: baseUrl || process.env.OPENAI_BASE_URL || undefined })
+      selectedModel = openai(model, { apiKey: finalKey, baseURL: normalizeOpenAIBaseUrl(baseUrl) })
     } else {
       selectedModel = openai('gpt-3.5-turbo', { apiKey: finalKey })
     }

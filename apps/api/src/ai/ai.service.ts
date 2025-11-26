@@ -586,7 +586,7 @@ export class AiService {
 
     let normalized = trimmed.replace(/\/+$/, '')
 
-    if (provider === 'anthropic') {
+    if (provider === 'anthropic' || provider === 'openai') {
       const hasVersion = /\/v\d+($|\/)/i.test(normalized)
       if (!hasVersion) normalized = `${normalized}/v1`
     }
@@ -739,7 +739,13 @@ export class AiService {
 
   private normalizeMessages(messages: ChatRequestDto['messages']): CoreMessage[] {
     if (!messages?.length) return []
-    const uiMessages = messages.map(message => this.mapToUiMessage(message))
+    const filtered = (messages as ChatMessageDto[]).filter((message): message is ChatMessageDto => {
+      return !!message && typeof message.role === 'string'
+    })
+    if (!filtered.length) return []
+    const uiMessages = filtered
+      .map(message => this.mapToUiMessage(message))
+      .filter((msg): msg is NonNullable<ReturnType<typeof AiService.prototype.mapToUiMessage>> => !!msg && msg.parts.length > 0)
     return convertToCoreMessages(uiMessages as any)
   }
 
@@ -762,13 +768,54 @@ export class AiService {
   private mapToUiMessage(message: ChatMessageDto) {
     const hasParts = Array.isArray((message as any)?.parts) && (message as any).parts.length > 0
     const fallbackText = typeof message.content === 'string' ? message.content : ''
-    const parts = hasParts ? (message.parts as any[]) : [{ type: 'text', text: fallbackText }]
+    const parts = hasParts
+      ? (message.parts as any[])
+        .map(part => this.normalizePart(part))
+        .filter(Boolean)
+      : [{ type: 'text', text: fallbackText }]
     const metadata = (message as any)?.metadata
     return {
       role: (message.role || 'user') as 'system' | 'user' | 'assistant',
       parts,
       ...(metadata ? { metadata } : {})
     }
+  }
+
+  private normalizePart(part: any) {
+    if (!part) return null
+    if (part.type === 'item_reference') {
+      return null
+    }
+    if (part.type === 'function_call_output') {
+      const textPayload = typeof part.output === 'string'
+        ? part.output
+        : (() => {
+            try {
+              return JSON.stringify(part.output)
+            } catch {
+              return ''
+            }
+          })()
+      return textPayload ? { type: 'text', text: textPayload } : null
+    }
+    if (part.type === 'text' || part.type === 'reasoning') {
+      return {
+        type: part.type,
+        text: typeof part.text === 'string' ? part.text : ''
+      }
+    }
+    if (part.type === 'step-start' || part.type === 'step-end') {
+      return { type: part.type }
+    }
+    if (part.type?.startsWith('tool-')) {
+      const { providerMetadata, callProviderMetadata, ...rest } = part
+      return rest
+    }
+    if (typeof part === 'object') {
+      const { providerMetadata, callProviderMetadata, ...rest } = part
+      return rest
+    }
+    return null
   }
 
   private extractMessageText(message?: ChatMessageDto | null): string {

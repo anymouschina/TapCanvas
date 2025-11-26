@@ -27,14 +27,19 @@ pnpm --filter @tapcanvas/web test
 
 ### Infrastructure
 ```bash
-# Start backend infrastructure (PostgreSQL + Redis)
+# Start backend infrastructure (PostgreSQL + Redis + Admin UIs)
 pnpm compose:up
+# Or use Docker directly:
+docker-compose -f docker-compose.minimal.yml up -d
 
 # Stop backend infrastructure
 pnpm compose:down
 
 # View backend logs
 pnpm compose:logs
+
+# Database migration (after infrastructure is up)
+cd apps/api && pnpm prisma:generate && pnpm prisma:migrate
 ```
 
 ### Deployment
@@ -65,6 +70,8 @@ The canvas system has been comprehensively refactored following "Yahoo's militar
 apps/web/src/canvas/
 ├── index.ts                    # Unified export module
 ├── store.ts                    # Zustand state management with history
+├── Canvas.tsx                  # Main canvas component
+├── insertMenuStore.ts          # Insert menu state management
 ├── utils/                      # Pure utility functions (business logic)
 │   ├── constants.ts           # Centralized constants and node types
 │   ├── node.ts                # Node manipulation utilities
@@ -73,21 +80,32 @@ apps/web/src/canvas/
 │   ├── geometry.ts            # Mathematical calculations
 │   ├── validation.ts          # Data validation schemas
 │   ├── serialization.ts       # Data persistence utilities
+│   ├── canvas.ts              # Canvas-specific utilities
 │   └── colors.ts              # Color schemes and themes
-├── components/shared/          # Reusable UI components
-│   ├── NodeBase/              # Base node component architecture
-│   ├── Modal/                 # Reusable modal components
-│   └── GitHubLanguageButton.tsx # Language switcher + GitHub icon
+├── ai/                        # AI Assistant integration
+│   ├── index.ts               # Module exports
+│   ├── tools.ts               # Canvas manipulation tools for AI
+│   ├── aiAssistant.ts         # AI assistant core logic
+│   ├── UseChatAssistant.tsx   # Chat assistant React component
+│   └── useApiKey.ts           # API key management
+├── components/                 # Reusable UI components
+│   ├── shared/
+│   │   ├── NodeBase/          # Base node component architecture
+│   │   ├── Modal/             # Reusable modal components
+│   │   ├── GitHubLanguageButton.tsx
+│   │   └── LanguageSwitcher.tsx
+│   └── PromptSampleDrawer.tsx # Prompt templates drawer
 ├── nodes/                     # Node type implementations
-│   ├── TaskNode.tsx # Main workflow nodes
+│   ├── TaskNode.tsx           # Main workflow nodes
+│   ├── taskNodeSchema.ts      # Node configuration schema
+│   ├── storyboardUtils.ts     # Storyboard/scene utilities
 │   ├── GroupNode.tsx          # Group container nodes
 │   └── IONode.tsx             # Input/output interface nodes
 ├── edges/                     # Edge type implementations
 │   ├── TypedEdge.tsx          # Standard typed connections
 │   └── OrthTypedEdge.tsx      # Orthogonal routing
-├── i18n/                      # Internationalization system
-│   └── index.ts               # Chinese/English translation functions
-└── examples/                  # Demo components
+└── i18n/                      # Internationalization system
+    └── index.ts               # Chinese/English translation functions
 ```
 
 ### Node System Architecture
@@ -116,6 +134,14 @@ interface NodeData {
 - **Text Generation**: Gemini 2.5 Flash/Pro models
 - **Image Generation**: Qwen Image Plus (multiple resolutions: 16:9, 1:1, 9:16)
 - **Video Generation**: Sora 2 with character references (@mentions)
+- **Storyboard Mode**: Multi-shot video generation with scene breakdown
+
+**Storyboard/Scene System:**
+The `storyboardUtils.ts` provides utilities for managing multi-scene video workflows:
+- Scene breakdown with timing (镜头时长)
+- Camera angles and shot types (近景/中景/远景)
+- Character reference management (@username mentions)
+- Sequential shot generation and assembly
 
 ### State Management Architecture
 
@@ -151,6 +177,30 @@ updateNodeData: (id, patch) => set((s) => ({
 - **Radial Layout**: Center-based layout with distance calculations
 - **Force-Directed Layout**: Physics-based positioning with repulsion/attraction
 - **Alignment Tools**: Grid snapping, horizontal/vertical alignment
+
+### AI Assistant Architecture
+
+The AI assistant enables natural language control of the canvas:
+
+**Frontend Components (`canvas/ai/`):**
+- **tools.ts**: Defines canvas manipulation tools (addNode, editNode, deleteNode, connectNodes, findNodes, getCanvasInfo)
+- **aiAssistant.ts**: Core AI chat logic with tool call handling
+- **UseChatAssistant.tsx**: React component managing chat state and SSE streams
+
+**Backend Intelligence (`apps/api/src/ai/`):**
+- **Capabilities System**: Modular capabilities for different tasks
+  - `node-manipulation.capability.ts`: Node CRUD operations
+  - `layout-arrangement.capability.ts`: Auto-layout commands
+  - `execution-debug.capability.ts`: Workflow execution control
+  - `xiaohongshu-cover.capability.ts`: Specialized content generation
+- **Intelligence Layer**: Intent recognition and thinking stream
+- **Tool Events**: SSE-based tool call/result communication
+
+**AI-Canvas Integration Flow:**
+1. User sends chat message → Backend streams response via SSE
+2. AI generates tool calls → Frontend receives via `/ai/tool-events` SSE
+3. Frontend executes tools on canvas → Results sent via `/ai/tools/result`
+4. Backend continues conversation with tool results
 
 ### Internationalization System
 
@@ -255,6 +305,7 @@ const { currentLanguage, setLanguage, isEn, isZh } = useI18n();
 **Backend:**
 - **NestJS** API with Prisma ORM
 - **Bull** for job queues and task orchestration
+- **AI Module** with capability-based architecture for intelligent features
 
 **Development:**
 - **pnpm workspaces** for monorepo management
@@ -268,9 +319,19 @@ TapCanvas/
 ├── apps/
 │   ├── web/              # React frontend application
 │   │   └── src/
-│   │       ├── canvas/   # Core canvas system (recently refactored)
-│   │       └── ui/       # UI components and panels
+│   │       ├── canvas/   # Core canvas system (nodes, edges, AI, i18n)
+│   │       ├── ui/       # UI panels (FloatingNav, ProjectPanel, ModelPanel, etc.)
+│   │       └── runner/   # Node execution runners (mock, remote, DAG)
 │   └── api/              # NestJS API service
+│       └── src/
+│           ├── ai/       # AI assistant backend (capabilities, intelligence)
+│           ├── task/     # Task execution with model adapters
+│           ├── sora/     # Sora-specific services and token routing
+│           ├── flow/     # Workflow management
+│           ├── project/  # Project CRUD
+│           ├── model/    # Model configuration
+│           ├── asset/    # Asset management
+│           └── auth/     # Authentication (GitHub OAuth, JWT)
 ├── packages/
 │   ├── cli/              # Command line tools
 │   ├── sdk/              # TypeScript SDK
@@ -279,4 +340,18 @@ TapCanvas/
     └── docker/           # Docker infrastructure files
 ```
 
-The canvas module (`apps/web/src/canvas/`) contains the main visual editor and has been comprehensively refactored following strict architectural principles for maintainability and extensibility.
+The canvas module (`apps/web/src/canvas/`) contains the main visual editor following strict architectural principles for maintainability and extensibility.
+
+### Key API Endpoints
+
+**AI Assistant:**
+- `POST /ai/chat/stream` - SSE streaming chat
+- `GET /ai/tool-events` - SSE for tool call events
+- `POST /ai/tools/result` - Submit tool execution results
+
+**Task Execution:**
+- Model adapters in `apps/api/src/task/adapters/`:
+  - `sora.adapter.ts` - Sora 2 video generation
+  - `qwen.adapter.ts` - Qwen image generation
+  - `gemini.adapter.ts` - Gemini text generation
+  - `anthropic.adapter.ts` - Claude text generation

@@ -16,6 +16,7 @@ import {
   type ModelTokenDto,
   type ModelEndpointDto,
 } from '../api/server'
+import { notifyModelOptionsRefresh } from '../config/useModelOptions'
 
 export default function ModelPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
@@ -123,9 +124,12 @@ export default function ModelPanel(): JSX.Element | null {
       setGeminiTokens([])
       setAnthropicTokens([])
       setQwenTokens([])
+      setOpenaiTokens([])
       setGeminiBaseUrl('')
       setAnthropicBaseUrl('')
       setAnthropicBaseShared(false)
+      setOpenaiBaseUrl('')
+      setOpenaiBaseShared(false)
       setVideosEndpoint(null)
       setVideoEndpoint(null)
       setSoraEndpoint(null)
@@ -281,6 +285,24 @@ export default function ModelPanel(): JSX.Element | null {
               const qwenTokenData = await listModelTokens(qwen.id)
               setQwenTokens(qwenTokenData)
             }
+
+            // 刷新OpenAI数据
+            let openai = ps.find((p) => p.vendor === 'openai')
+            if (!openai) {
+              openai = await upsertModelProvider({ name: 'OpenAI / Codex', vendor: 'openai' })
+              setProviders((prev) => [...prev, openai!])
+            }
+            setOpenaiProvider(openai || null)
+            if (openai) {
+              setOpenaiBaseUrl(openai.baseUrl || '')
+              setOpenaiBaseShared(!!openai.sharedBaseUrl)
+              const openaiTokenData = await listModelTokens(openai.id)
+              setOpenaiTokens(openaiTokenData)
+            } else {
+              setOpenaiTokens([])
+              setOpenaiBaseUrl('')
+              setOpenaiBaseShared(false)
+            }
           } catch (error) {
             console.error('Failed to refresh data:', error)
           }
@@ -358,6 +380,15 @@ export default function ModelPanel(): JSX.Element | null {
   const [qwenLabel, setQwenLabel] = React.useState('')
   const [qwenSecret, setQwenSecret] = React.useState('')
   const [qwenShared, setQwenShared] = React.useState(false)
+  const [openaiProvider, setOpenaiProvider] = React.useState<ModelProviderDto | null>(null)
+  const [openaiBaseUrl, setOpenaiBaseUrl] = React.useState('')
+  const [openaiBaseShared, setOpenaiBaseShared] = React.useState(false)
+  const [openaiTokens, setOpenaiTokens] = React.useState<ModelTokenDto[]>([])
+  const [openaiModalOpen, setOpenaiModalOpen] = React.useState(false)
+  const [openaiEditingToken, setOpenaiEditingToken] = React.useState<ModelTokenDto | null>(null)
+  const [openaiLabel, setOpenaiLabel] = React.useState('')
+  const [openaiSecret, setOpenaiSecret] = React.useState('')
+  const [openaiShared, setOpenaiShared] = React.useState(false)
 
   React.useEffect(() => {
     if (!mounted) return
@@ -420,6 +451,22 @@ export default function ModelPanel(): JSX.Element | null {
         setQwenProvider(qwen)
         const qTokens = await listModelTokens(qwen.id)
         setQwenTokens(qTokens)
+
+        // 初始化 OpenAI 提供方
+        let openai = ps.find((p) => p.vendor === 'openai')
+        if (!openai) {
+          openai = await upsertModelProvider({ name: 'OpenAI / Codex', vendor: 'openai' })
+          setProviders((prev) => [...prev, openai!])
+        }
+        setOpenaiProvider(openai || null)
+        setOpenaiBaseUrl(openai?.baseUrl || '')
+        setOpenaiBaseShared(!!openai?.sharedBaseUrl)
+        if (openai) {
+          const openaiTokenData = await listModelTokens(openai.id)
+          setOpenaiTokens(openaiTokenData)
+        } else {
+          setOpenaiTokens([])
+        }
       })
       .catch(() => {})
   }, [mounted])
@@ -530,12 +577,14 @@ export default function ModelPanel(): JSX.Element | null {
       : [...anthropicTokens, saved]
     setAnthropicTokens(next)
     setAnthropicModalOpen(false)
+    notifyModelOptionsRefresh('anthropic')
   }
 
   const handleDeleteAnthropicToken = async (id: string) => {
     if (!confirm('确定删除该密钥吗？')) return
     await deleteModelToken(id)
     setAnthropicTokens((prev) => prev.filter((t) => t.id !== id))
+    notifyModelOptionsRefresh('anthropic')
   }
 
   const openQwenModalForNew = () => {
@@ -575,6 +624,45 @@ export default function ModelPanel(): JSX.Element | null {
     setQwenTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
+  const openOpenAIModalForNew = () => {
+    setOpenaiEditingToken(null)
+    setOpenaiLabel('')
+    setOpenaiSecret('')
+    setOpenaiShared(false)
+    setOpenaiModalOpen(true)
+  }
+
+  const handleSaveOpenAIToken = async () => {
+    if (!openaiProvider) return
+    const existingSecret = openaiEditingToken?.secretToken ?? ''
+    const finalSecret = openaiSecret || existingSecret
+    if (!finalSecret.trim()) {
+      alert('请填写 API Key')
+      return
+    }
+    const saved = await upsertModelToken({
+      id: openaiEditingToken?.id,
+      providerId: openaiProvider.id,
+      label: openaiLabel || '未命名密钥',
+      secretToken: finalSecret,
+      userAgent: null,
+      shared: openaiShared,
+    })
+    const next = openaiEditingToken
+      ? openaiTokens.map((t) => (t.id === saved.id ? saved : t))
+      : [...openaiTokens, saved]
+    setOpenaiTokens(next)
+    setOpenaiModalOpen(false)
+    notifyModelOptionsRefresh('openai')
+  }
+
+  const handleDeleteOpenAIToken = async (id: string) => {
+    if (!confirm('确定删除该密钥吗？')) return
+    await deleteModelToken(id)
+    setOpenaiTokens((prev) => prev.filter((t) => t.id !== id))
+    notifyModelOptionsRefresh('openai')
+  }
+
   const bulkShareTokens = async (
     provider: ModelProviderDto | null,
     list: ModelTokenDto[],
@@ -600,12 +688,18 @@ export default function ModelPanel(): JSX.Element | null {
       }
     }
     setter(updated)
+    if (provider.vendor === 'anthropic') {
+      notifyModelOptionsRefresh('anthropic')
+    } else if (provider.vendor === 'openai') {
+      notifyModelOptionsRefresh('openai')
+    }
   }
 
   const handleShareAllTokens = (sharedFlag: boolean) => bulkShareTokens(soraProvider, tokens, sharedFlag, setTokens)
   const handleShareAllGeminiTokens = (sharedFlag: boolean) => bulkShareTokens(geminiProvider, geminiTokens, sharedFlag, setGeminiTokens)
   const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(anthropicProvider, anthropicTokens, sharedFlag, setAnthropicTokens)
   const handleShareAllQwenTokens = (sharedFlag: boolean) => bulkShareTokens(qwenProvider, qwenTokens, sharedFlag, setQwenTokens)
+  const handleShareAllOpenAITokens = (sharedFlag: boolean) => bulkShareTokens(openaiProvider, openaiTokens, sharedFlag, setOpenaiTokens)
 
   // 计算安全的最大高度
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
@@ -756,6 +850,25 @@ export default function ModelPanel(): JSX.Element | null {
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
                       <Group gap={6}>
+                        <Title order={6}>OpenAI / Codex</Title>
+                        <Badge color="violet" size="xs">
+                          New
+                        </Badge>
+                      </Group>
+                      <Button size="xs" onClick={openOpenAIModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed" mb={2}>
+                      配置 OpenAI 或 right.codes Codex API Key，支持 GPT-4o / GPT-5.1 等模型，可自定义 Base URL。
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{openaiTokens.length}
+                    </Text>
+                  </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" align="flex-start" mb={4}>
+                      <Group gap={6}>
                         <Title order={6}>Anthropic/GLM</Title>
                         <Badge color="yellow" size="xs">
                           New
@@ -861,6 +974,7 @@ export default function ModelPanel(): JSX.Element | null {
                           setAnthropicProvider(saved)
                           setAnthropicBaseUrl(saved.baseUrl || '')
                           setAnthropicBaseShared(!!saved.sharedBaseUrl)
+                          notifyModelOptionsRefresh('anthropic')
                         }}
                       />
                       <Switch
@@ -883,6 +997,7 @@ export default function ModelPanel(): JSX.Element | null {
                             setAnthropicProvider(saved)
                             setAnthropicBaseUrl(saved.baseUrl || '')
                             setAnthropicBaseShared(!!saved.sharedBaseUrl)
+                            notifyModelOptionsRefresh('anthropic')
                           } catch (err) {
                             console.error('Failed to toggle Anthropic base URL share', err)
                             setAnthropicBaseShared(!next)
@@ -1105,6 +1220,189 @@ export default function ModelPanel(): JSX.Element | null {
                         取消
                       </Button>
                       <Button onClick={handleSaveGeminiToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+            <Modal
+              opened={openaiModalOpen}
+              onClose={() => setOpenaiModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={8000}
+              title="OpenAI / Codex 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      配置 OpenAI 或 right.codes Codex API Key，可自定义 Base URL 访问代理（如 https://www.right.codes/codex）。
+                    </Text>
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => window.open('https://platform.openai.com/account/api-keys', '_blank', 'noopener')}
+                      >
+                        获取 OpenAI Key
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => window.open('https://www.right.codes/codex', '_blank', 'noopener')}
+                      >
+                        Codex 文档
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="OpenAI / Codex Base URL"
+                        placeholder="例如：https://api.openai.com 或 https://www.right.codes/codex"
+                        value={openaiBaseUrl}
+                        onChange={(e) => setOpenaiBaseUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!openaiProvider) return
+                          try {
+                            const saved = await upsertModelProvider({
+                              id: openaiProvider.id,
+                              name: openaiProvider.name,
+                              vendor: openaiProvider.vendor,
+                              baseUrl: openaiBaseUrl.trim() || null,
+                              sharedBaseUrl: openaiBaseShared,
+                            })
+                            setOpenaiProvider(saved)
+                            setOpenaiBaseUrl(saved.baseUrl || '')
+                            setOpenaiBaseShared(!!saved.sharedBaseUrl)
+                            notifyModelOptionsRefresh('openai')
+                          } catch (err) {
+                            console.error('Failed to update OpenAI base URL', err)
+                          }
+                        }}
+                      />
+                      <Switch
+                        size="xs"
+                        mt={4}
+                        label="将 Base URL 作为共享配置（团队复用同一代理域名）"
+                        checked={openaiBaseShared}
+                        onChange={async (e) => {
+                          const next = e.currentTarget.checked
+                          setOpenaiBaseShared(next)
+                          if (!openaiProvider) return
+                          try {
+                            const saved = await upsertModelProvider({
+                              id: openaiProvider.id,
+                              name: openaiProvider.name,
+                              vendor: openaiProvider.vendor,
+                              baseUrl: openaiBaseUrl.trim() || null,
+                              sharedBaseUrl: next,
+                            })
+                            setOpenaiProvider(saved)
+                            setOpenaiBaseUrl(saved.baseUrl || '')
+                            setOpenaiBaseShared(!!saved.sharedBaseUrl)
+                            notifyModelOptionsRefresh('openai')
+                          } catch (err) {
+                            console.error('Failed to toggle OpenAI base share', err)
+                            setOpenaiBaseShared(!next)
+                          }
+                        }}
+                      />
+                    </div>
+                  </Stack>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 OpenAI Key</Title>
+                    <Group gap="xs">
+                      {openaiTokens.length > 0 && (
+                        <>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(true)}>
+                            全部共享
+                          </Button>
+                          <Button size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(false)}>
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" onClick={openOpenAIModalForNew}>
+                        新增 Key
+                      </Button>
+                    </Group>
+                  </Group>
+                  {openaiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack gap="xs">
+                    {openaiTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setOpenaiEditingToken(t)
+                              setOpenaiLabel(t.label)
+                              setOpenaiSecret('')
+                              setOpenaiShared(!!t.shared)
+                              setOpenaiModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteOpenAIToken(t.id)}>
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{openaiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput label="名称" placeholder="例如：OpenAI 主账号 Key" value={openaiLabel} onChange={(e) => setOpenaiLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={openaiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 OpenAI / Codex API Key'}
+                      value={openaiSecret}
+                      onChange={(e) => setOpenaiSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
+                      checked={openaiShared}
+                      onChange={(e) => setOpenaiShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setOpenaiModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveOpenAIToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>

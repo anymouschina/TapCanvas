@@ -8,8 +8,6 @@ import { getDefaultModel, getModelProvider } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
-import { getFirstAvailableApiKey } from './useApiKey'
-import { listModelProviders } from '../../api/server'
 import { functionHandlers } from '../../ai/canvasService'
 import type { Node, Edge } from 'reactflow'
 import { subscribeToolEvents, type ToolEventMessage } from '../../api/toolEvents'
@@ -31,8 +29,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => getDefaultModel('text'))
-  const [apiKey, setApiKey] = useState<string | undefined>()
-  const [baseUrl, setBaseUrl] = useState<string | undefined>()
   const textModelOptions = useModelOptions('text')
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
@@ -67,31 +63,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [textModelOptions, model])
 
-  useEffect(() => {
-    let cancelled = false
-    const loadCredentials = async () => {
-      const vendor = getModelProvider(model)
-      try {
-        const providers = await listModelProviders()
-        const vendorKey = vendor === 'google' ? 'gemini' : vendor
-        const matched = providers.find(p => p.vendor === vendorKey)
-        if (!cancelled) setBaseUrl(matched?.baseUrl || undefined)
-      } catch (err) {
-        console.warn('[UseChatAssistant] load providers failed', err)
-        if (!cancelled) setBaseUrl(undefined)
-      }
-      try {
-        const key = await getFirstAvailableApiKey(vendor as any)
-        if (!cancelled) setApiKey(key || undefined)
-      } catch (err) {
-        console.warn('[UseChatAssistant] load api key failed', err)
-        if (!cancelled) setApiKey(undefined)
-      }
-    }
-    loadCredentials()
-    return () => { cancelled = true }
-  }, [model])
-
   const canvasContext = useMemo(() => {
     if (!nodes.length) return undefined
     return {
@@ -115,13 +86,11 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     temperature: 0.2,
     context: canvasContext,
     provider: getModelProvider(model),
-    apiKey,
-    baseUrl,
     clientToolExecution: true,
     maxToolRoundtrips: 4,
-  }), [model, canvasContext, apiKey, baseUrl])
+  }), [model, canvasContext])
 
-  const chatId = useMemo(() => nanoid(), [])
+  const chatId = useMemo(() => `${model}-${nanoid()}`, [model])
 
   const chatTransport = useMemo(() => new DefaultChatTransport({
     api: `${apiRoot}/ai/chat/stream`,
@@ -153,7 +122,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         }
       }
     }
-  }), [apiRoot, body])
+  }), [apiRoot, body, model])
 
   const parseJsonIfNeeded = (value: any) => {
     if (typeof value === 'string') {

@@ -196,6 +196,7 @@ enum ProfileKind {
   chat
   prompt_refine
   text_to_image
+  image_to_prompt
   image_to_video
   text_to_video
   image_edit

@@ -6,13 +6,14 @@ import { soraAdapter } from './adapters/sora.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
 import { qwenAdapter } from './adapters/qwen.adapter'
 import { anthropicAdapter } from './adapters/anthropic.adapter'
+import { openaiAdapter } from './adapters/openai.adapter'
 
 @Injectable()
 export class TaskService {
   private readonly adapters: ProviderAdapter[]
 
   constructor(private readonly prisma: PrismaService) {
-    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter]
+    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter]
   }
 
   private async buildContextForProvider(
@@ -117,6 +118,11 @@ export class TaskService {
           throw new Error(`provider ${adapter.name} does not support text_to_image`)
         }
         return adapter.textToImage(req as any, ctx)
+      case 'image_to_prompt':
+        if (!adapter.imageToPrompt) {
+          throw new Error(`provider ${adapter.name} does not support image_to_prompt`)
+        }
+        return adapter.imageToPrompt(req as any, ctx)
       case 'chat':
       case 'prompt_refine':
         if (!adapter.runChat) {
@@ -205,6 +211,11 @@ export class TaskService {
           throw new Error(`provider ${adapter.name} does not support text_to_image`)
         }
         return adapter.textToImage(req as any, ctx)
+      case 'image_to_prompt':
+        if (!adapter.imageToPrompt) {
+          throw new Error(`provider ${adapter.name} does not support image_to_prompt`)
+        }
+        return adapter.imageToPrompt(req as any, ctx)
       case 'chat':
       case 'prompt_refine':
         if (!adapter.runChat) {
@@ -246,6 +257,6 @@ export class TaskService {
   }
 
   private requiresApiKey(vendor: string) {
-    return vendor === 'gemini' || vendor === 'qwen' || vendor === 'anthropic'
+    return vendor === 'gemini' || vendor === 'qwen' || vendor === 'anthropic' || vendor === 'openai'
   }
 }

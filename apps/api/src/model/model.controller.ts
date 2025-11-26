@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards, Res } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards, Res, Query } from '@nestjs/common'
 import type { Response } from 'express'
 import { JwtGuard } from '../auth/jwt.guard'
 import { ModelService } from './model.service'
@@ -11,6 +11,11 @@ export class ModelController {
   @Get('providers')
   listProviders(@Req() req: any) {
     return this.service.listProviders(String(req.user.sub))
+  }
+
+  @Get('available')
+  listAvailableModels(@Req() req: any, @Query('vendor') vendor?: string) {
+    return this.service.listAvailableModels(String(req.user.sub), vendor)
   }
 
   @Get('providers/:id/tokens')

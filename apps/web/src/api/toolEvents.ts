@@ -1,3 +1,5 @@
+import type { ThinkingEvent } from '../types/canvas-intelligence'
+
 export interface ToolEventMessage {
   type: 'tool-call' | 'tool-result'
   toolCallId: string
@@ -11,13 +13,15 @@ interface SubscribeOptions {
   url: string
   token?: string | null
   onEvent: (event: ToolEventMessage) => void
+  onOpen?: () => void
+  onError?: (error: Error) => void
 }
 
 /**
  * Minimal SSE client using fetch so we can attach Authorization headers.
  * Returns a function that aborts the stream.
  */
-export function subscribeToolEvents({ url, token, onEvent }: SubscribeOptions) {
+export function subscribeToolEvents({ url, token, onEvent, onOpen, onError }: SubscribeOptions) {
   if (!url || !token) {
     return () => {}
   }
@@ -35,6 +39,12 @@ export function subscribeToolEvents({ url, token, onEvent }: SubscribeOptions) {
     if (!response.body) {
       throw new Error('No response body for tool-events stream')
     }
+
+    if (!response.ok) {
+      throw new Error(`Failed to subscribe tool-events: ${response.status}`)
+    }
+
+    onOpen?.()
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -73,8 +83,40 @@ export function subscribeToolEvents({ url, token, onEvent }: SubscribeOptions) {
   connect().catch(err => {
     if (!controller.signal.aborted) {
       console.warn('[toolEvents] stream failed', err)
+      onError?.(err instanceof Error ? err : new Error('tool-events stream error'))
     }
   })
 
   return () => controller.abort()
+}
+
+const TOOL_NAME_TO_EVENT: Record<string, string> = {
+  'canvas.node.operation': 'canvas_node.operation',
+  'canvas.layout.apply': 'canvas_layout.apply',
+  'canvas.optimization.analyze': 'canvas_optimization.analyze',
+  'canvas.view.navigate': 'canvas_view.navigate',
+  'project.operation': 'project.operation'
+}
+
+export function mapToolEventToCanvasOperation(event: ToolEventMessage) {
+  if (event.type !== 'tool-call') {
+    return null
+  }
+
+  const mappedType = TOOL_NAME_TO_EVENT[event.toolName]
+  if (!mappedType) {
+    return null
+  }
+
+  return {
+    type: mappedType,
+    payload: event.input || {}
+  }
+}
+
+export function extractThinkingEvent(event: ToolEventMessage): ThinkingEvent | null {
+  if (event.type === 'tool-result' && event.toolName === 'ai.thinking.process' && event.output) {
+    return event.output as ThinkingEvent
+  }
+  return null
 }

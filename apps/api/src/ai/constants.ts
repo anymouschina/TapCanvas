@@ -1,6 +1,8 @@
 export type SupportedProvider = 'openai' | 'anthropic' | 'google'
 
 export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
+  'gpt-5.1': 'openai',
+  'gpt-4.1': 'openai',
   'gpt-4o-mini': 'openai',
   'gpt-4o': 'openai',
   'gpt-4.1-mini': 'openai',

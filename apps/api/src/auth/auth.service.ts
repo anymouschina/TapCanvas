@@ -1,24 +1,51 @@
 import { Injectable } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
-import axios from 'axios'
+import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly jwt: JwtService, private readonly prisma: PrismaService) {}
+  private readonly http: AxiosInstance
+
+  constructor(private readonly jwt: JwtService, private readonly prisma: PrismaService) {
+    const proxyUrl = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.DEV_PROXY
+
+    if (proxyUrl) {
+      try {
+        const parsed = new URL(proxyUrl)
+        this.http = axios.create({
+          proxy: {
+            host: parsed.hostname,
+            port: Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80)),
+            protocol: (parsed.protocol.replace(':', '') || 'http') as 'http' | 'https',
+          },
+        })
+      } catch {
+        this.http = axios
+      }
+    } else {
+      this.http = axios
+    }
+  }
 
   async exchangeGithubCode(code: string) {
     const client_id = process.env.GITHUB_CLIENT_ID || ''
     const client_secret = process.env.GITHUB_CLIENT_SECRET || ''
-    const tokenResp = await axios.post(
+    const tokenResp = await this.http.post(
       'https://github.com/login/oauth/access_token',
       { client_id, client_secret, code },
       { headers: { Accept: 'application/json' } },
     )
     const access_token = tokenResp.data?.access_token as string
     if (!access_token) throw new Error('no access token')
-    const user = (await axios.get('https://api.github.com/user', { headers: { Authorization: `Bearer ${access_token}`, Accept: 'application/vnd.github+json' } })).data
-    const emailRes = await axios.get('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}` } }).catch(() => ({ data: [] }))
+    const user = (
+      await this.http.get('https://api.github.com/user', {
+        headers: { Authorization: `Bearer ${access_token}`, Accept: 'application/vnd.github+json' },
+      })
+    ).data
+    const emailRes = await this.http
+      .get('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}` } })
+      .catch(() => ({ data: [] }))
     const primaryEmail = Array.isArray(emailRes.data) ? (emailRes.data.find((e: any) => e.primary)?.email || emailRes.data[0]?.email) : undefined
     // upsert user
     await this.prisma.user.upsert({

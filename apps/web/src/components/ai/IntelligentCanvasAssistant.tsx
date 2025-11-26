@@ -39,6 +39,19 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
         handleOptimizationOperation(operation.payload)
         break
 
+      case 'canvas_operation': {
+        const domain = operation.params?.domain
+        const parameters = operation.params?.parameters || operation.payload || {}
+        if (domain === 'node_manipulation') {
+          handleNodeOperation(parameters)
+        } else if (domain === 'layout_arrangement') {
+          handleLayoutOperation(parameters)
+        } else if (domain === 'execution_debug') {
+          handleOptimizationOperation(parameters)
+        }
+        break
+      }
+
       default:
         console.log('Unknown operation type:', operation.type)
     }
