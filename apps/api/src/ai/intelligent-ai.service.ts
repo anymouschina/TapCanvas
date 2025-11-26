@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { AiService } from './ai.service'
 import { CanvasIntentRecognizer } from './intelligence/intent-recognizer'
 import { ThinkingStream } from './intelligence/thinking-stream'
 import { WebExecutionEngine } from './execution/web-execution-engine'
@@ -10,7 +11,9 @@ import {
   ParsedCanvasIntent,
   ExecutionContext
 } from './core/types/canvas-intelligence.types'
-import type { ChatRequestDto, CanvasContextDto } from './dto/chat.dto'
+import type { ChatRequestDto } from './dto/chat.dto'
+
+const DEFAULT_INTELLIGENT_MODEL = 'gemini-2.5-flash'
 
 export interface IntelligentChatResponseDto {
   reply: string
@@ -30,6 +33,7 @@ export class IntelligentAiService {
   private readonly logger = new Logger(IntelligentAiService.name)
 
   constructor(
+    private readonly aiService: AiService,
     private readonly intentRecognizer: CanvasIntentRecognizer,
     private readonly thinkingStream: ThinkingStream,
     private readonly executionEngine: WebExecutionEngine,
@@ -81,8 +85,14 @@ export class IntelligentAiService {
       // 5. 执行具体操作（或发送到前端执行）
       const results = await this.executeOperations(operations, executionContext)
 
-      // 6. 生成最终回复
-      const reply = this.generateFinalReply(intent, plan, results)
+      // 6. 调用大模型获取可执行动作
+      const llmResult = await this.invokeAssistantModel(userId, payload)
+
+      // 7. 生成最终回复
+      const reply = llmResult?.reply ?? this.generateFinalReply(intent, plan, results)
+      const responseActions = llmResult?.actions && llmResult.actions.length > 0
+        ? llmResult.actions
+        : this.convertOperationsToActions(operations)
 
       this.logger.debug('Intelligent chat completed', {
         intent: intent.type,
@@ -94,7 +104,7 @@ export class IntelligentAiService {
       return {
         reply,
         plan: plan.steps.map(step => step.description),
-        actions: this.convertOperationsToActions(operations),
+        actions: responseActions,
         thinkingEvents: this.thinkingStream.getCurrentEvents(),
         intent: {
           type: intent.type,
@@ -208,6 +218,11 @@ export class IntelligentAiService {
         type: 'complete',
         payload: {
           reply: this.generateFinalReply(intent, plan, []),
+          intent: {
+            type: intent.type,
+            confidence: intent.confidence,
+            reasoning: intent.reasoning
+          },
           summary: {
             operationsCount: operations.length,
             thinkingSteps: this.thinkingStream.getCurrentEvents().length
@@ -371,6 +386,26 @@ export class IntelligentAiService {
    */
   private generateSessionId(): string {
     return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  }
+
+  /**
+   * 调用传统 AI 助手以生成具体动作
+   */
+  private async invokeAssistantModel(
+    userId: string,
+    payload: ChatRequestDto
+  ) {
+    try {
+      const chatPayload: ChatRequestDto = {
+        ...payload,
+        model: payload.model || DEFAULT_INTELLIGENT_MODEL,
+        clientToolExecution: payload.clientToolExecution ?? true
+      }
+      return await this.aiService.chat(userId, chatPayload)
+    } catch (error) {
+      this.logger.warn('invokeAssistantModel failed, fallback to rule-based actions', error as any)
+      return null
+    }
   }
 
   /**

@@ -2,6 +2,7 @@ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
 import FormData from 'form-data'
+import { createReadStream } from 'fs'
 import { TokenRouterService } from './token-router.service'
 import { VideoHistoryService } from '../video/video-history.service'
 
@@ -1467,46 +1468,25 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(
-      token,
-      'sora',
-      'https://sora.chatgpt.com',
-    )
-    const url = new URL('/backend/project_y/file/upload', baseUrl).toString()
-    const userAgent = token.userAgent || 'TapCanvas/1.0'
-
-    const form = new FormData()
-    form.append('file', file.buffer, {
-      filename: file.originalname || 'cover.png',
-      contentType: file.mimetype || 'image/png',
-    })
-    form.append('use_case', 'profile')
-
     try {
-      const res = await axios.post(url, form, {
-        headers: {
-          ...form.getHeaders(),
-          Authorization: `Bearer ${token.secretToken}`,
-          'User-Agent': userAgent,
-          Accept: 'application/json',
-        },
-        maxBodyLength: Infinity,
+      const { data } = await this.uploadSoraFileWithRetry({
+        token,
+        userId,
+        file,
+        defaultFilename: 'cover.png',
+        useCase: 'profile',
+        logContext: 'profile_asset',
       })
-      return res.data
+      return data
     } catch (err: any) {
       if (token.shared) {
         await this.registerSharedFailure(token.id)
       }
-      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
-      const message =
-        err?.response?.data?.message ||
-        err?.response?.statusText ||
-        err?.message ||
-        'Sora upload profile asset request failed'
-      throw new HttpException(
-        { message, upstreamStatus: err?.response?.status ?? null },
-        status,
+      const normalized = this.normalizeSoraUploadError(
+        err,
+        'Sora upload profile asset request failed',
       )
+      throw new HttpException(normalized.body, normalized.status)
     }
   }
 
@@ -1520,37 +1500,20 @@ export class SoraService {
       throw new Error('token not found or not a Sora token')
     }
 
-    const baseUrl = await this.resolveBaseUrl(
-      token,
-      'sora',
-      'https://sora.chatgpt.com',
-    )
-    const url = new URL('/backend/project_y/file/upload', baseUrl).toString()
-    const userAgent = token.userAgent || 'TapCanvas/1.0'
-
-    const form = new FormData()
-    form.append('file', file.buffer, {
-      filename: file.originalname || 'image.png',
-      contentType: file.mimetype || 'image/png',
-    })
-    form.append('use_case', 'profile')
-
     try {
-      const res = await axios.post(url, form, {
-        headers: {
-          ...form.getHeaders(),
-          Authorization: `Bearer ${token.secretToken}`,
-          'User-Agent': userAgent,
-          Accept: 'application/json',
-        },
-        maxBodyLength: Infinity,
+      const { data: result, baseUrl } = await this.uploadSoraFileWithRetry({
+        token,
+        userId,
+        file,
+        defaultFilename: 'image.png',
+        useCase: 'profile',
+        logContext: 'image',
       })
-
-      const result = res.data
       this.logger.log('Image uploaded to Sora successfully', {
         userId,
         file_id: result.file_id,
         asset_pointer: result.asset_pointer,
+        baseUrl,
       })
 
       return result
@@ -1564,16 +1527,11 @@ export class SoraService {
       if (token.shared) {
         await this.registerSharedFailure(token.id)
       }
-      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
-      const message =
-        err?.response?.data?.message ||
-        err?.response?.statusText ||
-        err?.message ||
-        'Sora upload image request failed'
-      throw new HttpException(
-        { message, upstreamStatus: err?.response?.status ?? null },
-        status,
+      const normalized = this.normalizeSoraUploadError(
+        err,
+        'Sora upload image request failed',
       )
+      throw new HttpException(normalized.body, normalized.status)
     }
   }
 
@@ -2870,6 +2828,114 @@ export class SoraService {
       orderBy: { createdAt: 'asc' },
     })
     return shared || null
+  }
+
+  private async uploadSoraFileWithRetry(params: {
+    token: any
+    userId: string
+    file: any
+    defaultFilename: string
+    useCase: string
+    logContext: string
+  }): Promise<{ data: any; baseUrl: string }> {
+    const fallbackBase = 'https://sora.chatgpt.com'
+    const baseUrl = await this.resolveBaseUrl(params.token, 'sora', fallbackBase)
+    const userAgent = params.token.userAgent || 'TapCanvas/1.0'
+
+    const attemptUpload = async (targetBase: string) => {
+      const form = this.buildSoraUploadForm(params.file, params.defaultFilename, params.useCase)
+      const url = new URL('/backend/project_y/file/upload', targetBase).toString()
+      const response = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${params.token.secretToken}`,
+          'User-Agent': userAgent,
+          Accept: 'application/json',
+        },
+        maxBodyLength: Infinity,
+      })
+      return { data: response.data, baseUrl: targetBase }
+    }
+
+    try {
+      return await attemptUpload(baseUrl)
+    } catch (err) {
+      if (baseUrl !== fallbackBase && this.shouldRetrySoraUpload(err)) {
+        this.logger.warn(`Sora ${params.logContext} upload failed, retrying fallback domain`, {
+          userId: params.userId,
+          baseUrl,
+          fallbackBase,
+          message: err?.message,
+        })
+        return await attemptUpload(fallbackBase)
+      }
+      throw err
+    }
+  }
+
+  private buildSoraUploadForm(file: any, defaultFilename: string, useCase: string): FormData {
+    const payload = this.resolveSoraUploadPayload(file, defaultFilename)
+    const form = new FormData()
+    form.append('file', payload.source, {
+      filename: payload.filename,
+      contentType: payload.contentType,
+    })
+    form.append('use_case', useCase)
+    return form
+  }
+
+  private resolveSoraUploadPayload(
+    file: any,
+    defaultFilename: string,
+  ): { source: Buffer | NodeJS.ReadableStream; filename: string; contentType: string } {
+    const filename =
+      (typeof file?.originalname === 'string' && file.originalname.trim().length > 0
+        ? file.originalname
+        : defaultFilename) || defaultFilename
+    const contentType =
+      (typeof file?.mimetype === 'string' && file.mimetype.trim().length > 0
+        ? file.mimetype
+        : 'application/octet-stream')
+
+    if (file?.buffer && (file.buffer.length || file.buffer.byteLength)) {
+      const buffer = Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer)
+      return { source: buffer, filename, contentType }
+    }
+    if (file?.path) {
+      return { source: createReadStream(file.path), filename, contentType }
+    }
+
+    throw new Error('uploaded file buffer is empty')
+  }
+
+  private shouldRetrySoraUpload(err: any): boolean {
+    if (!err || err.response) {
+      return false
+    }
+    const code = typeof err.code === 'string' ? err.code.toLowerCase() : ''
+    const message = typeof err.message === 'string' ? err.message.toLowerCase() : ''
+    if (message.includes('socket hang up')) {
+      return true
+    }
+    return ['ecconnreset', 'econrefused', 'ecconnaborted', 'ehostunreach', 'enotfound', 'etimedout'].includes(code)
+  }
+
+  private normalizeSoraUploadError(err: any, fallbackMessage: string): { status: number; body: { message: string; upstreamStatus: number | null } } {
+    const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+    const upstreamStatus = err?.response?.status ?? null
+    const message =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      err?.response?.statusText ||
+      err?.message ||
+      fallbackMessage
+    return {
+      status,
+      body: {
+        message,
+        upstreamStatus,
+      },
+    }
   }
 
   private async resolveBaseUrl(

@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { listModelProviders, listModelTokens, type ModelTokenDto } from '../api/server'
+import { listAvailableModels, type AvailableModelDto } from '../api/server'
 import type { ModelOption, NodeKind } from './models'
 import { getAllowedModelsByKind } from './models'
-import { markAnthropicModels } from './modelSource'
 
-const ANTHROPIC_VENDOR = 'anthropic'
-const ANTHROPIC_VERSION = '2023-06-01'
+const MODEL_REFRESH_EVENT = 'tapcanvas-models-refresh'
 
-let cachedAnthropicModels: ModelOption[] | null = null
-let anthropicPromise: Promise<ModelOption[]> | null = null
+type RefreshDetail = 'openai' | 'anthropic' | 'all' | undefined
+
+let cachedAvailableModels: ModelOption[] | null = null
+let availablePromise: Promise<ModelOption[]> | null = null
 
 function mergeOptions(base: ModelOption[], extra: ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -21,96 +21,78 @@ function mergeOptions(base: ModelOption[], extra: ModelOption[]): ModelOption[] 
   return merged
 }
 
-function buildAnthropicModelsUrl(baseUrl: string): string {
-  const base = baseUrl.replace(/\/+$/, '')
-  // If user already points directly to a models endpoint, keep it.
-  if (/\/v\d+\/models$/i.test(base) || /\/models$/i.test(base)) return base
-  // If base already contains a version path (e.g. /api/anthropic/v1), append /models.
-  if (/\/v\d+$/i.test(base)) return `${base}/models`
-  return `${base}/v1/models`
-}
-
-async function fetchAnthropicModels(baseUrl: string, token: string): Promise<ModelOption[]> {
-  const url = buildAnthropicModelsUrl(baseUrl)
-  const resp = await fetch(url, {
-    headers: {
-      'x-api-key': token,
-      'Authorization': `Bearer ${token}`,
-      'anthropic-version': ANTHROPIC_VERSION,
-    },
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`fetch models failed: ${resp.status} ${text || resp.statusText}`)
-  }
-  const body = await resp.json().catch(() => null)
-  if (!body || !Array.isArray(body.data)) return []
-  return body.data
-    .map((item: any) => {
-      if (!item || typeof item.id !== 'string') return null
-      const label = typeof item.display_name === 'string' && item.display_name.trim()
-        ? item.display_name.trim()
-        : item.id
-      return { value: item.id, label }
+function normalizeAvailableModels(items: AvailableModelDto[]): ModelOption[] {
+  if (!Array.isArray(items)) return []
+  return items
+    .map((item) => {
+      const value = item?.value || (item as any)?.id
+      if (!value || typeof value !== 'string') return null
+      const label = typeof item?.label === 'string' && item.label.trim() ? item.label.trim() : value
+      return { value, label }
     })
     .filter(Boolean) as ModelOption[]
 }
 
-async function getAnthropicModelOptions(): Promise<ModelOption[]> {
-  if (cachedAnthropicModels) return cachedAnthropicModels
-  if (anthropicPromise) return anthropicPromise
+function invalidateAvailableCache() {
+  cachedAvailableModels = null
+  availablePromise = null
+}
 
-  anthropicPromise = (async () => {
-    try {
-      const providers = await listModelProviders()
-      let provider = providers.find((p) => p.vendor === ANTHROPIC_VENDOR)
-      if (!provider) {
-        provider = providers.find((p) => (p.baseUrl || '').toLowerCase().includes('anthropic'))
+export function notifyModelOptionsRefresh(detail?: RefreshDetail) {
+  invalidateAvailableCache()
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent<RefreshDetail>(MODEL_REFRESH_EVENT, { detail }))
+  }
+}
+
+async function getAvailableModelOptions(): Promise<ModelOption[]> {
+  if (cachedAvailableModels) return cachedAvailableModels
+  if (!availablePromise) {
+    availablePromise = (async () => {
+      try {
+        const remote = await listAvailableModels()
+        const normalized = normalizeAvailableModels(remote)
+        cachedAvailableModels = normalized
+        return normalized
+      } finally {
+        availablePromise = null
       }
-      if (!provider) return []
-
-      const tokens = await listModelTokens(provider.id)
-      const usable = tokens.find((t: ModelTokenDto) => t.enabled && Boolean(t.secretToken))
-      if (!usable || !usable.secretToken) return []
-
-      const baseUrl = provider.baseUrl?.trim() || 'https://api.anthropic.com'
-      const models = await fetchAnthropicModels(baseUrl, usable.secretToken)
-      if (models.length) {
-        cachedAnthropicModels = models
-        markAnthropicModels(models.map((m) => m.value))
-      }
-      return models
-    } finally {
-      anthropicPromise = null
-    }
-  })()
-
-  return anthropicPromise
+    })()
+  }
+  return availablePromise
 }
 
 export function useModelOptions(kind?: NodeKind): ModelOption[] {
   const baseOptions = useMemo(() => getAllowedModelsByKind(kind), [kind])
   const [options, setOptions] = useState<ModelOption[]>(baseOptions)
+  const [refreshSeq, setRefreshSeq] = useState(0)
 
   useEffect(() => {
     setOptions(baseOptions)
   }, [baseOptions])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handler = () => setRefreshSeq((prev) => prev + 1)
+    window.addEventListener(MODEL_REFRESH_EVENT, handler)
+    return () => window.removeEventListener(MODEL_REFRESH_EVENT, handler)
+  }, [])
+
+  useEffect(() => {
     if (kind && kind !== 'text') return
     let canceled = false
-    getAnthropicModelOptions()
+    getAvailableModelOptions()
       .then((remote) => {
         if (canceled || !remote.length) return
         setOptions((prev) => mergeOptions(prev, remote))
       })
       .catch(() => {
-        // ignore errors; fallback to static list
+        // ignore; fallback to static list
       })
     return () => {
       canceled = true
     }
-  }, [kind])
+  }, [kind, refreshSeq])
 
   return options
 }

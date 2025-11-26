@@ -7,9 +7,10 @@ import {
   CanvasOperation,
   ParsedCanvasIntent,
   ExecutionContext,
-  CanvasActionDomain
+  CanvasActionDomain,
+  CanvasCapability
 } from '../core/types/canvas-intelligence.types'
-import { EventEmitter } from 'events'
+import { canvasCapabilityRegistry } from '../core/canvas-registry'
 
 @Injectable()
 export class ThinkingStream {
@@ -48,7 +49,7 @@ export class ThinkingStream {
       await this.emitRiskAssessment(riskAssessment, onThinkingEvent)
 
       // 5. 生成具体操作
-      const operations = this.generateOperations(plan)
+      const operations = this.generateOperations(plan, intent, executionContext)
       await this.emitOperationGeneration(operations, onThinkingEvent)
 
       this.logger.debug('Thinking process completed', {
@@ -385,26 +386,66 @@ export class ThinkingStream {
   /**
    * 生成具体操作
    */
-  private generateOperations(plan: ExecutionPlan): CanvasOperation[] {
+  private generateOperations(
+    plan: ExecutionPlan,
+    intent: ParsedCanvasIntent,
+    context: ExecutionContext
+  ): CanvasOperation[] {
+    const parameters = this.buildOperationParameters(intent)
+
     return plan.steps.map(step => ({
       id: this.generateEventId('operation'),
-      capability: {
-        domain: step.name.includes('布局') ? CanvasActionDomain.LAYOUT_ARRANGEMENT : CanvasActionDomain.NODE_MANIPULATION,
-        name: step.name,
-        description: step.description,
-        operationModes: [],
-        intentPatterns: [],
-        webActions: {}
-      },
-      parameters: {},
-      context: {
-        userId: 'current_user',
-        sessionId: 'current_session',
-        currentCanvas: {},
-        timestamp: new Date()
-      },
-      priority: 1
+      capability: this.resolveCapabilityForStep(step, intent),
+      parameters,
+      context,
+      priority: step.name.includes('关键') ? 6 : 1
     }))
+  }
+
+  private resolveCapabilityForStep(step: ExecutionStep, intent: ParsedCanvasIntent): CanvasCapability {
+    const fromIntent = (intent.entities?.capability || null) as CanvasCapability | null
+    if (fromIntent && this.isCanvasCapability(fromIntent)) {
+      return fromIntent
+    }
+
+    if (intent.capabilityName) {
+      const matched = canvasCapabilityRegistry.getCapabilityByName(intent.type, intent.capabilityName)
+      if (matched) return matched
+    }
+
+    const [fallback] = canvasCapabilityRegistry.getCapabilitiesByDomain(intent.type)
+    if (fallback) return fallback
+
+    return {
+      domain: intent.type,
+      name: step.name,
+      description: step.description,
+      operationModes: [],
+      intentPatterns: [],
+      webActions: {}
+    }
+  }
+
+  private buildOperationParameters(intent: ParsedCanvasIntent) {
+    if (intent.extractedParams && Object.keys(intent.extractedParams).length > 0) {
+      return intent.extractedParams
+    }
+    return this.buildFallbackParameters(intent)
+  }
+
+  private buildFallbackParameters(intent: ParsedCanvasIntent) {
+    switch (intent.type) {
+      case CanvasActionDomain.LAYOUT_ARRANGEMENT:
+        return { action: 'format', layoutType: 'grid', spacing: 120 }
+      case CanvasActionDomain.EXECUTION_DEBUG:
+        return { analysisType: 'performance', scope: 'entire_workflow' }
+      default:
+        return { action: 'create', nodeType: 'text', config: { kind: 'text' } }
+    }
+  }
+
+  private isCanvasCapability(value: any): value is CanvasCapability {
+    return Boolean(value && value.domain && value.name)
   }
 
   /**

@@ -852,12 +852,20 @@ async function runGenericTask(ctx: RunnerContext) {
     const selectedModel = taskKind === 'text_to_image'
       ? (data.imageModel as string) || 'qwen-image-plus'
       : (data.model as string) || 'gemini-2.5-flash'
+    const modelLower = selectedModel.toLowerCase()
 
     const vendor = taskKind === 'text_to_image'
-      ? (selectedModel.toLowerCase().includes('gemini') ? 'gemini' : 'qwen')
-      : isAnthropicModel(selectedModel) || selectedModel.toLowerCase().includes('claude')
+      ? (modelLower.includes('gemini') ? 'gemini' : 'qwen')
+      : isAnthropicModel(selectedModel) ||
+        modelLower.includes('claude') ||
+        modelLower.includes('glm')
         ? 'anthropic'
-        : 'gemini'
+        : modelLower.includes('gpt') ||
+          modelLower.includes('openai') ||
+          modelLower.includes('o3-') ||
+          modelLower.includes('codex')
+          ? 'openai'
+          : 'gemini'
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
@@ -872,7 +880,14 @@ async function runGenericTask(ctx: RunnerContext) {
 
       const progressBase = 5 + Math.floor((90 * i) / sampleCount)
       setNodeStatus(id, 'running', { progress: progressBase })
-      const vendorName = vendor === 'qwen' ? 'Qwen' : vendor === 'anthropic' ? 'Claude' : 'Gemini'
+      const vendorName =
+        vendor === 'qwen'
+          ? 'Qwen'
+          : vendor === 'anthropic'
+            ? 'Claude'
+            : vendor === 'openai'
+              ? 'OpenAI'
+              : 'Gemini'
       const modelType = taskKind === 'text_to_image' ? '图像' : '文案'
       appendLog(
         id,

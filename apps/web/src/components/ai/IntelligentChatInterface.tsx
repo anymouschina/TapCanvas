@@ -22,9 +22,9 @@ import {
   IconHistory,
   IconLoader
 } from '@tabler/icons-react'
-import { IntelligentAssistant } from './IntelligentAssistant'
-import { useWebSocket } from '../../hooks/useWebSocket'
 import type { ThinkingEvent } from '../../../types/canvas-intelligence'
+import { subscribeToolEvents, extractThinkingEvent, mapToolEventToCanvasOperation } from '../../api/toolEvents'
+import { getAuthToken } from '../../auth/store'
 
 interface IntelligentChatInterfaceProps {
   userId: string
@@ -53,23 +53,41 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
   const [isIntelligentMode, setIsIntelligentMode] = useState(true)
   const [showThinking, setShowThinking] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
+  const [isEventStreamConnected, setIsEventStreamConnected] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // WebSocket连接
-  const { isConnected, sendMessage: sendWebSocketMessage } = useWebSocket('/api/ai/tool-events', {
-    userId,
-    onMessage: (event) => {
-      if (event.type === 'tool-result' && event.toolName === 'ai.thinking.process') {
-        setThinkingEvents(prev => [...prev, event.output as ThinkingEvent])
+  // 订阅工具事件
+  useEffect(() => {
+    if (!userId) return
+    const token = getAuthToken()
+    if (!token) return
+
+    const unsubscribe = subscribeToolEvents({
+      url: '/api/ai/tool-events',
+      token,
+      onOpen: () => setIsEventStreamConnected(true),
+      onError: () => setIsEventStreamConnected(false),
+      onEvent: (event) => {
+        const thinking = extractThinkingEvent(event)
+        if (thinking) {
+          setThinkingEvents(prev => [...prev, thinking])
+          return
+        }
+
+        if (onOperationExecuted) {
+          const normalizedOperation = mapToolEventToCanvasOperation(event)
+          if (normalizedOperation) {
+            onOperationExecuted(normalizedOperation)
+          }
+        }
       }
-    },
-    onOpen: () => {
-      console.log('WebSocket connected for intelligent chat')
-    },
-    onError: (error) => {
-      console.error('WebSocket error:', error)
+    })
+
+    return () => {
+      setIsEventStreamConnected(false)
+      unsubscribe()
     }
-  })
+  }, [userId, onOperationExecuted])
 
   // 处理发送消息
   const handleSendMessage = useCallback(async (content: string) => {
@@ -88,11 +106,12 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
     setThinkingEvents([]) // 清空之前的思考事件
 
     try {
+      const token = getAuthToken()
       const response = await fetch('/api/ai/chat/intelligent', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           messages: [{ role: 'user', content: content.trim() }],
@@ -121,13 +140,6 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
 
       setMessages(prev => [...prev, assistantMessage])
       setThinkingEvents(result.thinkingEvents || [])
-
-      // 执行返回的actions
-      if (result.actions && onOperationExecuted) {
-        result.actions.forEach((action: any) => {
-          onOperationExecuted(action)
-        })
-      }
 
     } catch (error) {
       console.error('Intelligent chat failed:', error)
@@ -297,7 +309,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
                 <Text size="sm" color="dimmed">
                   {isIntelligentMode ? 'AI 正在深度思考并制定执行计划...' : 'AI 正在处理...'}
                 </Text>
-                {isConnected ? (
+                {isEventStreamConnected ? (
                   <Badge size="xs" color="green" variant="light">已连接</Badge>
                 ) : (
                   <Badge size="xs" color="red" variant="light">连接中...</Badge>

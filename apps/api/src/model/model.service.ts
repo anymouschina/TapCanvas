@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
 
 export interface ModelExportData {
@@ -30,7 +31,27 @@ export interface ModelExportData {
 
 @Injectable()
 export class ModelService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly http: AxiosInstance
+
+  constructor(private readonly prisma: PrismaService) {
+    const proxyUrl = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.DEV_PROXY
+    if (proxyUrl) {
+      try {
+        const parsed = new URL(proxyUrl)
+        this.http = axios.create({
+          proxy: {
+            host: parsed.hostname,
+            port: Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80)),
+            protocol: (parsed.protocol.replace(':', '') || 'http') as 'http' | 'https',
+          },
+        })
+      } catch {
+        this.http = axios
+      }
+    } else {
+      this.http = axios
+    }
+  }
 
   listProviders(userId: string) {
     return this.prisma.modelProvider.findMany({
@@ -314,5 +335,133 @@ export class ModelService {
     }
 
     return result
+  }
+
+  async listAvailableModels(userId: string, vendor?: string | null) {
+    const supportedVendors = ['openai', 'anthropic']
+    const targetVendors =
+      vendor && vendor.trim()
+        ? supportedVendors.filter((v) => v === vendor.trim().toLowerCase())
+        : supportedVendors
+    if (!targetVendors.length) {
+      return { models: [] }
+    }
+
+    const providers = await this.prisma.modelProvider.findMany({
+      where: { ownerId: userId, vendor: { in: targetVendors } },
+      orderBy: { createdAt: 'asc' },
+    })
+    console.log('[ModelService] resolving models', { userId, vendor, providerCount: providers.length })
+    const results = new Map<string, { value: string; label: string; vendor: string }>()
+    const errors: { providerId: string; vendor: string; message: string }[] = []
+
+    for (const provider of providers) {
+      const token = await this.prisma.modelToken.findFirst({
+        where: { providerId: provider.id, userId, enabled: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      const secret = token?.secretToken?.trim()
+      if (!secret) continue
+
+      console.log('[ModelService] fetching models for provider', { providerId: provider.id, vendor: provider.vendor, baseUrl: provider.baseUrl })
+      let models: { id: string; label?: string }[] = []
+      try {
+        if (provider.vendor === 'openai') {
+          models = await this.fetchOpenAIModels(provider.baseUrl, secret)
+        } else if (provider.vendor === 'anthropic') {
+          models = await this.fetchAnthropicModels(provider.baseUrl, secret)
+        }
+      } catch (err: any) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn('[ModelService] failed to fetch models for provider', provider.id, message)
+        errors.push({ providerId: provider.id, vendor: provider.vendor, message })
+        if (provider.vendor === 'openai') {
+          const fallbackId = 'gpt-5.1-codex'
+          if (!results.has(fallbackId)) {
+            results.set(fallbackId, {
+              value: fallbackId,
+              label: 'GPT-5.1 Codex (默认)',
+              vendor: provider.vendor,
+            })
+          }
+        }
+        continue
+      }
+      models.forEach((entry) => {
+        if (!entry?.id) return
+        if (results.has(entry.id)) return
+        results.set(entry.id, {
+          value: entry.id,
+          label: entry.label?.trim() || entry.id,
+          vendor: provider.vendor,
+        })
+      })
+    }
+
+    return { models: Array.from(results.values()), errors }
+  }
+
+  private buildAnthropicModelsUrl(baseUrl?: string | null) {
+    const base = (baseUrl || 'https://api.anthropic.com').trim().replace(/\/+$/, '')
+    if (/\/v\d+$/i.test(base)) return `${base}/models`
+    if (/\/v\d+\/models$/i.test(base)) return base
+    return `${base}/v1/models`
+  }
+
+  private async fetchAnthropicModels(baseUrl: string | null | undefined, apiKey: string) {
+    const url = this.buildAnthropicModelsUrl(baseUrl)
+    try {
+      const resp = await this.http.get(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+      })
+      const data = Array.isArray(resp.data?.data) ? resp.data.data : []
+      return data
+        .map((item: any) => {
+          if (!item || typeof item.id !== 'string') return null
+          const label = typeof item.display_name === 'string' && item.display_name.trim()
+            ? item.display_name.trim()
+            : item.id
+          return { id: item.id, label }
+        })
+        .filter(Boolean) as { id: string; label?: string }[]
+    } catch (err: any) {
+      const message = err?.response?.data || err?.message || 'unknown'
+      throw new Error(`anthropic models request failed: ${typeof message === 'string' ? message : JSON.stringify(message)}`)
+    }
+  }
+
+  private buildOpenAIModelsUrl(baseUrl?: string | null) {
+    const base = (baseUrl || 'https://api.openai.com').trim().replace(/\/+$/, '')
+    if (/\/v\d+\/models$/i.test(base)) return base
+    if (/\/v\d+$/i.test(base)) return `${base}/models`
+    return `${base}/v1/models`
+  }
+
+  private async fetchOpenAIModels(baseUrl: string | null | undefined, apiKey: string) {
+    const url = this.buildOpenAIModelsUrl(baseUrl)
+    try {
+      const resp = await this.http.get(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+      const data = Array.isArray(resp.data?.data) ? resp.data.data : Array.isArray(resp.data) ? resp.data : []
+      return data
+        .map((item: any) => {
+          if (!item || typeof item.id !== 'string') return null
+          const label = typeof item.display_name === 'string' && item.display_name.trim()
+            ? item.display_name.trim()
+            : item.id
+          return { id: item.id, label }
+        })
+        .filter(Boolean) as { id: string; label?: string }[]
+    } catch (err: any) {
+      const message = err?.response?.data || err?.message || 'unknown'
+      throw new Error(`openai models request failed: ${typeof message === 'string' ? message : JSON.stringify(message)}`)
+    }
   }
 }

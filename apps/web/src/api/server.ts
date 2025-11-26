@@ -29,6 +29,12 @@ export type ModelEndpointDto = {
   shared?: boolean
 }
 
+export type AvailableModelDto = {
+  value: string
+  label: string
+  vendor?: string
+}
+
 export type PromptSampleDto = {
   id: string
   scene: string
@@ -226,6 +232,24 @@ export async function upsertModelEndpoint(payload: {
   }))
   if (!r.ok) throw new Error(`save endpoint failed: ${r.status}`)
   return r.json()
+}
+
+export async function listAvailableModels(vendor?: string): Promise<AvailableModelDto[]> {
+  const qs = vendor ? `?vendor=${encodeURIComponent(vendor)}` : ''
+  const r = await fetch(`${API_BASE}/models/available${qs}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `list available models failed: ${r.status}`
+    throw new Error(msg)
+  }
+  if (Array.isArray(body)) return body as AvailableModelDto[]
+  if (Array.isArray(body?.models)) return body.models as AvailableModelDto[]
+  return []
 }
 
 export type SoraDraftItemDto = {
@@ -793,6 +817,7 @@ export type TaskKind =
   | 'chat'
   | 'prompt_refine'
   | 'text_to_image'
+  | 'image_to_prompt'
   | 'image_to_video'
   | 'text_to_video'
   | 'image_edit'

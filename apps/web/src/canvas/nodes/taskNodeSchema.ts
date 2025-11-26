@@ -18,6 +18,7 @@ export type TaskNodeFeature =
   | 'image'
   | 'imageUpload'
   | 'imageResults'
+  | 'reversePrompt'
   | 'video'
   | 'videoResults'
   | 'orientation'
@@ -162,7 +163,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     category: 'image',
     icon: IconPhoto,
     label: '图像',
-    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'aspect', 'sampleCount', 'modelSelect'],
+    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
@@ -173,7 +174,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     category: 'image',
     icon: IconPhoto,
     label: '图像',
-    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'aspect', 'sampleCount', 'modelSelect'],
+    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],

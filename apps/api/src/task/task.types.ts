@@ -2,6 +2,7 @@ export type TaskKind =
   | 'chat'
   | 'prompt_refine'
   | 'text_to_image'
+  | 'image_to_prompt'
   | 'image_to_video'
   | 'text_to_video'
   | 'image_edit'
@@ -29,7 +30,15 @@ export interface TextToVideoRequest extends BaseTaskRequest {
   durationSeconds?: number
 }
 
-export type AnyTaskRequest = BaseTaskRequest | TextToImageRequest | TextToVideoRequest
+export interface ImageToPromptRequest extends BaseTaskRequest {
+  kind: 'image_to_prompt'
+}
+
+export type AnyTaskRequest =
+  | BaseTaskRequest
+  | TextToImageRequest
+  | TextToVideoRequest
+  | ImageToPromptRequest
 
 export interface TaskAsset {
   type: 'image' | 'video'
@@ -59,5 +68,5 @@ export interface ProviderAdapter {
   runChat?(req: BaseTaskRequest, ctx: ProviderContext): Promise<TaskResult>
   textToImage?(req: TextToImageRequest, ctx: ProviderContext): Promise<TaskResult>
   textToVideo?(req: TextToVideoRequest, ctx: ProviderContext): Promise<TaskResult>
+  imageToPrompt?(req: ImageToPromptRequest, ctx: ProviderContext): Promise<TaskResult>
 }
-

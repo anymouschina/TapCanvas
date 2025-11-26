@@ -20,6 +20,7 @@ import {
   IconArrowRight,
   IconScissors,
   IconPhotoEdit,
+  IconPhotoSearch,
   IconDeviceTv,
   IconClock,
   IconChevronDown,
@@ -55,7 +56,7 @@ import {
   STORYBOARD_DEFAULT_DURATION,
   enforceStoryboardTotalLimit,
 } from './storyboardUtils'
-import { getTaskNodeSchema, type TaskNodeHandlesConfig } from './taskNodeSchema'
+import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } from './taskNodeSchema'
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 
@@ -77,6 +78,48 @@ const ORIENTATION_OPTIONS = [
 ]
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
+
+const DEFAULT_REVERSE_PROMPT_INSTRUCTION =
+  '请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格，并附上必要的中文备注。'
+
+const REMOTE_IMAGE_URL_REGEX = /^https?:\/\//i
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const result = reader.result
+      resolve(typeof result === 'string' ? result : '')
+    }
+    reader.onerror = () => reject(new Error('Failed to convert blob to data URL'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function resolveImageForReversePrompt(url: string): Promise<{ imageUrl?: string; imageData?: string }> {
+  const normalized = (url || '').trim()
+  if (!normalized) return {}
+  if (REMOTE_IMAGE_URL_REGEX.test(normalized) || normalized.startsWith('data:')) {
+    return { imageUrl: normalized }
+  }
+  if (normalized.startsWith('blob:')) {
+    try {
+      const res = await fetch(normalized)
+      if (!res.ok) {
+        throw new Error('Failed to fetch blob URL')
+      }
+      const blob = await res.blob()
+      const dataUrl = await blobToDataUrl(blob)
+      if (dataUrl) {
+        return { imageData: dataUrl }
+      }
+    } catch (error) {
+      console.error('resolveImageForReversePrompt: failed to read blob URL', error)
+      return {}
+    }
+  }
+  return {}
+}
 
 const genTaskNodeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -222,18 +265,28 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
-  const schemaFeatures = React.useMemo(() => new Set(schema.features), [schema])
+  const schemaFeatures = React.useMemo<Set<TaskNodeFeature>>(
+    () => new Set(schema.features),
+    [schema],
+  )
   const isStoryboardNode = schema.category === 'storyboard'
   const isComposerNode = schema.category === 'composer' || isStoryboardNode
-  const isVideoNode = schemaFeatures.has('video') || isComposerNode
-  const isImageNode = schema.category === 'image'
-  const isCharacterNode = schema.category === 'character'
-  const isAudioNode = kind === 'tts'
+  const hasVideoOutputs = schemaFeatures.has('video') || schemaFeatures.has('videoResults')
+  const isVideoNode = hasVideoOutputs || isComposerNode
+  const isStandaloneVideoNode = hasVideoOutputs && !isComposerNode
+  const isImageNode =
+    schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults')
+  const isCharacterNode = schema.category === 'character' || schemaFeatures.has('character')
+  const isAudioNode = schema.category === 'audio' || schemaFeatures.has('audio')
+  const isSubtitleNode = schema.category === 'subtitle' || schemaFeatures.has('subtitle')
+  const supportsSubflowHandles = schemaFeatures.has('subflow')
+  const supportsImageUpload = schemaFeatures.has('imageUpload')
+  const supportsReversePrompt = schemaFeatures.has('reversePrompt')
   const targets: { id: string; type: string; pos: Position }[] = []
   const sources: { id: string; type: string; pos: Position }[] = []
   const schemaHandles = schema.handles
   if (isDynamicHandlesConfig(schemaHandles)) {
-    if (kind === 'subflow') {
+    if (supportsSubflowHandles) {
       const io = (data as any)?.io as {
         inputs?: { id: string; type: string; label?: string }[]
         outputs?: { id: string; type: string; label?: string }[]
@@ -375,6 +428,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const imageUrl = (data as any)?.imageUrl as string | undefined
   const soraFileId = (data as any)?.soraFileId as string | undefined
   const [uploading, setUploading] = React.useState(false)
+  const [reversePromptLoading, setReversePromptLoading] = React.useState(false)
   const imageResults = React.useMemo(() => {
     const raw = (data as any)?.imageResults as { url: string }[] | undefined
     if (raw && Array.isArray(raw) && raw.length > 0) return raw
@@ -384,6 +438,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [imageExpanded, setImageExpanded] = React.useState(false)
   const [imagePrimaryIndex, setImagePrimaryIndex] = React.useState(0)
   const [imageSelectedIndex, setImageSelectedIndex] = React.useState(0)
+  const primaryImageUrl = imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || null
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
@@ -567,7 +622,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         patch.inpaintFileId = upstreamSoraFileId
       }
     }
-    if (schema.kind === 'video') {
+    if (isStandaloneVideoNode) {
       patch.orientation = orientation
       // Include upstream Sora file_id if available
       if (upstreamSoraFileId) {
@@ -612,7 +667,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [selectedCharacter])
   const characterRefs = React.useMemo(() => {
     return nodesForCharacters
-      .filter((node) => (node.data as any)?.kind === 'character')
+      .filter((node) => {
+        const nodeKind = (node.data as any)?.kind
+        const nodeSchema = getTaskNodeSchema(nodeKind)
+        return nodeSchema.category === 'character' || nodeSchema.features.includes('character')
+      })
       .map((node) => {
         const payload: any = node.data || {}
         const usernameRaw = payload.soraCharacterUsername || ''
@@ -1039,31 +1098,49 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [characterCursor, fetchCharacters, selectedCharacterTokenId])
   const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
-    if (!edgesToThis.length) return { upstreamText: null as string | null, upstreamImageUrl: null as string | null, upstreamVideoUrl: null as string | null, upstreamSoraFileId: null as string | null }
+    if (!edgesToThis.length) {
+      return {
+        upstreamText: null as string | null,
+        upstreamImageUrl: null as string | null,
+        upstreamVideoUrl: null as string | null,
+        upstreamSoraFileId: null as string | null,
+      }
+    }
     const last = edgesToThis[edgesToThis.length - 1]
     const src = s.nodes.find((n) => n.id === last.source)
-    if (!src) return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
+    if (!src) {
+      return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
+    }
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
-    const uText =
-      skind === 'image'
-        ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
-        : null
+    const sourceSchema = getTaskNodeSchema(skind)
+    const sourceFeatures = new Set(sourceSchema.features)
+    const sourceIsImageNode =
+      sourceSchema.category === 'image' || sourceFeatures.has('image') || sourceFeatures.has('imageResults')
+    const sourceHasVideoResults =
+      sourceFeatures.has('videoResults') ||
+      sourceFeatures.has('video') ||
+      sourceSchema.category === 'video' ||
+      sourceSchema.category === 'composer' ||
+      sourceSchema.category === 'storyboard'
+    const uText = sourceIsImageNode
+      ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
+      : null
 
     // 获取最新的主图片 URL
     let uImg = null
     let uSoraFileId = null
-    if (skind === 'image') {
+    if (sourceIsImageNode) {
       uImg = (sd.imageUrl as string | undefined) || null
       uSoraFileId = (sd.soraFileId as string | undefined) || null
-    } else if ((skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-      // 对于video节点，优先获取主视频的缩略图作为上游图片
+    } else if (sourceHasVideoResults && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+      // 对于 video 节点，优先获取主视频的缩略图作为上游图片
       uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
     }
 
     // 获取最新的主视频 URL
     let uVideo = null
-    if (skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') {
+    if (sourceHasVideoResults) {
       if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
         uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
       } else {
@@ -1075,7 +1152,7 @@ const rewritePromptWithCharacters = React.useCallback(
   })
 
   React.useEffect(() => {
-    if (kind !== 'character') {
+    if (!isCharacterNode) {
       setCharacterTokens([])
       setCharacterTokenError(null)
       setCharacterTokensLoading(false)
@@ -1114,16 +1191,16 @@ const rewritePromptWithCharacters = React.useCallback(
     return () => {
       canceled = true
     }
-  }, [kind])
+  }, [isCharacterNode])
 
   React.useEffect(() => {
-    if (kind !== 'character') return
+    if (!isCharacterNode) return
     setCharacterError(null)
     setCharacterList([])
     setCharacterCursor(null)
     if (!selectedCharacterTokenId) return
     fetchCharacters()
-  }, [fetchCharacters, kind, selectedCharacterTokenId])
+  }, [fetchCharacters, isCharacterNode, selectedCharacterTokenId])
 
   React.useEffect(() => {
     if (!selected || selectedCount !== 1) setShowMore(false)
@@ -1231,10 +1308,10 @@ const rewritePromptWithCharacters = React.useCallback(
   const hasContent = React.useMemo(() => {
     if (isImageNode) return Boolean(imageUrl)
     if (isVideoNode) return Boolean((data as any)?.videoUrl)
-    if (kind === 'tts') return Boolean((data as any)?.audioUrl)
+    if (isAudioNode) return Boolean((data as any)?.audioUrl)
     if (isCharacterNode) return Boolean(characterPrimaryImage)
     return false
-  }, [isImageNode, isVideoNode, imageUrl, data, kind, characterPrimaryImage])
+  }, [isImageNode, isVideoNode, isAudioNode, isCharacterNode, imageUrl, data, characterPrimaryImage])
 
   const connectToRight = (targetKind: string, targetLabel: string) => {
     const all = useRFStore.getState().nodes
@@ -1310,7 +1387,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // Handle image upload with Sora API
   const handleImageUpload = async (file: File) => {
-    if (kind !== 'image') return
+    if (!supportsImageUpload) return
 
     try {
       setUploading(true)
@@ -1340,13 +1417,54 @@ const rewritePromptWithCharacters = React.useCallback(
       setUploading(false)
     }
   }
-    const defaultLabel = React.useMemo(() => {
-    if (isComposerNode || schema.kind === 'video') return '文生视频'
+
+  const handleReversePrompt = React.useCallback(async () => {
+    if (!supportsReversePrompt) return
+
+    const targetUrl = imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''
+    if (!targetUrl) {
+      toast('请先上传或生成图片', 'error')
+      return
+    }
+
+    try {
+      setReversePromptLoading(true)
+      const imagePayload = await resolveImageForReversePrompt(targetUrl)
+      if (!imagePayload.imageUrl && !imagePayload.imageData) {
+        toast('当前图片不可用，请稍后重试', 'error')
+        setReversePromptLoading(false)
+        return
+      }
+      const task = await runTaskByVendor('openai', {
+        kind: 'image_to_prompt',
+        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
+        extras: {
+          ...imagePayload,
+          nodeId: id,
+        },
+      })
+      const nextPrompt = extractTextFromTaskResult(task)
+      if (nextPrompt) {
+        setPrompt(nextPrompt)
+        updateNodeData(id, { prompt: nextPrompt })
+        toast('已根据图片生成提示词', 'success')
+      } else {
+        toast('模型未返回提示词，请稍后重试', 'error')
+      }
+    } catch (error: any) {
+      const message = typeof error?.message === 'string' ? error.message : '反推提示词失败'
+      toast(message, 'error')
+    } finally {
+      setReversePromptLoading(false)
+    }
+  }, [supportsReversePrompt, imageResults, imagePrimaryIndex, id, updateNodeData, setPrompt])
+  const defaultLabel = React.useMemo(() => {
+    if (isComposerNode || schema.category === 'video') return '文生视频'
     if (isImageNode) return '图像节点'
-    if (kind === 'audio') return '音频节点'
-    if (kind === 'subtitle') return '字幕节点'
+    if (isAudioNode) return '音频节点'
+    if (isSubtitleNode) return '字幕节点'
     return 'Task'
-  }, [kind])
+  }, [isComposerNode, isImageNode, isAudioNode, isSubtitleNode, schema.category])
   const currentLabel = React.useMemo(() => {
     const text = (data?.label ?? '').trim()
     return text || defaultLabel
@@ -1690,6 +1808,37 @@ const rewritePromptWithCharacters = React.useCallback(
                   >
                     ✓ Sora
                   </div>
+                )}
+                {supportsReversePrompt && primaryImageUrl && (
+                  <button
+                    type="button"
+                    onClick={handleReversePrompt}
+                    disabled={reversePromptLoading}
+                    style={{
+                      position: 'absolute',
+                      left: 8,
+                      bottom: 8,
+                      padding: '4px 12px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: mediaOverlayBackground,
+                      color: mediaOverlayText,
+                      fontSize: 11,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: reversePromptLoading ? 'wait' : 'pointer',
+                      transition: 'opacity .12s ease',
+                      opacity: reversePromptLoading ? 0.7 : 0.95,
+                    }}
+                  >
+                    {reversePromptLoading ? (
+                      <Loader size="xs" color={mediaOverlayText} />
+                    ) : (
+                      <IconPhotoSearch size={12} />
+                    )}
+                    <span>反推提示词</span>
+                  </button>
                 )}
                 {/* 数量 + 展开标签 */}
                 {imageResults.length > 1 && (
@@ -2809,7 +2958,7 @@ const rewritePromptWithCharacters = React.useCallback(
       />
 
       {/* 图片结果弹窗：选择主图 + 全屏预览 */}
-      {kind === 'image' && imageResults.length > 1 && (
+      {isImageNode && imageResults.length > 1 && (
         <Modal
           opened={imageExpanded}
           onClose={() => setImageExpanded(false)}
