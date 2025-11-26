@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, Group, Loader, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { ActionIcon, Badge, Box, Button, Group, Loader, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import { IconX, IconSparkles, IconSend, IconPhoto } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
@@ -26,23 +26,95 @@ interface UseChatAssistantProps {
 
 const OPENAI_DEFAULT_MODEL = 'gpt-5.1-codex'
 
+const collectTextFromParts = (parts?: any): string => {
+  if (!Array.isArray(parts)) return ''
+  const buffer: string[] = []
+  const pushPart = (part: any) => {
+    if (!part) return
+    if (typeof part === 'string' && part.trim()) {
+      buffer.push(part.trim())
+      return
+    }
+    const candidates: (string | undefined)[] = [
+      typeof part.text === 'string' ? part.text : undefined,
+      typeof part.content === 'string' ? part.content : undefined,
+      typeof part.output_text === 'string' ? part.output_text : undefined,
+      typeof part.value === 'string' ? part.value : undefined,
+    ]
+    candidates.forEach((text) => {
+      if (text && text.trim()) {
+        buffer.push(text.trim())
+      }
+    })
+    if (Array.isArray(part.content)) {
+      part.content.forEach(pushPart)
+    }
+  }
+  parts.forEach(pushPart)
+  return buffer.join('').trim()
+}
+
+const extractTextFromResponsePayload = (payload: any): string => {
+  if (!payload || typeof payload !== 'object') return ''
+
+  if (typeof payload.text === 'string' && payload.text.trim()) {
+    return payload.text.trim()
+  }
+
+  if (Array.isArray(payload.output_text)) {
+    const merged = payload.output_text
+      .map((entry: any) => (typeof entry === 'string' ? entry : ''))
+      .join('')
+      .trim()
+    if (merged) return merged
+  }
+
+  if (Array.isArray(payload.output)) {
+    const merged = payload.output
+      .map((entry: any) => collectTextFromParts(entry?.content))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    if (merged) return merged
+  }
+
+  if (Array.isArray(payload.content)) {
+    const merged = collectTextFromParts(payload.content)
+    if (merged) return merged
+  }
+
+  const choices = payload.choices
+  if (Array.isArray(choices) && choices.length > 0) {
+    const message = choices[0]?.message
+    const choiceText =
+      (typeof message?.content === 'string' && message.content.trim()) ||
+      collectTextFromParts(message?.content) ||
+      (typeof choices[0]?.text === 'string' ? choices[0].text.trim() : '')
+    if (choiceText) return choiceText
+  }
+
+  const candidates = payload.candidates
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const merged = collectTextFromParts(candidates[0]?.content?.parts || candidates[0]?.content)
+    if (merged) return merged
+  }
+
+  if (payload.result) {
+    const nested = extractTextFromResponsePayload(payload.result)
+    if (nested) return nested
+  }
+
+  return ''
+}
+
 const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
   if (!task) return ''
   const raw = task.raw as any
   if (raw && typeof raw.text === 'string' && raw.text.trim()) {
     return raw.text.trim()
   }
-  const candidates = raw?.response?.candidates
-  if (Array.isArray(candidates) && candidates.length > 0) {
-    const parts = candidates[0]?.content?.parts
-    if (Array.isArray(parts)) {
-      const combined = parts
-        .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
-        .join('')
-        .trim()
-      if (combined) return combined
-    }
-  }
+  const fromResponse = extractTextFromResponsePayload(raw?.response || raw)
+  if (fromResponse) return fromResponse
   return ''
 }
 
@@ -70,6 +142,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
   const { colorScheme } = useMantineColorScheme()
+  const theme = useMantineTheme()
   const isDarkUi = colorScheme === 'dark'
   const panelBackground = isDarkUi
     ? 'linear-gradient(145deg, rgba(5,7,16,0.95), rgba(12,17,32,0.9), rgba(8,14,28,0.95))'
@@ -121,14 +194,17 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [nodes, edges])
 
+  const provider = useMemo(() => getModelProvider(model), [model])
+  const isGptModel = provider === 'openai'
+
   const body = useMemo(() => ({
     model,
     temperature: 0.2,
     context: canvasContext,
-    provider: getModelProvider(model),
+    provider,
     clientToolExecution: true,
     maxToolRoundtrips: 4,
-  }), [model, canvasContext])
+  }), [model, canvasContext, provider])
 
   const chatId = useMemo(() => `${model}-${nanoid()}`, [model])
 
@@ -258,6 +334,10 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     .filter(Boolean)
     .join('\n')
   const handleImagePromptUpload = useCallback(async (file: File) => {
+    if (!isGptModel) {
+      toast('仅 GPT 模型支持图片提示词', 'error')
+      return
+    }
     setImagePromptLoading(true)
     try {
       const dataUrl = await fileToDataUrl(file)
@@ -279,7 +359,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     } finally {
       setImagePromptLoading(false)
     }
-  }, [setInput])
+  }, [setInput, isGptModel])
 
   const handleImagePromptChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -288,6 +368,14 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       void handleImagePromptUpload(file)
     }
   }, [handleImagePromptUpload])
+
+  const handleImagePromptButtonClick = useCallback(() => {
+    if (!isGptModel) {
+      toast('仅 GPT 模型支持图片提示词', 'error')
+      return
+    }
+    imagePromptInputRef.current?.click()
+  }, [isGptModel])
 
   const onSubmit = (e?: any) => {
     if (e?.preventDefault) e.preventDefault()
@@ -391,9 +479,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         <Box px="lg" py="md" style={{ borderBottom: headerBorder, background: headerBackground }}>
           <Group justify="space-between" align="center">
             <Group gap="sm">
-              <Badge color="violet" variant="light" size="sm" radius="sm">流式</Badge>
-              <IconSparkles size={16} color={sparklesColor} />
-              <Text fw={600} fz="lg" c={headerTextColor}>暗夜AI助手</Text>
+              <Badge color={colorScheme === 'dark' ? 'teal' : 'blue'} variant="light" size="xs" radius="sm">流式</Badge>
+              <IconSparkles size={14} color={sparklesColor} />
+              <Text fw={600} fz="sm" c={headerTextColor}>暗夜AI助手</Text>
             </Group>
             <Group gap="xs">
               <Select
@@ -415,7 +503,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                     }
                   }}
                 >
-                  <IconX size={16} color={closeIconColor} />
+                  <IconX size={14} color={closeIconColor} />
                 </ActionIcon>
               </Tooltip>
             </Group>
@@ -482,12 +570,12 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                   注入系统提示
                 </Button>
                 <Group gap="xs">
-                  <Tooltip label="上传图片生成提示词">
+                  <Tooltip label={isGptModel ? '上传图片生成提示词' : '仅 GPT 模型支持图片提示词'}>
                     <ActionIcon
                       variant="light"
                       color="teal"
-                      onClick={() => imagePromptInputRef.current?.click()}
-                      disabled={imagePromptLoading}
+                      onClick={handleImagePromptButtonClick}
+                      disabled={imagePromptLoading || !isGptModel}
                     >
                       {imagePromptLoading ? (
                         <Loader size="xs" />

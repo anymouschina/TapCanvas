@@ -63,7 +63,9 @@ function CanvasInner(): JSX.Element {
   const isDarkCanvas = colorScheme === 'dark'
   const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
   const backgroundGridColor = isDarkCanvas ? theme.colors.dark[5] : theme.colors.gray[2]
-  const connectionStrokeColor = isDarkCanvas ? theme.colors.violet[4] : theme.colors.violet[6]
+  const connectionStrokeColor =
+    theme.colors[theme.primaryColor]?.[isDarkCanvas ? 4 : 6] ||
+    theme.colors.blue[isDarkCanvas ? 4 : 6]
   const edgeMarkerColor = isDarkCanvas ? theme.colors.gray[6] : theme.colors.gray[5]
   const emptyGuideBackground = isDarkCanvas ? rgba(theme.colors.dark[7], 0.9) : rgba(theme.white, 0.95)
   const emptyGuideTextColor = isDarkCanvas ? theme.white : theme.colors.dark[6]

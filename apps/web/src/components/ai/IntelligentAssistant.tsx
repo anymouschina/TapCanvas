@@ -53,17 +53,17 @@ export const ThinkingProcess: React.FC<ThinkingProcessProps> = ({
     return <Icon size={16} />
   }
 
-  const getThinkingColor = (type: ThinkingEvent['type']) => {
-    const colorMap = {
-      intent_analysis: 'blue',
-      planning: 'green',
-      reasoning: 'orange',
-      decision: 'violet',
-      execution: 'yellow',
-      result: 'teal'
-    }
-    return colorMap[type] || 'gray'
+const getThinkingColor = (type: ThinkingEvent['type']) => {
+  const colorMap = {
+    intent_analysis: 'blue',
+    planning: 'green',
+    reasoning: 'orange',
+    decision: 'teal',
+    execution: 'yellow',
+    result: 'cyan'
   }
+  return colorMap[type] || 'gray'
+}
 
   const getThinkingTitle = (type: ThinkingEvent['type']) => {
     const titleMap = {

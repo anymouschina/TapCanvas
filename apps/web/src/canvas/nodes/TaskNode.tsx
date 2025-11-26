@@ -9,7 +9,6 @@ import {
   IconDownload,
   IconArrowsDiagonal2,
   IconBrush,
-  IconPhotoUp,
   IconDots,
   IconAdjustments,
   IconUpload,
@@ -17,7 +16,6 @@ import {
   IconPlayerStop,
   IconTexture,
   IconVideo,
-  IconArrowRight,
   IconScissors,
   IconPhotoEdit,
   IconPhotoSearch,
@@ -164,23 +162,95 @@ const applyMentionFallback = (text: string, mention: string, aliases: string[]) 
   return { text: result, replaced }
 }
 
+const collectTextFromParts = (parts?: any): string => {
+  if (!Array.isArray(parts)) return ''
+  const buffer: string[] = []
+  const pushPart = (part: any) => {
+    if (!part) return
+    if (typeof part === 'string' && part.trim()) {
+      buffer.push(part.trim())
+      return
+    }
+    const candidates: (string | undefined)[] = [
+      typeof part.text === 'string' ? part.text : undefined,
+      typeof part.content === 'string' ? part.content : undefined,
+      typeof part.output_text === 'string' ? part.output_text : undefined,
+      typeof part.value === 'string' ? part.value : undefined,
+    ]
+    candidates.forEach((text) => {
+      if (text && text.trim()) {
+        buffer.push(text.trim())
+      }
+    })
+    if (Array.isArray(part.content)) {
+      part.content.forEach(pushPart)
+    }
+  }
+  parts.forEach(pushPart)
+  return buffer.join('').trim()
+}
+
+const extractTextFromResponsePayload = (payload: any): string => {
+  if (!payload || typeof payload !== 'object') return ''
+
+  if (typeof payload.text === 'string' && payload.text.trim()) {
+    return payload.text.trim()
+  }
+
+  if (Array.isArray(payload.output_text)) {
+    const merged = payload.output_text
+      .map((entry: any) => (typeof entry === 'string' ? entry : ''))
+      .join('')
+      .trim()
+    if (merged) return merged
+  }
+
+  if (Array.isArray(payload.output)) {
+    const merged = payload.output
+      .map((entry: any) => collectTextFromParts(entry?.content))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    if (merged) return merged
+  }
+
+  if (Array.isArray(payload.content)) {
+    const merged = collectTextFromParts(payload.content)
+    if (merged) return merged
+  }
+
+  const choices = payload.choices
+  if (Array.isArray(choices) && choices.length > 0) {
+    const message = choices[0]?.message
+    const choiceText =
+      (typeof message?.content === 'string' && message.content.trim()) ||
+      collectTextFromParts(message?.content) ||
+      (typeof choices[0]?.text === 'string' ? choices[0].text.trim() : '')
+    if (choiceText) return choiceText
+  }
+
+  const candidates = payload.candidates
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const merged = collectTextFromParts(candidates[0]?.content?.parts || candidates[0]?.content)
+    if (merged) return merged
+  }
+
+  if (payload.result) {
+    const nested = extractTextFromResponsePayload(payload.result)
+    if (nested) return nested
+  }
+
+  return ''
+}
+
 const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
   if (!task) return ''
   const raw = task.raw as any
   if (raw && typeof raw.text === 'string' && raw.text.trim()) {
     return raw.text.trim()
   }
-  const candidates = raw?.response?.candidates
-  if (Array.isArray(candidates) && candidates.length > 0) {
-    const parts = candidates[0]?.content?.parts
-    if (Array.isArray(parts)) {
-      const combined = parts
-        .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
-        .join('')
-        .trim()
-      if (combined) return combined
-    }
-  }
+  const fromResponse = extractTextFromResponsePayload(raw?.response || raw)
+  if (fromResponse) return fromResponse
   return ''
 }
 
@@ -208,12 +278,30 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     status === 'canceled' ? '#475569' :
     status === 'running' ? '#8b5cf6' :
     status === 'queued' ? '#f59e0b' : 'rgba(127,127,127,.6)'
+  const statusLabel =
+    status === 'success' ? '已完成' :
+    status === 'error' ? '异常' :
+    status === 'canceled' ? '已取消' :
+    status === 'running' ? '生成中' :
+    status === 'queued' ? '排队中' : '待命'
   const { colorScheme } = useMantineColorScheme()
   const theme = useMantineTheme()
   const isDarkUi = colorScheme === 'dark'
   const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
-  const nodeShellBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.9) : theme.white
-  const nodeShellBorder = `1px solid ${isDarkUi ? theme.colors.dark[4] : theme.colors.gray[3]}`
+  const lightCards = ['#fefeff', '#f4f7ff']
+  const darkCards = ['rgba(19, 22, 40, 0.98)', 'rgba(12, 14, 26, 0.96)']
+  const nodeShellBackground = isDarkUi
+    ? `linear-gradient(145deg, ${darkCards[0]}, ${darkCards[1]})`
+    : `linear-gradient(145deg, ${lightCards[0]}, ${lightCards[1]})`
+  const nodeShellBorder = `1px solid ${
+    isDarkUi ? rgba(theme.colors.blue[4], 0.6) : 'rgba(172, 191, 255, 0.9)'
+  }`
+  const nodeShellShadow = isDarkUi
+    ? '0 18px 38px rgba(5, 8, 23, 0.75)'
+    : '0 30px 55px rgba(79, 120, 255, 0.2)'
+  const nodeShellGlow = isDarkUi
+    ? '0 0 32px rgba(96, 165, 250, 0.35)'
+    : '0 0 32px rgba(96, 165, 250, 0.45)'
   const nodeShellText = isDarkUi ? theme.white : theme.colors.gray[8] // 使用更深的颜色提高日间模式对比度
   const nodeShellMuted = isDarkUi ? theme.colors.gray[4] : theme.colors.gray[7] // 提高日间模式下次要文本的对比度
   const quickActionBackgroundActive = isDarkUi ? rgba(theme.white, 0.08) : rgba(theme.colors.gray[1], 0.8)
@@ -224,31 +312,85 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const mediaCardBackground = isDarkUi ? theme.colors.dark[8] : theme.white
   const mediaOverlayBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.85) : rgba(theme.colors.gray[0], 0.95)
   const mediaOverlayText = nodeShellText
+  const toolbarBackground = isDarkUi ? 'rgba(23, 28, 50, 0.94)' : '#ffffff'
+  const toolbarBorder = `1px solid ${isDarkUi ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.08)'}`
+  const toolbarShadow = isDarkUi ? '0 18px 32px rgba(2,4,10,0.55)' : '0 18px 32px rgba(29,78,216,0.15)'
+  const detailPanelBackground = isDarkUi
+    ? 'linear-gradient(145deg, rgba(12,15,32,0.97), rgba(6,8,18,0.96))'
+    : 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(241,246,255,0.95))'
+  const detailPanelBorder = `1px solid ${isDarkUi ? 'rgba(255,255,255,0.1)' : 'rgba(180,198,255,0.7)'}`
+  const detailPanelShadow = isDarkUi ? '0 18px 45px rgba(1,2,8,0.7)' : '0 25px 60px rgba(54,79,199,0.15)'
   const overlayCardBorder = `1px solid ${isDarkUi ? theme.colors.gray[4] : theme.colors.gray[3]}`
   const subtleOverlayBackground = isDarkUi ? rgba(theme.colors.dark[5], 0.6) : rgba(theme.colors.gray[3], 0.3)
   const mediaFallbackSurface = isDarkUi ? theme.colors.dark[9] : theme.colors.gray[0]
   const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[7] // 提高日间模式下媒体回退文本的对比度
   const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
-  const summaryBarBackground = isDarkUi ? theme.colors.dark[8] : theme.colors.gray[0]
-  const summaryBarBorder = `1px solid ${isDarkUi ? rgba(theme.white, 0.1) : theme.colors.gray[3]}`
-  const summaryChipAccent = theme.colors.violet?.[5] || theme.colors.blue[5]
-  const summaryChipBackground = isDarkUi ? rgba(summaryChipAccent, 0.4) : rgba(summaryChipAccent, 0.1)
-  const summaryChipBorder = `1px solid ${isDarkUi ? rgba(summaryChipAccent, 0.85) : rgba(summaryChipAccent, 0.4)}`
-  const summaryChipShadow = isDarkUi ? '0 12px 25px rgba(0, 0, 0, 0.45)' : '0 6px 16px rgba(84, 58, 255, 0.12)'
-  const summaryChipColor = theme.white // 在日间和dark模式下都使用白色文字，保持一致
+  const summaryChipAccent = theme.colors.blue?.[5] || '#4c6ef5'
+  const summaryChipGradient = isDarkUi
+    ? `linear-gradient(135deg, rgba(72, 94, 230, 0.85), rgba(125, 176, 255, 0.7))`
+    : `linear-gradient(135deg, rgba(76, 110, 245, 1), rgba(147, 197, 253, 0.95))`
+  const summaryChipShadow = isDarkUi
+    ? '0 10px 20px rgba(5, 6, 23, 0.6)'
+    : '0 12px 20px rgba(76, 110, 245, 0.25)'
+  const summaryChipColor = '#ffffff'
   const summaryChipStyles = React.useMemo(() => ({
-    background: summaryChipBackground,
-    borderRadius: 999,
-    border: summaryChipBorder,
+    background: summaryChipGradient,
+    borderRadius: 12,
+    border: 'none',
     color: summaryChipColor,
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '4px 10px',
+    padding: '6px 12px',
+    fontWeight: 500,
     boxShadow: summaryChipShadow,
-    transition: 'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease'
-  }), [summaryChipBackground, summaryChipBorder, summaryChipColor, summaryChipShadow])
+    transition: 'transform 120ms ease, box-shadow 120ms ease',
+    fontSize: 12,
+  }), [summaryChipGradient, summaryChipColor, summaryChipShadow])
+  const inlineDividerColor = rgba(nodeShellText, 0.15)
+  const sleekChipBase = React.useMemo(() => ({
+    borderRadius: 999,
+    border: `1px solid ${isDarkUi ? 'rgba(255,255,255,0.12)' : 'rgba(164,184,255,0.55)'}`,
+    padding: '6px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 12,
+    fontWeight: 500,
+    background: isDarkUi ? 'rgba(12,15,32,0.75)' : 'rgba(255,255,255,0.8)',
+    color: nodeShellText,
+    lineHeight: 1.2,
+    whiteSpace: 'nowrap',
+  }), [isDarkUi, nodeShellText])
+  const toolbarIconButton = React.useMemo(() => ({
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    border: `1px solid ${isDarkUi ? 'rgba(255,255,255,0.18)' : 'rgba(214,219,235,0.8)'}`,
+    background: isDarkUi ? 'rgba(20,24,45,0.85)' : '#ffffff',
+    color: nodeShellText,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    padding: 0,
+    boxShadow: isDarkUi ? '0 6px 18px rgba(0,0,0,0.45)' : '0 10px 20px rgba(15,23,42,0.08)',
+    transition: 'all 120ms ease',
+  }), [isDarkUi, nodeShellText])
+  const overlayIconButton = React.useMemo(() => ({
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    border: '1px solid rgba(255,255,255,0.2)',
+    background: isDarkUi ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,42,0.6)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    padding: 0,
+  }), [isDarkUi])
   const galleryCardBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.95) : theme.white
   const galleryBorderDefault = `1px solid ${isDarkUi ? rgba(theme.white, 0.2) : theme.colors.gray[3]}`
   const galleryBorderActive = `2px solid ${isDarkUi ? theme.colors.blue[4] : theme.colors.blue[6]}`
@@ -263,6 +405,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
+  const NodeIcon = schema.icon
   const schemaFeatures = React.useMemo<Set<TaskNodeFeature>>(
     () => new Set(schema.features),
     [schema],
@@ -329,6 +472,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const addEdge = useRFStore(s => s.onConnect)
   const [prompt, setPrompt] = React.useState<string>((data as any)?.prompt || '')
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
+  const previewAspectRatio = React.useMemo(() => {
+    if (!isImageNode) return null
+    const [w, h] = (aspect || '').split(':').map((part) => Number(part))
+    if (!w || !h) return null
+    return `${w} / ${h}`
+  }, [aspect, isImageNode])
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
   const [storyboardScenes, setStoryboardScenes] = React.useState<StoryboardScene[]>(() =>
@@ -1346,6 +1495,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const fixedWidth = isImageNode ? 320 : undefined
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
+  const promptPreview = (prompt || (data as any)?.prompt || '').trim()
   const hasAiText = lastText.trim().length > 0
 
   const edgeRoute = useUIStore(s => s.edgeRoute)
@@ -1420,7 +1570,7 @@ const rewritePromptWithCharacters = React.useCallback(
       const result = await uploadImageWithRetry(file)
 
       if (result.file_id) {
-        const remoteUrl = result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
+        const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
         updateNodeData(id, {
           imageUrl: remoteUrl,
           soraFileId: result.file_id,
@@ -1522,103 +1672,220 @@ const rewritePromptWithCharacters = React.useCallback(
     setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
   }, [cancelNodeExecution, id, setNodeStatus])
   const isRunning = status === 'running' || status === 'queued'
+  const shellOutline = selected ? `1px solid ${theme.colors.blue?.[4] || '#4c6ef5'}` : nodeShellBorder
+  const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
+  const subtitle = schema.label || defaultLabel
 
   return (
-    <div style={{
-      border: nodeShellBorder,
-      borderRadius: 12,
-      padding: '10px 12px',
-      background: nodeShellBackground,
-      color: nodeShellText,
-      width: fixedWidth
-    }}>
-      {/* Title */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: nodeShellText, marginBottom: 6 }}>
-        {editing ? (
-          <TextInput
-            ref={labelInputRef}
-            size="xs"
-            value={labelDraft}
-            onChange={(e) => setLabelDraft(e.currentTarget.value)}
-            onBlur={commitLabel}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                commitLabel()
-              } else if (e.key === 'Escape') {
-                setLabelDraft(currentLabel)
-                setEditing(false)
-              }
+    <div
+      style={{
+        border: shellOutline,
+        borderRadius: 18,
+        padding: '16px 18px 18px',
+        background: nodeShellBackground,
+        color: nodeShellText,
+        boxShadow: shellShadow,
+        backdropFilter: 'blur(18px)',
+        transition: 'box-shadow 180ms ease, border-color 180ms ease, transform 180ms ease',
+        transform: selected ? 'translateY(-2px)' : 'translateY(0)',
+        position: 'relative',
+        ...(fixedWidth ? { width: fixedWidth } : {}),
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 12,
+              background: isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: summaryChipAccent,
             }}
-          />
-        ) : (
-          <Group justify="space-between" gap={4}>
-            <span onDoubleClick={() => setEditing(true)} title="Double-click to rename">
-              {currentLabel}
-            </span>
-            <ActionIcon size="sm" variant="subtle" color="gray" title="Rename" onClick={() => setEditing(true)}>
-              <IconBrush size={12} />
-            </ActionIcon>
-          </Group>
-        )}
+          >
+            <NodeIcon size={18} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editing ? (
+              <TextInput
+                ref={labelInputRef}
+                size="xs"
+                value={labelDraft}
+                onChange={(e) => setLabelDraft(e.currentTarget.value)}
+                onBlur={commitLabel}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    commitLabel()
+                  } else if (e.key === 'Escape') {
+                    setLabelDraft(currentLabel)
+                    setEditing(false)
+                  }
+                }}
+              />
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Text
+                    size="sm"
+                    fw={600}
+                    style={{ color: nodeShellText, lineHeight: 1.2, cursor: 'pointer', flex: 1 }}
+                    title="双击重命名"
+                    onDoubleClick={() => setEditing(true)}
+                  >
+                    {currentLabel}
+                  </Text>
+                  <ActionIcon size="sm" variant="subtle" color="gray" title="重命名" onClick={() => setEditing(true)}>
+                    <IconBrush size={12} />
+                  </ActionIcon>
+                </div>
+                <Text size="xs" c="dimmed" style={{ marginTop: 2 }}>
+                  {subtitle}
+                </Text>
+              </>
+            )}
+          </div>
+        </div>
+        <div
+          style={{
+            ...sleekChipBase,
+            borderColor: rgba(color, 0.4),
+            background: rgba(color, 0.12),
+            color,
+            fontSize: 12,
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
+          <span>{statusLabel}</span>
+        </div>
       </div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
         <div ref={moreRef} style={{ position: 'relative', display: 'inline-block' }} data-more-root>
-          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4}>
-            <Group gap={6}>
-            <ActionIcon key="preview" variant="subtle" title="放大预览" onClick={()=>{
-              const url =
-                isCharacterNode
-                  ? characterPrimaryImage || undefined
-                  : (isImageNode)
-                    ? (imageUrl || (data as any)?.imageUrl)
-                    : isVideoNode
-                      ? (data as any)?.videoUrl
-                      : (isAudioNode ? (data as any)?.audioUrl : undefined)
-              const k: any =
-                isCharacterNode
-                  ? 'image'
-                  : isAudioNode
-                    ? 'audio'
-                    : isVideoNode
-                      ? 'video'
-                      : 'image'
-              if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
-            }}><IconMaximize size={16} /></ActionIcon>
-            <ActionIcon key="download" variant="subtle" title="下载" onClick={()=>{
-              const url =
-                isCharacterNode
-                  ? characterPrimaryImage || undefined
-                  : (isImageNode )
-                    ? (imageUrl || (data as any)?.imageUrl)
-                    : isVideoNode
-                      ? (data as any)?.videoUrl
-                      : (isAudioNode ? (data as any)?.audioUrl : undefined)
-              if (!url) return
-              const a = document.createElement('a')
-              a.href = url
-              a.download = `${(data?.label || kind)}-${Date.now()}`
-              document.body.appendChild(a)
-              a.click()
-              a.remove()
-            }}><IconDownload size={16} /></ActionIcon>
-            {visibleDefs.length > 0 && <span style={{ color: quickActionDividerColor, padding: '0 6px', userSelect: 'none' }}>|</span>}
-            {visibleDefs.map(d => (
-              <Button key={d.key} size="xs" variant="subtle" leftSection={d.icon} onClick={d.onClick}>{d.label}</Button>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 12px',
+              borderRadius: 999,
+              border: toolbarBorder,
+              background: toolbarBackground,
+              boxShadow: toolbarShadow,
+              backdropFilter: 'blur(18px)',
+            }}
+          >
+            <button
+              type="button"
+              title="放大预览"
+              onClick={() => {
+                const url =
+                  isCharacterNode
+                    ? characterPrimaryImage || undefined
+                    : isImageNode
+                      ? imageUrl || (data as any)?.imageUrl
+                      : isVideoNode
+                        ? (data as any)?.videoUrl
+                        : isAudioNode
+                          ? (data as any)?.audioUrl
+                          : undefined
+                const k: any =
+                  isCharacterNode
+                    ? 'image'
+                    : isAudioNode
+                      ? 'audio'
+                      : isVideoNode
+                        ? 'video'
+                        : 'image'
+                if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
+              }}
+              style={toolbarIconButton}
+            >
+              <IconMaximize size={16} />
+            </button>
+            <button
+              type="button"
+              title="下载"
+              onClick={() => {
+                const url =
+                  isCharacterNode
+                    ? characterPrimaryImage || undefined
+                    : isImageNode
+                      ? imageUrl || (data as any)?.imageUrl
+                      : isVideoNode
+                        ? (data as any)?.videoUrl
+                        : isAudioNode
+                          ? (data as any)?.audioUrl
+                          : undefined
+                if (!url) return
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${(data?.label || kind)}-${Date.now()}`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+              }}
+              style={toolbarIconButton}
+            >
+              <IconDownload size={16} />
+            </button>
+            {visibleDefs.length > 0 && (
+              <div style={{ width: 1, height: 24, background: inlineDividerColor }} />
+            )}
+            {visibleDefs.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                onClick={d.onClick}
+                style={{
+                  ...sleekChipBase,
+                  border: '1px solid transparent',
+                  background: 'transparent',
+                  padding: '4px 8px',
+                }}
+              >
+                {d.icon}
+                <span>{d.label}</span>
+              </button>
             ))}
             {extraDefs.length > 0 && (
-              <ActionIcon variant="subtle" title="更多" onClick={(e)=>{ e.stopPropagation(); setShowMore(v=>!v) }}><IconDots size={16} /></ActionIcon>
+              <button
+                type="button"
+                title="更多"
+                style={toolbarIconButton}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowMore((v) => !v)
+                }}
+              >
+                <IconDots size={16} />
+              </button>
             )}
-          </Group>
-        </Paper>
+          </div>
           {showMore && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 2 }}>
+            <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 2 }}>
               <Paper withBorder shadow="md" radius="md" className="glass" p="xs" style={{ width: 260 }}>
-                <Text size="xs" c="dimmed" mb={6}>更多</Text>
+                <Text size="xs" c="dimmed" mb={6}>
+                  更多
+                </Text>
                 <Group wrap="wrap" gap={6}>
-                  {extraDefs.map(d => (
-                    <Button key={d.key} size="xs" variant="subtle" leftSection={<>{d.icon}</>} onClick={()=>{ setShowMore(false); d.onClick() }}>{d.label}</Button>
+                  {extraDefs.map((d) => (
+                    <Button
+                      key={d.key}
+                      size="xs"
+                      variant="subtle"
+                      leftSection={<>{d.icon}</>}
+                      onClick={() => {
+                        setShowMore(false)
+                        d.onClick()
+                      }}
+                    >
+                      {d.label}
+                    </Button>
                   ))}
                 </Group>
               </Paper>
@@ -1742,9 +2009,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ color: active ? quickActionIconActive : quickActionIconColor }}>{row.icon}</div>
                         <div style={{ flex: 1, color: nodeShellText, fontSize: 13 }}>{row.label}</div>
-                        <div style={{ color: active ? quickActionIconActive : 'transparent', transition: 'color .12s ease', width: 16, display: 'flex', justifyContent: 'center' }}>
-                          <IconArrowRight size={14} />
-                        </div>
+                        <div style={{ width: 12, height: 12 }} />
                       </div>
                       {active && idx === 0 && (
                         <div style={{ marginLeft: 36, marginTop: 4, color: quickActionHint, fontSize: 11 }}>
@@ -2028,12 +2293,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
       {/* Bottom detail panel near node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center">
-        <Paper
-          withBorder
-          shadow="md"
-          radius="md"
-          className="glass"
-          p="sm"
+        <div
           style={{
             width: 420,
             maxHeight: '60vh',
@@ -2044,30 +2304,36 @@ const rewritePromptWithCharacters = React.useCallback(
         >
           <div
             style={{
-              background: summaryBarBackground,
-              borderRadius: 8,
-              padding: '6px 10px',
+              borderRadius: 20,
+              border: detailPanelBorder,
+              background: detailPanelBackground,
+              boxShadow: detailPanelShadow,
+              padding: 16,
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 6,
-              marginBottom: 8,
-              border: summaryBarBorder,
+              flexDirection: 'column',
+              gap: 12,
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
                   <button
                     type="button"
                     style={{
                       ...summaryChipStyles,
-                      minWidth: 150,
+                      minWidth: 0,
+                      maxWidth: 220,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
                     }}
+                    title={summaryModelLabel}
                   >
                     <IconBrush size={14} />
                     <span>{summaryModelLabel}</span>
-                    <IconArrowRight size={12} />
                   </button>
                 </Menu.Target>
                 <Menu.Dropdown>
@@ -2097,12 +2363,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     type="button"
                     style={{
                       ...summaryChipStyles,
-                      minWidth: 100,
+                      minWidth: 0,
                     }}
                   >
                       <IconClock size={14} />
                       <span>{summaryDuration}</span>
-                      <IconArrowRight size={12} />
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2122,18 +2387,16 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Menu>
               )}
               {showResolutionMenu && (
-                <Menu withinPortal position="bottom-start" transition="pop-top-left">
+              <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
                   <button
                     type="button"
                     style={{
                       ...summaryChipStyles,
-                      minWidth: 120,
                     }}
                   >
                       <IconDeviceTv size={14} />
                       <span>{summaryResolution}</span>
-                      <IconArrowRight size={12} />
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2158,12 +2421,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     type="button"
                     style={{
                       ...summaryChipStyles,
-                      minWidth: 100,
+                      minWidth: 0,
                     }}
                   >
                       <IconDeviceMobile size={14} />
                       <span>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
-                      <IconArrowRight size={12} />
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2187,12 +2449,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     type="button"
                     style={{
                       ...summaryChipStyles,
-                      minWidth: 80,
+                      minWidth: 0,
                     }}
                   >
                     <IconAdjustments size={14} />
                     <span>{summaryExec}</span>
-                    <IconArrowRight size={12} />
                   </button>
                 </Menu.Target>
                 <Menu.Dropdown>
@@ -2209,31 +2470,60 @@ const rewritePromptWithCharacters = React.useCallback(
                   ))}
                 </Menu.Dropdown>
               </Menu>
+              {!isCharacterNode && (
+                <>
+                  {isRunning && (
+                    <ActionIcon
+                      size="lg"
+                      variant="light"
+                      color="red"
+                      title="停止当前任务"
+                      onClick={handleCancelRun}
+                    >
+                      <IconPlayerStop size={16} />
+                    </ActionIcon>
+                  )}
+                  <ActionIcon
+                    size="xl"
+                    variant="filled"
+                    title="执行节点"
+                    loading={isRunning}
+                    disabled={isRunning}
+                    onClick={runNode}
+                    radius="xl"
+                    style={{
+                      width: 46,
+                      height: 46,
+                      background: 'linear-gradient(135deg, #4c6ef5, #60a5fa)',
+                      boxShadow: '0 18px 30px rgba(76, 110, 245, 0.35)',
+                    }}
+                  >
+                    <IconPlayerPlay size={18} />
+                  </ActionIcon>
+                </>
+              )}
             </div>
             {!isCharacterNode && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {isRunning && (
-                  <ActionIcon
-                    size="lg"
-                    variant="light"
-                    color="red"
-                    title="停止当前任务"
-                    onClick={handleCancelRun}
-                  >
-                    <IconPlayerStop size={16} />
-                  </ActionIcon>
-                )}
-                <ActionIcon
-                  size="lg"
-                  variant="filled"
-                  color="blue"
-                  title="执行节点"
-                  loading={isRunning}
-                  disabled={isRunning}
-                  onClick={runNode}
+              <div>
+                <Text size="xs" c="dimmed" mb={4}>
+                  详情
+                </Text>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${rgba(nodeShellText, 0.15)}`,
+                    background: isDarkUi ? 'rgba(20,22,35,0.9)' : 'rgba(248,250,255,0.95)',
+                    minHeight: 60,
+                    padding: '8px 10px',
+                    fontSize: 12,
+                    color: nodeShellText,
+                    whiteSpace: 'pre-wrap',
+                  }}
                 >
-                  <IconPlayerPlay size={16} />
-                </ActionIcon>
+                  {promptPreview || (
+                    <span style={{ color: nodeShellMuted }}>在这里输入提示词… (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)</span>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -2644,7 +2934,6 @@ const rewritePromptWithCharacters = React.useCallback(
                             size="xs"
                             withinPortal
                             clearable
-                            style={{ minWidth: 120 }}
                           />
                           <Select
                             label="镜头运动"
@@ -2659,7 +2948,6 @@ const rewritePromptWithCharacters = React.useCallback(
                             size="xs"
                             withinPortal
                             clearable
-                            style={{ minWidth: 120 }}
                           />
                           <NumberInput
                             label="时长 (秒)"
@@ -2980,7 +3268,7 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
             </>
           )}
-        </Paper>
+        </div>
       </NodeToolbar>
       <PromptSampleDrawer
         opened={promptSamplesOpen}
