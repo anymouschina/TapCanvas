@@ -127,7 +127,6 @@ export async function runFlowDag(
         const nodeMeta = graph.nodes.get(id)
         const kind = (nodeMeta?.data as any)?.kind
         const shouldRemote =
-          kind === 'textToImage' ||
           kind === 'composeVideo' ||
           kind === 'storyboard' ||
           kind === 'tts' ||

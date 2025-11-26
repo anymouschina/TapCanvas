@@ -38,7 +38,6 @@ export type TaskNodeCategory =
   | 'storyboard'
   | 'video'
   | 'image'
-  | 'text'
   | 'audio'
   | 'subtitle'
   | 'character'
@@ -158,8 +157,8 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
       sources: [{ id: 'out-video', type: 'video', position: SOURCE }],
     },
   },
-  image: {
-    kind: 'image',
+  textToImage:{
+    kind: 'textToImage',
     category: 'image',
     icon: IconPhoto,
     label: '图像',
@@ -169,24 +168,14 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
     },
   },
-  textToImage: {
-    kind: 'textToImage',
-    category: 'text',
-    icon: IconPhotoEdit,
-    label: '文生图',
-    features: ['prompt', 'image', 'imageResults', 'sampleCount', 'modelSelect', 'systemPrompt'],
-    handles: {
-      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  coverImage: {
-    kind: 'coverImage',
+  image: {
+    kind: 'image',
     category: 'image',
     icon: IconPhoto,
-    label: '封面生成',
-    features: ['prompt', 'image', 'imageResults', 'sampleCount', 'aspect', 'modelSelect', 'systemPrompt'],
+    label: '图像',
+    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'aspect', 'sampleCount', 'modelSelect'],
     handles: {
-      targets: [{ id: 'in-text', type: 'text', position: TARGET }],
+      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
     },
   },
@@ -219,14 +208,6 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     handles: {
       sources: [{ id: 'out-character', type: 'character', position: SOURCE }],
     },
-  },
-  text: {
-    kind: 'text',
-    category: 'text',
-    icon: IconMessages,
-    label: '文本',
-    features: ['prompt', 'textResults', 'modelSelect'],
-    handles: DEFAULT_SCHEMA.handles,
   },
   subflow: {
     kind: 'subflow',

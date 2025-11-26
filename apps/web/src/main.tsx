@@ -7,6 +7,7 @@ import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './dark.css'
 import './light.css'
+import { installAuth401Interceptor } from './auth/fetch401Interceptor'
 
 const COLOR_SCHEME_STORAGE_KEY = 'tapcanvas-color-scheme'
 const DEFAULT_COLOR_SCHEME: MantineColorScheme = 'dark'
@@ -26,6 +27,7 @@ function primeColorSchemeAttribute() {
 }
 
 primeColorSchemeAttribute()
+installAuth401Interceptor()
 
 const baseTheme = {
   defaultRadius: 'sm',

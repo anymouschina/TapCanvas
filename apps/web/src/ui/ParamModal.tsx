@@ -2,7 +2,7 @@ import React, { useEffect } from 'react'
 import { Modal, TextInput, Textarea, NumberInput, Select, Button, Group } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
-import { textToImageSchema, composeVideoSchema, ttsSchema, subtitleAlignSchema, defaultsFor } from '../inspector/forms'
+import { composeVideoSchema, ttsSchema, subtitleAlignSchema, defaultsFor } from '../inspector/forms'
 
 export default function ParamModal(): JSX.Element {
   const nodeId = useUIStore(s => s.paramNodeId)
@@ -28,17 +28,7 @@ export default function ParamModal(): JSX.Element {
       {!n && <div>节点不存在</div>}
       {n && (
         <div>
-          {kind === 'textToImage' && (
-            <>
-              <Textarea label="提示词" autosize minRows={3} value={form.prompt||''} onChange={(e)=>setField('prompt', e.currentTarget.value)} />
-              <Group grow mt={8}>
-                <NumberInput label="Steps" min={1} max={100} value={form.steps||30} onChange={(v)=>setField('steps', Number(v)||30)} />
-                <NumberInput label="Seed" value={form.seed||''} onChange={(v)=>setField('seed', v===undefined? undefined : Number(v))} />
-              </Group>
-              <Select mt={8} label="比例" data={[{value:'16:9',label:'16:9'},{value:'1:1',label:'1:1'},{value:'9:16',label:'9:16'}]} value={form.aspect||'16:9'} onChange={(v)=>setField('aspect', v||'16:9')} />
-            </>
-          )}
-          {(kind === 'composeVideo' || kind === 'storyboard') && (
+                                                                    {(kind === 'composeVideo' || kind === 'storyboard') && (
             <>
               <Textarea label="分镜/脚本" autosize minRows={4} value={form.storyboard||''} onChange={(e)=>setField('storyboard', e.currentTarget.value)} />
               <Group grow mt={8}>

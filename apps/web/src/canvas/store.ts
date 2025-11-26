@@ -286,7 +286,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const selected = s.nodes.find((n) => n.selected)
     if (!selected) return
     const kind = (selected.data as any)?.kind as string | undefined
-    if (kind === 'textToImage' || kind === 'composeVideo' || kind === 'storyboard' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image') {
+    if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image') {
       await runNodeRemote(selected.id, get, set)
     } else {
       await runNodeMock(selected.id, get, set)

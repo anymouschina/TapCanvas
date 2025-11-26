@@ -326,7 +326,6 @@ export class AIAssistant {
       '任务': 'taskNode',
       '分组': 'groupNode',
       '输入输出': 'ioNode',
-      '文本': 'text',
       '图像': 'image',
       '视频': 'composeVideo',
       '分镜': 'storyboard',

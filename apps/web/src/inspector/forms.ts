@@ -1,13 +1,5 @@
 import { z } from 'zod'
 
-export const textToImageSchema = z.object({
-  prompt: z.string().min(1, '请输入提示词'),
-  steps: z.number().min(1).max(100).default(30),
-  seed: z.number().int().optional(),
-  aspect: z.enum(['16:9','1:1','9:16']).default('16:9')
-})
-
-export type TextToImage = z.infer<typeof textToImageSchema>
 
 export const composeVideoSchema = z.object({
   storyboard: z.string().min(1, '请输入分镜/脚本'),
@@ -32,8 +24,6 @@ export type SubtitleAlign = z.infer<typeof subtitleAlignSchema>
 
 export function defaultsFor(kind?: string) {
   switch (kind) {
-    case 'textToImage':
-      return { prompt: '', steps: 30, seed: undefined, aspect: '16:9' }
     case 'composeVideo':
     case 'storyboard':
       return { storyboard: '', duration: 30, fps: 24, remixTargetId: undefined }
