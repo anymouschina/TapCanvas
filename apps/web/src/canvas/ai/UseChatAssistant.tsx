@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, Group, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme } from '@mantine/core'
-import { IconX, IconSparkles, IconSend } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, Group, Loader, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
@@ -11,6 +11,9 @@ import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
 import type { Node, Edge } from 'reactflow'
 import { subscribeToolEvents, type ToolEventMessage } from '../../api/toolEvents'
+import { runTaskByVendor, type TaskResultDto } from '../../api/server'
+import { toast } from '../../ui/toast'
+import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 
 type AssistantPosition = 'right' | 'left'
 
@@ -21,6 +24,40 @@ interface UseChatAssistantProps {
   width?: number
 }
 
+const OPENAI_DEFAULT_MODEL = 'gpt-5.1-codex'
+
+const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
+  if (!task) return ''
+  const raw = task.raw as any
+  if (raw && typeof raw.text === 'string' && raw.text.trim()) {
+    return raw.text.trim()
+  }
+  const candidates = raw?.response?.candidates
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const parts = candidates[0]?.content?.parts
+    if (Array.isArray(parts)) {
+      const combined = parts
+        .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
+        .join('')
+        .trim()
+      if (combined) return combined
+    }
+  }
+  return ''
+}
+
+const fileToDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const result = reader.result
+      if (typeof result === 'string') resolve(result)
+      else reject(new Error('failed to read file'))
+    }
+    reader.onerror = () => reject(new Error('failed to read file'))
+    reader.readAsDataURL(file)
+  })
+
 /**
  * 暗夜AI助手（流式版），基于 @ai-sdk/react 的 useChat。
  * 匹配原 SimpleAIAssistant 的弹窗行为，使用后端 /ai/chat SSE。
@@ -28,7 +65,7 @@ interface UseChatAssistantProps {
 export function UseChatAssistant({ opened, onClose, position = 'right', width = 420 }: UseChatAssistantProps) {
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
-  const [model, setModel] = useState(() => getDefaultModel('text'))
+  const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
   const textModelOptions = useModelOptions('text')
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
@@ -56,12 +93,15 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const inputBorder = isDarkUi ? 'rgba(99,102,241,0.4)' : 'rgba(148,163,184,0.5)'
   const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
   const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
+  const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
+  const [imagePromptLoading, setImagePromptLoading] = useState(false)
 
   useEffect(() => {
     if (textModelOptions.length && !textModelOptions.find(option => option.value === model)) {
-      setModel(textModelOptions[0].value)
+      const preferred = textModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
+      setModel(preferred ? preferred.value : textModelOptions[0].value)
     }
-  }, [textModelOptions, model])
+  }, [textModelOptions.length])
 
   const canvasContext = useMemo(() => {
     if (!nodes.length) return undefined
@@ -217,6 +257,37 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     })
     .filter(Boolean)
     .join('\n')
+  const handleImagePromptUpload = useCallback(async (file: File) => {
+    setImagePromptLoading(true)
+    try {
+      const dataUrl = await fileToDataUrl(file)
+      const task = await runTaskByVendor('openai', {
+        kind: 'image_to_prompt',
+        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
+        extras: { imageData: dataUrl },
+      })
+      const nextPrompt = extractTextFromTaskResult(task)
+      if (nextPrompt) {
+        setInput(prev => prev ? `${prev}\n\n${nextPrompt}` : nextPrompt)
+        toast('已根据图片生成提示词', 'success')
+      } else {
+        toast('模型未返回提示词，请稍后再试', 'error')
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '解析图片失败'
+      toast(message, 'error')
+    } finally {
+      setImagePromptLoading(false)
+    }
+  }, [setInput])
+
+  const handleImagePromptChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (file) {
+      void handleImagePromptUpload(file)
+    }
+  }, [handleImagePromptUpload])
 
   const onSubmit = (e?: any) => {
     if (e?.preventDefault) e.preventDefault()
@@ -377,6 +448,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         </Box>
 
         <Box px="lg" py="md" style={{ background: footerBackground, borderTop: footerBorder }}>
+          <input
+            ref={imagePromptInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleImagePromptChange}
+          />
           <form
             onSubmit={onSubmit}
           >
@@ -404,12 +482,21 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                   注入系统提示
                 </Button>
                 <Group gap="xs">
-                  <Tooltip label="Ctrl/⌘ + Enter 发送">
-                    <ActionIcon type="submit" color="violet" variant="light" loading={isLoading}>
-                      <IconSend size={16} />
+                  <Tooltip label="上传图片生成提示词">
+                    <ActionIcon
+                      variant="light"
+                      color="teal"
+                      onClick={() => imagePromptInputRef.current?.click()}
+                      disabled={imagePromptLoading}
+                    >
+                      {imagePromptLoading ? (
+                        <Loader size="xs" />
+                      ) : (
+                        <IconPhoto size={16} />
+                      )}
                     </ActionIcon>
                   </Tooltip>
-                  <Button type="submit" loading={isLoading}>
+                  <Button type="submit" loading={isLoading} leftSection={<IconSend size={16} />}>
                     发送
                   </Button>
                 </Group>

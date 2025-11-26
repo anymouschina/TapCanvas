@@ -59,6 +59,7 @@ import {
 import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } from './taskNodeSchema'
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
+import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -78,9 +79,6 @@ const ORIENTATION_OPTIONS = [
 ]
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
-
-const DEFAULT_REVERSE_PROMPT_INSTRUCTION =
-  '请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格，并附上必要的中文备注。'
 
 const REMOTE_IMAGE_URL_REGEX = /^https?:\/\//i
 
@@ -1385,6 +1383,22 @@ const rewritePromptWithCharacters = React.useCallback(
     })
   }
 
+  const uploadImageWithRetry = React.useCallback(async (file: File, maxRetry = 2) => {
+    let lastError: any = null
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      try {
+        return await uploadSoraImage(undefined, file)
+      } catch (err) {
+        lastError = err
+        if (attempt === maxRetry) {
+          throw err
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+      }
+    }
+    throw lastError
+  }, [])
+
   // Handle image upload with Sora API
   const handleImageUpload = async (file: File) => {
     if (!supportsImageUpload) return
@@ -1394,16 +1408,28 @@ const rewritePromptWithCharacters = React.useCallback(
 
       // First, create a local URL for immediate preview
       const localUrl = URL.createObjectURL(file)
-      updateNodeData(id, { imageUrl: localUrl })
+      let localDataUrl: string | undefined
+      try {
+        localDataUrl = await blobToDataUrl(file)
+      } catch {
+        localDataUrl = undefined
+      }
+      updateNodeData(id, { imageUrl: localUrl, reverseImageData: localDataUrl })
 
       // Then upload to Sora to get file_id
-      const result = await uploadSoraImage(undefined, file) // Use default token for now
+      const result = await uploadImageWithRetry(file)
 
       if (result.file_id) {
+        const remoteUrl = result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
         updateNodeData(id, {
+          imageUrl: remoteUrl,
           soraFileId: result.file_id,
-          assetPointer: result.asset_pointer
+          assetPointer: result.asset_pointer,
+          reverseImageData: localDataUrl,
         })
+        if (remoteUrl !== localUrl) {
+          URL.revokeObjectURL(localUrl)
+        }
 
         // 静默保存项目状态
         if ((window as any).silentSaveProject) {
@@ -1412,6 +1438,7 @@ const rewritePromptWithCharacters = React.useCallback(
       }
     } catch (error) {
       console.error('Failed to upload image to Sora:', error)
+      toast('上传图片到 Sora 失败，请稍后再试', 'error')
       // Keep the local URL even if upload fails
     } finally {
       setUploading(false)
@@ -1427,10 +1454,15 @@ const rewritePromptWithCharacters = React.useCallback(
       return
     }
 
+    if (!REMOTE_IMAGE_URL_REGEX.test(targetUrl)) {
+      toast('请先上传图片到 Sora 或提供可访问的线上链接，再使用反推提示词', 'error')
+      return
+    }
+
     try {
       setReversePromptLoading(true)
       const imagePayload = await resolveImageForReversePrompt(targetUrl)
-      if (!imagePayload.imageUrl && !imagePayload.imageData) {
+      if (!imagePayload.imageUrl) {
         toast('当前图片不可用，请稍后重试', 'error')
         setReversePromptLoading(false)
         return
@@ -1457,7 +1489,7 @@ const rewritePromptWithCharacters = React.useCallback(
     } finally {
       setReversePromptLoading(false)
     }
-  }, [supportsReversePrompt, imageResults, imagePrimaryIndex, id, updateNodeData, setPrompt])
+  }, [supportsReversePrompt, imageResults, imagePrimaryIndex, id, updateNodeData, setPrompt, data])
   const defaultLabel = React.useMemo(() => {
     if (isComposerNode || schema.category === 'video') return '文生视频'
     if (isImageNode) return '图像节点'
