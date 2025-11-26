@@ -832,7 +832,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Group justify="space-between" align="flex-start" mb={4}>
                       <Group gap={6}>
                         <Title order={6}>Gemini</Title>
-                        <Badge color="grape" size="xs">
+                        <Badge color="blue" size="xs">
                           Beta
                         </Badge>
                       </Group>
@@ -851,7 +851,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Group justify="space-between" align="flex-start" mb={4}>
                       <Group gap={6}>
                         <Title order={6}>OpenAI / Codex</Title>
-                        <Badge color="violet" size="xs">
+                        <Badge color="teal" size="xs">
                           New
                         </Badge>
                       </Group>
@@ -1265,9 +1265,9 @@ export default function ModelPanel(): JSX.Element | null {
                       <Button
                         size="xs"
                         variant="outline"
-                        onClick={() => window.open('https://www.right.codes/codex', '_blank', 'noopener')}
+                        onClick={() => window.open('https://www.right.codes/register?aff=21f6040a', '_blank', 'noopener')}
                       >
-                        Codex 文档
+                        使用国内代理
                       </Button>
                     </Group>
                   </Group>

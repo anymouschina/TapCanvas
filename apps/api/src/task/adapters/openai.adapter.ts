@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { Buffer } from 'buffer'
 import type {
   BaseTaskRequest,
   ImageToPromptRequest,
@@ -8,7 +9,7 @@ import type {
 } from '../task.types'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com'
-const DEFAULT_MODEL = 'gpt-4o-mini'
+const DEFAULT_MODEL = 'gpt-5.1-codex'
 
 type OpenAIContentPart =
   | { type: 'text'; text: string }
@@ -30,14 +31,8 @@ function buildResponsesUrl(baseUrl: string): string {
 
 function shouldUseResponsesEndpoint(baseUrl: string, preferred?: boolean): boolean {
   if (typeof preferred === 'boolean') return preferred
-  const lower = (baseUrl || '').toLowerCase()
-  if (!lower) return false
-  return (
-    lower.includes('/responses') ||
-    lower.includes('/codex') ||
-    lower.includes('right.codes') ||
-    lower.includes('codex')
-  )
+  // 默认统一走 /responses 端点，避免 codex 代理返回 400
+  return true
 }
 
 function normalizeMessageContent(content: string | OpenAIContentPart[]): OpenAIContentPart[] {
@@ -112,6 +107,61 @@ function extractTextFromResponse(raw: any): string {
   return ''
 }
 
+function safeParseJson(data: string): any | null {
+  try {
+    return JSON.parse(data)
+  } catch {
+    return null
+  }
+}
+
+function parseSseResponse(raw: string): any | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  const chunks = raw.split(/\n\n+/)
+  let completedResponse: any = null
+  let aggregatedText = ''
+
+  chunks.forEach((chunk) => {
+    const trimmed = chunk.trim()
+    if (!trimmed) return
+    const dataLines = trimmed
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean)
+    if (!dataLines.length) return
+    const payload = safeParseJson(dataLines.join('\n'))
+    if (!payload || typeof payload !== 'object') return
+    if (payload.type === 'response.completed' && payload.response) {
+      completedResponse = payload.response
+      return
+    }
+    if (payload.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
+      aggregatedText += payload.delta
+    }
+    if (!aggregatedText) {
+      if (payload.type === 'response.output_text.done' && typeof payload.text === 'string') {
+        aggregatedText = payload.text
+      } else if (
+        payload.type === 'response.content_part.done' &&
+        payload.part &&
+        typeof payload.part.text === 'string'
+      ) {
+        aggregatedText = payload.part.text
+      }
+    }
+  })
+
+  if (completedResponse) return completedResponse
+  if (aggregatedText) {
+    return {
+      text: aggregatedText,
+      output_text: [aggregatedText],
+    }
+  }
+  return null
+}
+
 function isValidImageSource(value?: string) {
   if (!value) return false
   const trimmed = value.trim()
@@ -122,6 +172,23 @@ function resolveImageSource(url?: string, data?: string): string | null {
   if (isValidImageSource(url)) return url!.trim()
   if (isValidImageSource(data)) return data!.trim()
   return null
+}
+
+async function convertRemoteImageToDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 15000,
+    })
+    const contentType =
+      (res.headers && (res.headers['content-type'] as string | undefined)) || 'image/png'
+    const buffer = Buffer.from(res.data)
+    const encoded = buffer.toString('base64')
+    return `data:${contentType};base64,${encoded}`
+  } catch (error) {
+    console.error('convertRemoteImageToDataUrl failed', { url, error })
+    return null
+  }
 }
 
 function normalizeBaseUrl(baseUrl?: string): string {
@@ -171,7 +238,7 @@ async function callOpenAIChat(
       { type: 'text', text: prompt && prompt.trim().length > 0 ? prompt : '请分析这张图片并回答问题。' },
     ]
     normalizedImages.forEach((url) => {
-      content.push({ type: 'image_url', image_url: { url } })
+      content.push({ type: 'image_url', image_url: url })
     })
     messages.push({ role: 'user', content })
   } else {
@@ -188,6 +255,7 @@ async function callOpenAIChat(
         model,
         input: convertMessagesToResponseInput(messages),
         max_output_tokens: 800,
+        stream: false,
       }
     : {
         model,
@@ -201,6 +269,7 @@ async function callOpenAIChat(
   const res = await axios.post(url, body, {
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     timeout: 30000,
@@ -226,9 +295,11 @@ async function callOpenAIChat(
   }
 
   const raw = res.data
-  const text = extractTextFromResponse(raw)
+  const normalized =
+    typeof raw === 'string' ? parseSseResponse(raw) || safeParseJson(raw) || raw : raw
+  const text = extractTextFromResponse(normalized)
 
-  return { text, raw }
+  return { text, raw: normalized }
 }
 
 export const openaiAdapter: ProviderAdapter = {
@@ -284,11 +355,17 @@ export const openaiAdapter: ProviderAdapter = {
     const temperature =
       typeof extras.temperature === 'number' && !Number.isNaN(extras.temperature) ? extras.temperature : 0.2
 
+    let preparedImageSource = imageSource
+    if (/^https?:\/\//i.test(imageSource)) {
+      const converted = await convertRemoteImageToDataUrl(imageSource)
+      preparedImageSource = converted || imageSource
+    }
+
     const { text, raw } = await callOpenAIChat(userPrompt, ctx, {
       systemPrompt,
       modelKey: modelKeyOverride,
       temperature,
-      imageUrls: [imageSource],
+      imageUrls: [preparedImageSource],
       preferResponses: typeof extras.preferResponses === 'boolean' ? extras.preferResponses : undefined,
     })
 
@@ -302,7 +379,7 @@ export const openaiAdapter: ProviderAdapter = {
         provider: 'openai',
         response: raw,
         text,
-        imageSource,
+        imageSource: preparedImageSource,
       },
     }
   },
