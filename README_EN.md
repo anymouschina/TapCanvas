@@ -75,6 +75,7 @@ Example storyboard:
 
 ## 📅 Changelog
 
+- **2025-11-28**: Added automatic “type-sequence” naming for task nodes and exposed a Guest Mode entry point. Whenever you create a node via the canvas panel, context menu, assets/templates panel, or the AI assistant, the label now defaults to something like `Image-1`, `Video-2`, etc., incrementing per kind so both humans and LLMs can identify nodes instantly. Templates/assets keep their original names by passing `autoLabel: false`. Meanwhile, unregistered users can tap **Guest Mode** on the login gate to try the canvas with all data stored locally in the browser—perfect for demos and quick tests.
 - **2025-11-27**: Shipped Reverse Prompt extraction and GPT-only image uploads for the Dark Assistant, plus fresh screenshots.
   - Every task node now shows a “Reverse Prompt” button on the image card. We send the current image to GPT, decode an English prompt plus Chinese notes, and write the result back automatically. UI preview: ![Reverse Prompt UI](assets/2025-11-27.pic.jpg)
   - The Dark Assistant allows image uploads when the selected model is GPT. The decoded prompt is inserted into the chat input so you can keep refining or invoke more tools. UI preview: ![Assistant Image Prompt](assets/2025-11-27-ai.pic.jpg)
