@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import type { ModelProvider, ModelToken } from '@prisma/client'
 import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
 
@@ -339,10 +340,8 @@ export class ModelService {
 
   async listAvailableModels(userId: string, vendor?: string | null) {
     const supportedVendors = ['openai', 'anthropic']
-    const targetVendors =
-      vendor && vendor.trim()
-        ? supportedVendors.filter((v) => v === vendor.trim().toLowerCase())
-        : supportedVendors
+    const normalizedVendor = vendor?.trim().toLowerCase()
+    const targetVendors = normalizedVendor ? supportedVendors.filter((v) => v === normalizedVendor) : supportedVendors
     if (!targetVendors.length) {
       return { models: [] }
     }
@@ -351,25 +350,67 @@ export class ModelService {
       where: { ownerId: userId, vendor: { in: targetVendors } },
       orderBy: { createdAt: 'asc' },
     })
-    console.log('[ModelService] resolving models', { userId, vendor, providerCount: providers.length })
+    console.log('[ModelService] resolving models', {
+      userId,
+      vendor,
+      providerCount: providers.length,
+      targetVendors,
+    })
+
+    const contexts: Array<{ provider: ModelProvider; apiKey: string }> = []
+    for (const provider of providers) {
+      const token = await this.findBestTokenForProvider(provider.id, userId)
+      const secret = token?.secretToken?.trim()
+      if (!secret) continue
+      contexts.push({ provider, apiKey: secret })
+    }
+
+    for (const vendorName of targetVendors) {
+      const hasContext = contexts.some((ctx) => ctx.provider.vendor === vendorName)
+      if (hasContext) continue
+      const sharedToken = await this.findSharedTokenForVendor(vendorName)
+      const secret = sharedToken?.secretToken?.trim()
+      const provider = sharedToken?.provider
+      if (!secret || !provider) continue
+      contexts.push({ provider, apiKey: secret })
+    }
+
+    if (!contexts.length) {
+      return { models: [] }
+    }
+
+    const sharedBaseCache = new Map<string, string | null>()
+    const getBaseUrlForProvider = async (provider: ModelProvider) => {
+      if (provider.baseUrl) return provider.baseUrl
+      if (sharedBaseCache.has(provider.vendor)) {
+        const cached = sharedBaseCache.get(provider.vendor)
+        return typeof cached === 'string' ? cached : null
+      }
+      const resolved = await this.resolveSharedBaseUrl(provider.vendor)
+      sharedBaseCache.set(provider.vendor, resolved)
+      return resolved
+    }
+
     const results = new Map<string, { value: string; label: string; vendor: string }>()
     const errors: { providerId: string; vendor: string; message: string }[] = []
 
-    for (const provider of providers) {
-      const token = await this.prisma.modelToken.findFirst({
-        where: { providerId: provider.id, userId, enabled: true },
-        orderBy: { createdAt: 'asc' },
+    for (const context of contexts) {
+      const provider = context.provider
+      const baseUrl = await getBaseUrlForProvider(provider)
+      console.log('[ModelService] fetching models for provider', {
+        providerId: provider.id,
+        vendor: provider.vendor,
+        baseUrl: baseUrl || provider.baseUrl,
+        sharedContext: provider.ownerId !== userId,
       })
-      const secret = token?.secretToken?.trim()
-      if (!secret) continue
-
-      console.log('[ModelService] fetching models for provider', { providerId: provider.id, vendor: provider.vendor, baseUrl: provider.baseUrl })
       let models: { id: string; label?: string }[] = []
       try {
         if (provider.vendor === 'openai') {
-          models = await this.fetchOpenAIModels(provider.baseUrl, secret)
+          models = await this.fetchOpenAIModels(baseUrl, context.apiKey)
         } else if (provider.vendor === 'anthropic') {
-          models = await this.fetchAnthropicModels(provider.baseUrl, secret)
+          models = await this.fetchAnthropicModels(baseUrl, context.apiKey)
+        } else {
+          continue
         }
       } catch (err: any) {
         const message = err instanceof Error ? err.message : String(err)
@@ -399,6 +440,58 @@ export class ModelService {
     }
 
     return { models: Array.from(results.values()), errors }
+  }
+
+  private async findBestTokenForProvider(providerId: string, userId: string) {
+    const owned = await this.prisma.modelToken.findFirst({
+      where: { providerId, userId, enabled: true },
+      orderBy: { createdAt: 'asc' },
+    })
+    if (owned) return owned
+    const now = new Date()
+    return this.prisma.modelToken.findFirst({
+      where: {
+        providerId,
+        shared: true,
+        enabled: true,
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+      },
+      orderBy: { updatedAt: 'asc' },
+    })
+  }
+
+  private async findSharedTokenForVendor(
+    vendor: string,
+  ): Promise<(ModelToken & { provider: ModelProvider }) | null> {
+    const now = new Date()
+    return this.prisma.modelToken.findFirst({
+      where: {
+        shared: true,
+        enabled: true,
+        provider: { vendor },
+        OR: [
+          { sharedDisabledUntil: null },
+          { sharedDisabledUntil: { lt: now } },
+        ],
+      },
+      include: { provider: true },
+      orderBy: { updatedAt: 'asc' },
+    })
+  }
+
+  private async resolveSharedBaseUrl(vendor: string): Promise<string | null> {
+    const shared = await this.prisma.modelProvider.findFirst({
+      where: {
+        vendor,
+        sharedBaseUrl: true,
+        baseUrl: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    })
+    return shared?.baseUrl ?? null
   }
 
   private buildAnthropicModelsUrl(baseUrl?: string | null) {

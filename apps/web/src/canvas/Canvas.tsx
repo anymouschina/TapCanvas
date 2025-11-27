@@ -795,7 +795,7 @@ function CanvasInner(): JSX.Element {
             <Stack gap={8} style={{ color: emptyGuideTextColor }}>
               <Text c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
               <Group gap={8} style={{ flexWrap: 'nowrap' }}>
-                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }) }}>{$('新建 text')}</Button>
+                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'textToImage' }) }}>{$('新建 text')}</Button>
                 <Button size="sm" variant="light" onClick={() => {
                   // create a small sample flow in center
                   const center = rf.project?.({ x: window.innerWidth/2, y: window.innerHeight/2 }) || { x: 200, y: 200 }
@@ -906,9 +906,9 @@ function CanvasInner(): JSX.Element {
                 {focusGroupId && <Button variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
                 {focusGroupId && <Button variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
                 <Divider my={2} />
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'text', { kind: 'textToImage' }); setMenu(null) }}>新建 text</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', 'video', { kind: 'composeVideo' }); setMenu(null) }}>新建 video</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', '分镜', { kind: 'storyboard' }); setMenu(null) }}>新建 storyboard</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'textToImage' }); setMenu(null) }}>新建 text</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'composeVideo' }); setMenu(null) }}>新建 video</Button>
+                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'storyboard' }); setMenu(null) }}>新建 storyboard</Button>
               </>
             )}
             {menu.type === 'node' && menu.id && (() => {

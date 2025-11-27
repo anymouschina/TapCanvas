@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type User = { sub: string|number; login: string; name?: string; avatarUrl?: string; email?: string }
+type User = { sub: string|number; login: string; name?: string; avatarUrl?: string; email?: string; guest?: boolean }
 
 function base64UrlDecode(input: string): string {
   input = input.replace(/-/g, '+').replace(/_/g, '/')
@@ -15,7 +15,7 @@ function decodeJwtUser(token: string | null): User | null {
   if (parts.length < 2) return null
   try {
     const payload = JSON.parse(base64UrlDecode(parts[1]))
-    const u: User = { sub: payload.sub, login: payload.login, name: payload.name, avatarUrl: payload.avatarUrl, email: payload.email }
+    const u: User = { sub: payload.sub, login: payload.login, name: payload.name, avatarUrl: payload.avatarUrl, email: payload.email, guest: payload.guest }
     return u
   } catch { return null }
 }

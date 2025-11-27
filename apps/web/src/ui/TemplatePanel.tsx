@@ -83,7 +83,7 @@ export default function TemplatePanel(): JSX.Element | null {
                   <PlaceholderImage label={t.title} />
                   <Group justify="space-between" mt="sm">
                     <Text size="sm">{t.title}</Text>
-                    <Button size="xs" variant="light" onClick={() => { addNode('taskNode', t.title, { kind: 'subflow' }); setActivePanel(null) }}>使用</Button>
+                    <Button size="xs" variant="light" onClick={() => { addNode('taskNode', t.title, { kind: 'subflow', autoLabel: false }); setActivePanel(null) }}>使用</Button>
                   </Group>
                 </Card>
               ))}
@@ -99,7 +99,7 @@ export default function TemplatePanel(): JSX.Element | null {
                     <PlaceholderImage label={f.name} />
                     <Group justify="space-between" mt="sm">
                       <Text size="sm">{f.name}</Text>
-                      <Button size="xs" variant="light" onClick={() => { addNode('taskNode', f.name, { kind: 'subflow', subflowRef: f.id }); setActivePanel(null) }}>引用</Button>
+                      <Button size="xs" variant="light" onClick={() => { addNode('taskNode', f.name, { kind: 'subflow', subflowRef: f.id, autoLabel: false }); setActivePanel(null) }}>引用</Button>
                     </Group>
                   </Card>
                 ))}
