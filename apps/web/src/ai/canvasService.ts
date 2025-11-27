@@ -49,6 +49,8 @@ export class CanvasService {
         }
       }
 
+      const nodeData = { ...normalized.data }
+
       if (normalized.remixFromNodeId) {
         const remixSource = store.nodes.find(node => node.id === normalized.remixFromNodeId)
         const remixKind = (remixSource?.data as any)?.kind
@@ -66,11 +68,20 @@ export class CanvasService {
             error: 'Remix 只能基于已成功完成的视频节点，请等待前序节点完成。'
           }
         }
+
+        if (!nodeData.prompt) {
+          const sourcePrompt = (remixSource.data as any)?.videoPrompt || (remixSource.data as any)?.prompt
+          if (typeof sourcePrompt === 'string' && sourcePrompt.trim()) {
+            nodeData.prompt = sourcePrompt.trim()
+          }
+        }
+        nodeData.remixSourceId = remixSource.id
+        nodeData.remixSourceLabel = (remixSource.data as any)?.label || remixSource.id
       }
 
       // 调用store方法创建节点
       addNode(normalized.nodeType, normalized.label, {
-        ...normalized.data,
+        ...nodeData,
         position,
         autoLabel: !(params.label && params.label.trim()),
       })

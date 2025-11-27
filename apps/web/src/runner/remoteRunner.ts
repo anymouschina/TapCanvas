@@ -218,23 +218,38 @@ function buildPromptFromState(
   if (IMAGE_NODE_KINDS.has(kind) || kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
     const edges = (state.edges || []) as any[]
     const inbound = edges.filter((e) => e.target === id)
-    let upstreamPrompt = ''
+    const upstreamPrompts: string[] = []
     if (inbound.length) {
-      const lastEdge = inbound[inbound.length - 1]
-      const src = (state.nodes as Node[]).find((n: Node) => n.id === lastEdge.source)
-      const sd: any = src?.data || {}
-      const skind: string | undefined = sd.kind
-      if (skind && IMAGE_NODE_KINDS.has(skind)) {
-        upstreamPrompt =
-          (sd.prompt as string | undefined) ||
-          ''
-      }
+      inbound.forEach((edge) => {
+        const src = (state.nodes as Node[]).find((n: Node) => n.id === edge.source)
+        if (!src) return
+        const sd: any = src.data || {}
+        const skind: string | undefined = sd.kind
+        if (!skind) return
+        const promptCandidates: string[] = []
+        if (IMAGE_NODE_KINDS.has(skind) || skind === 'textToImage' || skind === 'image') {
+          if (typeof sd.prompt === 'string') promptCandidates.push(sd.prompt)
+        }
+        if (skind === 'composeVideo' || skind === 'video' || skind === 'storyboard') {
+          if (typeof sd.videoPrompt === 'string') promptCandidates.push(sd.videoPrompt)
+          if (typeof sd.prompt === 'string') promptCandidates.push(sd.prompt)
+        }
+        if (skind === 'text') {
+          if (typeof sd.prompt === 'string') promptCandidates.push(sd.prompt)
+          if (typeof sd.text === 'string') promptCandidates.push(sd.text)
+        }
+        promptCandidates
+          .map((p) => (typeof p === 'string' ? p.trim() : ''))
+          .filter(Boolean)
+          .forEach((p) => upstreamPrompts.push(p))
+      })
     }
-    const own = (data.prompt as string) || ''
-    if (upstreamPrompt && own) {
-      return `${upstreamPrompt}\n${own}`
+    const own = typeof data.prompt === 'string' ? data.prompt : ''
+    const combined = [...upstreamPrompts, own].filter((p) => typeof p === 'string' && p.trim())
+    if (!combined.length) {
+      return (data.label as string) || ''
     }
-    return upstreamPrompt || own || (data.label as string) || ''
+    return combined.join('\n')
   }
 
   return (data.prompt as string) || (data.label as string) || ''
