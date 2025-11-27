@@ -908,6 +908,56 @@ export class AiService {
         const preview = context.edges.slice(0, 6).map(edge => `${edge.source} -> ${edge.target}`)
         pieces.push(`连接示例：${preview.join(', ')}`)
       }
+
+      if (context.characters?.length) {
+        const preview = context.characters.slice(0, 6).map((character, index) => {
+          const name = character.label || character.username || character.nodeId
+          const username = character.username ? ` (@${character.username})` : ''
+          const desc = character.description ? ` - ${character.description}` : ''
+          return `${index + 1}. ${name}${username}${desc}`
+        })
+        pieces.push(`角色资料：\n${preview.join('\n')}`)
+      }
+
+      if (context.videoBindings?.length) {
+        const preview = context.videoBindings.slice(0, 4).map((binding, index) => {
+          const chars = binding.characters?.map(char => char.label || char.username || char.nodeId).join(', ') || '无角色引用'
+          const promptSnippet = binding.promptPreview ? ` | prompt: ${binding.promptPreview}` : ''
+          const remix = binding.remixSourceLabel ? ` | remix自: ${binding.remixSourceLabel}` : ''
+          return `${index + 1}. ${binding.label || binding.nodeId} -> 角色: ${chars}${remix}${promptSnippet}`
+        })
+        pieces.push(`镜头延续上下文：\n${preview.join('\n')}`)
+      }
+
+      if (!context.videoBindings?.length && context.nodes?.some?.((node: any) => node.kind === 'image')) {
+        pieces.push('提示：当前仅存在图像节点供画风参考，除非用户要求剧情延续，否则不要强行复用图像中的人物或故事。')
+      }
+
+      if (context.timeline?.length) {
+        const summaryTimeline = context.timeline
+          .slice(0, 5)
+          .map((entry: any, index: number) => {
+            const chars = entry.characters?.map?.((c: any) => c.label || c.username)?.join(', ')
+            const charText = chars ? ` | 角色: ${chars}` : ''
+            return `${index + 1}. ${entry.label || entry.nodeId} (${entry.kind || 'node'} - ${entry.status || 'unknown'})${charText}`
+          })
+        if (summaryTimeline.length) {
+          pieces.push(`镜头时间线：\n${summaryTimeline.join('\n')}`)
+        }
+      }
+
+      if (context.pendingNodes?.length) {
+        const pendings = context.pendingNodes
+          .map((node: any) => `${node.label || node.nodeId}(${node.kind || 'node'}) -> ${node.status}`)
+          .join('；')
+        pieces.push(`待处理节点：${pendings}`)
+      }
+
+      if (context.currentRun) {
+        pieces.push(
+          `当前有节点正在运行：${context.currentRun.label || context.currentRun.nodeId}（状态 ${context.currentRun.status}，进度 ${context.currentRun.progress ?? 0}%）。请优先关注其结果或异常，再决定是否继续新的生成。`
+        )
+      }
     }
 
     if (latestUserText && latestUserText.trim()) {

@@ -29,6 +29,7 @@ interface IntelligentChatInterfaceProps {
   userId: string
   height?: string
   onOperationExecuted?: (operation: any) => void
+  context?: any
 }
 
 interface ChatMessage {
@@ -44,7 +45,8 @@ interface ChatMessage {
 export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> = ({
   userId,
   height = '500px',
-  onOperationExecuted
+  onOperationExecuted,
+  context
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
@@ -129,7 +131,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
         },
         body: JSON.stringify({
           messages: [{ role: 'user', content: content.trim() }],
-          context: {}, // 这里应该传入当前画布上下文
+          context: context || {},
           intelligentMode: isIntelligentMode,
           enableThinking: showThinking
         })
@@ -170,7 +172,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
       setIsLoading(false)
       setIsThinking(false)
     }
-  }, [isIntelligentMode, showThinking, onOperationExecuted])
+  }, [isIntelligentMode, showThinking, onOperationExecuted, context])
 
   // 清理会话
   const handleClear = useCallback(() => {

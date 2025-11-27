@@ -4,6 +4,8 @@ import { IconBrain } from '@tabler/icons-react'
 import { IntelligentChatInterface } from './IntelligentChatInterface'
 import { useIntelligentChat } from '../../hooks/useIntelligentChat'
 import { useReactFlow } from '@xyflow/react'
+import { useRFStore } from '../../canvas/store'
+import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
 
 interface IntelligentCanvasAssistantProps {
   userId: string
@@ -20,6 +22,9 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
   onClose
 }) => {
   const { getNodes, getEdges, setNodes, setEdges } = useReactFlow()
+  const nodes = useRFStore(state => state.nodes)
+  const edges = useRFStore(state => state.edges)
+  const canvasContext = React.useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
 
   // 处理画布操作执行
   const handleOperationExecuted = (operation: any) => {
@@ -170,6 +175,7 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
         <IntelligentChatInterface
           userId={userId}
           height="500px"
+          context={canvasContext}
           onOperationExecuted={handleOperationExecuted}
         />
 
@@ -190,13 +196,17 @@ export const IntelligentAssistantTrigger: React.FC<{
   userId: string
   onOpen: () => void
 }> = ({ userId, onOpen }) => {
+  const nodes = useRFStore(state => state.nodes)
+  const edges = useRFStore(state => state.edges)
+  const canvasContext = React.useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
   const {
     messages,
     thinkingEvents,
     isLoading,
     clearSession
   } = useIntelligentChat({
-    userId
+    userId,
+    context: canvasContext
   })
 
   const hasActiveSession = messages.length > 0 || thinkingEvents.length > 0

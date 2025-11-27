@@ -353,7 +353,8 @@ export class ThinkingStream {
           description: '根据用户意图创建或修改相应的节点',
           status: 'pending',
           reasoning: `用户需要${intent.capabilityName || '节点操作'}，准备执行`,
-          estimatedTime: 1
+          estimatedTime: 1,
+          acceptanceCriteria: this.buildAcceptanceCriteria(intent.type)
         })
         break
 
@@ -364,7 +365,8 @@ export class ThinkingStream {
           description: '重新排列和整理画布布局',
           status: 'pending',
           reasoning: '检测到布局整理需求，将应用智能布局算法',
-          estimatedTime: 2
+          estimatedTime: 2,
+          acceptanceCriteria: this.buildAcceptanceCriteria(intent.type)
         })
         break
 
@@ -375,7 +377,8 @@ export class ThinkingStream {
           description: '分析当前工作流的性能瓶颈',
           status: 'pending',
           reasoning: '准备进行深度性能分析和优化建议',
-          estimatedTime: 3
+          estimatedTime: 3,
+          acceptanceCriteria: this.buildAcceptanceCriteria(intent.type)
         })
         break
 
@@ -386,7 +389,8 @@ export class ThinkingStream {
           description: '执行用户请求的操作',
           status: 'pending',
           reasoning: '识别到通用操作需求，将执行相应功能',
-          estimatedTime: 1
+          estimatedTime: 1,
+          acceptanceCriteria: this.buildAcceptanceCriteria(intent.type)
         })
     }
 
@@ -548,6 +552,33 @@ export class ThinkingStream {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  private buildAcceptanceCriteria(domain: CanvasActionDomain | string): string[] {
+    switch (domain) {
+      case CanvasActionDomain.NODE_MANIPULATION:
+        return [
+          '节点已在画布上创建/更新并与描述一致',
+          '提示词或参数覆盖角色、光影与剧情要求',
+          '节点连接/运行状态无报错'
+        ]
+      case CanvasActionDomain.LAYOUT_ARRANGEMENT:
+        return [
+          '节点布局整洁且无明显重叠',
+          '关键连线保持正确顺序',
+          '用户确认新的结构便于继续创作'
+        ]
+      case CanvasActionDomain.EXECUTION_DEBUG:
+        return [
+          '列出失败节点或性能瓶颈',
+          '给出复现步骤与优化建议'
+        ]
+      default:
+        return [
+          '操作结果记录并同步给用户',
+          '必要的参数或提示词已更新'
+        ]
+    }
   }
 
   /**

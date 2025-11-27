@@ -65,6 +65,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
         reasoning: step.reasoning || '',
         estimatedTime: undefined,
         dependencies: [],
+        acceptanceCriteria: step.acceptance || [],
       })),
       estimatedTime: update.summary?.estimatedTime ?? update.steps.length,
       estimatedCost: update.summary?.estimatedCost ?? update.steps.length,

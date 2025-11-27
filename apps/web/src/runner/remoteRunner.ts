@@ -50,6 +50,7 @@ function nowLabel() {
 }
 
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
+const SORA_POLL_TIMEOUT_MS = 300_000
 const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
@@ -645,6 +646,10 @@ async function runVideoTask(ctx: RunnerContext) {
       return
     }
 
+    const pollStartedAt = Date.now()
+    const pollTimeoutMs = SORA_POLL_TIMEOUT_MS
+    let pollTimedOut = false
+    let lastSyncError: any = null
     let draftSynced = false
     let lastDraft: {
       id: string
@@ -662,6 +667,7 @@ async function runVideoTask(ctx: RunnerContext) {
       try {
         const draftTokenId = getCurrentVideoTokenId()
         const draft = await getSoraVideoDraftByTask(taskId, draftTokenId || null)
+        lastSyncError = null
         lastDraft = draft
         const patch: any = {
           videoDraftId: draft.id,
@@ -686,18 +692,25 @@ async function runVideoTask(ctx: RunnerContext) {
         }
         return draft
       } catch (err: any) {
-        if (err?.upstreamStatus === 202 || err?.status === 202) {
+        const status = err?.status ?? err?.upstreamStatus ?? null
+        if (status === 202) {
+          lastSyncError = null
           appendLog(id, `[${nowLabel()}] 草稿同步：任务仍在进行中，继续等待...`)
-  return null
-}
+          return null
+        }
 
-        if (err?.upstreamStatus === 404 || err?.status === 404) {
+        if (status === 404) {
           appendLog(id, `[${nowLabel()}] 草稿同步：任务未找到（可能已失败），停止轮询`)
-          throw new Error('任务未找到或已失败')
+          const notFound: any = new Error('任务未找到或已失败')
+          notFound.status = status
+          notFound.cause = err
+          lastSyncError = notFound
+          throw notFound
         }
 
         const msg = err?.message || '同步 Sora 草稿失败'
         appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        lastSyncError = err
         return null
       }
     }
@@ -712,6 +725,12 @@ async function runVideoTask(ctx: RunnerContext) {
         appendLog(id, `[${nowLabel()}] 已取消 Sora 视频任务`)
         ctx.endRunToken(id)
         return
+      }
+
+      if (Date.now() - pollStartedAt >= pollTimeoutMs) {
+        pollTimedOut = true
+        appendLog(id, `[${nowLabel()}] Sora 视频任务等待超过 300 秒，自动停止轮询`)
+        break
       }
 
       try {
@@ -731,6 +750,7 @@ async function runVideoTask(ctx: RunnerContext) {
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
             continue
           } catch (syncError: any) {
+            lastSyncError = syncError
             appendLog(id, `[${nowLabel()}] 草稿同步失败，任务可能已结束: ${syncError.message}`)
             break
           }
@@ -746,6 +766,7 @@ async function runVideoTask(ctx: RunnerContext) {
               break
             }
           } catch (syncError: any) {
+            lastSyncError = syncError
             appendLog(id, `[${nowLabel()}] 任务不在pending中且草稿同步失败: ${syncError.message}`)
             break
           }
@@ -759,6 +780,30 @@ async function runVideoTask(ctx: RunnerContext) {
           typeof found.progress_pct === 'number'
             ? Math.round(Number(found.progress_pct) * 100)
             : null
+        const normalizedStatus = typeof found.status === 'string' ? found.status.toLowerCase() : null
+        const normalizedState = typeof (found.state ?? found.generator_status) === 'string'
+          ? String(found.state ?? found.generator_status).toLowerCase()
+          : null
+        const didError =
+          !!found.did_error ||
+          normalizedStatus === 'error' ||
+          normalizedStatus === 'failed' ||
+          normalizedStatus === 'cancelled' ||
+          normalizedStatus === 'canceled' ||
+          normalizedState === 'error' ||
+          normalizedState === 'failed'
+
+        if (didError) {
+          const failMessage =
+            found.error_message ||
+            found.failure_reason ||
+            found.errorReason ||
+            'Sora 视频任务在官方控制台标记为失败，请在 Sora 控制台查看详情'
+          lastSyncError = new Error(failMessage)
+          appendLog(id, `[${nowLabel()}] Sora 视频任务失败：${failMessage}`)
+          break
+        }
+
         const nextProgress =
           serverProgress !== null
             ? Math.min(95, Math.max(progress, Math.max(5, serverProgress)))
@@ -777,6 +822,7 @@ async function runVideoTask(ctx: RunnerContext) {
       } catch (err: any) {
         const msg = err?.message || '轮询 Sora 视频进度失败'
         appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        lastSyncError = err
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
       }
 
@@ -786,10 +832,20 @@ async function runVideoTask(ctx: RunnerContext) {
     }
 
     const finalDraft = lastDraft
-    const videoUrl = finalDraft?.videoUrl
+    const videoUrl = finalDraft?.videoUrl || null
     const thumbnailUrl = finalDraft?.thumbnailUrl
     const title = finalDraft?.title
     const duration = finalDraft?.duration
+
+    if (pollTimedOut || !videoUrl) {
+      const errorMessage = pollTimedOut
+        ? 'Sora 视频生成超时（已等待超过 300 秒），请稍后在 Sora 控制台确认任务状态'
+        : (lastSyncError?.message || '未能获取 Sora 草稿，任务可能已失败，请稍后再试')
+      setNodeStatus(id, 'error', { progress: 0, lastError: errorMessage })
+      appendLog(id, `[${nowLabel()}] error: ${errorMessage}`)
+      ctx.endRunToken(id)
+      return
+    }
 
     let updatedVideoResults = (data.videoResults as any[] | undefined) || []
     const previousPrimaryIndex =

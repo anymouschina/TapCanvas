@@ -39,6 +39,7 @@ export interface ExecutionStep {
   dependencies?: string[]
   result?: any
   error?: string
+  acceptanceCriteria?: string[]
 }
 
 export interface ExecutionPlan {
@@ -112,6 +113,7 @@ export interface PlanUpdatePayload {
     description: string
     status: ExecutionStep['status']
     reasoning?: string
+    acceptance?: string[]
   }>
   updatedAt: string
 }

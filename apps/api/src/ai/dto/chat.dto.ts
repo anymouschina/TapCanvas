@@ -7,10 +7,32 @@ export interface ChatMessageDto {
   metadata?: Record<string, any>
 }
 
+export interface CanvasCharacterContextDto {
+  nodeId: string
+  label?: string
+  username?: string
+  description?: string
+  avatarUrl?: string
+}
+
+export interface CanvasVideoBindingContextDto {
+  nodeId: string
+  label?: string
+  promptPreview?: string
+  remixSourceLabel?: string
+  characters?: Array<{
+    nodeId: string
+    label?: string
+    username?: string
+  }>
+}
+
 export interface CanvasContextDto {
   nodes?: Array<Record<string, any>>
   edges?: Array<Record<string, any>>
   summary?: Record<string, any>
+  characters?: CanvasCharacterContextDto[]
+  videoBindings?: CanvasVideoBindingContextDto[]
 }
 
 export interface ChatRequestDto {
