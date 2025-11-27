@@ -1,4 +1,5 @@
-import type { ThinkingEvent } from '../types/canvas-intelligence'
+import type { ThinkingEvent, PlanUpdatePayload } from '../types/canvas-intelligence'
+import { API_BASE } from './server'
 
 export interface ToolEventMessage {
   type: 'tool-call' | 'tool-result'
@@ -21,16 +22,32 @@ interface SubscribeOptions {
  * Minimal SSE client using fetch so we can attach Authorization headers.
  * Returns a function that aborts the stream.
  */
+function resolveEventsUrl(url?: string) {
+  const trimmed = (url || '').trim()
+  if (!trimmed) {
+    return `${API_BASE.replace(/\/$/, '')}/ai/tool-events`
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed
+  }
+  if (trimmed.startsWith('/')) {
+    return `${API_BASE.replace(/\/$/, '')}${trimmed}`
+  }
+  return `${API_BASE.replace(/\/$/, '')}/${trimmed}`
+}
+
 export function subscribeToolEvents({ url, token, onEvent, onOpen, onError }: SubscribeOptions) {
-  if (!url || !token) {
+  if (!token) {
     return () => {}
   }
 
+  const resolvedUrl = resolveEventsUrl(url)
   const controller = new AbortController()
   const connect = async () => {
-    const response = await fetch(url, {
+    const response = await fetch(resolvedUrl, {
       method: 'GET',
       headers: {
+        Accept: 'text/event-stream',
         Authorization: `Bearer ${token}`,
       },
       signal: controller.signal,
@@ -117,6 +134,13 @@ export function mapToolEventToCanvasOperation(event: ToolEventMessage) {
 export function extractThinkingEvent(event: ToolEventMessage): ThinkingEvent | null {
   if (event.type === 'tool-result' && event.toolName === 'ai.thinking.process' && event.output) {
     return event.output as ThinkingEvent
+  }
+  return null
+}
+
+export function extractPlanUpdate(event: ToolEventMessage): PlanUpdatePayload | null {
+  if (event.type === 'tool-result' && event.toolName === 'ai.plan.update' && event.output) {
+    return event.output as PlanUpdatePayload
   }
   return null
 }

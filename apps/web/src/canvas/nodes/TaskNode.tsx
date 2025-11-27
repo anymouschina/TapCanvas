@@ -56,6 +56,7 @@ import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } f
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
+import { VideoRealismTips } from '../components/shared/VideoRealismTips'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -428,6 +429,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isComposerNode = schema.category === 'composer' || isStoryboardNode
   const hasVideoOutputs = schemaFeatures.has('video') || schemaFeatures.has('videoResults')
   const isVideoNode = hasVideoOutputs || isComposerNode
+  const showVideoRealismTips =
+    isComposerNode || schema.category === 'video' || (kind === 'composeVideo' || (data as any)?.kind === 'composeVideo')
   const isStandaloneVideoNode = hasVideoOutputs && !isComposerNode
   const isImageNode =
     schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults')
@@ -485,6 +488,17 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const addNode = useRFStore(s => s.addNode)
   const addEdge = useRFStore(s => s.onConnect)
   const [prompt, setPrompt] = React.useState<string>((data as any)?.prompt || '')
+  const applyVideoRealismSnippet = React.useCallback(
+    (snippet: string) => {
+      const block = (snippet || '').trim()
+      if (!block) return
+      const base = (prompt || '').trim()
+      const merged = base ? `${base}\n\n${block}` : block
+      setPrompt(merged)
+      updateNodeData(id, { prompt: merged })
+    },
+    [id, prompt, updateNodeData]
+  )
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
   const previewAspectRatio = React.useMemo(() => {
     if (!isImageNode) return null
@@ -3266,6 +3280,11 @@ const rewritePromptWithCharacters = React.useCallback(
                     ))}
                   </Paper>
                 )}
+                </div>
+              )}
+              {showVideoRealismTips && (
+                <div style={{ marginTop: 10 }}>
+                  <VideoRealismTips onInsertSnippet={applyVideoRealismSnippet} />
                 </div>
               )}
             </>

@@ -92,7 +92,16 @@ button { color: var(--mantine-color-text); }
   background: #1a1d24 !important;
   border: 1px solid rgba(255,255,255,0.18) !important;
 }
+:root[data-mantine-color-scheme="dark"] .react-flow__handle::after {
+  background: transparent;
+  border-color: transparent;
+}
 :root[data-mantine-color-scheme="dark"] .react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
+:root[data-mantine-color-scheme="dark"] .react-flow__handle:hover::after,
+:root[data-mantine-color-scheme="dark"] .react-flow__handle:focus-visible::after {
+  border-color: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+}
 :root[data-mantine-color-scheme="dark"] .react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
 :root[data-mantine-color-scheme="dark"] .react-flow__edge:hover .react-flow__edge-path { opacity: 1; }
 

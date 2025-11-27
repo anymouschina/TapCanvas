@@ -9,9 +9,11 @@ import {
   ExecutionPlan,
   CanvasOperation,
   ParsedCanvasIntent,
-  ExecutionContext
+  ExecutionContext,
+  ExecutionResult
 } from './core/types/canvas-intelligence.types'
 import type { ChatRequestDto } from './dto/chat.dto'
+import { PlanManager } from './intelligence/plan-manager'
 
 const DEFAULT_INTELLIGENT_MODEL = 'gemini-2.5-flash'
 
@@ -24,6 +26,7 @@ export interface IntelligentChatResponseDto {
     type: string
     confidence: number
     reasoning: string
+    planSteps: string[]
   }
   optimizations?: any[]
 }
@@ -37,7 +40,8 @@ export class IntelligentAiService {
     private readonly intentRecognizer: CanvasIntentRecognizer,
     private readonly thinkingStream: ThinkingStream,
     private readonly executionEngine: WebExecutionEngine,
-    private readonly toolEvents: ToolEventsService
+    private readonly toolEvents: ToolEventsService,
+    private readonly planManager: PlanManager
   ) {}
 
   /**
@@ -47,6 +51,8 @@ export class IntelligentAiService {
     userId: string,
     payload: ChatRequestDto
   ): Promise<IntelligentChatResponseDto> {
+
+    let activePlanId: string | undefined
 
     try {
       this.logger.debug('Starting intelligent chat', {
@@ -82,8 +88,21 @@ export class IntelligentAiService {
         (event) => this.emitThinkingEvent(userId, event)
       )
 
+      this.planManager.startPlan(
+        userId,
+        executionContext.sessionId,
+        plan,
+        intent.reasoning
+      )
+      activePlanId = plan.id
+
       // 5. 执行具体操作（或发送到前端执行）
-      const results = await this.executeOperations(operations, executionContext)
+      const results = await this.executeOperations(
+        operations,
+        executionContext,
+        plan,
+        userId
+      )
 
       // 6. 调用大模型获取可执行动作
       const llmResult = await this.invokeAssistantModel(userId, payload)
@@ -109,11 +128,16 @@ export class IntelligentAiService {
         intent: {
           type: intent.type,
           confidence: intent.confidence,
-          reasoning: intent.reasoning
+          reasoning: intent.reasoning,
+          planSteps: intent.planSteps
         }
       }
 
     } catch (error) {
+      if (activePlanId) {
+        this.planManager.abortPlan(userId, activePlanId, '智能处理失败，计划已终止')
+      }
+
       this.logger.error('Intelligent chat failed', error as any)
 
       return {
@@ -124,7 +148,8 @@ export class IntelligentAiService {
         intent: {
           type: 'error',
           confidence: 0,
-          reasoning: '智能处理失败，回退到传统处理'
+          reasoning: '智能处理失败，回退到传统处理',
+          planSteps: []
         }
       }
     }
@@ -171,7 +196,8 @@ export class IntelligentAiService {
         payload: {
           type: intent.type,
           confidence: intent.confidence,
-          reasoning: intent.reasoning
+          reasoning: intent.reasoning,
+          planSteps: intent.planSteps
         }
       })}\n\n`)
 
@@ -182,6 +208,14 @@ export class IntelligentAiService {
         executionContext,
         onThinkingEvent
       )
+
+      this.planManager.startPlan(
+        userId,
+        executionContext.sessionId,
+        plan,
+        intent.reasoning
+      )
+      activePlanId = plan.id
 
       // 推送执行计划
       res.write(`data: ${JSON.stringify({
@@ -198,33 +232,37 @@ export class IntelligentAiService {
         }
       })}\n\n`)
 
-      // 逐个执行操作并推送结果
-      for (const operation of operations) {
-        const result = await this.executionEngine.executeOperation(operation, executionContext)
-
-        res.write(`data: ${JSON.stringify({
-          type: 'operation_result',
-          payload: {
-            operationId: operation.id,
-            success: result.success,
-            result: result.result,
-            duration: result.duration
-          }
-        })}\n\n`)
-      }
+      const operationResults = await this.executeOperations(
+        operations,
+        executionContext,
+        plan,
+        userId,
+        (operation, result) => {
+          res.write(`data: ${JSON.stringify({
+            type: 'operation_result',
+            payload: {
+              operationId: operation.id,
+              success: result.success,
+              result: result.result,
+              duration: result.duration
+            }
+          })}\n\n`)
+        }
+      )
 
       // 完成信号
       res.write(`data: ${JSON.stringify({
         type: 'complete',
         payload: {
-          reply: this.generateFinalReply(intent, plan, []),
+          reply: this.generateFinalReply(intent, plan, operationResults),
           intent: {
             type: intent.type,
             confidence: intent.confidence,
-            reasoning: intent.reasoning
+            reasoning: intent.reasoning,
+            planSteps: intent.planSteps
           },
           summary: {
-            operationsCount: operations.length,
+            operationsCount: operationResults.length,
             thinkingSteps: this.thinkingStream.getCurrentEvents().length
           }
         }
@@ -233,6 +271,10 @@ export class IntelligentAiService {
       res.end()
 
     } catch (error) {
+      if (activePlanId) {
+        this.planManager.abortPlan(userId, activePlanId, '智能流式处理失败')
+      }
+
       this.logger.error('Stream intelligent chat failed', error as any)
 
       res.write(`data: ${JSON.stringify({
@@ -252,25 +294,75 @@ export class IntelligentAiService {
    */
   private async executeOperations(
     operations: CanvasOperation[],
-    context: ExecutionContext
-  ) {
-    const results = []
+    context: ExecutionContext,
+    plan?: ExecutionPlan,
+    userId?: string,
+    onResult?: (operation: CanvasOperation, result: ExecutionResult) => void
+  ): Promise<ExecutionResult[]> {
+    const results: ExecutionResult[] = []
+    let abortedEarly = false
 
-    for (const operation of operations) {
-      const result = await this.executionEngine.executeOperation(operation, context)
-      results.push(result)
+    try {
+      for (const operation of operations) {
+        if (plan && userId && operation.planStepId) {
+          this.planManager.markStepInProgress(
+            userId,
+            plan.id,
+            operation.planStepId,
+            `执行${operation.capability.name}`
+          )
+        }
 
-      // 如果关键操作失败，可以决定是否继续
-      if (!result.success && operation.priority > 5) {
-        this.logger.warn('Critical operation failed, stopping execution', {
-          operation: operation.capability.name,
-          error: result.error
-        })
-        break
+        const result = await this.executionEngine.executeOperation(operation, context)
+        results.push(result)
+        onResult?.(operation, result)
+
+        if (plan && userId && operation.planStepId) {
+          if (result.success) {
+            this.planManager.markStepCompleted(
+              userId,
+              plan.id,
+              operation.planStepId,
+              `${operation.capability.name}完成`
+            )
+          } else {
+            this.planManager.markStepFailed(
+              userId,
+              plan.id,
+              operation.planStepId,
+              result.error || '执行失败'
+            )
+          }
+        }
+
+        // 如果关键操作失败，可以决定是否继续
+        if (!result.success && operation.priority > 5) {
+          this.logger.warn('Critical operation failed, stopping execution', {
+            operation: operation.capability.name,
+            error: result.error
+          })
+          abortedEarly = true
+          break
+        }
       }
-    }
 
-    return results
+      if (plan && userId) {
+        const hasFailures = results.some(r => !r.success)
+        const explanation = abortedEarly
+          ? '计划因关键步骤失败提前终止'
+          : hasFailures
+            ? '部分步骤失败，计划需要人工处理'
+            : '计划执行完成'
+        this.planManager.completePlan(userId, plan.id, explanation)
+      }
+
+      return results
+    } catch (error) {
+      if (plan && userId) {
+        this.planManager.abortPlan(userId, plan.id, '执行操作时出现异常')
+      }
+      throw error
+    }
   }
 
   /**
@@ -416,7 +508,8 @@ export class IntelligentAiService {
       intentRecognizer: this.intentRecognizer.getIntentStatistics(),
       executionEngine: this.executionEngine.getExecutionStatistics(),
       currentThinkingEvents: this.thinkingStream.getCurrentEvents().length,
-      currentPlan: !!this.thinkingStream.getCurrentPlan()
+      currentPlan: !!this.thinkingStream.getCurrentPlan(),
+      activePlans: this.planManager.getActivePlanCount()
     }
   }
 
@@ -425,5 +518,6 @@ export class IntelligentAiService {
    */
   clearSession() {
     this.thinkingStream.clear()
+    this.planManager.clear()
   }
 }

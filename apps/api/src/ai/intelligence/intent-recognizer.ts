@@ -29,7 +29,7 @@ export class CanvasIntentRecognizer {
     // 2. 快速模式匹配
     const quickMatch = this.performQuickMatch(normalizedInput, canvasContext)
     if (quickMatch.confidence > 0.8) {
-      return quickMatch
+      return this.attachPlanToIntent(quickMatch, canvasContext)
     }
 
     // 3. 上下文增强分析
@@ -39,7 +39,7 @@ export class CanvasIntentRecognizer {
       executionContext
     )
     if (contextualMatch.confidence > 0.6) {
-      return contextualMatch
+      return this.attachPlanToIntent(contextualMatch, canvasContext)
     }
 
     // 4. 深度语义分析
@@ -55,7 +55,7 @@ export class CanvasIntentRecognizer {
       capability: finalIntent.capabilityName
     })
 
-    return finalIntent
+    return this.attachPlanToIntent(finalIntent, canvasContext)
   }
 
   /**
@@ -100,7 +100,8 @@ export class CanvasIntentRecognizer {
       },
       rawText: input,
       extractedParams,
-      reasoning: `通过模式匹配识别到${capability.name}，置信度${(bestMatch.score * 0.9 + 0.1).toFixed(2)}`
+      reasoning: `通过模式匹配识别到${capability.name}，置信度${(bestMatch.score * 0.9 + 0.1).toFixed(2)}`,
+      planSteps: []
     }
   }
 
@@ -131,7 +132,8 @@ export class CanvasIntentRecognizer {
           entities: { canvasState: 'empty', action: 'create' },
           rawText: input,
           extractedParams: {},
-          reasoning: '检测到空画布，推断需要创建新的工作流'
+          reasoning: '检测到空画布，推断需要创建新的工作流',
+          planSteps: []
         }
       }
     }
@@ -148,7 +150,8 @@ export class CanvasIntentRecognizer {
           nodeCount,
           layoutType: this.inferLayoutType(input)
         },
-        reasoning: `检测到${nodeCount}个节点的复杂画布，需要布局优化`
+        reasoning: `检测到${nodeCount}个节点的复杂画布，需要布局优化`,
+        planSteps: []
       }
     }
 
@@ -161,7 +164,8 @@ export class CanvasIntentRecognizer {
         entities: { canvasState: 'connected', action: 'optimize' },
         rawText: input,
         extractedParams: { nodeCount, edgeCount },
-        reasoning: `检测到${edgeCount}个连接的工作流，需要性能或结构优化`
+        reasoning: `检测到${edgeCount}个连接的工作流，需要性能或结构优化`,
+        planSteps: []
       }
     }
 
@@ -208,7 +212,8 @@ export class CanvasIntentRecognizer {
             entities: { semanticIntent: pattern.intent },
             rawText: input,
             extractedParams: {},
-            reasoning: `通过语义模式识别到${pattern.intent}意图`
+            reasoning: `通过语义模式识别到${pattern.intent}意图`,
+            planSteps: []
           }
         }
       }
@@ -243,7 +248,91 @@ export class CanvasIntentRecognizer {
       entities: { originalInput: input },
       rawText: input,
       extractedParams: {},
-      reasoning: '未能明确识别用户意图，将交由AI模型进行深度理解'
+      reasoning: '未能明确识别用户意图，将交由AI模型进行深度理解',
+      planSteps: []
+    }
+  }
+
+  /**
+   * 为意图附加初步计划
+   */
+  private attachPlanToIntent(intent: ParsedCanvasIntent, canvasContext?: CanvasContextDto): ParsedCanvasIntent {
+    if (intent.planSteps && intent.planSteps.length > 0) {
+      return intent
+    }
+
+    return {
+      ...intent,
+      planSteps: this.buildPlanStepsForIntent(intent, canvasContext)
+    }
+  }
+
+  /**
+   * 根据意图域生成默认计划步骤
+   */
+  private buildPlanStepsForIntent(intent: ParsedCanvasIntent, canvasContext?: CanvasContextDto): string[] {
+    const nodeCount = canvasContext?.nodes?.length ?? 0
+    const edgeCount = canvasContext?.edges?.length ?? 0
+    const capability = intent.capabilityName || '相关操作'
+    const inspectStep = nodeCount > 0
+      ? `审视当前${nodeCount}个节点${edgeCount ? `和${edgeCount}条连接` : ''}，明确需要处理的区域`
+      : '确认画布上下文（是否为空、需创建的内容）'
+
+    switch (intent.type) {
+      case CanvasActionDomain.LAYOUT_ARRANGEMENT:
+        return [
+          inspectStep,
+          '根据画布密度选择合适的布局算法并设置参数',
+          '执行布局并检查是否存在重叠或未连接节点'
+        ]
+      case CanvasActionDomain.CONNECTION_FLOW:
+        return [
+          inspectStep,
+          `确定需要连接/断开的节点并规划${capability}的走向`,
+          '应用连接调整并验证数据流是否正确'
+        ]
+      case CanvasActionDomain.EXECUTION_DEBUG:
+        return [
+          inspectStep,
+          '定位失败的节点或瓶颈并收集日志',
+          '给出重新运行或优化建议并确认风险'
+        ]
+      case CanvasActionDomain.VIEW_NAVIGATION:
+        return [
+          inspectStep,
+          '定位用户关注的节点或区域并设置视图中心',
+          '调整缩放/镜头并确保重点清晰可见'
+        ]
+      case CanvasActionDomain.PROJECT_MANAGEMENT:
+        return [
+          '检查当前项目/版本与成员权限',
+          `执行${capability}涉及的保存、导入或分享流程`,
+          '回传成功状态并提示后续操作'
+        ]
+      case CanvasActionDomain.TEMPLATE_SYSTEM:
+        return [
+          inspectStep,
+          '挑选合适模板或组件并注入上下文',
+          '生成新的画布结构并提示可自定义的部分'
+        ]
+      case CanvasActionDomain.SETTINGS_CONFIG:
+        return [
+          '确认当前设置值与依赖项',
+          `应用${capability}需要的配置变更`,
+          '验证设置生效并记录回滚方式'
+        ]
+      case CanvasActionDomain.ASSET_MANAGEMENT:
+        return [
+          '检查资产库及配额情况',
+          `上传/引用所需素材并绑定到${capability}`,
+          '同步元数据并提示使用方式'
+        ]
+      default:
+        return [
+          inspectStep,
+          `规划并执行${capability}的关键动作`,
+          '验证结果并准备下一步或回滚方案'
+        ]
     }
   }
 

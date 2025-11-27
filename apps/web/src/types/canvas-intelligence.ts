@@ -63,10 +63,12 @@ export interface ParsedCanvasIntent {
   rawText: string
   extractedParams: Record<string, any>
   reasoning: string
+  planSteps: string[]
 }
 
 export interface CanvasOperation {
   id: string
+  planStepId?: string
   capability: {
     domain: CanvasActionDomain
     name: string
@@ -95,6 +97,25 @@ export interface CanvasOperation {
   priority: number
 }
 
+export interface PlanUpdatePayload {
+  planId: string
+  sessionId: string
+  explanation?: string
+  summary?: {
+    strategy?: string
+    estimatedTime?: number
+    estimatedCost?: number
+  }
+  steps: Array<{
+    id: string
+    name: string
+    description: string
+    status: ExecutionStep['status']
+    reasoning?: string
+  }>
+  updatedAt: string
+}
+
 export interface IntelligentChatResponse {
   reply: string
   plan: string[]
@@ -104,6 +125,7 @@ export interface IntelligentChatResponse {
     type: string
     confidence: number
     reasoning: string
+    planSteps: string[]
   }
   optimizations?: any[]
 }
@@ -180,6 +202,7 @@ export interface IntelligentChatMessage {
     type: string
     confidence: number
     reasoning: string
+    planSteps: string[]
   }
   actions?: any[]
 }

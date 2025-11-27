@@ -25,8 +25,10 @@ import {
   IconClock,
   IconAlertTriangle
 } from '@tabler/icons-react'
-import { useWebSocket } from '../hooks/useWebSocket'
-import type { ThinkingEvent, ExecutionStep } from '../../../types/canvas-intelligence'
+import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
+import { subscribeToolEvents, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
+import { getAuthToken } from '../../auth/store'
+import { API_BASE } from '../../api/server'
 
 interface ThinkingProcessProps {
   events: ThinkingEvent[]
@@ -189,12 +191,22 @@ const getThinkingColor = (type: ThinkingEvent['type']) => {
 }
 
 interface ExecutionPlanDisplayProps {
-  plan?: {
-    strategy?: string
-    steps?: string[]
-    estimatedTime?: number
-  }
-  onStepClick?: (stepIndex: number) => void
+  plan?: PlanUpdatePayload | null
+  onStepClick?: (stepId: string) => void
+}
+
+const STEP_STATUS_LABEL: Record<string, string> = {
+  pending: '待执行',
+  in_progress: '执行中',
+  completed: '已完成',
+  failed: '失败'
+}
+
+const STEP_STATUS_COLOR: Record<string, string> = {
+  pending: 'gray',
+  in_progress: 'yellow',
+  completed: 'green',
+  failed: 'red'
 }
 
 export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
@@ -206,6 +218,8 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
     return null
   }
 
+  const summary = plan.summary || {}
+
   return (
     <Paper p="md" withBorder shadow="sm" mt="md">
       <Group position="apart" mb="md">
@@ -216,18 +230,24 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
             {plan.steps.length} 个步骤
           </Badge>
         </Group>
-        {plan.estimatedTime && (
+        {summary.estimatedTime && (
           <Text size="xs" color="dimmed">
-            预计 {plan.estimatedTime}s
+            预计 {summary.estimatedTime}s
           </Text>
         )}
       </Group>
 
-      {plan.strategy && (
+      {plan.explanation && (
+        <Text size="xs" color="dimmed" mb="sm">
+          {plan.explanation}
+        </Text>
+      )}
+
+      {summary.strategy && (
         <Group mb="md">
           <Text size="sm" weight={500}>策略:</Text>
           <Badge color="blue" variant="light">
-            {plan.strategy}
+            {summary.strategy}
           </Badge>
         </Group>
       )}
@@ -235,28 +255,39 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
       <Stack spacing="sm">
         {plan.steps.map((step, index) => (
           <Paper
-            key={index}
+            key={step.id}
             p="sm"
             withBorder
             style={{
               cursor: onStepClick ? 'pointer' : 'default'
             }}
-            onClick={() => onStepClick?.(index)}
+            onClick={() => onStepClick?.(step.id)}
           >
-            <Group position="apart" align="start">
-              <Group spacing="xs" align="start">
+            <Group position="apart" align="flex-start">
+              <Group spacing="xs" align="flex-start">
                 <Text size="sm" weight={500}>
                   {index + 1}.
                 </Text>
-                <Text size="sm">
-                  {step}
-                </Text>
+                <div>
+                  <Text size="sm" weight={500}>
+                    {step.name}
+                  </Text>
+                  <Text size="xs" color="dimmed">
+                    {step.description}
+                  </Text>
+                  {step.reasoning && (
+                    <Text size="xs" color="dimmed">
+                      {step.reasoning}
+                    </Text>
+                  )}
+                </div>
               </Group>
-              {onStepClick && (
-                <ActionIcon size="sm" variant="subtle">
-                  <IconAdjustments size={14} />
-                </ActionIcon>
-              )}
+              <Badge
+                color={STEP_STATUS_COLOR[step.status] || 'gray'}
+                variant="light"
+              >
+                {STEP_STATUS_LABEL[step.status] || step.status}
+              </Badge>
             </Group>
           </Paper>
         ))}
@@ -277,30 +308,42 @@ export const IntelligentAssistant: React.FC<IntelligentAssistantProps> = ({
   height = '600px'
 }) => {
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
-  const [currentPlan, setCurrentPlan] = useState<any>(null)
+  const [currentPlan, setCurrentPlan] = useState<PlanUpdatePayload | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [isEnabled, setIsEnabled] = useState(true)
 
-  // 监听智能事件
-  const { lastMessage, sendMessage } = useWebSocket(`/ai/tool-events?userId=${userId}`)
-
   useEffect(() => {
-    if (lastMessage) {
-      try {
-        const data = JSON.parse(lastMessage.data)
+    if (!userId) return
+    const token = getAuthToken()
+    if (!token) return
 
-        if (data.type === 'thinking-event') {
-          setThinkingEvents(prev => [...prev, data.payload])
+    const unsubscribe = subscribeToolEvents({
+      url: `${API_BASE.replace(/\/$/, '')}/ai/tool-events`,
+      token,
+      onEvent: (event) => {
+        const thinking = extractThinkingEvent(event)
+        if (thinking) {
+          setThinkingEvents(prev => [...prev, thinking])
           setIsThinking(true)
-        } else if (data.type === 'plan_update') {
-          setCurrentPlan(data.payload)
-          setIsThinking(false)
+          return
         }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error)
+
+        const planUpdate = extractPlanUpdate(event)
+        if (planUpdate) {
+          setCurrentPlan(planUpdate)
+          const planFinished = planUpdate.steps.every(step => step.status === 'completed')
+          setIsThinking(!planFinished)
+        }
+      },
+      onError: (err) => {
+        console.error('tool-events stream error', err)
       }
+    })
+
+    return () => {
+      unsubscribe()
     }
-  }, [lastMessage])
+  }, [userId])
 
   const handleClear = useCallback(() => {
     setThinkingEvents([])

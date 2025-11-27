@@ -109,6 +109,11 @@ const canvasToolsWithServerFallback = Object.fromEntries(
   ])
 )
 
+const CREATIVE_NODE_TYPES = new Set(['image', 'texttoimage', 'composevideo', 'video', 'storyboard', 'animation'])
+const PROMPT_ENHANCEMENT_PLAN_HINT = '润色提示词，扩展镜头语言、光影与情绪细节'
+const DEFAULT_NEGATIVE_PROMPT =
+  'low quality, blurry, lowres, distorted faces, watermark, duplicate, overexposed, underexposed, noisy, bad composition, text overlay'
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name)
@@ -157,11 +162,13 @@ export class AiService {
             temperature: payload.temperature ?? 0.2,
           })
           if (res) {
-            return {
-              reply: res.reply,
-              plan: res.plan || [],
-              actions: res.actions || [],
-            }
+            const finalized = this.finalizeAssistantResponse(
+              res.reply,
+              res.plan,
+              res.actions,
+              { userInput: lastUserText, canvasContext: payload.context }
+            )
+            return finalized
           }
           throw new BadRequestException('AI助手不可用：Anthropic 代理返回无效响应')
         }
@@ -186,14 +193,19 @@ export class AiService {
             actions = extracted.actions
           }
         }
-        lastResult = { reply, plan, actions }
+        const finalized = this.finalizeAssistantResponse(
+          reply,
+          plan,
+          actions,
+          { userInput: lastUserText, canvasContext: payload.context }
+        )
+        reply = finalized.reply
+        plan = finalized.plan
+        actions = finalized.actions
+        lastResult = finalized
 
         if (actions && actions.length > 0) {
-          return {
-            reply,
-            plan: plan || [],
-            actions
-          }
+          return finalized
         }
 
         conversation.push({
@@ -203,11 +215,16 @@ export class AiService {
       }
 
       const fallbackActions = this.buildFallbackActions(payload.messages)
-      return {
-        reply: lastResult?.reply || '已自动为你生成基础画布操作。',
-        plan: lastResult?.plan || [],
-        actions: (lastResult?.actions && lastResult.actions.length > 0) ? lastResult.actions : fallbackActions
+      const fallbackResult = this.finalizeAssistantResponse(
+        lastResult?.reply || '已自动为你生成基础画布操作。',
+        lastResult?.plan,
+        (lastResult?.actions && lastResult.actions.length > 0) ? lastResult.actions : fallbackActions,
+        { userInput: lastUserText, canvasContext: payload.context }
+      )
+      if (!fallbackResult.actions.length) {
+        fallbackResult.actions = fallbackActions
       }
+      return fallbackResult
     } catch (error) {
       this.logger.error('AI chat失败', error as any)
       // Anthropic自定义域（如 GLM 代理）可能返回非标准JSON，尝试兜底请求
@@ -225,7 +242,13 @@ export class AiService {
             const ensured = (fallback.actions && fallback.actions.length > 0)
               ? fallback.actions
               : (this.extractAssistantPayload(fallback.reply || '')?.actions || this.buildFallbackActions(payload.messages))
-            return { reply: fallback.reply, plan: fallback.plan || [], actions: ensured }
+            const finalized = this.finalizeAssistantResponse(
+              fallback.reply,
+              fallback.plan,
+              ensured,
+              { userInput: lastUserText, canvasContext: payload.context }
+            )
+            return finalized
           }
         } catch (e) {
           this.logger.error('Anthropic fallback失败', e as any)
@@ -466,6 +489,158 @@ export class AiService {
       reasoning: '无动作输出时，默认查询画布状态',
       params: {}
     }]
+  }
+
+  private finalizeAssistantResponse(
+    reply: string,
+    plan: string[] | undefined,
+    actions: any[] | undefined,
+    options: { userInput?: string; canvasContext?: CanvasContextDto | null }
+  ): { reply: string; plan: string[]; actions: any[] } {
+    const enhancement = this.enhanceCreativeActions(actions, options)
+    let finalPlan = Array.isArray(plan) ? [...plan] : []
+    if (enhancement.addedPlanStep) {
+      const planStep = this.buildPromptEnhancementPlanStep(options.userInput)
+      const alreadyHasStep = finalPlan.some(step => step.includes('提示词') || step.includes('润色'))
+      if (!alreadyHasStep) {
+        finalPlan = [planStep, ...finalPlan]
+      }
+    }
+    return {
+      reply,
+      plan: finalPlan,
+      actions: enhancement.actions
+    }
+  }
+
+  private enhanceCreativeActions(
+    actions: any[] | undefined,
+    options: { userInput?: string; canvasContext?: CanvasContextDto | null }
+  ): { actions: any[]; addedPlanStep: boolean } {
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return { actions: Array.isArray(actions) ? actions : [], addedPlanStep: false }
+    }
+
+    let applied = false
+    const enriched = actions.map(action => {
+      if (!action || action.type !== 'createNode') {
+        return action
+      }
+      if (action.meta?.promptEnhanced) {
+        return action
+      }
+      const nodeType: string | undefined = action.params?.type || action.params?.payload?.type || action.params?.config?.type
+      if (!this.isCreativeNodeType(nodeType)) {
+        return action
+      }
+
+      const basePrompt = this.getBasePromptFromAction(action, options.userInput)
+      const enrichedPrompt = this.buildEnhancedPrompt(basePrompt, nodeType || '')
+      if (!enrichedPrompt) {
+        return action
+      }
+
+      const params = { ...(action.params || {}) }
+      const config = { ...(params.config || {}) }
+      config.prompt = enrichedPrompt.prompt
+      if (!config.negativePrompt) {
+        config.negativePrompt = enrichedPrompt.negativePrompt
+      }
+      if (!config.keywords && enrichedPrompt.keywords.length > 0) {
+        config.keywords = enrichedPrompt.keywords
+      }
+      params.config = config
+
+      applied = true
+      return {
+        ...action,
+        params,
+        meta: {
+          ...(action.meta || {}),
+          promptEnhanced: true,
+          promptSeed: enrichedPrompt.brief
+        },
+        reasoning: action.reasoning
+          ? `${action.reasoning}（提示词已润色，补充镜头语言与细节）`
+          : '提示词已润色，补充镜头语言、光影与细节'
+      }
+    })
+
+    return { actions: enriched, addedPlanStep: applied }
+  }
+
+  private buildPromptEnhancementPlanStep(userInput?: string) {
+    if (userInput && userInput.trim()) {
+      const brief = userInput.trim().slice(0, 24)
+      return `润色提示词：围绕“${brief}”补全镜头语言、光影与情绪`
+    }
+    return PROMPT_ENHANCEMENT_PLAN_HINT
+  }
+
+  private isCreativeNodeType(nodeType?: string | null) {
+    if (!nodeType) return false
+    return CREATIVE_NODE_TYPES.has(nodeType.toLowerCase())
+  }
+
+  private isVideoNodeType(nodeType: string) {
+    const normalized = nodeType.toLowerCase()
+    return normalized.includes('compose') || normalized.includes('video')
+  }
+
+  private getBasePromptFromAction(action: any, fallback?: string) {
+    const params = action?.params ?? {}
+    const config = params.config ?? {}
+    const candidates = [
+      action?.meta?.promptSeed,
+      config.prompt,
+      params.prompt,
+      params.label,
+      config.label,
+      fallback,
+    ]
+    const seed = candidates.find(value => typeof value === 'string' && value.trim())
+    return this.normalizePromptSeed(seed as string | undefined)
+  }
+
+  private buildEnhancedPrompt(seed: string | undefined, nodeType: string) {
+    const subject = this.normalizePromptSeed(seed) || 'an imaginative concept'
+    const isVideo = this.isVideoNodeType(nodeType)
+
+    if (isVideo) {
+      const prompt = [
+        `Cinematic short film shot about ${subject}`,
+        'Show a complete beat with character motivation, environment scale, and evolving emotion',
+        'Camera language: dynamic tracking shot mixed with low-angle close-ups, smooth gimbal motion, subtle handheld energy',
+        'Lighting: volumetric shafts, moody rim lights, neon practicals wrapping the subject',
+        'Mood & texture: high-contrast film grain, rich color separation, Dolby Vision grade, dramatic depth of field'
+      ].join('. ')
+      return {
+        prompt,
+        brief: subject,
+        negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+        keywords: ['cinematic', 'story-driven', 'dynamic lighting', '4k', 'film grain']
+      }
+    }
+
+    const prompt = [
+      `Ultra detailed illustration of ${subject}`,
+      'Rich material textures, layered foreground/midground/background storytelling',
+      'Lighting: cinematic rim lights, volumetric glow, dramatic contrast',
+      'Shot on 50mm prime, shallow depth of field, hyperreal focus',
+      'Post-processing: 8K render, HDR toning, clean composition'
+    ].join('. ')
+
+    return {
+      prompt,
+      brief: subject,
+      negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+      keywords: ['ultra detailed', '8k', 'dramatic lighting', 'photoreal', 'volumetric glow']
+    }
+  }
+
+  private normalizePromptSeed(value?: string) {
+    if (!value) return ''
+    return value.replace(/\s+/g, ' ').trim()
   }
 
   private isCustomAnthropicBase(baseUrl?: string | null) {

@@ -5,10 +5,12 @@ import type {
   ExecutionPlan,
   UseIntelligentChatOptions,
   UseIntelligentChatReturn,
-  IntelligentChatMessage
+  IntelligentChatMessage,
+  PlanUpdatePayload
 } from '../types/canvas-intelligence'
-import { subscribeToolEvents, mapToolEventToCanvasOperation, extractThinkingEvent } from '../api/toolEvents'
+import { subscribeToolEvents, mapToolEventToCanvasOperation, extractThinkingEvent, extractPlanUpdate } from '../api/toolEvents'
 import { getAuthToken } from '../auth/store'
+import { API_BASE } from '../api/server'
 
 export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntelligentChatReturn => {
   const {
@@ -45,6 +47,30 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   }
 
+  const convertPlanUpdateToExecutionPlan = useCallback((update: PlanUpdatePayload): ExecutionPlan => {
+    return {
+      id: update.planId,
+      strategy: {
+        name: update.summary?.strategy || '智能执行策略',
+        description: update.explanation || '智能助手正在执行多步骤计划',
+        efficiency: 'medium',
+        risk: 'medium',
+        reasoning: update.explanation || ''
+      },
+      steps: update.steps.map(step => ({
+        id: step.id,
+        name: step.name,
+        description: step.description,
+        status: step.status,
+        reasoning: step.reasoning || '',
+        estimatedTime: undefined,
+        dependencies: [],
+      })),
+      estimatedTime: update.summary?.estimatedTime ?? update.steps.length,
+      estimatedCost: update.summary?.estimatedCost ?? update.steps.length,
+    }
+  }, [])
+
   // 订阅工具事件
   useEffect(() => {
     if (!userId) return
@@ -52,12 +78,18 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     if (!token) return
 
     const unsubscribe = subscribeToolEvents({
-      url: '/api/ai/tool-events',
+      url: `${API_BASE.replace(/\/$/, '')}/ai/tool-events`,
       token,
       onEvent: (event) => {
         const thinking = extractThinkingEvent(event)
         if (thinking) {
           handleThinkingEvent(thinking)
+          return
+        }
+
+        const planUpdate = extractPlanUpdate(event)
+        if (planUpdate) {
+          setCurrentPlan(convertPlanUpdateToExecutionPlan(planUpdate))
           return
         }
 
@@ -71,7 +103,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     return () => {
       unsubscribe()
     }
-  }, [userId, handleThinkingEvent, onOperationExecuted])
+  }, [userId, handleThinkingEvent, onOperationExecuted, convertPlanUpdateToExecutionPlan])
 
   // 发送消息
   const sendMessage = useCallback(async (message: string, options?: any) => {
@@ -89,6 +121,8 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
     }
 
     setMessages(prev => [...prev, userMessage])
+    setThinkingEvents([])
+    setCurrentPlan(undefined)
 
     try {
       const token = getAuthToken()
@@ -109,7 +143,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
 
       if (options?.stream) {
         // 流式请求处理
-        const response = await fetch('/api/ai/chat/intelligent/stream', requestOptions)
+        const response = await fetch(`${API_BASE.replace(/\/$/, '')}/ai/chat/intelligent/stream`, requestOptions)
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`)
@@ -140,7 +174,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
         }
       } else {
         // 普通请求处理
-        const response = await fetch('/api/ai/chat/intelligent', requestOptions)
+        const response = await fetch(`${API_BASE.replace(/\/$/, '')}/ai/chat/intelligent`, requestOptions)
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`)
