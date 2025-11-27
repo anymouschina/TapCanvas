@@ -9,13 +9,13 @@ import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
-import type { Node, Edge } from 'reactflow'
 import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
 import { runTaskByVendor, type TaskResultDto } from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
 import { ThinkingProcess, ExecutionPlanDisplay } from '../../components/ai/IntelligentAssistant'
+import { buildCanvasContext } from '../utils/buildCanvasContext'
 
 type AssistantPosition = 'right' | 'left'
 
@@ -222,23 +222,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [assistantModelOptions, model])
 
-  const canvasContext = useMemo(() => {
-    if (!nodes.length) return undefined
-    return {
-      summary: {
-        nodeCount: nodes.length,
-        edgeCount: edges.length,
-        kinds: Array.from(new Set(nodes.map(n => (n.data as any)?.kind).filter(Boolean))),
-      },
-      nodes: nodes.slice(0, 14).map((node: Node) => ({
-        id: node.id,
-        label: (node.data as any)?.label,
-        kind: (node.data as any)?.kind,
-        type: node.type,
-      })),
-      edges: edges.slice(0, 16).map((edge: Edge) => ({ source: edge.source, target: edge.target })),
-    }
-  }, [nodes, edges])
+  const canvasContext = useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
 
   const provider = useMemo(() => getModelProvider(model), [model])
   const isGptModel = provider === 'openai'

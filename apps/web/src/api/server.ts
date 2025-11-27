@@ -455,8 +455,14 @@ export async function getSoraVideoDraftByTask(
     const msg =
       (body && (body.message || body.error)) ||
       `get sora video draft failed: ${r.status}`
+    const err: any = new Error(msg)
+    err.status = r.status
+    if (body && typeof body.upstreamStatus !== 'undefined') {
+      err.upstreamStatus = body.upstreamStatus
+    }
+    err.body = body
     console.debug('[getSoraVideoDraftByTask] failed', { taskId, tokenId, status: r.status, body })
-    throw new Error(msg)
+    throw err
   }
   console.debug('[getSoraVideoDraftByTask] success', { taskId, tokenId, body })
   return {

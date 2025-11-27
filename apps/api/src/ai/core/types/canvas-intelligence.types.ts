@@ -104,6 +104,7 @@ export interface ExecutionStep {
   dependencies?: string[]
   result?: any
   error?: string
+  acceptanceCriteria?: string[]
 }
 
 export interface ExecutionPlan {
