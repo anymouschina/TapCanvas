@@ -503,7 +503,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                       opacity: 0.8
                                     }}
                                   >
-                                    {$('作者：{{name}}', { name: p.ownerName })}
+                                    {$t('作者：{{name}}', { name: p.ownerName })}
                                   </Text>
                                 </motion.div>
                               )}
@@ -749,7 +749,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                       </motion.div>
                                     </Group>
                                     {p.ownerName && (
-                                      <Text size="xs" c="dimmed">{$('作者：{{name}}', { name: p.ownerName })}</Text>
+                                      <Text size="xs" c="dimmed">{$t('作者：{{name}}', { name: p.ownerName })}</Text>
                                     )}
                                   </div>
                                   <motion.div

@@ -755,30 +755,25 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                   ))}
                 </Stack>
               )}
-              <Group justify="space-between" align="flex-end">
-                <Button variant="light" size="xs" onClick={injectSystemPrompt}>
-                  注入系统提示
-                </Button>
-                <Group gap="xs" align="flex-end">
-                  <Tooltip label={uploadTooltipLabel}>
-                    <ActionIcon
-                      variant="light"
-                      color="teal"
-                      onClick={handleImagePromptButtonClick}
-                      disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
-                    >
-                      {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
-                    </ActionIcon>
-                  </Tooltip>
-                  <Button
-                    type="submit"
-                    loading={isLoading}
-                    leftSection={<IconSend size={16} />}
-                    style={{ minWidth: 120 }}
+              <Group justify="flex-end" align="flex-end" gap="xs">
+                <Tooltip label={uploadTooltipLabel}>
+                  <ActionIcon
+                    variant="light"
+                    color="teal"
+                    onClick={handleImagePromptButtonClick}
+                    disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
                   >
-                    发送
-                  </Button>
-                </Group>
+                    {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
+                  </ActionIcon>
+                </Tooltip>
+                <Button
+                  type="submit"
+                  loading={isLoading}
+                  leftSection={<IconSend size={16} />}
+                  style={{ minWidth: 120 }}
+                >
+                  发送
+                </Button>
               </Group>
             </Stack>
           </form>

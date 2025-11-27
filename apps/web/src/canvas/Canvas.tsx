@@ -20,7 +20,7 @@ import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
 import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import { IconBrandGithub, IconRobot } from '@tabler/icons-react'
-import { getCurrentLanguage, setLanguage, $ } from './i18n'
+import { getCurrentLanguage, setLanguage, $, $t } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
@@ -28,6 +28,7 @@ import { runFlowDag } from '../runner/dag'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
 import { UseChatAssistant } from './ai/UseChatAssistant'
+import { getQuickStartSampleFlow } from './quickStartSample'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -718,7 +719,7 @@ function CanvasInner(): JSX.Element {
                 crossAllowed = true
               }
               if (!crossAllowed) {
-                lastReason.current = $('类型不兼容：{{from}} → {{to}}', { from: sType, to: tType })
+                lastReason.current = $t('类型不兼容：{{from}} → {{to}}', { from: sType, to: tType })
                 return false
               }
             }
@@ -795,19 +796,17 @@ function CanvasInner(): JSX.Element {
             <Stack gap={8} style={{ color: emptyGuideTextColor }}>
               <Text c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
               <Group gap={8} style={{ flexWrap: 'nowrap' }}>
-                <Button size="sm" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'textToImage' }) }}>{$('新建 text')}</Button>
-                <Button size="sm" variant="light" onClick={() => {
-                  // create a small sample flow in center
-                  const center = rf.project?.({ x: window.innerWidth/2, y: window.innerHeight/2 }) || { x: 200, y: 200 }
-                  useRFStore.setState((s) => {
-                    const n1 = { id: `n${s.nextId}`, type: 'taskNode' as const, position: { x: center.x - 240, y: center.y - 60 }, data: { label: 'text', kind: 'textToImage' } }
-                    const n2 = { id: `n${s.nextId+1}`, type: 'taskNode' as const, position: { x: center.x, y: center.y - 60 }, data: { label: $('图像'), kind: 'image' } }
-                    const n3 = { id: `n${s.nextId+2}`, type: 'taskNode' as const, position: { x: center.x + 260, y: center.y - 60 }, data: { label: 'video', kind: 'composeVideo' } }
-                    const e1 = { id: `e-${n1.id}-${n2.id}`, source: n1.id, target: n2.id, type: 'typed' as const, animated: true } as any
-                    const e2 = { id: `e-${n2.id}-${n3.id}`, source: n2.id, target: n3.id, type: 'typed' as const, animated: true } as any
-                    return { nodes: [n1, n2, n3], edges: [e1, e2], nextId: s.nextId + 3 }
-                  })
-                }}>{$('创建示例工作流')}</Button>
+                <Button
+                  size="sm"
+                  variant="light"
+                  onClick={() => {
+                    const sample = getQuickStartSampleFlow()
+                    load(sample)
+                    setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
+                  }}
+                >
+                  {$('创建示例工作流')}
+                </Button>
                 <Button
                   size="sm"
                   variant="subtle"

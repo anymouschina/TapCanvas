@@ -123,20 +123,20 @@ export default function AssetPanel(): JSX.Element | null {
         return soras[0]
       })
       .then(async (sora) => {
-        if (!sora) {
-          setSoraTokens([])
-          setDrafts([])
-          setPublishedVideos([])
-          setCharacters([])
-          setSelectedTokenId(null)
-          return
-        }
-        const tokens = await listModelTokens(sora.id)
-        setSoraTokens(tokens)
+        let tokens: ModelTokenDto[] = []
+        if (sora) {
+          tokens = await listModelTokens(sora.id)
+          setSoraTokens(tokens)
 
-        // 当进入 Sora 草稿、发布或角色 Tab 时，如果还没有选择 Token，则默认选第一个
-        if (!selectedTokenId && tokens.length > 0) {
-          setSelectedTokenId(tokens[0].id)
+          // 当进入 Sora 草稿、发布或角色 Tab 时，如果还没有选择 Token，则默认选第一个
+          if (!selectedTokenId && tokens.length > 0) {
+            setSelectedTokenId(tokens[0].id)
+          }
+        } else {
+          setSoraTokens([])
+          if (selectedTokenId) {
+            setSelectedTokenId(null)
+          }
         }
 
         // 根据当前 Tab 加载对应的数据
@@ -231,10 +231,11 @@ export default function AssetPanel(): JSX.Element | null {
   }, [mounted, tab, selectedTokenId])
 
   const loadMoreDrafts = async () => {
-    if (!selectedTokenId || !draftCursor) return
+    if (!draftCursor) return
+    if (!selectedTokenId && !soraUsingShared) return
     setDraftLoading(true)
     try {
-      const data = await listSoraDrafts(selectedTokenId, draftCursor)
+      const data = await listSoraDrafts(selectedTokenId || undefined, draftCursor)
       setDrafts(prev => [...prev, ...(data.items || [])])
       setDraftCursor(data.cursor || null)
     } catch (err: any) {
@@ -843,11 +844,29 @@ export default function AssetPanel(): JSX.Element | null {
                               }
                             }
                           } else {
-                            setDrafts([])
-                            setDraftCursor(null)
                             setPublishedVideos([])
                             setCharacters([])
                             setCharCursor(null)
+                            if (tab === 'sora') {
+                              setDraftLoading(true)
+                              setSoraUsingShared(false)
+                              try {
+                                const data = await listSoraDrafts()
+                                setDrafts(data.items || [])
+                                setDraftCursor(data.cursor || null)
+                                setSoraUsingShared(true)
+                              } catch (err: any) {
+                                console.error(err)
+                                setDrafts([])
+                                setDraftCursor(null)
+                                setSoraUsingShared(false)
+                              } finally {
+                                setDraftLoading(false)
+                              }
+                            } else {
+                              setDrafts([])
+                              setDraftCursor(null)
+                            }
                           }
                         }}
                       />

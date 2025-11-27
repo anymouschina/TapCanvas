@@ -34,11 +34,12 @@ const canvasToolSchemas = {
     inputSchema: z.object({})
   },
   createNode: {
-    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成），跟图片有关的节点就是image,视频就是video节点，提示词直接传入 prompt 就行，支持文生图，文生视频',
+    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成），跟图片有关的节点就是image,视频就是video节点，提示词直接传入 prompt 就行，支持文生图，文生视频；当传入 remixFromNodeId 时，必须指向一个已成功的 composeVideo/video/storyboard 节点',
     inputSchema: z.object({
       type: z.string(),
       label: z.string().optional(),
       config: z.record(z.any()).optional(),
+      remixFromNodeId: z.string().optional(),
       position: z.object({ x: z.number(), y: z.number() }).optional()
     })
   },
@@ -53,6 +54,12 @@ const canvasToolSchemas = {
     description: '执行当前画布工作流，真实执行在前端/客户端完成',
     inputSchema: z.object({
       concurrency: z.number().optional()
+    })
+  },
+  runNode: {
+    description: '执行指定的单个节点，仅触发用户需要的动作，避免整图跑满',
+    inputSchema: z.object({
+      nodeId: z.string()
     })
   },
   formatAll: {
@@ -436,9 +443,11 @@ export class AiService {
           }
         },
         {
-          type: 'runDag',
-          reasoning: '自动执行生成流程，触发图像/视频生成（顺序执行）',
-          params: { concurrency: 1 }
+          type: 'runNode',
+          reasoning: '精准执行刚创建的生成节点，避免跑整个工作流',
+          params: {
+            nodeId: `{{ref:${wantsVideo ? 'fallback_video' : 'fallback_image'}}}`
+          }
         }
       ]
       return actions
