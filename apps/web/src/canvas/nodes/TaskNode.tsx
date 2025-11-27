@@ -19,12 +19,10 @@ import {
   IconScissors,
   IconPhotoEdit,
   IconPhotoSearch,
-  IconDeviceTv,
   IconClock,
   IconChevronDown,
   IconBrain,
   IconBulb,
-  IconDeviceMobile,
   IconRefresh,
   IconUsers,
   IconPlus,
@@ -326,28 +324,35 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[7] // 提高日间模式下媒体回退文本的对比度
   const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
   const summaryChipAccent = theme.colors.blue?.[5] || '#4c6ef5'
-  const summaryChipGradient = isDarkUi
-    ? `linear-gradient(135deg, rgba(72, 94, 230, 0.85), rgba(125, 176, 255, 0.7))`
-    : `linear-gradient(135deg, rgba(76, 110, 245, 1), rgba(147, 197, 253, 0.95))`
-  const summaryChipShadow = isDarkUi
-    ? '0 10px 20px rgba(5, 6, 23, 0.6)'
-    : '0 12px 20px rgba(76, 110, 245, 0.25)'
-  const summaryChipColor = '#ffffff'
+  const chipBorderColor = 'transparent'
+  const controlLabelColor = rgba(nodeShellText, 0.6)
   const summaryChipStyles = React.useMemo(() => ({
-    background: summaryChipGradient,
     borderRadius: 12,
-    border: 'none',
-    color: summaryChipColor,
+    border: `1px solid ${chipBorderColor}`,
+    background: isDarkUi ? 'rgba(10, 14, 30, 0.9)' : 'rgba(255, 255, 255, 0.92)',
+    color: nodeShellText,
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     padding: '6px 12px',
     fontWeight: 500,
-    boxShadow: summaryChipShadow,
-    transition: 'transform 120ms ease, box-shadow 120ms ease',
     fontSize: 12,
-  }), [summaryChipGradient, summaryChipColor, summaryChipShadow])
+    height: 38,
+    lineHeight: 1.1,
+  }), [isDarkUi, nodeShellText, chipBorderColor])
+  const controlLabelStyle = React.useMemo(() => ({
+    fontSize: 11,
+    fontWeight: 500,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    color: controlLabelColor,
+  }), [controlLabelColor])
+  const controlValueStyle = React.useMemo(() => ({
+    fontSize: 12,
+    fontWeight: 600,
+    color: nodeShellText,
+  }), [nodeShellText])
   const inlineDividerColor = rgba(nodeShellText, 0.15)
   const sleekChipBase = React.useMemo(() => ({
     borderRadius: 999,
@@ -705,7 +710,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       ? `${videoDuration}s`
       : `${sampleCount}x`
   const summaryResolution = aspect
-  const summaryExec = `${sampleCount}x`
+  const summaryExec = `${sampleCount} x`
   const durationOptions = React.useMemo(
     () =>
       isStoryboardNode
@@ -1495,7 +1500,6 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const fixedWidth = isImageNode ? 320 : undefined
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
-  const promptPreview = (prompt || (data as any)?.prompt || '').trim()
   const hasAiText = lastText.trim().length > 0
 
   const edgeRoute = useUIStore(s => s.edgeRoute)
@@ -2295,7 +2299,7 @@ const rewritePromptWithCharacters = React.useCallback(
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center">
         <div
           style={{
-            width: 420,
+            width: 380,
             maxHeight: '60vh',
             overflowY: 'auto',
             overflowX: 'visible',
@@ -2304,11 +2308,6 @@ const rewritePromptWithCharacters = React.useCallback(
         >
           <div
             style={{
-              borderRadius: 20,
-              border: detailPanelBorder,
-              background: detailPanelBackground,
-              boxShadow: detailPanelShadow,
-              padding: 16,
               display: 'flex',
               flexDirection: 'column',
               gap: 12,
@@ -2323,17 +2322,12 @@ const rewritePromptWithCharacters = React.useCallback(
                       ...summaryChipStyles,
                       minWidth: 0,
                       maxWidth: 220,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                     }}
-                    title={summaryModelLabel}
+                    title={`模型 · ${summaryModelLabel}`}
                   >
-                    <IconBrush size={14} />
-                    <span>{summaryModelLabel}</span>
+                    <span style={controlValueStyle}>{summaryModelLabel}</span>
                   </button>
                 </Menu.Target>
                 <Menu.Dropdown>
@@ -2365,9 +2359,9 @@ const rewritePromptWithCharacters = React.useCallback(
                       ...summaryChipStyles,
                       minWidth: 0,
                     }}
+                    title="时长"
                   >
-                      <IconClock size={14} />
-                      <span>{summaryDuration}</span>
+                      <span style={controlValueStyle}>{summaryDuration}</span>
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2394,9 +2388,9 @@ const rewritePromptWithCharacters = React.useCallback(
                     style={{
                       ...summaryChipStyles,
                     }}
+                    title="分辨率"
                   >
-                      <IconDeviceTv size={14} />
-                      <span>{summaryResolution}</span>
+                      <span style={controlValueStyle}>{summaryResolution}</span>
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2423,9 +2417,9 @@ const rewritePromptWithCharacters = React.useCallback(
                       ...summaryChipStyles,
                       minWidth: 0,
                     }}
+                    title="方向"
                   >
-                      <IconDeviceMobile size={14} />
-                      <span>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
+                      <span style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
                     </button>
                   </Menu.Target>
                   <Menu.Dropdown>
@@ -2451,9 +2445,9 @@ const rewritePromptWithCharacters = React.useCallback(
                       ...summaryChipStyles,
                       minWidth: 0,
                     }}
+                    title="生成次数"
                   >
-                    <IconAdjustments size={14} />
-                    <span>{summaryExec}</span>
+                    <span style={controlValueStyle}>{summaryExec}</span>
                   </button>
                 </Menu.Target>
                 <Menu.Dropdown>
@@ -2503,34 +2497,11 @@ const rewritePromptWithCharacters = React.useCallback(
                 </>
               )}
             </div>
-            {!isCharacterNode && (
-              <div>
-                <Text size="xs" c="dimmed" mb={4}>
-                  详情
-                </Text>
-                <div
-                  style={{
-                    borderRadius: 12,
-                    border: `1px solid ${rgba(nodeShellText, 0.15)}`,
-                    background: isDarkUi ? 'rgba(20,22,35,0.9)' : 'rgba(248,250,255,0.95)',
-                    minHeight: 60,
-                    padding: '8px 10px',
-                    fontSize: 12,
-                    color: nodeShellText,
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {promptPreview || (
-                    <span style={{ color: nodeShellMuted }}>在这里输入提示词… (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)</span>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
           {isCharacterNode ? (
             <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
           ) : (
-            <Text size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : '详情'}</Text>
+            <Text size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : ''}</Text>
           )}
 
           {!isCharacterNode && status === 'error' && (data as any)?.lastError && (
