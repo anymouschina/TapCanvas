@@ -52,6 +52,7 @@ function nowLabel() {
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
 const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
+const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
@@ -226,6 +227,12 @@ function buildPromptFromState(
         const sd: any = src.data || {}
         const skind: string | undefined = sd.kind
         if (!skind) return
+        const targetIsVideoRender = VIDEO_RENDER_NODE_KINDS.has(kind)
+        const sourceIsVideoRender = VIDEO_RENDER_NODE_KINDS.has(skind)
+        if (targetIsVideoRender && sourceIsVideoRender) {
+          // 当视频继续连接视频节点时，避免继承上游完整提示词以免重复堆叠
+          return
+        }
         const promptCandidates: string[] = []
         if (IMAGE_NODE_KINDS.has(skind) || skind === 'textToImage' || skind === 'image') {
           if (typeof sd.prompt === 'string') promptCandidates.push(sd.prompt)

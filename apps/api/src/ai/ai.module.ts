@@ -4,6 +4,7 @@ import { AiService } from './ai.service'
 import { IntelligentAiService } from './intelligent-ai.service'
 import { CanvasIntentRecognizer } from './intelligence/intent-recognizer'
 import { ThinkingStream } from './intelligence/thinking-stream'
+import { PlanManager } from './intelligence/plan-manager'
 import { WebExecutionEngine } from './execution/web-execution-engine'
 import { ToolEventsService } from './tool-events.service'
 import { CapabilityRegistryService } from './capabilities'
@@ -20,6 +21,7 @@ import { CanvasCapabilityRegistry, canvasCapabilityRegistry } from './core/canva
     IntelligentAiService,
     CanvasIntentRecognizer,
     ThinkingStream,
+    PlanManager,
     WebExecutionEngine,
     CapabilityRegistryService,
 

@@ -113,6 +113,28 @@ export class ThinkingStream {
 
     await this.emitEvent(deepAnalysisEvent, onEvent)
     await this.sleep(200)
+
+    if (intent.planSteps && intent.planSteps.length > 0) {
+      const summarized = intent.planSteps
+        .map((step, idx) => `${idx + 1}. ${step}`)
+        .join(' | ')
+
+      const previewEvent: ThinkingEvent = {
+        id: this.generateEventId('intent_plan_preview'),
+        type: 'planning',
+        timestamp: new Date(),
+        content: `初步计划: ${summarized}`,
+        metadata: {
+          context: {
+            planSteps: intent.planSteps,
+            preview: true
+          }
+        }
+      }
+
+      await this.emitEvent(previewEvent, onEvent)
+      await this.sleep(150)
+    }
   }
 
   /**
@@ -395,6 +417,7 @@ export class ThinkingStream {
 
     return plan.steps.map(step => ({
       id: this.generateEventId('operation'),
+      planStepId: step.id,
       capability: this.resolveCapabilityForStep(step, intent),
       parameters,
       context,

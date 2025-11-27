@@ -17,14 +17,13 @@ import {
 import {
   IconSend,
   IconBrain,
-  IconBulb,
-  IconSettings,
-  IconHistory,
   IconLoader
 } from '@tabler/icons-react'
-import type { ThinkingEvent } from '../../../types/canvas-intelligence'
-import { subscribeToolEvents, extractThinkingEvent, mapToolEventToCanvasOperation } from '../../api/toolEvents'
+import type { ThinkingEvent, PlanUpdatePayload } from '../../../types/canvas-intelligence'
+import { subscribeToolEvents, extractThinkingEvent, mapToolEventToCanvasOperation, extractPlanUpdate } from '../../api/toolEvents'
 import { getAuthToken } from '../../auth/store'
+import { ThinkingProcess, ExecutionPlanDisplay } from './IntelligentAssistant'
+import { API_BASE } from '../../api/server'
 
 interface IntelligentChatInterfaceProps {
   userId: string
@@ -55,6 +54,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
   const [isLoading, setIsLoading] = useState(false)
   const [isEventStreamConnected, setIsEventStreamConnected] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
+  const [isThinking, setIsThinking] = useState(false)
 
   // 订阅工具事件
   useEffect(() => {
@@ -63,7 +64,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
     if (!token) return
 
     const unsubscribe = subscribeToolEvents({
-      url: '/api/ai/tool-events',
+      url: `${API_BASE.replace(/\/$/, '')}/ai/tool-events`,
       token,
       onOpen: () => setIsEventStreamConnected(true),
       onError: () => setIsEventStreamConnected(false),
@@ -71,6 +72,17 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
         const thinking = extractThinkingEvent(event)
         if (thinking) {
           setThinkingEvents(prev => [...prev, thinking])
+          setIsThinking(true)
+          return
+        }
+
+        const planPayload = extractPlanUpdate(event)
+        if (planPayload) {
+          setPlanUpdate(planPayload)
+          const done = planPayload.steps.every(step => step.status === 'completed')
+          if (done) {
+            setIsThinking(false)
+          }
           return
         }
 
@@ -104,10 +116,12 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
     setInput('')
     setIsLoading(true)
     setThinkingEvents([]) // 清空之前的思考事件
+    setPlanUpdate(null)
+    setIsThinking(true)
 
     try {
       const token = getAuthToken()
-      const response = await fetch('/api/ai/chat/intelligent', {
+      const response = await fetch(`${API_BASE.replace(/\/$/, '')}/ai/chat/intelligent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -154,6 +168,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
       setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
+      setIsThinking(false)
     }
   }, [isIntelligentMode, showThinking, onOperationExecuted])
 
@@ -161,6 +176,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
   const handleClear = useCallback(() => {
     setMessages([])
     setThinkingEvents([])
+    setPlanUpdate(null)
+    setIsThinking(false)
     setIsLoading(false)
   }, [])
 
@@ -222,6 +239,14 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
       {/* 聊天消息区域 */}
       <ScrollArea.Autosize mah="calc(100% - 180px)" offsetScrollbars>
         <Stack spacing="md" p="md">
+          {(showThinking && (thinkingEvents.length > 0 || isThinking)) && (
+            <ThinkingProcess events={thinkingEvents} isProcessing={isThinking} maxHeight={200} />
+          )}
+
+          {planUpdate && planUpdate.steps.length > 0 && (
+            <ExecutionPlanDisplay plan={planUpdate} />
+          )}
+
           {messages.map((message) => (
             <Box
               key={message.id}
@@ -271,36 +296,6 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
               )}
             </Box>
           ))}
-
-          {/* 思考过程展示 */}
-          {isIntelligentMode && thinkingEvents.length > 0 && (
-            <Paper p="md" withBorder style={{ background: 'linear-gradient(45deg, #f0f9ff 0%, #e0f2fe 100%)' }}>
-              <Group mb="sm">
-                <IconBrain size={16} color="blue" />
-                <Text size="sm" weight={500} color="blue">AI 思考过程</Text>
-                <Badge size="xs" color="blue" variant="light">
-                  {thinkingEvents.length} 个步骤
-                </Badge>
-              </Group>
-
-              <Stack spacing="xs">
-                {thinkingEvents.slice(-3).map((event, index) => (
-                  <Group key={event.id} spacing="xs">
-                    <Text size="xs" color="blue">
-                      {event.type === 'intent_analysis' && '🧠 分析'}
-                      {event.type === 'planning' && '📋 规划'}
-                      {event.type === 'reasoning' && '💭 思考'}
-                      {event.type === 'decision' && '⚡ 决策'}
-                      {event.type === 'execution' && '🚀 执行'}
-                    </Text>
-                    <Text size="xs" color="dimmed">
-                      {event.content}
-                    </Text>
-                  </Group>
-                ))}
-              </Stack>
-            </Paper>
-          )}
 
           {isLoading && (
             <Paper p="md" withBorder>

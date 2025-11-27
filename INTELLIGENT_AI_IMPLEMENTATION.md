@@ -196,6 +196,12 @@ function MyComponent() {
    算法: force-directed | 节点数: 8
 ```
 
+### 3. 计划进度广播
+
+- `apps/api/src/ai/intelligence/plan-manager.ts` 会把每次 `update_plan` 的结构化数据通过 `ToolEventsService` 以 `ai.plan.update` 事件形式推送给前端。
+- `useIntelligentChat`、`UseChatAssistant`、`IntelligentChatInterface` 等 Hook/组件已统一订阅 `/api/ai/tool-events`，实时渲染计划 checklist，与 Codex CLI 行为保持一致。
+- 发送新问题时会自动清空旧的思考/计划状态，防止不同任务的事件互相干扰。
+
 ### 3. 支持的画布操作
 
 | 操作域 | 功能描述 | 示例命令 |

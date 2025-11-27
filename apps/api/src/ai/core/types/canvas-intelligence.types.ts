@@ -76,6 +76,7 @@ export interface ParsedCanvasIntent {
   rawText: string
   extractedParams: Record<string, any>
   reasoning: string
+  planSteps: string[]
 }
 
 export interface ThinkingEvent {
@@ -151,6 +152,7 @@ export interface RollbackPlan {
 
 export interface CanvasOperation {
   id: string
+  planStepId?: string
   capability: CanvasCapability
   parameters: Record<string, any>
   context: ExecutionContext

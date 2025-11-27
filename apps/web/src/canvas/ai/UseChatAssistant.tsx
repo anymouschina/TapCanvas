@@ -10,10 +10,12 @@ import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
 import type { Node, Edge } from 'reactflow'
-import { subscribeToolEvents, type ToolEventMessage } from '../../api/toolEvents'
+import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
 import { runTaskByVendor, type TaskResultDto } from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
+import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
+import { ThinkingProcess, ExecutionPlanDisplay } from '../../components/ai/IntelligentAssistant'
 
 type AssistantPosition = 'right' | 'left'
 
@@ -209,6 +211,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     () => imagePromptAttachments.find(attachment => attachment.id === activePromptAttachmentId) || null,
     [imagePromptAttachments, activePromptAttachmentId]
   )
+  const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
+  const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
+  const [isThinking, setIsThinking] = useState(false)
 
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
@@ -325,6 +330,17 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [input, setInput] = useState('')
   const isLoading = status === 'submitted' || status === 'streaming'
 
+  useEffect(() => {
+    if (!isLoading) {
+      const allStepsCompleted = planUpdate?.steps?.length
+        ? planUpdate.steps.every(step => step.status === 'completed')
+        : false
+      if (allStepsCompleted || !planUpdate) {
+        setIsThinking(false)
+      }
+    }
+  }, [isLoading, planUpdate])
+
   const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
     try {
       const token = getAuthToken()
@@ -363,17 +379,83 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [])
 
-  const stringifyMessage = (msg: UIMessage) => msg.parts
-    .map(part => {
-      if (part.type === 'text') return part.text
-      if (part.type === 'reasoning') return part.text || ''
-      if (part.type === 'data') return typeof part.data === 'string' ? part.data : JSON.stringify(part.data)
-      if (part.type === 'tool-call') return `🛠 调用 ${part.toolName}`
-      if (part.type === 'tool-result') return `✅ 工具 ${part.toolName} 完成`
-      return ''
+  const stringifyMessage = (msg: UIMessage) => {
+    const describeToolState = (part: any) => {
+      const toolName = resolveToolName(part) || '未知工具'
+      if (part.state === 'output-error') {
+        const errorText = typeof part.errorText === 'string' && part.errorText.trim()
+          ? `：${part.errorText.trim()}`
+          : ''
+        return `⚠️ ${toolName} · 执行失败${errorText}`
+      }
+
+      if (part.type === 'tool-result' || (part.state === 'output-available' && !part.preliminary)) {
+        return `✅ ${toolName} · 执行完成`
+      }
+
+      if (part.state === 'input-streaming' || part.type === 'tool-call') {
+        return `🛠 ${toolName} · 正在整理参数`
+      }
+
+      if (part.state === 'input-available' || part.type === 'tool-input-available') {
+        return `🛠 ${toolName} · 参数已就绪，准备执行`
+      }
+
+      if (part.state === 'output-available' && part.preliminary) {
+        return `🛠 ${toolName} · 正在生成结果`
+      }
+
+      return `🛠 ${toolName} · 执行中…`
+    }
+
+    const lines: string[] = []
+    const toolLineIndex = new Map<string, number>()
+    const pushOrUpdateLine = (key: string | undefined, text: string) => {
+      if (!text) return
+      if (key && toolLineIndex.has(key)) {
+        const index = toolLineIndex.get(key)
+        if (typeof index === 'number') {
+          lines[index] = text
+          return
+        }
+      }
+      const index = lines.length
+      lines.push(text)
+      if (key) {
+        toolLineIndex.set(key, index)
+      }
+    }
+
+    msg.parts.forEach((part: any) => {
+      if (part.type === 'text') {
+        if (part.text) {
+          lines.push(part.text)
+        }
+        return
+      }
+      if (part.type === 'reasoning') {
+        if (part.text) {
+          lines.push(part.text)
+        }
+        return
+      }
+      if (part.type === 'data') {
+        if (part.data != null) {
+          const text = typeof part.data === 'string' ? part.data : JSON.stringify(part.data)
+          lines.push(text)
+        }
+        return
+      }
+      const isToolPart = part.type === 'tool-result' || isToolCallPart(part)
+      if (isToolPart) {
+        const summary = describeToolState(part)
+        const key = part.toolCallId || part.id || (resolveToolName(part) ? `tool-${resolveToolName(part)}` : undefined)
+        pushOrUpdateLine(key, summary)
+      }
     })
-    .filter(Boolean)
-    .join('\n')
+
+    return lines.filter(Boolean).join('\n')
+  }
   const removeImagePromptAttachment = useCallback((attachmentId: string) => {
     setImagePromptAttachments(prev => prev.filter(att => att.id !== attachmentId))
     setActivePromptAttachmentId(prev => (prev === attachmentId ? null : prev))
@@ -475,6 +557,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     setInput('')
     setImagePromptAttachments([])
     setActivePromptAttachmentId(null)
+    setThinkingEvents([])
+    setPlanUpdate(null)
+    setIsThinking(true)
   }
 
   useEffect(() => {
@@ -517,12 +602,32 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       url: `${apiRoot}/ai/tool-events`,
       token,
       onEvent: async (event: ToolEventMessage) => {
-        if (event.type !== 'tool-call') return
-        if (!event.toolCallId || handledToolCalls.current.has(event.toolCallId)) return
-        handledToolCalls.current.add(event.toolCallId)
-        const normalizedInput = parseJsonIfNeeded(event.input)
-        const { output, errorText } = await runToolHandler({ ...event, input: normalizedInput })
-        await reportToolResult({ toolCallId: event.toolCallId, toolName: event.toolName, output, errorText })
+        if (event.type === 'tool-call') {
+          if (!event.toolCallId || handledToolCalls.current.has(event.toolCallId)) return
+          handledToolCalls.current.add(event.toolCallId)
+          const normalizedInput = parseJsonIfNeeded(event.input)
+          const { output, errorText } = await runToolHandler({ ...event, input: normalizedInput })
+          await reportToolResult({ toolCallId: event.toolCallId, toolName: event.toolName, output, errorText })
+          return
+        }
+
+        if (event.type === 'tool-result') {
+          const thinking = extractThinkingEvent(event)
+          if (thinking) {
+            setThinkingEvents(prev => [...prev, thinking])
+            setIsThinking(true)
+            return
+          }
+
+          const planPayload = extractPlanUpdate(event)
+          if (planPayload) {
+            setPlanUpdate(planPayload)
+            const done = planPayload.steps.every(step => step.status === 'completed')
+            if (done) {
+              setIsThinking(false)
+            }
+          }
+        }
       }
     })
     return () => {
@@ -631,6 +736,14 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             }}
           >
             <Stack gap="sm">
+              {(thinkingEvents.length > 0 || isThinking) && (
+                <ThinkingProcess events={thinkingEvents} isProcessing={isThinking} maxHeight={180} />
+              )}
+
+              {planUpdate && planUpdate.steps.length > 0 && (
+                <ExecutionPlanDisplay plan={planUpdate} />
+              )}
+
               {messages.map(msg => (
                 <Box key={msg.id} style={{ background: messageBackground, borderRadius: 8, padding: 10, border: messageBorder }}>
                   <Text c="dimmed" size="xs">{msg.role}</Text>

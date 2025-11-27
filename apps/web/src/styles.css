@@ -1,5 +1,8 @@
 :root {
   color-scheme: light dark;
+  --handle-hit-outside: 16px;
+  --handle-hit-inside: 4px;
+  --handle-hit-vertical: 10px;
 }
 
 body {
@@ -57,13 +60,69 @@ html, body, #root {
   opacity: 1;
   box-shadow: 0 0 0 2px rgba(59,130,246,.6);
 }
+[data-connecting-active="true"][data-connecting="image"] .react-flow__handle[data-handle-type="image"]::after {
+  box-shadow: 0 0 0 1px rgba(59,130,246,.35);
+}
 [data-connecting-active="true"][data-connecting="audio"] .react-flow__handle[data-handle-type="audio"] {
   opacity: 1;
   box-shadow: 0 0 0 2px rgba(16,185,129,.6);
+}
+[data-connecting-active="true"][data-connecting="audio"] .react-flow__handle[data-handle-type="audio"]::after {
+  box-shadow: 0 0 0 1px rgba(16,185,129,.35);
 }
 [data-connecting-active="true"][data-connecting="subtitle"] .react-flow__handle[data-handle-type="subtitle"] {
   opacity: 1;
   box-shadow: 0 0 0 2px rgba(234,179,8,.6);
 }
+[data-connecting-active="true"][data-connecting="subtitle"] .react-flow__handle[data-handle-type="subtitle"]::after {
+  box-shadow: 0 0 0 1px rgba(234,179,8,.35);
+}
 [data-connecting-active="true"] .react-flow__edge-path { opacity: 0.6 }
 .react-flow__edge:hover .react-flow__edge-path { filter: drop-shadow(0 0 6px rgba(59,130,246,.5)); }
+
+/* 扩大句柄热区，保证左右连接更容易被点击 */
+.react-flow__handle {
+  position: relative;
+  isolation: isolate;
+}
+
+.react-flow__handle::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+
+.react-flow__handle-left::after,
+.react-flow__handle-right::after {
+  top: calc(-1 * var(--handle-hit-vertical));
+  bottom: calc(-1 * var(--handle-hit-vertical));
+}
+
+.react-flow__handle-left::after {
+  left: calc(-1 * var(--handle-hit-outside));
+  right: calc(-1 * var(--handle-hit-inside));
+}
+
+.react-flow__handle-right::after {
+  left: calc(-1 * var(--handle-hit-inside));
+  right: calc(-1 * var(--handle-hit-outside));
+}
+
+.react-flow__handle-top::after,
+.react-flow__handle-bottom::after {
+  left: calc(-1 * var(--handle-hit-vertical));
+  right: calc(-1 * var(--handle-hit-vertical));
+}
+
+.react-flow__handle-top::after {
+  top: calc(-1 * var(--handle-hit-outside));
+  bottom: calc(-1 * var(--handle-hit-inside));
+}
+
+.react-flow__handle-bottom::after {
+  top: calc(-1 * var(--handle-hit-inside));
+  bottom: calc(-1 * var(--handle-hit-outside));
+}

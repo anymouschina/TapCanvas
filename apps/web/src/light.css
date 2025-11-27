@@ -95,7 +95,16 @@
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,0.25) !important;
 }
+:root[data-mantine-color-scheme="light"] .react-flow__handle::after {
+  background: transparent;
+  border-color: transparent;
+}
 :root[data-mantine-color-scheme="light"] .react-flow__handle:hover { border-color: rgba(59,130,246,0.6) !important; }
+:root[data-mantine-color-scheme="light"] .react-flow__handle:hover::after,
+:root[data-mantine-color-scheme="light"] .react-flow__handle:focus-visible::after {
+  border-color: rgba(59,130,246,0.35);
+  background: rgba(59,130,246,0.12);
+}
 :root[data-mantine-color-scheme="light"] .react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
 :root[data-mantine-color-scheme="light"] .react-flow__edge:hover .react-flow__edge-path { opacity: 1; }
 

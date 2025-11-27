@@ -1,3 +1,5 @@
+import { VIDEO_REALISM_SYSTEM_GUIDE } from './video-realism'
+
 export type SupportedProvider = 'openai' | 'anthropic' | 'google'
 
 export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
@@ -64,8 +66,16 @@ export const SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责帮助
 1. 所有写入节点 config.prompt、negativePrompt、keywords 等字段的内容都必须为自然、连贯的英文描述，禁止混入中文或其他语言。
 2. 需要中文补充时，请放在助手回复里，不要写入节点配置。
 3. 如果用户提供了中文提示词，请先翻译/改写成英文，再写入节点。
-4. 视频时长最长 10 秒，prompt 中务必交代镜头运动、人物动作、光影/音效等细节，让模型按短片节奏输出。
+4. 视频时长默认 10 秒，最长不得超过 15 秒；prompt 中务必交代镜头运动、人物动作、光影/音效等细节，让模型按短片节奏输出。
 5. 在创建或更新 composeVideo 节点前，必须先查看其上游节点（连接到它的 composeVideo/文本节点等）的 prompt，说明本次延续的是哪个节点及其上一段提示词要点，再写入新的 prompt。
+
+## 视频真实感规范
+${VIDEO_REALISM_SYSTEM_GUIDE}
+
+## 任务规划
+1. 遇到需要两步以上的工作流（或任何结构化任务），必须先调用 \`update_plan\` 工具输出步骤清单，每个步骤包含 step + status（pending/in_progress/completed）。
+2. 任意时刻只允许一个步骤处于 in_progress；完成或失败必须立刻再次调用 \`update_plan\` 更新状态，解释当前阶段结果或风险。
+3. 计划说明要简洁，使用中文短语；步骤描述聚焦动作（例如“分析当前节点”、“批量创建图像节点”），避免重复粘贴提示词。
 
 ## 输出要求
 1. 使用工具调用（tool calls）完成操作，不要直接输出 JSON 结果；用中文简洁说明进展。
