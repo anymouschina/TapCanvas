@@ -75,6 +75,9 @@ Example storyboard:
 
 ## 📅 Changelog
 
+- **2025-11-27**: Shipped Reverse Prompt extraction and GPT-only image uploads for the Dark Assistant, plus fresh screenshots.
+  - Every task node now shows a “Reverse Prompt” button on the image card. We send the current image to GPT, decode an English prompt plus Chinese notes, and write the result back automatically. UI preview: ![Reverse Prompt UI](assets/2025-11-27.pic.jpg)
+  - The Dark Assistant allows image uploads when the selected model is GPT. The decoded prompt is inserted into the chat input so you can keep refining or invoke more tools. UI preview: ![Assistant Image Prompt](assets/2025-11-27-ai.pic.jpg)
 - **2025-11-24**: Added the latest Storyboard usage screenshots (`assets/2025-11-24-storyboard*.jpg`) showcasing the scene list, editing drawer, and run result so the team can quickly understand the 25-second multi-shot workflow.
 - **2025-11-24**: Introduced the new **Character Node** and **Auto Mention** workflow so Sora characters can be managed directly on the canvas.
   - A character node lets you pick a Sora token, browse roles (cover, username, description), copy `@username`, or clear the binding without leaving the canvas.
