@@ -26,6 +26,7 @@ import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
+import { Background } from 'reactflow'
 
 export default function App(): JSX.Element {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()

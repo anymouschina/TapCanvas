@@ -50,6 +50,7 @@ function nowLabel() {
 }
 
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
+const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const ANTHROPIC_VERSION = '2023-06-01'
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
@@ -182,7 +183,7 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
     (data.geminiModel as string | undefined) ||
     (data.modelKey as string | undefined)
   const imageModelKey = data.imageModel as string | undefined
-  const modelKey = (kind === 'image' ? imageModelKey : textModelKey) || undefined
+  const modelKey = (IMAGE_NODE_KINDS.has(kind) ? imageModelKey : textModelKey) || undefined
 
   return {
     id,
@@ -202,7 +203,7 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
 }
 
 function resolveTaskKind(kind: string): TaskKind {
-  if (kind === 'image') return 'text_to_image'
+  if (IMAGE_NODE_KINDS.has(kind)) return 'text_to_image'
   if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') return 'text_to_video'
   return 'prompt_refine'
 }
@@ -213,7 +214,7 @@ function buildPromptFromState(
   state: any,
   id: string,
 ): string {
-  if (kind === 'image' || kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
+  if (IMAGE_NODE_KINDS.has(kind) || kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
     const edges = (state.edges || []) as any[]
     const inbound = edges.filter((e) => e.target === id)
     let upstreamPrompt = ''
@@ -222,7 +223,7 @@ function buildPromptFromState(
       const src = (state.nodes as Node[]).find((n: Node) => n.id === lastEdge.source)
       const sd: any = src?.data || {}
       const skind: string | undefined = sd.kind
-      if (skind === 'image') {
+      if (skind && IMAGE_NODE_KINDS.has(skind)) {
         upstreamPrompt =
           (sd.prompt as string | undefined) ||
           ''
@@ -239,7 +240,7 @@ function buildPromptFromState(
 }
 
 function computeSampleMeta(kind: string, data: any) {
-  const isImageTask = kind === 'image'
+  const isImageTask = IMAGE_NODE_KINDS.has(kind)
   const isVideoTask = kind === 'composeVideo' || kind === 'storyboard' || kind === 'video'
     const rawSampleCount = typeof data.sampleCount === 'number' ? data.sampleCount : 1
   const supportsSamples = isImageTask || isVideoTask
@@ -511,7 +512,7 @@ async function runVideoTask(ctx: RunnerContext) {
             const skind: string | undefined = sd.kind
 
             let primaryMediaUrl = null
-            if (skind === 'image' || skind === 'textToImage') {
+            if (skind && IMAGE_NODE_KINDS.has(skind)) {
               primaryMediaUrl = (sd.imageUrl as string | undefined) || null
             } else if (skind === 'video' || skind === 'composeVideo' || skind === 'storyboard') {
               if (
@@ -942,7 +943,7 @@ async function runGenericTask(ctx: RunnerContext) {
     const firstImage =
       isImageTask && allImageAssets.length ? allImageAssets[0] : null
     const preview =
-      kind === 'image' && firstImage
+      IMAGE_NODE_KINDS.has(kind) && firstImage
         ? { type: 'image', src: firstImage.url }
         : text.trim().length > 0
           ? { type: 'text', value: text }

@@ -1,7 +1,8 @@
 import React from 'react'
-import { Button, Paper, Group, Title, Text } from '@mantine/core'
+import { Button, Paper, Group, Title, Text, Stack } from '@mantine/core'
 import { useAuth } from './store'
-import { exchangeGithub } from '../api/server'
+import { exchangeGithub, createGuestSession } from '../api/server'
+import { toast } from '../ui/toast'
 
 const CLIENT_ID =
   (import.meta as any).env?.VITE_GITHUB_CLIENT_ID ||
@@ -22,6 +23,7 @@ function buildGuideUrl(){
 export default function GithubGate({ children }: { children: React.ReactNode }) {
   const token = useAuth(s => s.token)
   const setAuth = useAuth(s => s.setAuth)
+  const [guestLoading, setGuestLoading] = React.useState(false)
 
   React.useEffect(() => {
     const u = new URL(window.location.href)
@@ -34,6 +36,20 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
     }
   }, [setAuth])
 
+  const handleGuestLogin = React.useCallback(async () => {
+    if (guestLoading) return
+    setGuestLoading(true)
+    try {
+      const { token: t, user } = await createGuestSession()
+      setAuth(t, user)
+    } catch (error) {
+      console.error('Guest login failed', error)
+      toast('游客模式登录失败，请稍后再试', 'error')
+    } finally {
+      setGuestLoading(false)
+    }
+  }, [guestLoading, setAuth])
+
   if (token) return <>{children}</>
 
   return (
@@ -41,10 +57,14 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
       <Paper withBorder shadow="md" p="lg" radius="md" style={{ width: 420, textAlign: 'center' }}>
         <Title order={4} mb="sm">登录 TapCanvas</Title>
         <Text c="dimmed" size="sm" mb="md">使用 GitHub 账号登录后方可使用</Text>
-        <Group justify="center">
-          <Button onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
-          <Button onClick={() => { window.location.href = buildAuthUrl() }}>使用 GitHub 登录</Button>
-        </Group>
+        <Stack gap="sm">
+          <Group justify="center" gap="sm">
+            <Button onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
+            <Button onClick={() => { window.location.href = buildAuthUrl() }}>使用 GitHub 登录</Button>
+          </Group>
+          <Button variant="default" loading={guestLoading} onClick={handleGuestLogin}>游客模式体验</Button>
+          <Text size="xs" c="dimmed">无需 GitHub，系统会自动创建临时账号，数据仅保存在当前浏览器。</Text>
+        </Stack>
       </Paper>
     </div>
   )

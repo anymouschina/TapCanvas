@@ -293,6 +293,7 @@ export default function AssetPanel(): JSX.Element | null {
     const remixTarget = d.videoDraftId || d.videoPostId || d.id || (d.raw as any)?.generation_id || (d.raw as any)?.id || null
     const baseData: any = {
       kind: remix ? 'composeVideo' : 'video',
+      autoLabel: false,
       source: 'sora',
       videoUrl: videoUrl || undefined,
       thumbnailUrl: d.thumbnailUrl,
@@ -1151,6 +1152,7 @@ export default function AssetPanel(): JSX.Element | null {
                                   onClick={() => {
                                     addNode('taskNode', video.title || '已发布视频', {
                                       kind: 'composeVideo',
+                                      autoLabel: false,
                                       source: 'sora',
                                       prompt: video.prompt || '',
                                       thumbnailUrl: video.thumbnailUrl,
@@ -1294,6 +1296,7 @@ export default function AssetPanel(): JSX.Element | null {
                                     onClick={() => {
                                       addNode('taskNode', name, {
                                         kind: 'character',
+                                        autoLabel: false,
                                         source: 'sora',
                                         soraTokenId: selectedTokenId || null,
                                         soraCharacterId: charId || c.user_id || c.id || null,

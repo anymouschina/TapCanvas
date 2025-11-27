@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import { randomUUID } from 'crypto'
 import { JwtService } from '@nestjs/jwt'
 import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
@@ -53,7 +54,27 @@ export class AuthService {
       update: { login: user.login, name: user.name || user.login, avatarUrl: user.avatar_url, email: primaryEmail || undefined },
       create: { id: String(user.id), login: user.login, name: user.name || user.login, avatarUrl: user.avatar_url, email: primaryEmail || undefined },
     })
-    const payload = { sub: String(user.id), login: user.login, name: user.name, avatarUrl: user.avatar_url, email: primaryEmail }
+    const payload = { sub: String(user.id), login: user.login, name: user.name, avatarUrl: user.avatar_url, email: primaryEmail, guest: false }
+    const token = await this.jwt.signAsync(payload)
+    return { token, user: payload }
+  }
+
+  async createGuestUser(nickname?: string) {
+    const id = randomUUID()
+    const trimmed = typeof nickname === 'string' ? nickname.trim().slice(0, 32) : ''
+    const normalizedLogin = trimmed ? trimmed.replace(/[^\w-]/g, '').toLowerCase() : ''
+    const login = normalizedLogin || `guest_${id.slice(0, 8)}`
+    const name = trimmed || `Guest ${id.slice(0, 4).toUpperCase()}`
+    await this.prisma.user.create({
+      data: {
+        id,
+        login,
+        name,
+        avatarUrl: null,
+        email: null,
+      },
+    })
+    const payload = { sub: id, login, name, guest: true }
     const token = await this.jwt.signAsync(payload)
     return { token, user: payload }
   }

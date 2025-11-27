@@ -14,6 +14,7 @@ export default function AccountPanel(): JSX.Element | null {
   const user = useAuth(s => s.user)
   const clear = useAuth(s => s.clear)
   const { colorScheme } = useMantineColorScheme()
+  const isGuest = Boolean(user?.guest)
   if (!mounted) return null
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
@@ -46,11 +47,12 @@ export default function AccountPanel(): JSX.Element | null {
                   <div>
                     <Title order={6}>{user?.login || '未登录'}</Title>
                     {user?.email && <Text size="xs" c="dimmed">{user.email}</Text>}
+                    {isGuest && <Text size="xs" c="dimmed">游客模式（仅保存在当前浏览器）</Text>}
                   </div>
                 </Group>
                 <Divider my={10} />
                 <Stack gap={6}>
-                  {user?.login && (
+                  {user?.login && !isGuest && (
                     <Button size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
                   )}
                   <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>

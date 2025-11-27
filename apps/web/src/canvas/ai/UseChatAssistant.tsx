@@ -2,9 +2,9 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, Group, Loader, Paper, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto } from '@tabler/icons-react'
-import { getDefaultModel, getModelProvider } from '../../config/models'
+import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye } from '@tabler/icons-react'
+import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
@@ -25,6 +25,12 @@ interface UseChatAssistantProps {
 }
 
 const OPENAI_DEFAULT_MODEL = 'gpt-5.1-codex'
+const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
+  { value: 'gpt-5.1', label: 'GPT-5.1' },
+  { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' }
+]
+const ASSISTANT_MODEL_SET = new Set(ASSISTANT_MODEL_PRESETS.map(option => option.value))
+const MAX_IMAGE_PROMPT_ATTACHMENTS = 2
 
 const collectTextFromParts = (parts?: any): string => {
   if (!Array.isArray(parts)) return ''
@@ -130,6 +136,25 @@ const fileToDataUrl = (file: File) =>
     reader.readAsDataURL(file)
   })
 
+interface ImagePromptAttachment {
+  id: string
+  preview: string
+  prompt: string
+  ready: boolean
+}
+
+const normalizeFileList = (files: FileList | File[]): File[] => {
+  if (Array.isArray(files)) {
+    return files.filter((file): file is File => !!file)
+  }
+  const out: File[] = []
+  for (let i = 0; i < files.length; i += 1) {
+    const item = files.item(i)
+    if (item) out.push(item)
+  }
+  return out
+}
+
 /**
  * 暗夜AI助手（流式版），基于 @ai-sdk/react 的 useChat。
  * 匹配原 SimpleAIAssistant 的弹窗行为，使用后端 /ai/chat SSE。
@@ -139,6 +164,15 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
   const textModelOptions = useModelOptions('text')
+  const assistantModelOptions = useMemo(() => {
+    const overrides = new Map<string, ModelOption>()
+    textModelOptions.forEach(option => {
+      if (ASSISTANT_MODEL_SET.has(option.value)) {
+        overrides.set(option.value, option)
+      }
+    })
+    return ASSISTANT_MODEL_PRESETS.map(option => overrides.get(option.value) || option)
+  }, [textModelOptions])
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
   const { colorScheme } = useMantineColorScheme()
@@ -167,14 +201,21 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
   const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
-  const [imagePromptLoading, setImagePromptLoading] = useState(false)
+  const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
+  const imagePromptLoading = imagePromptLoadingCount > 0
+  const [imagePromptAttachments, setImagePromptAttachments] = useState<ImagePromptAttachment[]>([])
+  const [activePromptAttachmentId, setActivePromptAttachmentId] = useState<string | null>(null)
+  const activePromptAttachment = useMemo(
+    () => imagePromptAttachments.find(attachment => attachment.id === activePromptAttachmentId) || null,
+    [imagePromptAttachments, activePromptAttachmentId]
+  )
 
   useEffect(() => {
-    if (textModelOptions.length && !textModelOptions.find(option => option.value === model)) {
-      const preferred = textModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
-      setModel(preferred ? preferred.value : textModelOptions[0].value)
+    if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
+      const preferred = assistantModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
+      setModel(preferred ? preferred.value : assistantModelOptions[0].value)
     }
-  }, [textModelOptions.length])
+  }, [assistantModelOptions, model])
 
   const canvasContext = useMemo(() => {
     if (!nodes.length) return undefined
@@ -333,39 +374,73 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     })
     .filter(Boolean)
     .join('\n')
-  const handleImagePromptUpload = useCallback(async (file: File) => {
+  const removeImagePromptAttachment = useCallback((attachmentId: string) => {
+    setImagePromptAttachments(prev => prev.filter(att => att.id !== attachmentId))
+    setActivePromptAttachmentId(prev => (prev === attachmentId ? null : prev))
+  }, [])
+
+  const handleImagePromptUpload = useCallback(async (files: FileList | File[]) => {
     if (!isGptModel) {
       toast('仅 GPT 模型支持图片提示词', 'error')
       return
     }
-    setImagePromptLoading(true)
-    try {
-      const dataUrl = await fileToDataUrl(file)
-      const task = await runTaskByVendor('openai', {
-        kind: 'image_to_prompt',
-        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
-        extras: { imageData: dataUrl },
-      })
-      const nextPrompt = extractTextFromTaskResult(task)
-      if (nextPrompt) {
-        setInput(prev => prev ? `${prev}\n\n${nextPrompt}` : nextPrompt)
-        toast('已根据图片生成提示词', 'success')
-      } else {
-        toast('模型未返回提示词，请稍后再试', 'error')
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '解析图片失败'
-      toast(message, 'error')
-    } finally {
-      setImagePromptLoading(false)
+    if (imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS) {
+      toast(`一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`, 'error')
+      return
     }
-  }, [setInput, isGptModel])
+    const availableSlots = MAX_IMAGE_PROMPT_ATTACHMENTS - imagePromptAttachments.length
+    const normalizedFiles = normalizeFileList(files)
+    const sanitizedFiles = normalizedFiles.slice(0, availableSlots)
+    if (!sanitizedFiles.length) {
+      toast(`一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`, 'error')
+      return
+    }
+    if (normalizedFiles.length > sanitizedFiles.length) {
+      toast(`一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片，多余的图片已被忽略`, 'info')
+    }
+    const processFile = async (file: File) => {
+      setImagePromptLoadingCount(count => count + 1)
+      try {
+        const dataUrl = await fileToDataUrl(file)
+        const attachmentId = nanoid()
+        setImagePromptAttachments(prev => [...prev, { id: attachmentId, preview: dataUrl, prompt: '', ready: false }])
+        setActivePromptAttachmentId(null)
+        try {
+          const task = await runTaskByVendor('openai', {
+            kind: 'image_to_prompt',
+            prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
+            extras: { imageData: dataUrl },
+          })
+          const nextPrompt = extractTextFromTaskResult(task)
+          if (nextPrompt) {
+            setImagePromptAttachments(prev => prev.map(att => att.id === attachmentId ? { ...att, prompt: nextPrompt, ready: true } : att))
+            toast('已根据图片生成提示词，发送时将自动附带', 'success')
+          } else {
+            removeImagePromptAttachment(attachmentId)
+            toast('模型未返回提示词，请稍后再试', 'error')
+          }
+        } catch (error) {
+          removeImagePromptAttachment(attachmentId)
+          const message = error instanceof Error ? error.message : '解析图片失败'
+          toast(message, 'error')
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '解析图片失败'
+        toast(message, 'error')
+      } finally {
+        setImagePromptLoadingCount(count => Math.max(0, count - 1))
+      }
+    }
+    await Promise.all(sanitizedFiles.map(file => processFile(file)))
+  }, [imagePromptAttachments.length, isGptModel, removeImagePromptAttachment])
 
   const handleImagePromptChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (file) {
-      void handleImagePromptUpload(file)
+    const files = event.currentTarget.files
+    if (!files || files.length === 0) return
+    const clonedFiles = normalizeFileList(files)
+    event.currentTarget.value = ''
+    if (clonedFiles.length > 0) {
+      void handleImagePromptUpload(clonedFiles)
     }
   }, [handleImagePromptUpload])
 
@@ -374,14 +449,32 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       toast('仅 GPT 模型支持图片提示词', 'error')
       return
     }
+    if (imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS) {
+      toast(`一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`, 'error')
+      return
+    }
     imagePromptInputRef.current?.click()
-  }, [isGptModel])
+  }, [imagePromptAttachments.length, isGptModel])
 
   const onSubmit = (e?: any) => {
     if (e?.preventDefault) e.preventDefault()
-    if (!input.trim()) return
-    sendMessage({ text: input })
+    const trimmed = input.trim()
+    const attachmentPrompts = imagePromptAttachments
+      .map((attachment, index) => {
+        const prompt = attachment.prompt?.trim()
+        if (!prompt) return null
+        const label = imagePromptAttachments.length > 1 ? `【图片提示${index + 1}】` : '【图片提示】'
+        return `${label}${prompt}`
+      })
+      .filter(Boolean) as string[]
+    if (!trimmed && attachmentPrompts.length === 0) return
+    const pieces: string[] = []
+    if (trimmed) pieces.push(trimmed)
+    pieces.push(...attachmentPrompts)
+    sendMessage({ text: pieces.join('\n\n') })
     setInput('')
+    setImagePromptAttachments([])
+    setActivePromptAttachmentId(null)
   }
 
   useEffect(() => {
@@ -448,6 +541,12 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     ])
   }
 
+  const uploadTooltipLabel = !isGptModel
+    ? '仅 GPT 模型支持图片提示词'
+    : imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS
+      ? `一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`
+      : '上传图片生成提示词'
+
   if (!opened) return null
 
   return (
@@ -473,10 +572,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           border: panelBorder,
           boxShadow: panelShadow,
           overflow: 'hidden',
-          backdropFilter: 'blur(18px)'
+          backdropFilter: 'blur(18px)',
+          display: 'flex',
+          flexDirection: 'column'
         }}
       >
-        <Box px="lg" py="md" style={{ borderBottom: headerBorder, background: headerBackground }}>
+        <Box
+          px="lg"
+          py="md"
+          style={{ borderBottom: headerBorder, background: headerBackground, flexShrink: 0 }}
+        >
           <Group justify="space-between" align="center">
             <Group gap="sm">
               <Badge color={colorScheme === 'dark' ? 'teal' : 'blue'} variant="light" size="xs" radius="sm">流式</Badge>
@@ -488,7 +593,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                 size="xs"
                 value={model}
                 onChange={(value) => value && setModel(value)}
-                data={textModelOptions.map(option => ({ value: option.value, label: option.label }))}
+                data={assistantModelOptions.map(option => ({ value: option.value, label: option.label }))}
                 aria-label="选择模型"
                 withinPortal
               />
@@ -510,7 +615,11 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           </Group>
         </Box>
 
-        <Box px="lg" py="md" style={{ height: 'calc(100% - 260px)', overflow: 'hidden' }}>
+        <Box
+          px="lg"
+          py="md"
+          style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
+        >
           <Box
             style={{
               height: '100%',
@@ -535,11 +644,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           </Box>
         </Box>
 
-        <Box px="lg" py="md" style={{ background: footerBackground, borderTop: footerBorder }}>
+        <Box
+          px="lg"
+          py="md"
+          style={{ background: footerBackground, borderTop: footerBorder, flexShrink: 0 }}
+        >
           <input
             ref={imagePromptInputRef}
             type="file"
             accept="image/*"
+            multiple
             style={{ display: 'none' }}
             onChange={handleImagePromptChange}
           />
@@ -561,30 +675,107 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                 }}
                 styles={{ input: { background: inputBackground, borderColor: inputBorder, color: inputColor } }}
               />
-              <Group justify="space-between">
-                <Button
-                  variant="light"
-                  size="xs"
-                  onClick={injectSystemPrompt}
-                >
+              {imagePromptAttachments.length > 0 && (
+                <Stack gap="sm">
+                  {imagePromptAttachments.map((attachment, index) => (
+                    <Group key={attachment.id} gap="sm" align="center" wrap="nowrap">
+                      <Box
+                        style={{
+                          position: 'relative',
+                          width: 90,
+                          height: 90,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: messageBorder,
+                          flex: '0 0 auto',
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={attachment.preview}
+                          alt={`prompt preview ${index + 1}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                        <ActionIcon
+                          size="xs"
+                          variant="filled"
+                          color="dark"
+                          radius="xl"
+                          onClick={() => removeImagePromptAttachment(attachment.id)}
+                          style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)' }}
+                        >
+                          <IconX size={12} />
+                        </ActionIcon>
+                      </Box>
+                      <Stack gap={4} style={{ flex: 1 }}>
+                        <Group gap={6}>
+                          <Text size="xs" c="dimmed">
+                            图片提示词{imagePromptAttachments.length > 1 ? ` #${index + 1}` : ''}
+                          </Text>
+                          <Badge size="xs" variant="light" color={attachment.ready ? 'green' : 'gray'}>
+                            {attachment.ready ? '已生成' : '生成中'}
+                          </Badge>
+                        </Group>
+                        <ScrollArea.Autosize mah={90} type="hover">
+                          <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>
+                            {attachment.prompt || '正在生成提示词…'}
+                          </Text>
+                        </ScrollArea.Autosize>
+                        <Group gap="xs">
+                          <Tooltip label={attachment.ready ? '查看图片与提示词详情' : '提示词生成中'}>
+                            <ActionIcon
+                              variant="light"
+                              color="violet"
+                              size="sm"
+                              disabled={!attachment.ready}
+                              onClick={() => attachment.ready && setActivePromptAttachmentId(attachment.id)}
+                            >
+                              <IconEye size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="复制提示词">
+                            <CopyButton value={attachment.prompt || ''}>
+                              {({ copy }) => (
+                                <ActionIcon
+                                  variant="light"
+                                  color="gray"
+                                  size="sm"
+                                  disabled={!attachment.prompt}
+                                  onClick={copy}
+                                >
+                                  <IconBulb size={14} />
+                                </ActionIcon>
+                              )}
+                            </CopyButton>
+                          </Tooltip>
+                          <Text size="xs" c="dimmed">发送时将附带</Text>
+                        </Group>
+                      </Stack>
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+              <Group justify="space-between" align="flex-end">
+                <Button variant="light" size="xs" onClick={injectSystemPrompt}>
                   注入系统提示
                 </Button>
-                <Group gap="xs">
-                  <Tooltip label={isGptModel ? '上传图片生成提示词' : '仅 GPT 模型支持图片提示词'}>
+                <Group gap="xs" align="flex-end">
+                  <Tooltip label={uploadTooltipLabel}>
                     <ActionIcon
                       variant="light"
                       color="teal"
                       onClick={handleImagePromptButtonClick}
-                      disabled={imagePromptLoading || !isGptModel}
+                      disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
                     >
-                      {imagePromptLoading ? (
-                        <Loader size="xs" />
-                      ) : (
-                        <IconPhoto size={16} />
-                      )}
+                      {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
                     </ActionIcon>
                   </Tooltip>
-                  <Button type="submit" loading={isLoading} leftSection={<IconSend size={16} />}>
+                  <Button
+                    type="submit"
+                    loading={isLoading}
+                    leftSection={<IconSend size={16} />}
+                    style={{ minWidth: 120 }}
+                  >
                     发送
                   </Button>
                 </Group>
@@ -592,6 +783,36 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             </Stack>
           </form>
         </Box>
+        <Modal
+          opened={!!activePromptAttachment}
+          onClose={() => setActivePromptAttachmentId(null)}
+          title="图片提示词详情"
+          centered
+          size="lg"
+        >
+          {activePromptAttachment && (
+            <Stack>
+              <Box
+                component="img"
+                src={activePromptAttachment.preview}
+                alt="attachment preview"
+                style={{ width: '100%', borderRadius: 12, objectFit: 'contain', maxHeight: 320 }}
+              />
+              <Divider my="xs" />
+              <Group justify="space-between" align="center">
+                <Text size="sm" fw={600}>生成的提示词</Text>
+                <CopyButton value={activePromptAttachment.prompt || ''}>
+                  {({ copy }) => (
+                    <Button size="xs" variant="light" onClick={copy}>复制提示词</Button>
+                  )}
+                </CopyButton>
+              </Group>
+              <ScrollArea h={180}>
+                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{activePromptAttachment.prompt || '暂无内容'}</Text>
+              </ScrollArea>
+            </Stack>
+          )}
+        </Modal>
       </Paper>
     </Box>
   )

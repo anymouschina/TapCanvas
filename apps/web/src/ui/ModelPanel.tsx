@@ -473,6 +473,8 @@ export default function ModelPanel(): JSX.Element | null {
 
   if (!mounted) return null
 
+  const ensureSecretPresent = (value: string) => !!value?.trim()
+
   const openModalForNew = () => {
     setEditingToken(null)
     setLabel('')
@@ -486,10 +488,7 @@ export default function ModelPanel(): JSX.Element | null {
     if (!soraProvider) return
     const existingSecret = editingToken?.secretToken ?? ''
     const finalSecret = secret || existingSecret
-    if (!finalSecret.trim()) {
-      alert('请填写 API Token')
-      return
-    }
+    if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: editingToken?.id,
       providerId: soraProvider.id,
@@ -523,10 +522,7 @@ export default function ModelPanel(): JSX.Element | null {
     if (!geminiProvider) return
     const existingSecret = geminiEditingToken?.secretToken ?? ''
     const finalSecret = geminiSecret || existingSecret
-    if (!finalSecret.trim()) {
-      alert('请填写 API Key')
-      return
-    }
+    if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: geminiEditingToken?.id,
       providerId: geminiProvider.id,
@@ -560,10 +556,7 @@ export default function ModelPanel(): JSX.Element | null {
     if (!anthropicProvider) return
     const existingSecret = anthropicEditingToken?.secretToken ?? ''
     const finalSecret = anthropicSecret || existingSecret
-    if (!finalSecret.trim()) {
-      alert('请填写 API Key')
-      return
-    }
+    if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: anthropicEditingToken?.id,
       providerId: anthropicProvider.id,
@@ -599,10 +592,7 @@ export default function ModelPanel(): JSX.Element | null {
     if (!qwenProvider) return
     const existingSecret = qwenEditingToken?.secretToken ?? ''
     const finalSecret = qwenSecret || existingSecret
-    if (!finalSecret.trim()) {
-      alert('请填写 DashScope API Key')
-      return
-    }
+    if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: qwenEditingToken?.id,
       providerId: qwenProvider.id,
@@ -636,10 +626,7 @@ export default function ModelPanel(): JSX.Element | null {
     if (!openaiProvider) return
     const existingSecret = openaiEditingToken?.secretToken ?? ''
     const finalSecret = openaiSecret || existingSecret
-    if (!finalSecret.trim()) {
-      alert('请填写 API Key')
-      return
-    }
+    if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: openaiEditingToken?.id,
       providerId: openaiProvider.id,
