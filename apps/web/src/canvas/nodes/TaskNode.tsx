@@ -292,9 +292,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const nodeShellBackground = isDarkUi
     ? `linear-gradient(145deg, ${darkCards[0]}, ${darkCards[1]})`
     : `linear-gradient(145deg, ${lightCards[0]}, ${lightCards[1]})`
-  const nodeShellBorder = `1px solid ${
-    isDarkUi ? rgba(theme.colors.blue[4], 0.6) : 'rgba(172, 191, 255, 0.9)'
-  }`
+  const nodeShellBorder = 'none'
   const nodeShellShadow = isDarkUi
     ? '0 18px 38px rgba(5, 8, 23, 0.75)'
     : '0 30px 55px rgba(79, 120, 255, 0.2)'
@@ -312,12 +310,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const mediaOverlayBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.85) : rgba(theme.colors.gray[0], 0.95)
   const mediaOverlayText = nodeShellText
   const toolbarBackground = isDarkUi ? 'rgba(23, 28, 50, 0.94)' : '#ffffff'
-  const toolbarBorder = `1px solid ${isDarkUi ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.08)'}`
+  const toolbarBorder = 'none'
   const toolbarShadow = isDarkUi ? '0 18px 32px rgba(2,4,10,0.55)' : '0 18px 32px rgba(29,78,216,0.15)'
   const detailPanelBackground = isDarkUi
     ? 'linear-gradient(145deg, rgba(12,15,32,0.97), rgba(6,8,18,0.96))'
     : 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(241,246,255,0.95))'
-  const detailPanelBorder = `1px solid ${isDarkUi ? 'rgba(255,255,255,0.1)' : 'rgba(180,198,255,0.7)'}`
+  const detailPanelBorder = 'none'
   const detailPanelShadow = isDarkUi ? '0 18px 45px rgba(1,2,8,0.7)' : '0 25px 60px rgba(54,79,199,0.15)'
   const overlayCardBorder = `1px solid ${isDarkUi ? theme.colors.gray[4] : theme.colors.gray[3]}`
   const subtleOverlayBackground = isDarkUi ? rgba(theme.colors.dark[5], 0.6) : rgba(theme.colors.gray[3], 0.3)
@@ -397,7 +395,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     width: 28,
     height: 28,
     borderRadius: 10,
-    border: '1px solid rgba(255,255,255,0.2)',
+    border: 'none',
     background: isDarkUi ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,42,0.6)',
     color: '#fff',
     display: 'flex',
@@ -613,7 +611,19 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [imageExpanded, setImageExpanded] = React.useState(false)
   const [imagePrimaryIndex, setImagePrimaryIndex] = React.useState(0)
   const [imageSelectedIndex, setImageSelectedIndex] = React.useState(0)
-  const primaryImageUrl = imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || null
+  const hasPrimaryImage = React.useMemo(
+    () => imageResults.some((img) => typeof img?.url === 'string' && img.url.trim().length > 0),
+    [imageResults]
+  )
+  const primaryImageUrl = React.useMemo(() => {
+    if (!hasPrimaryImage) return null
+    const current = imageResults[imagePrimaryIndex]?.url
+    if (typeof current === 'string' && current.trim().length > 0) {
+      return current
+    }
+    const fallback = imageResults.find((img) => typeof img?.url === 'string' && img.url.trim().length > 0)
+    return fallback?.url ?? null
+  }, [hasPrimaryImage, imagePrimaryIndex, imageResults])
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
@@ -1699,14 +1709,14 @@ const rewritePromptWithCharacters = React.useCallback(
     setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
   }, [cancelNodeExecution, id, setNodeStatus])
   const isRunning = status === 'running' || status === 'queued'
-  const shellOutline = selected ? `1px solid ${theme.colors.blue?.[4] || '#4c6ef5'}` : nodeShellBorder
+  const shellOutline = 'none'
   const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
   const subtitle = schema.label || defaultLabel
 
   return (
     <div
       style={{
-        border: shellOutline,
+        border: 'none',
         borderRadius: 18,
         padding: '16px 18px 18px',
         background: nodeShellBackground,
@@ -1901,7 +1911,7 @@ const rewritePromptWithCharacters = React.useCallback(
           </div>
           {showMore && (
             <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 2 }}>
-              <Paper withBorder shadow="md" radius="md" className="glass" p="xs" style={{ width: 260 }}>
+              <Paper shadow="md" radius="md" className="glass" p="xs" style={{ width: 260 }}>
                 <Text size="xs" c="dimmed" mb={6}>
                   更多
                 </Text>
@@ -1945,7 +1955,7 @@ const rewritePromptWithCharacters = React.useCallback(
               style={{
                 borderRadius: 10,
                 overflow: 'hidden',
-                border: '1px solid rgba(148,163,184,0.5)',
+                border: 'none',
                 position: 'relative',
                 background: mediaCardBackground,
               }}
@@ -1986,7 +1996,6 @@ const rewritePromptWithCharacters = React.useCallback(
             </div>
           ) : (
             <Paper
-              withBorder
               radius="md"
               p="md"
               style={{
@@ -2017,7 +2026,7 @@ const rewritePromptWithCharacters = React.useCallback(
       )}
       {isImageNode && (
         <div style={{ position: 'relative', marginTop: 6 }}>
-          {imageResults.length === 0 ? (
+          {!hasPrimaryImage ? (
             <>
               {/* 快捷操作列表，增强引导 */}
               <div style={{ width: 296, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
@@ -2072,7 +2081,6 @@ const rewritePromptWithCharacters = React.useCallback(
                     borderRadius: 10,
                     height: '100%',
                     background: darkContentBackground,
-                    border: `1px solid ${darkContentBorder}`,
                     transform: 'translate(4px, 4px)',
                     zIndex: 0,
                   }}
@@ -2084,12 +2092,11 @@ const rewritePromptWithCharacters = React.useCallback(
                   borderRadius: 10,
                   overflow: 'hidden',
                   boxShadow: darkCardShadow,
-                  border: '1px solid rgba(148,163,184,0.8)',
                   background: mediaFallbackSurface,
                 }}
               >
                 <img
-                  src={imageResults[imagePrimaryIndex]?.url}
+                  src={primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''}
                   alt="主图"
                   style={{
                     width: '100%',
@@ -2111,7 +2118,6 @@ const rewritePromptWithCharacters = React.useCallback(
                     <div style={{
                       width: 14,
                       height: 14,
-                      border: `2px solid ${nodeShellText}`,
                       borderTop: '2px solid transparent',
                       borderRadius: '50%',
                       animation: 'spin 1s linear infinite',
@@ -2220,7 +2226,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 width: 296,
                 maxHeight: 80,
                 borderRadius: 8,
-                border: '1px dashed rgba(148,163,184,0.6)',
+                border: 'none',
                 background: subtleOverlayBackground,
                 padding: '6px 8px',
                 color: mediaOverlayText,
@@ -2241,7 +2247,6 @@ const rewritePromptWithCharacters = React.useCallback(
             width: 296,
             minHeight: 160,
             borderRadius: 10,
-            border: '1px solid rgba(148,163,184,0.6)',
             background: mediaOverlayBackground,
             padding: 8,
             display: 'flex',
@@ -2291,7 +2296,6 @@ const rewritePromptWithCharacters = React.useCallback(
               style={{
                 height: 160,
                 borderRadius: 8,
-                border: '1px dashed rgba(148,163,184,0.5)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -2551,14 +2555,13 @@ const rewritePromptWithCharacters = React.useCallback(
 
           {!isCharacterNode && status === 'error' && (data as any)?.lastError && (
             <Paper
-              withBorder
               radius="md"
               p="xs"
               mb="xs"
               style={{
                 background: 'rgba(239,68,68,0.1)',
                 borderColor: 'rgba(239,68,68,0.3)',
-                border: '1px solid',
+                border: 'none',
               }}
             >
               <Text size="xs" c="red.4" style={{ fontWeight: 500 }}>
@@ -2615,13 +2618,13 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Button>
               </Group>
               {selectedCharacter ? (
-                <Paper withBorder radius="md" p="xs">
+                <Paper radius="md" p="xs">
                   {selectedCharacter.cover && (
                     <div
                       style={{
                         borderRadius: 8,
                         overflow: 'hidden',
-                        border: '1px solid rgba(148,163,184,0.5)',
+                        border: 'none',
                         marginBottom: 6,
                         background: mediaFallbackSurface,
                       }}
@@ -2708,11 +2711,10 @@ const rewritePromptWithCharacters = React.useCallback(
                       return (
                         <Paper
                           key={meta.id || meta.username || idx}
-                          withBorder
                           radius="md"
                           p="xs"
                           style={{
-                            border: isActive ? `1px solid ${theme.colors.blue[6]}` : `1px solid ${lightContentBorder}`,
+                            border: 'none',
                             background: isActive ? rgba(theme.colors.blue[6], 0.15) : lightContentBackground,
                             cursor: 'pointer',
                           }}
@@ -2723,7 +2725,7 @@ const rewritePromptWithCharacters = React.useCallback(
                               style={{
                                 borderRadius: 6,
                                 overflow: 'hidden',
-                                border: '1px solid rgba(148,163,184,0.4)',
+                                border: 'none',
                                 marginBottom: 6,
                                 background: mediaFallbackSurface,
                               }}
@@ -2790,7 +2792,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         borderRadius: 8,
                         overflow: 'hidden',
                         marginBottom: upstreamText ? 4 : 0,
-                        border: '1px solid rgba(148,163,184,0.5)',
+                        border: 'none',
                         background: darkContentBackground,
                       }}
                     >
@@ -2840,7 +2842,7 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
 
               {connectedCharacterOptions.length > 0 && (
-                <Paper withBorder radius="md" p="xs" mb="xs">
+                <Paper radius="md" p="xs" mb="xs">
                   <Text size="xs" fw={500} mb={4}>
                     {isUsingWorkflowCharacters ? '可用角色：' : '已连接角色：'}
                     {connectedCharacterOptions.map((opt) => `@${opt.username}`).join('、')}
@@ -2890,7 +2892,6 @@ const rewritePromptWithCharacters = React.useCallback(
                     {storyboardScenes.map((scene, idx) => (
                       <Paper
                         key={scene.id}
-                        withBorder
                         radius="md"
                         p="xs"
                         style={{ background: lightContentBackground, borderColor: lightContentBorder }}
@@ -3028,10 +3029,10 @@ const rewritePromptWithCharacters = React.useCallback(
                     size="xs"
                     onClick={() => setPromptSamplesOpen(true)}
                     title="打开提示词案例库"
-                    style={{
-                      border: '1px solid transparent',
-                      background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                    }}
+                      style={{
+                        border: 'none',
+                        background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                      }}
                   >
                     <IconBulb size={12} style={{ color: nodeShellText }} />
                   </ActionIcon>
@@ -3041,7 +3042,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       size="xs"
                       style={{
                         background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
-                        border: suggestionsEnabled ? '1px solid rgb(59, 130, 246)' : '1px solid transparent',
+                        border: 'none',
                       }}
                       onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
                       title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
@@ -3136,7 +3137,6 @@ const rewritePromptWithCharacters = React.useCallback(
                 />
                 {mentionOpen && (
                   <Paper
-                    withBorder
                     shadow="sm"
                     radius="md"
                     className="glass"
@@ -3242,7 +3242,6 @@ const rewritePromptWithCharacters = React.useCallback(
 
                 {!mentionOpen && promptSuggestions.length > 0 && (
                   <Paper
-                    withBorder
                     shadow="sm"
                     radius="md"
                     className="glass"
@@ -3331,7 +3330,6 @@ const rewritePromptWithCharacters = React.useCallback(
                   return (
                     <Paper
                       key={`${idx}-${img.url}`}
-                      withBorder
                       radius="md"
                       p="xs"
                       style={{
@@ -3342,9 +3340,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         style={{
                           borderRadius: 8,
                           overflow: 'hidden',
-                          border: isPrimary
-                            ? galleryBorderActive
-                            : galleryBorderDefault,
+                          border: 'none',
                           marginBottom: 6,
                           background: mediaFallbackSurface,
                         }}
@@ -3461,11 +3457,10 @@ const rewritePromptWithCharacters = React.useCallback(
                     {videoResults.map((video, idx) => {
                   const isPrimary = idx === videoPrimaryIndex
                   return (
-                    <Paper
-                      key={`${idx}-${video.url}`}
-                      withBorder
-                      radius="md"
-                      p="xs"
+                        <Paper
+                          key={`${idx}-${video.url}`}
+                          radius="md"
+                          p="xs"
                       style={{
                         background: galleryCardBackground,
                       }}
@@ -3474,9 +3469,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         style={{
                           borderRadius: 8,
                           overflow: 'hidden',
-                          border: isPrimary
-                            ? galleryBorderActive
-                            : galleryBorderDefault,
+                          border: 'none',
                           marginBottom: 6,
                           background: mediaFallbackSurface,
                           position: 'relative',

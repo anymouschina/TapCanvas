@@ -23,7 +23,9 @@ import {
   IconCheck,
   IconX,
   IconClock,
-  IconAlertTriangle
+  IconAlertTriangle,
+  IconCircleCheck,
+  IconCircle
 } from '@tabler/icons-react'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
 import { subscribeToolEvents, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
@@ -253,7 +255,9 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
       )}
 
       <Stack spacing="sm">
-        {plan.steps.map((step, index) => (
+        {plan.steps.map((step, index) => {
+          const acceptance = (step as any).acceptance || (step as any).acceptanceCriteria
+          return (
           <Paper
             key={step.id}
             p="sm"
@@ -280,6 +284,22 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
                       {step.reasoning}
                     </Text>
                   )}
+                  {acceptance && acceptance.length > 0 && (
+                    <Stack gap={4} mt={6}>
+                      {acceptance.map((item: string) => (
+                        <Group key={item} spacing={6} align="flex-start">
+                          {step.status === 'completed' ? (
+                            <IconCircleCheck size={14} color="#16a34a" />
+                          ) : (
+                            <IconCircle size={14} color="#94a3b8" />
+                          )}
+                          <Text size="xs" color="dimmed">
+                            {item}
+                          </Text>
+                        </Group>
+                      ))}
+                    </Stack>
+                  )}
                 </div>
               </Group>
               <Badge
@@ -290,7 +310,7 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
               </Badge>
             </Group>
           </Paper>
-        ))}
+        )})}
       </Stack>
     </Paper>
   )

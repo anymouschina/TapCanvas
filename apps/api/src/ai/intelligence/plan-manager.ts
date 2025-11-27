@@ -138,7 +138,8 @@ export class PlanManager {
         name: step.name,
         description: step.description,
         status: step.status,
-        reasoning: step.reasoning
+        reasoning: step.reasoning,
+        acceptance: step.acceptanceCriteria
       })),
       updatedAt: new Date(state.updatedAt).toISOString()
     }
