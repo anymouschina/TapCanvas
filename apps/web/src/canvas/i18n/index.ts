@@ -297,7 +297,6 @@ const enTranslations = {
   '上一级': 'Up Level',
   '退出聚焦': 'Exit Focus',
   '快速开始': 'Quick Start',
-  '新建 text': 'New Text',
   '图像': 'Image',
   '创建示例工作流': 'Create Sample Workflow',
   '了解更多': 'Learn More',

@@ -1,10 +1,23 @@
+import type { Connection } from 'reactflow'
 import { useRFStore } from '../canvas/store'
+import { runNodeMock } from '../runner/mockRunner'
+import { runNodeRemote } from '../runner/remoteRunner'
 import { FunctionResult } from './types'
 
 /**
  * Canvas操作服务层
  * 将AI Function Calling转换为实际的canvas操作
  */
+
+const REMOTE_RUN_KINDS = new Set([
+  'composeVideo',
+  'storyboard',
+  'video',
+  'tts',
+  'subtitleAlign',
+  'image',
+  'textToImage',
+])
 
 export class CanvasService {
 
@@ -21,13 +34,39 @@ export class CanvasService {
       console.debug('[CanvasService] createNode input', params)
       const store = useRFStore.getState()
       const prevIds = new Set(store.nodes.map(node => node.id))
-      const { addNode } = store
+      const { addNode, onConnect } = store
 
       // 生成默认位置（如果未提供）
       const position = params.position || CanvasService.generateDefaultPosition()
 
       const normalized = CanvasService.normalizeNodeParams(params)
       console.debug('[CanvasService] normalized node params', normalized)
+
+      if ((normalized.data as any)?.kind === 'storyboard' || normalized.nodeType === 'storyboard') {
+        return {
+          success: false,
+          error: 'Storyboard 节点暂未开放，请改用 composeVideo 节点生成视频内容'
+        }
+      }
+
+      if (normalized.remixFromNodeId) {
+        const remixSource = store.nodes.find(node => node.id === normalized.remixFromNodeId)
+        const remixKind = (remixSource?.data as any)?.kind
+        const remixStatus = (remixSource?.data as any)?.status
+        const supportedKinds = new Set(['composeVideo', 'video', 'storyboard'])
+        if (!remixSource || !supportedKinds.has(remixKind)) {
+          return {
+            success: false,
+            error: 'Remix 必须引用一个已有的视频/分镜节点。'
+          }
+        }
+        if (remixStatus !== 'success') {
+          return {
+            success: false,
+            error: 'Remix 只能基于已成功完成的视频节点，请等待前序节点完成。'
+          }
+        }
+      }
 
       // 调用store方法创建节点
       addNode(normalized.nodeType, normalized.label, {
@@ -38,6 +77,22 @@ export class CanvasService {
 
       const updatedState = useRFStore.getState()
       const newNode = [...updatedState.nodes].reverse().find(node => !prevIds.has(node.id)) || updatedState.nodes[updatedState.nodes.length - 1]
+
+      if (newNode && normalized.remixFromNodeId) {
+        try {
+          const sourceNode = updatedState.nodes.find(node => node.id === normalized.remixFromNodeId)
+          if (sourceNode && typeof onConnect === 'function') {
+            const connection: Connection = {
+              source: sourceNode.id,
+              target: newNode.id,
+              targetHandle: 'in-video',
+            }
+            onConnect(connection)
+          }
+        } catch (err) {
+          console.warn('[CanvasService] remix connection failed', err)
+        }
+      }
 
       return {
         success: true,
@@ -55,7 +110,7 @@ export class CanvasService {
     type: string
     label?: string
     config?: Record<string, any> | null
-  }): { nodeType: string; label: string; data: Record<string, any> } {
+  }): { nodeType: string; label: string; data: Record<string, any>; remixFromNodeId?: string } {
     const rawType = (params.type || 'taskNode').trim()
     const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
 
@@ -79,12 +134,15 @@ export class CanvasService {
     }
 
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
-    const data: Record<string, any> = { ...baseData, ...safeConfig }
+    const { remixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
+    const data: Record<string, any> = { ...baseData, ...restConfig }
     if (!data.prompt && label) {
       data.prompt = label
     }
 
-    return { nodeType, label, data }
+    const remixSource = typeof remixFromNodeId === 'string' && remixFromNodeId.trim() ? remixFromNodeId.trim() : undefined
+
+    return { nodeType, label, data, remixFromNodeId: remixSource }
   }
 
   private static defaultLabelForType(type: string) {
@@ -252,6 +310,45 @@ export class CanvasService {
   }
 
   /**
+   * 执行单个节点
+   */
+  static async runNode(params: { nodeId: string }): Promise<FunctionResult> {
+    try {
+      const { nodeId } = params
+      if (!nodeId) {
+        return { success: false, error: '缺少节点 ID' }
+      }
+
+      const store = useRFStore.getState()
+      const node = store.nodes.find(n => n.id === nodeId)
+      if (!node) {
+        return { success: false, error: '节点不存在，无法执行' }
+      }
+
+      const get = () => useRFStore.getState()
+      const set = (fn: (s: any) => any) => useRFStore.setState(fn)
+      const kind = (node.data as any)?.kind as string | undefined
+      const shouldRunRemote = kind ? REMOTE_RUN_KINDS.has(kind) : false
+
+      if (shouldRunRemote) {
+        await runNodeRemote(nodeId, get, set)
+      } else {
+        await runNodeMock(nodeId, get, set)
+      }
+
+      return {
+        success: true,
+        data: { message: `已执行节点 ${(node.data as any)?.label || nodeId}` }
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '执行节点失败'
+      }
+    }
+  }
+
+  /**
    * 全选并自动格式化（全局 DAG 布局）
    */
   static async formatAll(): Promise<FunctionResult> {
@@ -410,6 +507,7 @@ export const functionHandlers = {
   getNodes: CanvasService.getNodes,
   findNodes: CanvasService.findNodes,
   autoLayout: CanvasService.autoLayout,
+  runNode: CanvasService.runNode,
   runDag: CanvasService.runDag,
   formatAll: CanvasService.formatAll,
 } as const

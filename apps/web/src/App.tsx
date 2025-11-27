@@ -12,7 +12,7 @@ import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
 import { listModelProviders, listModelEndpoints, upsertModelProvider, saveProjectFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
 import { useAuth } from './auth/store'
-import { getCurrentLanguage, setLanguage, $ } from './canvas/i18n'
+import { getCurrentLanguage, setLanguage, $, $t } from './canvas/i18n'
 import SubflowEditor from './subflow/Editor'
 import LibraryEditor from './flows/LibraryEditor'
 import { listFlows, saveFlow, deleteFlow as deleteLibraryFlow, renameFlow, scanCycles } from './flows/registry'
@@ -178,7 +178,7 @@ export default function App(): JSX.Element {
       const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges })
       setCurrentFlow({ id: saved.id, name: flowName, source: 'server' })
       setDirty(false)
-      notifications.update({ id: nid, title: $('已保存'), message: $('项目「{{name}}」已保存', { name: proj!.name }), loading: false, autoClose: 1500, color: 'green' })
+      notifications.update({ id: nid, title: $('已保存'), message: $t('项目「{{name}}」已保存', { name: proj!.name }), loading: false, autoClose: 1500, color: 'green' })
     } catch (e: any) {
       notifications.update({ id: nid, title: $('保存失败'), message: e?.message || $('网络或服务器错误'), loading: false, autoClose: 3000, color: 'red' })
     } finally {

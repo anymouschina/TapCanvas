@@ -50,6 +50,7 @@ function nowLabel() {
 }
 
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
+const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const ANTHROPIC_VERSION = '2023-06-01'
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
@@ -450,9 +451,9 @@ async function runVideoTask(ctx: RunnerContext) {
       : null
     const storyboardNotes = isStoryboard ? (data as any)?.storyboardNotes || '' : ''
     const storyboardTitle = isStoryboard ? (data as any)?.storyboardTitle || (data as any)?.label || '' : ''
+    const storyboardTotalDuration = isStoryboard ? totalStoryboardDuration(storyboardScenesData || []) : 0
     if (isStoryboard) {
-      const storyboardTotal = totalStoryboardDuration(storyboardScenesData || [])
-      if (storyboardTotal > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
+      if (storyboardTotalDuration > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
         const msg = '分镜总时长不能超过 25 秒，请调整各镜头时长'
         setNodeStatus(id, 'error', { progress: 0, lastError: msg })
         appendLog(id, `[${nowLabel()}] error: ${msg}`)
@@ -467,13 +468,16 @@ async function runVideoTask(ctx: RunnerContext) {
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
     let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
     if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
-      videoDurationSeconds = isStoryboard ? STORYBOARD_MAX_TOTAL_DURATION : 10
+      if (isStoryboard) {
+        videoDurationSeconds = storyboardTotalDuration > 0 ? storyboardTotalDuration : 10
+      } else {
+        videoDurationSeconds = 10
+      }
     }
-    if (isStoryboard) {
-      videoDurationSeconds = Math.min(videoDurationSeconds, STORYBOARD_MAX_TOTAL_DURATION)
-    } else {
-      videoDurationSeconds = Math.min(videoDurationSeconds, 15)
+    if (isStoryboard && storyboardTotalDuration > 0) {
+      videoDurationSeconds = Math.min(videoDurationSeconds, storyboardTotalDuration)
     }
+    videoDurationSeconds = Math.max(2, Math.min(videoDurationSeconds, MAX_VIDEO_DURATION_SECONDS))
     const nFrames = Math.round(Math.max(videoDurationSeconds, 1) * 30)
     const getCurrentVideoTokenId = () =>
       (ctx.getState().nodes.find((n: Node) => n.id === id)?.data as any)
