@@ -94,11 +94,13 @@ export class AICanvasTools {
         return rawKind
       })()
 
-      const fallbackLabel = label || `新建${aliasKind || resolvedType}`
+      const trimmedLabel = label?.trim() || ''
+      const fallbackLabel = trimmedLabel || `新建${aliasKind || resolvedType}`
 
       // 添加节点到画布
-      store.addNode(resolvedType, fallbackLabel, {
+      store.addNode(resolvedType, trimmedLabel || undefined, {
         kind: normalizedKind,
+        autoLabel: !trimmedLabel,
         ...config
       })
 
@@ -124,7 +126,7 @@ export class AICanvasTools {
 
       return {
         success: true,
-        message: `成功添加节点: ${label || type}`,
+        message: `成功添加节点: ${fallbackLabel}`,
         data: { nodeId: store.nodes[store.nodes.length - 1]?.id }
       }
     } catch (error) {

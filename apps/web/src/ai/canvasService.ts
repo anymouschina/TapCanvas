@@ -32,7 +32,8 @@ export class CanvasService {
       // 调用store方法创建节点
       addNode(normalized.nodeType, normalized.label, {
         ...normalized.data,
-        position
+        position,
+        autoLabel: !(params.label && params.label.trim()),
       })
 
       const updatedState = useRFStore.getState()
@@ -58,17 +59,17 @@ export class CanvasService {
     const rawType = (params.type || 'taskNode').trim()
     const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
 
-    const baseData: Record<string, any> = { label }
     let nodeType = rawType
+    const baseData: Record<string, any> = {}
 
     const logicalKinds: Record<string, string> = {
-      text: 'text',
+      text: 'textToImage',
       image: 'image',
       video: 'composeVideo',
       composeVideo: 'composeVideo',
       storyboard: 'storyboard',
-      audio: 'audio',
-      subtitle: 'subtitle',
+      audio: 'tts',
+      subtitle: 'subtitleAlign',
       character: 'character',
     }
 
@@ -78,7 +79,7 @@ export class CanvasService {
     }
 
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
-    const data = { ...baseData, ...safeConfig }
+    const data: Record<string, any> = { ...baseData, ...safeConfig }
     if (!data.prompt && label) {
       data.prompt = label
     }
@@ -89,19 +90,20 @@ export class CanvasService {
   private static defaultLabelForType(type: string) {
     switch (type) {
       case 'text':
-        return '文本提示'
+        return '文本'
       case 'image':
-        return '图像生成'
+        return '图像'
       case 'video':
       case 'composeVideo':
-      case 'storyboard':
         return '文生视频'
+      case 'storyboard':
+        return '分镜'
       case 'audio':
-        return '音频节点'
+        return '语音'
       case 'subtitle':
-        return '字幕节点'
+        return '字幕'
       case 'character':
-        return '角色节点'
+        return '角色'
       default:
         return type
     }

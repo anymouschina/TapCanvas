@@ -92,6 +92,17 @@ export async function exchangeGithub(code: string): Promise<{ token: string; use
   return r.json()
 }
 
+export async function createGuestSession(nickname?: string): Promise<{ token: string; user: any }> {
+  const body = nickname ? { nickname } : {}
+  const r = await fetch(`${API_BASE}/auth/guest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw new Error(`guest login failed: ${r.status}`)
+  return r.json()
+}
+
 export async function listFlowVersions(flowId: string): Promise<Array<{ id: string; createdAt: string; name: string }>> {
   const r = await fetch(`${API_BASE}/flows/${flowId}/versions`, withAuth())
   if (!r.ok) throw new Error(`list versions failed: ${r.status}`)
