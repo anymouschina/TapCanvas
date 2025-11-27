@@ -324,23 +324,22 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[7] // 提高日间模式下媒体回退文本的对比度
   const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
   const summaryChipAccent = theme.colors.blue?.[5] || '#4c6ef5'
-  const chipBorderColor = 'transparent'
   const controlLabelColor = rgba(nodeShellText, 0.6)
   const summaryChipStyles = React.useMemo(() => ({
-    borderRadius: 12,
-    border: `1px solid ${chipBorderColor}`,
-    background: isDarkUi ? 'rgba(10, 14, 30, 0.9)' : 'rgba(255, 255, 255, 0.92)',
+    borderRadius: 0,
+    border: 'none',
+    background: 'transparent',
     color: nodeShellText,
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
-    padding: '6px 12px',
+    padding: '4px 8px',
     fontWeight: 500,
     fontSize: 12,
-    height: 38,
+    height: 32,
     lineHeight: 1.1,
-  }), [isDarkUi, nodeShellText, chipBorderColor])
+  }), [nodeShellText])
   const controlLabelStyle = React.useMemo(() => ({
     fontSize: 11,
     fontWeight: 500,
@@ -355,34 +354,44 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }), [nodeShellText])
   const inlineDividerColor = rgba(nodeShellText, 0.15)
   const sleekChipBase = React.useMemo(() => ({
-    borderRadius: 999,
-    border: `1px solid ${isDarkUi ? 'rgba(255,255,255,0.12)' : 'rgba(164,184,255,0.55)'}`,
     padding: '6px 12px',
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     fontSize: 12,
     fontWeight: 500,
-    background: isDarkUi ? 'rgba(12,15,32,0.75)' : 'rgba(255,255,255,0.8)',
     color: nodeShellText,
     lineHeight: 1.2,
     whiteSpace: 'nowrap',
   }), [isDarkUi, nodeShellText])
-  const toolbarIconButton = React.useMemo(() => ({
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    border: `1px solid ${isDarkUi ? 'rgba(255,255,255,0.18)' : 'rgba(214,219,235,0.8)'}`,
-    background: isDarkUi ? 'rgba(20,24,45,0.85)' : '#ffffff',
+  const toolbarActionIconStyles = React.useMemo(() => ({
+    root: {
+      width: 28,
+      height: 28,
+      borderRadius: 0,
+      border: 'none',
+      background: 'transparent',
+      color: nodeShellText,
+      padding: 0,
+    },
+    icon: {
+      fontSize: 16,
+    },
+  }), [nodeShellText])
+  const toolbarTextButtonStyle = React.useMemo(() => ({
+    borderRadius: 0,
+    border: 'none',
+    background: 'transparent',
     color: nodeShellText,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    padding: '0 8px',
+    fontSize: 12,
+    fontWeight: 500,
+    height: 32,
     cursor: 'pointer',
-    padding: 0,
-    boxShadow: isDarkUi ? '0 6px 18px rgba(0,0,0,0.45)' : '0 10px 20px rgba(15,23,42,0.08)',
-    transition: 'all 120ms ease',
-  }), [isDarkUi, nodeShellText])
+  }), [nodeShellText])
   const overlayIconButton = React.useMemo(() => ({
     width: 28,
     height: 28,
@@ -1754,18 +1763,18 @@ const rewritePromptWithCharacters = React.useCallback(
             )}
           </div>
         </div>
-        <div
-          style={{
-            ...sleekChipBase,
-            borderColor: rgba(color, 0.4),
-            background: rgba(color, 0.12),
-            color,
-            fontSize: 12,
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
-          <span>{statusLabel}</span>
-        </div>
+        {statusLabel?.trim() && (
+          <div
+            style={{
+              ...sleekChipBase,
+              color,
+              fontSize: 12,
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
+            <span>{statusLabel}</span>
+          </div>
+        )}
       </div>
       {/* Top floating toolbar anchored to node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
@@ -1783,9 +1792,12 @@ const rewritePromptWithCharacters = React.useCallback(
               backdropFilter: 'blur(18px)',
             }}
           >
-            <button
-              type="button"
+            <ActionIcon
+              variant="transparent"
+              radius={0}
+              size="sm"
               title="放大预览"
+              styles={toolbarActionIconStyles}
               onClick={() => {
                 const url =
                   isCharacterNode
@@ -1807,12 +1819,14 @@ const rewritePromptWithCharacters = React.useCallback(
                         : 'image'
                 if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
               }}
-              style={toolbarIconButton}
             >
               <IconMaximize size={16} />
-            </button>
-            <button
-              type="button"
+            </ActionIcon>
+            <ActionIcon
+              variant="transparent"
+              radius={0}
+              size="sm"
+              styles={toolbarActionIconStyles}
               title="下载"
               onClick={() => {
                 const url =
@@ -1833,41 +1847,42 @@ const rewritePromptWithCharacters = React.useCallback(
                 a.click()
                 a.remove()
               }}
-              style={toolbarIconButton}
             >
               <IconDownload size={16} />
-            </button>
+            </ActionIcon>
             {visibleDefs.length > 0 && (
               <div style={{ width: 1, height: 24, background: inlineDividerColor }} />
             )}
             {visibleDefs.map((d) => (
-              <button
+              <Button
                 key={d.key}
                 type="button"
+                variant="transparent"
+                radius={0}
+                size="compact-sm"
                 onClick={d.onClick}
-                style={{
-                  ...sleekChipBase,
-                  border: '1px solid transparent',
-                  background: 'transparent',
-                  padding: '4px 8px',
-                }}
+                style={toolbarTextButtonStyle}
               >
-                {d.icon}
-                <span>{d.label}</span>
-              </button>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {d.icon}
+                  <span>{d.label}</span>
+                </span>
+              </Button>
             ))}
             {extraDefs.length > 0 && (
-              <button
-                type="button"
+              <ActionIcon
+                variant="transparent"
+                radius={0}
+                size="sm"
                 title="更多"
-                style={toolbarIconButton}
+                styles={toolbarActionIconStyles}
                 onClick={(e) => {
                   e.stopPropagation()
                   setShowMore((v) => !v)
                 }}
               >
                 <IconDots size={16} />
-              </button>
+              </ActionIcon>
             )}
           </div>
           {showMore && (
@@ -2111,24 +2126,26 @@ const rewritePromptWithCharacters = React.useCallback(
                   </div>
                 )}
                 {supportsReversePrompt && primaryImageUrl && (
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-xs"
                     onClick={handleReversePrompt}
                     disabled={reversePromptLoading}
                     style={{
                       position: 'absolute',
                       left: 8,
                       bottom: 8,
-                      padding: '4px 12px',
-                      borderRadius: 999,
+                      padding: 0,
+                      borderRadius: 0,
                       border: 'none',
-                      background: mediaOverlayBackground,
+                      background: 'transparent',
                       color: mediaOverlayText,
-                      fontSize: 11,
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
-                      cursor: reversePromptLoading ? 'wait' : 'pointer',
+                      cursor: reversePromptLoading ? 'not-allowed' : 'pointer',
                       transition: 'opacity .12s ease',
                       opacity: reversePromptLoading ? 0.7 : 0.95,
                     }}
@@ -2138,33 +2155,35 @@ const rewritePromptWithCharacters = React.useCallback(
                     ) : (
                       <IconPhotoSearch size={12} />
                     )}
-                    <span>反推提示词</span>
-                  </button>
+                    <span style={{ fontSize: 11, color: mediaOverlayText }}>反推提示词</span>
+                  </Button>
                 )}
                 {/* 数量 + 展开标签 */}
                 {imageResults.length > 1 && (
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-xs"
                     onClick={() => setImageExpanded(true)}
                     style={{
                       position: 'absolute',
                       right: 8,
                       bottom: 8,
-                      padding: '2px 8px',
-                      borderRadius: 999,
+                      padding: 0,
+                      borderRadius: 0,
                       border: 'none',
-                      background: mediaOverlayBackground,
+                      background: 'transparent',
                       color: mediaOverlayText,
-                      fontSize: 11,
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
                       gap: 4,
-                      cursor: 'pointer',
+                      fontSize: 11,
                     }}
                   >
                     <span>{imageResults.length}</span>
                     <IconChevronDown size={12} />
-                  </button>
+                  </Button>
                 )}
               </div>
             <input
@@ -2296,7 +2315,7 @@ const rewritePromptWithCharacters = React.useCallback(
       ))}
 
       {/* Bottom detail panel near node */}
-      <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center">
+      <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
         <div
           style={{
             width: 380,
@@ -2316,8 +2335,11 @@ const rewritePromptWithCharacters = React.useCallback(
            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-sm"
                     style={{
                       ...summaryChipStyles,
                       minWidth: 0,
@@ -2328,7 +2350,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     title={`模型 · ${summaryModelLabel}`}
                   >
                     <span style={controlValueStyle}>{summaryModelLabel}</span>
-                  </button>
+                  </Button>
                 </Menu.Target>
                 <Menu.Dropdown>
                   {modelList.map((option) => (
@@ -2353,16 +2375,19 @@ const rewritePromptWithCharacters = React.useCallback(
               {showTimeMenu && (
                 <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-sm"
                     style={{
                       ...summaryChipStyles,
                       minWidth: 0,
                     }}
                     title="时长"
                   >
-                      <span style={controlValueStyle}>{summaryDuration}</span>
-                    </button>
+                    <span style={controlValueStyle}>{summaryDuration}</span>
+                  </Button>
                   </Menu.Target>
                   <Menu.Dropdown>
                     {durationOptions.map((option) => (
@@ -2383,15 +2408,16 @@ const rewritePromptWithCharacters = React.useCallback(
               {showResolutionMenu && (
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
+                  <Button
                     type="button"
-                    style={{
-                      ...summaryChipStyles,
-                    }}
+                    variant="transparent"
+                    radius={0}
+                    size="compact-sm"
+                    style={summaryChipStyles}
                     title="分辨率"
                   >
-                      <span style={controlValueStyle}>{summaryResolution}</span>
-                    </button>
+                    <span style={controlValueStyle}>{summaryResolution}</span>
+                  </Button>
                   </Menu.Target>
                   <Menu.Dropdown>
                     {RESOLUTION_OPTIONS.map((option) => (
@@ -2411,16 +2437,19 @@ const rewritePromptWithCharacters = React.useCallback(
               {showOrientationMenu && (
                 <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-sm"
                     style={{
                       ...summaryChipStyles,
                       minWidth: 0,
                     }}
                     title="方向"
                   >
-                      <span style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
-                    </button>
+                    <span style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
+                  </Button>
                   </Menu.Target>
                   <Menu.Dropdown>
                     {ORIENTATION_OPTIONS.map((option) => (
@@ -2439,8 +2468,11 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
               <Menu withinPortal position="bottom-start" transition="pop-top-left">
                 <Menu.Target>
-                  <button
+                  <Button
                     type="button"
+                    variant="transparent"
+                    radius={0}
+                    size="compact-sm"
                     style={{
                       ...summaryChipStyles,
                       minWidth: 0,
@@ -2448,7 +2480,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     title="生成次数"
                   >
                     <span style={controlValueStyle}>{summaryExec}</span>
-                  </button>
+                  </Button>
                 </Menu.Target>
                 <Menu.Dropdown>
                   {SAMPLE_OPTIONS.map((value) => (
@@ -2468,7 +2500,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 <>
                   {isRunning && (
                     <ActionIcon
-                      size="lg"
+                      size="md"
                       variant="light"
                       color="red"
                       title="停止当前任务"
@@ -2478,16 +2510,15 @@ const rewritePromptWithCharacters = React.useCallback(
                     </ActionIcon>
                   )}
                   <ActionIcon
-                    size="xl"
-                    variant="filled"
+                    size="md"
                     title="执行节点"
                     loading={isRunning}
                     disabled={isRunning}
                     onClick={runNode}
-                    radius="xl"
+                    radius="md"
                     style={{
-                      width: 46,
-                      height: 46,
+                      width: 20,
+                      height: 20,
                       background: 'linear-gradient(135deg, #4c6ef5, #60a5fa)',
                       boxShadow: '0 18px 30px rgba(76, 110, 245, 0.35)',
                     }}
