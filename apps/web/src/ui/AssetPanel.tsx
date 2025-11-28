@@ -4,6 +4,7 @@ import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
+import { toast } from './toast'
 import {
   listServerAssets,
   createServerAsset,
@@ -32,6 +33,8 @@ import {
 import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload, IconUserPlus } from '@tabler/icons-react'
 import { VideoTrimModal } from './VideoTrimModal'
 
+const MAX_CHARACTER_TRIM_SECONDS = 3
+
 function PlaceholderImage({ label }: { label: string }) {
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
@@ -51,6 +54,8 @@ export default function AssetPanel(): JSX.Element | null {
   const openPreview = useUIStore(s => s.openPreview)
   const mounted = active === 'assets'
   const currentProject = useUIStore(s => s.currentProject)
+  const characterCreatorRequest = useUIStore(s => s.characterCreatorRequest)
+  const clearCharacterCreatorRequest = useUIStore(s => s.clearCharacterCreatorRequest)
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
   const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-published' | 'sora-characters'>('local')
   const [soraProviders, setSoraProviders] = React.useState<ModelProviderDto[]>([])
@@ -93,6 +98,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharCoverUploading, setCreateCharCoverUploading] = React.useState(false)
   const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
   const [createCharProgress, setCreateCharProgress] = React.useState<number | null>(null)
+  const [createCharDefaultRange, setCreateCharDefaultRange] = React.useState<{ start: number; end: number } | null>(null)
   const [pickCharVideoOpen, setPickCharVideoOpen] = React.useState(false)
   const [pickCharTab, setPickCharTab] = React.useState<'local' | 'drafts' | 'published'>('local')
   const [pickCharLoading, setPickCharLoading] = React.useState(false)
@@ -101,7 +107,7 @@ export default function AssetPanel(): JSX.Element | null {
   const [publishingId, setPublishingId] = React.useState<string | null>(null)
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
-    const usedDuration = Math.min(createCharDuration, 2)
+    const usedDuration = Math.min(createCharDuration, MAX_CHARACTER_TRIM_SECONDS)
     const count = Math.max(10, Math.round(usedDuration))
     return Array.from({ length: count }, () => createCharVideoUrl)
   }, [createCharVideoUrl, createCharDuration])
@@ -229,6 +235,39 @@ export default function AssetPanel(): JSX.Element | null {
         if (tab === 'sora-characters') setCharLoading(false)
       })
   }, [mounted, tab, selectedTokenId])
+
+  React.useEffect(() => {
+    if (!characterCreatorRequest || !mounted) return
+    const clip = characterCreatorRequest.payload?.clipRange
+    if (clip) {
+      const rawStart = Number(clip.start)
+      const rawEnd = Number(clip.end)
+      const start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0
+      const endCandidate = Number.isFinite(rawEnd) ? rawEnd : start + MAX_CHARACTER_TRIM_SECONDS
+      const safeEnd = Math.max(start, endCandidate)
+      const end = Math.min(start + MAX_CHARACTER_TRIM_SECONDS, safeEnd)
+      setCreateCharDefaultRange({ start, end })
+    } else {
+      setCreateCharDefaultRange(null)
+    }
+    setTab('sora-characters')
+    const requestedTokenId = characterCreatorRequest.payload?.soraTokenId || null
+    const fallbackTokenId = selectedTokenId || requestedTokenId || soraTokens[0]?.id || null
+    if (!fallbackTokenId) {
+      toast('暂无可用的 Sora Token，请先在右上角绑定密钥', 'error')
+      setCreateCharDefaultRange(null)
+      clearCharacterCreatorRequest()
+      return
+    }
+    if (selectedTokenId !== fallbackTokenId) {
+      setSelectedTokenId(fallbackTokenId)
+    }
+    setPickCharError(null)
+    setPickCharVideoOpen(true)
+    setPickCharTab('local')
+    setPickCharSelected(null)
+    clearCharacterCreatorRequest()
+  }, [characterCreatorRequest, mounted, selectedTokenId, soraTokens, clearCharacterCreatorRequest])
 
   const loadMoreDrafts = async () => {
     if (!draftCursor) return
@@ -451,6 +490,7 @@ export default function AssetPanel(): JSX.Element | null {
     setCreateCharVideoUrl(null)
     setCreateCharDuration(0)
     setCreateCharFile(null)
+    setCreateCharDefaultRange(null)
   }
 
   const handlePickCover = () => {
@@ -499,7 +539,7 @@ export default function AssetPanel(): JSX.Element | null {
     setCreateCharProgress(0)
     try {
       const start = Math.max(0, range.start)
-      const end = Math.max(start, Math.min(range.end, start + 2))
+      const end = Math.max(start, Math.min(range.end, start + MAX_CHARACTER_TRIM_SECONDS))
       const uploadResult = await uploadSoraCharacterVideo(
         selectedTokenId,
         createCharFile,
@@ -538,6 +578,7 @@ export default function AssetPanel(): JSX.Element | null {
       setCreateCharVideoUrl(null)
       setCreateCharDuration(0)
       setCreateCharFile(null)
+      setCreateCharDefaultRange(null)
       const cameoId =
         (uploadResult && (uploadResult.cameo?.id || uploadResult.id)) || null
       setCreateCharCameoId(cameoId)
@@ -1509,6 +1550,7 @@ export default function AssetPanel(): JSX.Element | null {
                 setPickCharError(null)
                 setPickCharSelected(null)
                 setPickCharTab('local')
+                setCreateCharDefaultRange(null)
               }}
               size="xl"
               title="选择角色来源视频"
@@ -1853,6 +1895,7 @@ export default function AssetPanel(): JSX.Element | null {
               thumbnails={createCharThumbs}
               loading={createCharUploading}
               progressPct={createCharProgress}
+              defaultRange={createCharDefaultRange || undefined}
               onClose={handleTrimClose}
               onConfirm={handleTrimConfirm}
               centered
