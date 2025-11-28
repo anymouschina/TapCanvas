@@ -12,6 +12,8 @@ import { subscribeToolEvents, mapToolEventToCanvasOperation, extractThinkingEven
 import { getAuthToken } from '../auth/store'
 import { API_BASE } from '../api/server'
 
+const AI_DEBUG_LOGS_ENABLED = (import.meta as any).env?.VITE_DEBUG_AI_LOGS === 'true'
+
 export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntelligentChatReturn => {
   const {
     userId,
@@ -144,7 +146,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
 
       if (options?.stream) {
         // 流式请求处理
-        const response = await fetch(`${API_BASE.replace(/\/$/, '')}/ai/chat/intelligent/stream`, requestOptions)
+        const response = await fetch(`${API_BASE.replace(/\/$/, '')}/ai/chat/stream`, requestOptions)
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`)
@@ -167,7 +169,9 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
                   const data = JSON.parse(line.slice(6))
                   handleStreamEvent(data)
                 } catch (e) {
-                  console.error('Failed to parse stream data:', e)
+                  if (AI_DEBUG_LOGS_ENABLED) {
+                    console.error('Failed to parse stream data:', e)
+                  }
                 }
               }
             }
@@ -186,7 +190,9 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
       }
 
     } catch (error) {
-      console.error('Failed to send message:', error)
+      if (AI_DEBUG_LOGS_ENABLED) {
+        console.error('Failed to send message:', error)
+      }
       const err = error instanceof Error ? error : new Error('Unknown error')
       setError(err)
 
@@ -218,7 +224,9 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
 
       case 'intent':
         // 可以在这里更新当前的意图信息
-        console.log('Current intent:', data.payload)
+        if (AI_DEBUG_LOGS_ENABLED) {
+          console.log('Current intent:', data.payload)
+        }
         break
 
       case 'plan':
@@ -227,7 +235,9 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
 
       case 'operation_result':
         // 处理操作结果
-        console.log('Operation result:', data.payload)
+        if (AI_DEBUG_LOGS_ENABLED) {
+          console.log('Operation result:', data.payload)
+        }
         break
 
       case 'complete':

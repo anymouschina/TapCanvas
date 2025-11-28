@@ -221,6 +221,11 @@ function buildPromptFromState(
     const edges = (state.edges || []) as any[]
     const inbound = edges.filter((e) => e.target === id)
     const upstreamPrompts: string[] = []
+    const inboundHasImage = inbound.some((edge) => {
+      const src = (state.nodes as Node[]).find((n: Node) => n.id === edge.source)
+      const skind: string | undefined = (src?.data as any)?.kind
+      return skind ? IMAGE_NODE_KINDS.has(skind) : false
+    })
     if (inbound.length) {
       inbound.forEach((edge) => {
         const src = (state.nodes as Node[]).find((n: Node) => n.id === edge.source)
@@ -252,8 +257,14 @@ function buildPromptFromState(
           .forEach((p) => upstreamPrompts.push(p))
       })
     }
-    const own = typeof data.prompt === 'string' ? data.prompt : ''
-    const combined = [...upstreamPrompts, own].filter((p) => typeof p === 'string' && p.trim())
+    // 优先保留节点自身已写入的 prompt/videoPrompt
+    const ownPrompt = typeof data.prompt === 'string' ? data.prompt : ''
+    const ownVideoPrompt = typeof data.videoPrompt === 'string' ? data.videoPrompt : ''
+    const own = ownVideoPrompt || ownPrompt
+    const combinedBase = inboundHasImage
+      ? [own] // 参考图场景下，避免把上游图的提示词混入视频 prompt
+      : [...upstreamPrompts, own]
+    const combined = combinedBase.filter((p) => typeof p === 'string' && p.trim())
     if (!combined.length) {
       return (data.label as string) || ''
     }
@@ -566,7 +577,7 @@ async function runVideoTask(ctx: RunnerContext) {
       }
     }
 
-    // 如果有上游图片，避免把图片的提示词重复塞进视频提示词；保留用户写的内容并注明参考上游图片风格
+    // 如果有上游图片，删除上游图的 prompt 片段，保留自身 prompt，并追加参考说明
     let finalPrompt = effectivePrompt
     if (imageUrlForUpload) {
       const inboundImages = inbound

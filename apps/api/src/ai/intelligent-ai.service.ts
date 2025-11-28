@@ -181,6 +181,26 @@ export class IntelligentAiService {
     payload: ChatRequestDto,
     res: any
   ): Promise<void> {
+    // 已由 /ai/chat/stream 统一接管 UI 流，保留此方法用于旧路径兼容（通过 controller 转发）
+    return this.runSidecarStreaming(userId, payload, res)
+  }
+
+  /**
+   * 智能流程的“旁路”执行：复用普通流式 UI 通道，思考/计划/操作通过 tool-events 推送
+   */
+  async runSidecarStreaming(
+    userId: string,
+    payload: ChatRequestDto,
+    res?: any
+  ): Promise<void> {
+    // SSE headers
+    if (res) {
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Connection', 'keep-alive')
+      res.flushHeaders?.()
+      res.write(':\n\n') // kickstart stream for some proxies
+    }
 
     const executionContext: ExecutionContext = {
       userId,
@@ -194,12 +214,15 @@ export class IntelligentAiService {
     let activePlanId: string | undefined
 
     try {
-      // 实时思考过程推送
+      // 实时思考过程推送（经由工具事件复用前端订阅链路）
       const onThinkingEvent = (event: ThinkingEvent) => {
-        res.write(`data: ${JSON.stringify({
-          type: 'thinking',
-          payload: event
-        })}\n\n`)
+        this.emitThinkingEvent(userId, event)
+        if (res) {
+          res.write(`data: ${JSON.stringify({
+            type: 'thinking',
+            payload: event
+          })}\n\n`)
+        }
       }
 
       // 意图识别
@@ -210,15 +233,29 @@ export class IntelligentAiService {
       )
 
       // 推送识别结果
-      res.write(`data: ${JSON.stringify({
-        type: 'intent',
-        payload: {
-          type: intent.type,
-          confidence: intent.confidence,
-          reasoning: intent.reasoning,
-          planSteps: intent.planSteps
-        }
-      })}\n\n`)
+      if (res) {
+        res.write(`data: ${JSON.stringify({
+          type: 'intent',
+          payload: {
+            type: intent.type,
+            confidence: intent.confidence,
+            reasoning: intent.reasoning,
+            planSteps: intent.planSteps
+          }
+        })}\n\n`)
+      } else {
+        this.toolEvents.emit(userId, {
+          type: 'tool-result',
+          toolCallId: `intent_${executionContext.sessionId}`,
+          toolName: 'ai.intent.detected',
+          output: {
+            type: intent.type,
+            confidence: intent.confidence,
+            reasoning: intent.reasoning,
+            planSteps: intent.planSteps
+          }
+        })
+      }
 
       // 执行规划并实时推送
       const { plan, operations } = await this.thinkingStream.processWithThinking(
@@ -237,19 +274,21 @@ export class IntelligentAiService {
       activePlanId = plan.id
 
       // 推送执行计划
-      res.write(`data: ${JSON.stringify({
-        type: 'plan',
-        payload: {
-          strategy: plan.strategy.name,
-          steps: plan.steps.map(step => ({
-            id: step.id,
-            name: step.name,
-            description: step.description,
-            status: step.status
-          })),
-          estimatedTime: plan.estimatedTime
-        }
-      })}\n\n`)
+      if (res) {
+        res.write(`data: ${JSON.stringify({
+          type: 'plan',
+          payload: {
+            strategy: plan.strategy.name,
+            steps: plan.steps.map(step => ({
+              id: step.id,
+              name: step.name,
+              description: step.description,
+              status: step.status
+            })),
+            estimatedTime: plan.estimatedTime
+          }
+        })}\n\n`)
+      }
 
       const operationResults = await this.executeOperations(
         operations,
@@ -257,37 +296,62 @@ export class IntelligentAiService {
         plan,
         userId,
         (operation, result) => {
-          res.write(`data: ${JSON.stringify({
-            type: 'operation_result',
-            payload: {
+          if (res) {
+            res.write(`data: ${JSON.stringify({
+              type: 'operation_result',
+              payload: {
+                operationId: operation.id,
+                success: result.success,
+                result: result.result,
+                duration: result.duration
+              }
+            })}\n\n`)
+          }
+          this.toolEvents.emit(userId, {
+            type: 'tool-result',
+            toolCallId: `operation_${operation.id}`,
+            toolName: 'ai.operation.result',
+            output: {
               operationId: operation.id,
               success: result.success,
               result: result.result,
-              duration: result.duration
+              duration: result.duration,
+              error: result.error
             }
-          })}\n\n`)
+          })
         }
       )
 
       // 完成信号
-      res.write(`data: ${JSON.stringify({
-        type: 'complete',
-        payload: {
-          reply: this.generateFinalReply(intent, plan, operationResults),
-          intent: {
-            type: intent.type,
-            confidence: intent.confidence,
-            reasoning: intent.reasoning,
-            planSteps: intent.planSteps
-          },
-          summary: {
-            operationsCount: operationResults.length,
-            thinkingSteps: this.thinkingStream.getCurrentEvents().length
-          }
+      const summaryPayload = {
+        reply: this.generateFinalReply(intent, plan, operationResults),
+        intent: {
+          type: intent.type,
+          confidence: intent.confidence,
+          reasoning: intent.reasoning,
+          planSteps: intent.planSteps
+        },
+        summary: {
+          operationsCount: operationResults.length,
+          thinkingSteps: this.thinkingStream.getCurrentEvents().length
         }
-      })}\n\n`)
+      }
 
-      res.end()
+      if (res) {
+        res.write(`data: ${JSON.stringify({
+          type: 'complete',
+          payload: summaryPayload
+        })}\n\n`)
+
+        res.end()
+      } else {
+        this.toolEvents.emit(userId, {
+          type: 'tool-result',
+          toolCallId: `intelligent_complete_${plan.id || executionContext.sessionId}`,
+          toolName: 'ai.intelligent.summary',
+          output: summaryPayload
+        })
+      }
 
     } catch (error) {
       if (activePlanId) {
@@ -296,15 +360,27 @@ export class IntelligentAiService {
 
       this.logger.error('Stream intelligent chat failed', error as any)
 
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        payload: {
-          message: '智能处理失败',
-          error: (error as Error).message
-        }
-      })}\n\n`)
+      if (res) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          payload: {
+            message: '智能处理失败',
+            error: (error as Error).message
+          }
+        })}\n\n`)
 
-      res.end()
+        res.end()
+      } else {
+        this.toolEvents.emit(userId, {
+          type: 'tool-result',
+          toolCallId: `intelligent_error_${Date.now()}`,
+          toolName: 'ai.intelligent.error',
+          output: {
+            message: '智能处理失败',
+            error: (error as Error).message
+          }
+        })
+      }
     }
   }
 

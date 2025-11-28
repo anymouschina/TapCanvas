@@ -29,6 +29,26 @@ import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
 import { UseChatAssistant } from './ai/UseChatAssistant'
 import { getQuickStartSampleFlow } from './quickStartSample'
+import { getHandleTypeLabel } from './utils/handleLabels'
+
+// 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
+const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | null) => {
+  if (!sourceKind || !targetKind) return true
+  const allow: Record<string, string[]> = {
+    textToImage: ['composeVideo', 'storyboard', 'video', 'image'],
+    image: ['composeVideo', 'storyboard', 'video', 'image'],
+    video: ['composeVideo', 'storyboard', 'video'],
+    composeVideo: ['composeVideo', 'storyboard', 'video'],
+    storyboard: ['composeVideo', 'storyboard', 'video'],
+    tts: ['composeVideo', 'video'],
+    subtitleAlign: ['composeVideo', 'video', 'storyboard'],
+    character: ['composeVideo', 'storyboard', 'video', 'character'],
+    subflow: ['composeVideo', 'storyboard', 'video', 'image', 'character', 'subflow'],
+  }
+  const targets = allow[sourceKind]
+  if (!targets) return true
+  return targets.includes(targetKind)
+}
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -134,15 +154,6 @@ function CanvasInner(): JSX.Element {
     }
   }, [rf])
 
-  const isValidEdgeByType = useCallback((sourceKind?: string, targetKind?: string) => {
-    if (!sourceKind || !targetKind) return true
-    const isStoryboardTarget = targetKind === 'storyboard'
-    if (targetKind === 'composeVideo' || isStoryboardTarget) return ['textToImage','tts','subtitleAlign','composeVideo','storyboard','image','video','character'].includes(sourceKind)
-    if (targetKind === 'image') return ['image','textToImage'].includes(sourceKind)
-    if (targetKind === 'video') return ['image','composeVideo','storyboard','video','character'].includes(sourceKind)
-    return true
-  }, [])
-
   const createsCycle = useCallback((proposed: { source?: string|null; target?: string|null }) => {
     const sId = proposed.source
     const tId = proposed.target
@@ -198,19 +209,140 @@ function CanvasInner(): JSX.Element {
     }
   }, [nodes])
 
+  const SNAP_DISTANCE = 64
+  const NODE_SNAP_DISTANCE = 140
+
   const onConnectEnd = useCallback((_evt: any) => {
     const from = connectFromRef.current
-    if (connectingType && !didConnectRef.current && !lastReason.current && from) {
-      // 从 text 节点拖出并松手在空白处：打开插入菜单
-      useInsertMenuStore.getState().openMenu({
-        x: mouse.x,
-        y: mouse.y,
-        fromNodeId: from.nodeId,
-        fromHandle: from.handleId || 'out-any',
-      })
-    } else if (connectingType && lastReason.current) {
-      const msg = lastReason.current || $('连接无效：类型不兼容、重复或形成环')
-      toast(msg, 'error')
+
+    // Auto-snap to nearest compatible target handle / node
+    const autoSnap = () => {
+      if (!connectingType || !from) return false
+
+      const tryConnectWithHandle = (handleEl: HTMLElement | null) => {
+        if (!handleEl) return false
+        const targetHandle = handleEl.getAttribute('data-handleid') || handleEl.getAttribute('id') || undefined
+        const targetNodeId =
+          (handleEl.getAttribute('data-nodeid') || undefined) ||
+         (handleEl.closest('.react-flow__node') as HTMLElement | null)?.getAttribute('data-id') ||
+         undefined
+       if (!targetHandle || !targetNodeId) return false
+
+        const sourceNodeId = from.nodeId
+        const sourceHandleId = from.handleId || 'out-any'
+
+        const sNode = nodes.find(n => n.id === sourceNodeId)
+        const tNode = nodes.find(n => n.id === targetNodeId)
+        if (!sNode || !tNode) return false
+
+        if (sourceNodeId === targetNodeId) return false
+        if (edges.some(e => e.source === sourceNodeId && e.target === targetNodeId)) return false
+        if (createsCycle({ source: sourceNodeId, target: targetNodeId })) return false
+        const sKind = (sNode.data as any)?.kind
+        const tKind = (tNode.data as any)?.kind
+        if (!isValidEdgeByType(sKind, tKind)) return false
+
+        handleConnect({
+          source: sourceNodeId,
+          sourceHandle: sourceHandleId,
+          target: targetNodeId,
+          targetHandle,
+        })
+        return true
+      }
+
+      const pickHandleForNode = (nodeEl: HTMLElement | null) => {
+        if (!nodeEl) return null
+        const handlesInNode = Array.from(
+          nodeEl.querySelectorAll('.tc-handle.react-flow__handle-target, .react-flow__handle-target')
+        ) as HTMLElement[]
+        if (!handlesInNode.length) return null
+        if (!connectingType) return handlesInNode[0]
+        const exact = handlesInNode.find(el => (el.getAttribute('data-handle-type') || '') === connectingType)
+        if (exact) return exact
+        const anyHandle = handlesInNode.find(el => {
+          const type = el.getAttribute('data-handle-type')
+          return !type || type === 'any'
+        })
+        return anyHandle || handlesInNode[0]
+      }
+
+      const tryConnectViaNode = (nodeEl: HTMLElement | null) => {
+        if (!nodeEl) return false
+        const handleEl = pickHandleForNode(nodeEl)
+        if (!handleEl) return false
+        return tryConnectWithHandle(handleEl)
+      }
+
+      let touched = false
+      const hoveredElement = document.elementFromPoint(mouse.x, mouse.y) as HTMLElement | null
+      if (hoveredElement) {
+        touched = true
+        const hoveredHandle = hoveredElement.closest('.tc-handle.react-flow__handle-target') as HTMLElement | null
+        if (tryConnectWithHandle(hoveredHandle)) return true
+        const hoveredNode = hoveredElement.closest('.react-flow__node') as HTMLElement | null
+        if (tryConnectViaNode(hoveredNode)) return true
+      }
+
+      const handles = Array.from(document.querySelectorAll('.tc-handle.react-flow__handle-target')) as HTMLElement[]
+      if (!handles.length) return touched
+
+      let best: { el: HTMLElement; dist: number } | null = null
+      for (const el of handles) {
+        const rect = el.getBoundingClientRect()
+        const cx = rect.left + rect.width / 2
+        const cy = rect.top + rect.height / 2
+        const dist = Math.hypot(cx - mouse.x, cy - mouse.y)
+        if (dist > SNAP_DISTANCE) continue
+        if (!best || dist < best.dist) best = { el, dist }
+      }
+      if (!best) {
+        // Fallback: pick globally最近 compatible handle even超出 SNAP_DISTANCE
+        for (const el of handles) {
+          const rect = el.getBoundingClientRect()
+          const cx = rect.left + rect.width / 2
+          const cy = rect.top + rect.height / 2
+          const dist = Math.hypot(cx - mouse.x, cy - mouse.y)
+          if (!best || dist < best.dist) best = { el, dist }
+        }
+      }
+      // If still not found, try snapping to the nearest node body
+      if (!best) {
+        const nodeEls = Array.from(document.querySelectorAll('.react-flow__node')) as HTMLElement[]
+        let bestNode: { el: HTMLElement; dist: number } | null = null
+        for (const el of nodeEls) {
+          const nodeId = el.getAttribute('data-id')
+          if (!nodeId || nodeId === from.nodeId) continue
+          const rect = el.getBoundingClientRect()
+          const dx = Math.max(rect.left - mouse.x, 0, mouse.x - rect.right)
+          const dy = Math.max(rect.top - mouse.y, 0, mouse.y - rect.bottom)
+          const dist = Math.hypot(dx, dy)
+          if (dist > NODE_SNAP_DISTANCE && !(mouse.x >= rect.left && mouse.x <= rect.right && mouse.y >= rect.top && mouse.y <= rect.bottom)) continue
+          if (!bestNode || dist < bestNode.dist) bestNode = { el, dist }
+        }
+        if (bestNode) {
+          touched = true
+          if (tryConnectViaNode(bestNode.el)) {
+            return true
+          }
+        }
+      }
+      if (!best) return touched
+
+      return tryConnectWithHandle(best.el)
+    }
+
+    if (connectingType && !didConnectRef.current && from) {
+      const snapped = autoSnap()
+      if (!snapped) {
+        // 从 text 节点拖出并松手在空白处：打开插入菜单
+        useInsertMenuStore.getState().openMenu({
+          x: mouse.x,
+          y: mouse.y,
+          fromNodeId: from.nodeId,
+          fromHandle: from.handleId || 'out-any',
+        })
+      }
     }
     setConnectingType(null)
     lastReason.current = null
@@ -701,32 +833,9 @@ function CanvasInner(): JSX.Element {
           if (createsCycle({ source: c.source, target: c.target })) { lastReason.current = $('连接会导致环'); return false }
           const dup = edges.some(e => e.source === c.source && e.target === c.target)
           if (dup) { lastReason.current = $('重复连接'); return false }
-          const sNode = nodes.find(n => n.id === c.source)
-          const tNode = nodes.find(n => n.id === c.target)
-          const sKind = sNode?.data?.kind as string | undefined
-          const tKind = tNode?.data?.kind as string | undefined
-          // handle type matching
-          const sHandle = c.sourceHandle || ''
-          const tHandle = c.targetHandle || ''
-          if (sHandle && tHandle) {
-            const sType = sHandle.toString().startsWith('out-') ? sHandle.toString().slice(4).split('-')[0] : undefined
-            const tType = tHandle.toString().startsWith('in-') ? tHandle.toString().slice(3).split('-')[0] : undefined
-            if (sType && tType && sType !== 'any' && tType !== 'any' && sType !== tType) {
-              let crossAllowed = sType === 'video' && tType === 'subtitle'
-              const sourceIsVideoKind = ['video', 'composeVideo', 'storyboard'].includes(sKind || '')
-              const targetIsVideoKind = ['video', 'composeVideo', 'storyboard'].includes(tKind || '')
-              if (!crossAllowed && sType === 'video' && sourceIsVideoKind && targetIsVideoKind) {
-                crossAllowed = true
-              }
-              if (!crossAllowed) {
-                lastReason.current = $t('类型不兼容：{{from}} → {{to}}', { from: sType, to: tType })
-                return false
-              }
-            }
-          }
-          const ok = isValidEdgeByType(sKind, tKind)
-          if (!ok) lastReason.current = $('不允许的连接方向')
-          return ok
+          // 不做 feature/类型校验，仅阻止自连、重复和环路
+          lastReason.current = null
+          return true
         }}
         snapToGrid
         snapGrid={[16, 16]}
@@ -1033,8 +1142,8 @@ function CanvasInner(): JSX.Element {
         )
       })()}
       {connectingType && (
-        <div style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,.1)' }}>
-          连接类型: {connectingType}，拖到兼容端口
+        <div style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6 }}>
+          {$t('连接类型: {type}，拖到兼容端口', { type: getHandleTypeLabel(connectingType) })}
         </div>
       )}
     </div>

@@ -151,9 +151,6 @@ export class CanvasService {
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
     const { remixFromNodeId: configRemixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
     const data: Record<string, any> = { ...baseData, ...restConfig }
-    if (!data.prompt && label) {
-      data.prompt = label
-    }
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
       ? params.remixFromNodeId.trim()
@@ -197,14 +194,39 @@ export class CanvasService {
     config?: Record<string, any>
   }): Promise<FunctionResult> {
     try {
-      const { updateNodeLabel, updateNodeData } = useRFStore.getState()
+      const { updateNodeLabel, updateNodeData, appendLog, nodes } = useRFStore.getState()
+      const nowLabel = () => new Date().toLocaleTimeString()
+      const targetLabel =
+        nodes.find((n) => n.id === params.nodeId)?.data?.label || params.nodeId
 
       if (params.label) {
         updateNodeLabel(params.nodeId, params.label)
+        appendLog?.(params.nodeId, `[${nowLabel()}] 重命名为「${params.label}」`)
       }
 
       if (params.config) {
         updateNodeData(params.nodeId, params.config)
+        const logs: string[] = []
+        if (typeof params.config.prompt === 'string') {
+          logs.push(`prompt 写入（${params.config.prompt.length} 字符）`)
+        }
+        if (typeof params.config.negativePrompt === 'string') {
+          logs.push(`negativePrompt 写入（${params.config.negativePrompt.length} 字符）`)
+        }
+        if (params.config.keywords) {
+          const kw =
+            Array.isArray(params.config.keywords)
+              ? params.config.keywords
+              : typeof params.config.keywords === 'string'
+                ? params.config.keywords.split(',').map((s) => s.trim()).filter(Boolean)
+                : []
+          if (kw.length) {
+            logs.push(`keywords 写入（${kw.length} 项）`)
+          }
+        }
+        if (logs.length) {
+          appendLog?.(params.nodeId, `[${nowLabel()}] ${logs.join('，')} → ${targetLabel}`)
+        }
       }
 
       return {
@@ -312,6 +334,120 @@ export class CanvasService {
         error: error instanceof Error ? error.message : '断开连接失败'
       }
     }
+  }
+
+  /**
+   * 统一处理节点操作（来自智能助手）
+   */
+  static async nodeOperation(params: {
+    action: 'create' | 'update' | 'delete' | 'duplicate'
+    nodeType?: string
+    position?: { x: number; y: number }
+    config?: Record<string, any>
+    nodeIds?: string[]
+    operations?: any[]
+  }): Promise<FunctionResult> {
+    const action = params.action
+    if (action === 'create') {
+      return this.createNode({
+        type: params.nodeType || (params.config as any)?.kind || 'text',
+        label: params.config?.label || params.nodeType || '节点',
+        config: params.config || {},
+        position: params.position,
+      })
+    }
+
+    if (action === 'update') {
+      const targets = params.nodeIds && params.nodeIds.length ? params.nodeIds : []
+      if (!targets.length) {
+        return { success: false, error: '缺少要更新的节点 ID' }
+      }
+      for (const nodeId of targets) {
+        await this.updateNode({ nodeId, config: params.config || {} })
+      }
+      return { success: true, data: { message: `已更新 ${targets.length} 个节点` } }
+    }
+
+    if (action === 'delete') {
+      const targets = params.nodeIds && params.nodeIds.length ? params.nodeIds : []
+      if (!targets.length) {
+        return { success: false, error: '缺少要删除的节点 ID' }
+      }
+      for (const nodeId of targets) {
+        await this.deleteNode({ nodeId })
+      }
+      return { success: true, data: { message: `已删除 ${targets.length} 个节点` } }
+    }
+
+    if (action === 'duplicate') {
+      const targets = params.nodeIds && params.nodeIds.length ? params.nodeIds : []
+      if (!targets.length) {
+        return { success: false, error: '缺少要复制的节点 ID' }
+      }
+      const state = useRFStore.getState()
+      const nodesToCopy = state.nodes.filter((n) => targets.includes(n.id))
+      const offset = 60
+      useRFStore.setState((s: any) => {
+        const now = Date.now()
+        const clones = nodesToCopy.map((node, idx) => ({
+          ...node,
+          id: `${node.id}_copy_${now}_${idx}`,
+          position: {
+            x: (node.position?.x || 0) + offset * (idx + 1),
+            y: (node.position?.y || 0) + offset * (idx + 1),
+          },
+          selected: false,
+        }))
+        return { nodes: [...s.nodes, ...clones] }
+      })
+      return { success: true, data: { message: `已复制 ${targets.length} 个节点` } }
+    }
+
+    return { success: false, error: `不支持的操作：${action}` }
+  }
+
+  /**
+   * 处理连线操作（来自智能助手）
+   */
+  static async connectionOperation(params: {
+    action?: 'connect' | 'disconnect' | 'reconnect'
+    sourceNodeId?: string
+    targetNodeId?: string
+    edgeId?: string
+    connections?: Array<{ sourceNodeId: string; targetNodeId: string }>
+  }): Promise<FunctionResult> {
+    const action = params.action || 'connect'
+    if (Array.isArray(params.connections) && params.connections.length) {
+      for (const conn of params.connections) {
+        if (conn.sourceNodeId && conn.targetNodeId) {
+          await this.connectNodes({ sourceNodeId: conn.sourceNodeId, targetNodeId: conn.targetNodeId })
+        }
+      }
+      return { success: true, data: { message: `已处理 ${params.connections.length} 条连接` } }
+    }
+
+    if (action === 'disconnect') {
+      if (params.edgeId) {
+        return this.disconnectNodes({ edgeId: params.edgeId })
+      }
+      const state = useRFStore.getState()
+      const edge = state.edges.find(
+        (e) => e.source === params.sourceNodeId && e.target === params.targetNodeId,
+      )
+      if (edge?.id) {
+        return this.disconnectNodes({ edgeId: edge.id })
+      }
+      return { success: false, error: '未找到可断开的连接' }
+    }
+
+    if (params.sourceNodeId && params.targetNodeId) {
+      return this.connectNodes({
+        sourceNodeId: params.sourceNodeId,
+        targetNodeId: params.targetNodeId,
+      })
+    }
+
+    return { success: false, error: '缺少连接参数' }
   }
 
   /**
@@ -526,6 +662,8 @@ export const functionHandlers = {
   deleteNode: CanvasService.deleteNode,
   connectNodes: CanvasService.connectNodes,
   disconnectNodes: CanvasService.disconnectNodes,
+  'canvas.node.operation': CanvasService.nodeOperation,
+  'canvas.connection.operation': CanvasService.connectionOperation,
   getNodes: CanvasService.getNodes,
   findNodes: CanvasService.findNodes,
   autoLayout: CanvasService.autoLayout,
