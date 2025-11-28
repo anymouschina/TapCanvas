@@ -586,11 +586,6 @@ async function runVideoTask(ctx: RunnerContext) {
       const upstreamPrompts = inboundImages
         .map((n) => (n.data as any)?.prompt as string | undefined)
         .filter((p): p is string => Boolean(p && p.trim().length > 0))
-      upstreamPrompts.forEach((upPrompt) => {
-        if (finalPrompt.includes(upPrompt)) {
-          finalPrompt = finalPrompt.replace(upPrompt, '').trim()
-        }
-      })
       const refNote = '参考上游图片风格。'
       if (!finalPrompt) {
         finalPrompt = refNote
@@ -639,6 +634,7 @@ async function runVideoTask(ctx: RunnerContext) {
         kind,
         preview,
       },
+      prompt: finalPrompt,
       soraVideoTask: res,
       videoTaskId: taskId || null,
       videoInpaintFileId: inpaintFileId || null,
@@ -663,6 +659,7 @@ async function runVideoTask(ctx: RunnerContext) {
           kind,
           preview,
         },
+        prompt: finalPrompt,
         soraVideoTask: res,
         videoTaskId: null,
         videoInpaintFileId: inpaintFileId || null,
@@ -919,6 +916,7 @@ async function runVideoTask(ctx: RunnerContext) {
           ? { type: 'video', src: rewriteSoraVideoResourceUrl(videoUrl) }
           : preview,
       },
+      prompt: finalPrompt,
       soraVideoTask: res,
       videoTaskId: taskId,
       videoInpaintFileId: inpaintFileId || null,

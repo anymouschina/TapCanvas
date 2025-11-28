@@ -68,11 +68,18 @@ export const VIDEO_REALISM_RULES: VideoRealismRule[] = [
     summary: '设计有目的性的动作链与保留少量瑕疵（motion blur、色偏），让画面更像现场记录。',
     promptLine:
       'Micro narrative: phone buzzes → she checks the message → tram rushes past → she dodges and boards, retaining motion blur and slight color shift.'
+  },
+  {
+    id: 'voice-timbre',
+    title: '音色与对白真实性',
+    summary: '对白需有具体音色、音量与空间感：音色（女中音/男中音等）、气声比例、口型噪声、收声距离、房间混响时长与整体响度。',
+    promptLine:
+      'Voice: close-mic dialogue, warm baritone (110–150 Hz fundamental) with 25% breathiness, soft lip/tongue noise, -16 LUFS integrated loudness, gentle room reverb RT60≈0.4s.'
   }
 ]
 
 export const VIDEO_REALISM_SYSTEM_GUIDE = [
-  '当用户创建 composeVideo/视频节点时，必须默认套用“AI 视频真实感九大法则”：',
+  '当用户创建 composeVideo/视频节点时，必须默认套用“AI 视频真实感十条原则”：',
   ...VIDEO_REALISM_RULES.map(
     rule => `- ${rule.title}：${rule.summary}，并在 prompt 中用英文描述其细节。`
   ),
