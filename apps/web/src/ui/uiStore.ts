@@ -1,5 +1,14 @@
 import { create } from 'zustand'
 
+type CharacterCreatorPayload = {
+  source?: string
+  name?: string
+  summary?: string
+  tags?: string[]
+  soraTokenId?: string | null
+  clipRange?: { start: number; end: number }
+}
+
 type UIState = {
   subflowNodeId: string | null
   openSubflow: (nodeId: string) => void
@@ -39,6 +48,9 @@ type UIState = {
   setPromptSuggestMode: (m: 'off' | 'history' | 'semantic') => void
   soraVideoBaseUrl: string | null
   setSoraVideoBaseUrl: (url: string | null) => void
+  characterCreatorRequest: { timestamp: number; payload?: CharacterCreatorPayload } | null
+  requestCharacterCreator: (payload?: CharacterCreatorPayload | null) => void
+  clearCharacterCreatorRequest: () => void
   // AI Chat
   aiChatMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>
   addAiMessage: (message: { role: 'user' | 'assistant'; content: string }) => void
@@ -86,6 +98,14 @@ export const useUIStore = create<UIState>((set) => ({
   setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
   soraVideoBaseUrl: null,
   setSoraVideoBaseUrl: (url) => set({ soraVideoBaseUrl: url }),
+  characterCreatorRequest: null,
+  requestCharacterCreator: (payload) =>
+    set({
+      characterCreatorRequest: payload
+        ? { timestamp: Date.now(), payload }
+        : { timestamp: Date.now() },
+    }),
+  clearCharacterCreatorRequest: () => set({ characterCreatorRequest: null }),
   // AI Chat
   aiChatMessages: [],
   addAiMessage: (message) => set((s) => ({

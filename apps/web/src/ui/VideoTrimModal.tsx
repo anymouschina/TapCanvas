@@ -9,12 +9,13 @@ type VideoTrimModalProps = {
   thumbnails: string[]
   loading?: boolean
   progressPct?: number | null
+  defaultRange?: { start: number; end: number }
   onClose: () => void
   onConfirm: (range: { start: number; end: number }) => void
 }
 
 const MIN_TRIM_DURATION = 1 // seconds
-const MAX_TRIM_DURATION = 2 // seconds
+const MAX_TRIM_DURATION = 3 // seconds
 const TIMELINE_HEIGHT = 72
 const THUMB_WIDTH = 64
 
@@ -26,6 +27,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
     thumbnails,
     loading = false,
     progressPct = null,
+    defaultRange,
     onClose,
     onConfirm,
   } = props
@@ -53,12 +55,38 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
 
   // 当弹窗打开且拿到有效时长时，默认选中 0~MAX_TRIM_DURATION 区间
   useEffect(() => {
-    if (opened && originalDuration > 0) {
+    if (!opened || originalDuration <= 0) return
+    const fallbackEnd = Math.min(originalDuration, MAX_TRIM_DURATION)
+    if (defaultRange) {
+      const rawStart = Number(defaultRange.start)
+      const rawEnd = Number(defaultRange.end)
+      let start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0
+      let end = Number.isFinite(rawEnd) ? rawEnd : start + MIN_TRIM_DURATION
+      if (end <= start) {
+        end = start + MIN_TRIM_DURATION
+      }
+      end = Math.min(originalDuration, Math.min(start + MAX_TRIM_DURATION, Math.max(start + MIN_TRIM_DURATION, end)))
+      if (end > originalDuration) {
+        const diff = end - originalDuration
+        end = originalDuration
+        start = Math.max(0, start - diff)
+      }
+      if (end - start > MAX_TRIM_DURATION) {
+        end = start + MAX_TRIM_DURATION
+      }
+      if (start > originalDuration) {
+        start = Math.max(0, originalDuration - MAX_TRIM_DURATION)
+        end = Math.min(originalDuration, start + MAX_TRIM_DURATION)
+      }
+      setTrimStart(start)
+      setTrimEnd(end)
+      setCurrentTime(start)
+    } else {
       setTrimStart(0)
-      setTrimEnd(Math.min(originalDuration, MAX_TRIM_DURATION))
+      setTrimEnd(fallbackEnd)
       setCurrentTime(0)
     }
-  }, [opened, originalDuration])
+  }, [opened, originalDuration, defaultRange])
 
   useEffect(() => {
     if (!opened) {

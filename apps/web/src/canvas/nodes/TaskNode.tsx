@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -28,6 +28,7 @@ import {
   IconPlus,
   IconTrash,
   IconMovie,
+  IconUserPlus,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto, type TaskResultDto } from '../../api/server'
 import {
@@ -58,6 +59,7 @@ import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { VideoRealismTips } from '../components/shared/VideoRealismTips'
 import { getHandleTypeLabel } from '../utils/handleLabels'
+import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -320,6 +322,168 @@ const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
   return ''
 }
 
+type FrameCompareSummary = {
+  same: boolean | 'unknown'
+  reason?: string
+  tags?: string[]
+  frames?: Array<{ time?: number; desc?: string }>
+}
+
+type FrameSample = {
+  url: string
+  time: number
+  blob: Blob | null
+  remoteUrl?: string | null
+  description?: string | null
+  describing?: boolean
+}
+
+type CharacterCard = {
+  id: string
+  name: string
+  summary?: string
+  tags?: string[]
+  frames: Array<{ time: number; desc: string }>
+  startFrame?: { time: number; url: string }
+  endFrame?: { time: number; url: string }
+  clipRange?: { start: number; end: number }
+}
+
+const MAX_FRAME_ANALYSIS_SAMPLES = 60
+const CHARACTER_CLIP_MIN = 1.2
+const CHARACTER_CLIP_MAX = 3
+
+const tryParseJsonLike = (value: string): any | null => {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const candidates: string[] = []
+  const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)
+  if (codeBlock && codeBlock[1].trim()) {
+    candidates.push(codeBlock[1].trim())
+  }
+  const braceStart = trimmed.indexOf('{')
+  const braceEnd = trimmed.lastIndexOf('}')
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    candidates.push(trimmed.slice(braceStart, braceEnd + 1))
+  }
+  candidates.push(trimmed)
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // ignore parse error and try next candidate
+    }
+  }
+  return null
+}
+
+const parseFrameCompareSummary = (value?: string | null): FrameCompareSummary | null => {
+  if (!value) return null
+  const parsed = tryParseJsonLike(value)
+  if (!parsed || typeof parsed !== 'object') return null
+
+  const normalizedSame = (() => {
+    const rawSame = (parsed as any).same
+    if (typeof rawSame === 'boolean') return rawSame
+    if (typeof rawSame === 'string') {
+      const lowered = rawSame.toLowerCase()
+      if (lowered === 'true' || lowered === 'yes') return true
+      if (lowered === 'false' || lowered === 'no') return false
+      if (lowered === 'unknown' || lowered === 'uncertain') return 'unknown'
+    }
+    return 'unknown'
+  })()
+
+  const tags = Array.isArray((parsed as any).tags)
+    ? (parsed as any).tags
+        .map((tag: any) => (typeof tag === 'string' ? tag.trim() : ''))
+        .filter((tag: string) => Boolean(tag))
+    : undefined
+
+  const frames = Array.isArray((parsed as any).frames)
+    ? (parsed as any).frames
+        .map((frame: any) => {
+          const timeValue = typeof frame?.time === 'number' ? frame.time : Number(frame?.time)
+          return {
+            time: Number.isFinite(timeValue) ? timeValue : undefined,
+            desc: typeof frame?.desc === 'string' ? frame.desc : undefined,
+          }
+        })
+        .filter((frame: { time?: number; desc?: string }) => typeof frame.time === 'number' || Boolean(frame.desc))
+    : undefined
+
+  const summary: FrameCompareSummary = {
+    same: normalizedSame,
+    reason: typeof (parsed as any).reason === 'string' ? (parsed as any).reason.trim() : undefined,
+    tags: tags && tags.length > 0 ? tags : undefined,
+    frames: frames && frames.length > 0 ? frames : undefined,
+  }
+
+  if (summary.same === 'unknown' && !summary.reason && !summary.tags && !summary.frames) {
+    return null
+  }
+  return summary
+}
+
+type CharacterCardJson = {
+  characters: Array<{
+    name?: string
+    summary?: string
+    tags?: string[]
+    frames?: Array<{ time?: number; desc?: string }>
+    keyframes?: { start?: number; end?: number }
+  }>
+}
+
+const parseCharacterCardResult = (value?: string | null): CharacterCardJson | null => {
+  if (!value) return null
+  const parsed = tryParseJsonLike(value)
+  if (!parsed) return null
+  const characters = Array.isArray((parsed as any).characters)
+    ? (parsed as any).characters
+    : Array.isArray(parsed)
+      ? parsed
+      : null
+  if (!characters || characters.length === 0) return null
+  return { characters }
+}
+
+const clampCharacterClipWindow = (frames: Array<{ time: number }>, totalDuration?: number | null) => {
+  if (!frames.length) {
+    return { start: 0, end: CHARACTER_CLIP_MIN }
+  }
+  const safeDuration = typeof totalDuration === 'number' && Number.isFinite(totalDuration) && totalDuration > 0
+    ? totalDuration
+    : null
+  let start = Number.isFinite(frames[0].time) ? frames[0].time : 0
+  let end = Number.isFinite(frames[frames.length - 1].time) ? frames[frames.length - 1].time : start
+  if (end < start) {
+    const tmp = start
+    start = end
+    end = tmp
+  }
+  if (end - start < CHARACTER_CLIP_MIN) {
+    end = start + CHARACTER_CLIP_MIN
+  }
+  if (end - start > CHARACTER_CLIP_MAX) {
+    end = start + CHARACTER_CLIP_MAX
+  }
+  if (safeDuration !== null && end > safeDuration) {
+    const delta = end - safeDuration
+    end = safeDuration
+    start = Math.max(0, start - delta)
+  }
+  if (start < 0) {
+    const delta = -start
+    start = 0
+    end = safeDuration !== null ? Math.min(safeDuration, end + delta) : end + delta
+  }
+  if (end - start < CHARACTER_CLIP_MIN) {
+    end = Math.min(start + CHARACTER_CLIP_MIN, safeDuration ?? start + CHARACTER_CLIP_MIN)
+  }
+  return { start, end }
+}
+
 const isDynamicHandlesConfig = (
   handles?: TaskNodeHandlesConfig | null,
 ): handles is { dynamic: true } => Boolean(handles && 'dynamic' in handles && handles.dynamic)
@@ -541,6 +705,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openSubflow = useUIStore(s => s.openSubflow)
   const openParamFor = useUIStore(s => s.openParamFor)
   const setActivePanel = useUIStore(s => s.setActivePanel)
+  const edgeRoute = useUIStore(s => s.edgeRoute)
+  const requestCharacterCreator = useUIStore(s => s.requestCharacterCreator)
   const runSelected = useRFStore(s => s.runSelected)
   const cancelNodeExecution = useRFStore(s => s.cancelNode)
   const setNodeStatus = useRFStore(s => s.setNodeStatus)
@@ -722,6 +888,263 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     setVideoPrimaryIndex((prev) => (prev === clamped ? prev : clamped))
   }, [persistedVideoPrimaryIndex, videoResults.length])
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
+  const frameSampleUrlsRef = React.useRef<string[]>([])
+  const frameSampleUploadsRef = React.useRef<Map<string, string>>(new Map())
+  const [frameSamples, setFrameSamples] = React.useState<FrameSample[]>([])
+  const [frameCaptureLoading, setFrameCaptureLoading] = React.useState(false)
+  const [frameCompareTimes, setFrameCompareTimes] = React.useState<number[]>([])
+  const [frameCompareResult, setFrameCompareResult] = React.useState<string | null>(null)
+  const [frameCompareLoading, setFrameCompareLoading] = React.useState(false)
+  const frameCompareSummary = React.useMemo(() => parseFrameCompareSummary(frameCompareResult), [frameCompareResult])
+  const frameCompareVerdict = React.useMemo(() => {
+    if (!frameCompareSummary) return null
+    if (frameCompareSummary.same === true) {
+      return { label: '同一角色', color: 'teal' as const }
+    }
+    if (frameCompareSummary.same === false) {
+      return { label: '不同角色', color: 'red' as const }
+    }
+    return { label: '无法确定', color: 'gray' as const }
+  }, [frameCompareSummary])
+  const [characterCards, setCharacterCards] = React.useState<CharacterCard[]>([])
+  const [characterCardLoading, setCharacterCardLoading] = React.useState(false)
+  const [characterCardError, setCharacterCardError] = React.useState<string | null>(null)
+  const [characterCreatorModalOpen, setCharacterCreatorModalOpen] = React.useState(false)
+  const [characterCreatorCard, setCharacterCreatorCard] = React.useState<CharacterCard | null>(null)
+  const [characterCreatorTokenId, setCharacterCreatorTokenId] = React.useState<string | null>(null)
+  const characterCreatorClipPreview = React.useMemo(() => {
+    if (!characterCreatorCard?.clipRange) return null
+    const start = Math.max(0, characterCreatorCard.clipRange.start)
+    const rawEnd = Math.max(start, characterCreatorCard.clipRange.end)
+    const end = Math.min(rawEnd, start + CHARACTER_CLIP_MAX)
+    return { start, end }
+  }, [characterCreatorCard])
+  const describedFrameCount = React.useMemo(() => frameSamples.filter((sample) => Boolean(sample.description)).length, [frameSamples])
+  const findNearestFrameSample = React.useCallback(
+    (time?: number | null): FrameSample | null => {
+      if (typeof time !== 'number' || !Number.isFinite(time) || frameSamples.length === 0) return null
+      let best: FrameSample | null = null
+      let bestDiff = Number.POSITIVE_INFINITY
+      frameSamples.forEach((sample) => {
+        const diff = Math.abs(sample.time - time)
+        if (diff < bestDiff) {
+          best = sample
+          bestDiff = diff
+        }
+      })
+      return best
+    },
+    [frameSamples],
+  )
+
+  const cleanupFrameSamples = React.useCallback(() => {
+    frameSampleUrlsRef.current.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u)
+      } catch {
+        // ignore
+      }
+    })
+    frameSampleUrlsRef.current = []
+    frameSampleUploadsRef.current.clear()
+    setFrameSamples([])
+    setFrameCompareTimes([])
+    setFrameCompareResult(null)
+    setCharacterCards([])
+    setCharacterCardError(null)
+    setCharacterCardLoading(false)
+  }, [])
+
+  React.useEffect(() => {
+    return () => {
+      cleanupFrameSamples()
+    }
+  }, [cleanupFrameSamples])
+
+  const handleCaptureVideoFrames = React.useCallback(async () => {
+    const src = videoResults[videoPrimaryIndex]?.url || videoUrl
+    if (!src) {
+      toast('当前没有可用的视频链接', 'error')
+      return
+    }
+    const duration = videoResults[videoPrimaryIndex]?.duration
+    const sampleTimes = (() => {
+      if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
+        const durationSeconds = Math.max(1, duration)
+        const floorSeconds = Math.floor(durationSeconds)
+        const times: number[] = []
+        const step = floorSeconds + 1 > MAX_FRAME_ANALYSIS_SAMPLES
+          ? Math.ceil((floorSeconds + 1) / MAX_FRAME_ANALYSIS_SAMPLES)
+          : 1
+        for (let t = 0; t <= floorSeconds; t += step) {
+          times.push(Number(t.toFixed(2)))
+        }
+        if (!times.includes(Number(durationSeconds.toFixed(2)))) {
+          times.push(Number(durationSeconds.toFixed(2)))
+        }
+        return times
+      }
+      return [0, 0.5, 1.5]
+    })().filter((t, idx, arr) => Number.isFinite(t) && t >= 0 && arr.indexOf(t) === idx)
+
+    setFrameCaptureLoading(true)
+    cleanupFrameSamples()
+    try {
+      const { frames } = await captureFramesAtTimes({ type: 'url', url: src }, sampleTimes)
+      frameSampleUrlsRef.current = frames.map((f) => f.objectUrl)
+      frameSampleUploadsRef.current.clear()
+      setFrameSamples(
+        frames.map((f) => ({
+          url: f.objectUrl,
+          time: f.time,
+          blob: f.blob,
+          remoteUrl: null,
+          description: null,
+          describing: false,
+        })),
+      )
+      if (!frames.length) {
+        toast('未能抽取到有效帧，可能受跨域或视频格式限制', 'error')
+      } else {
+        toast(`已抽取 ${frames.length} 帧`, 'success')
+      }
+    } catch (err: any) {
+      console.error('captureFramesAtTimes error', err)
+      const message =
+        (err?.message as string | undefined) ||
+        '抽帧失败，可能是跨域或视频格式不支持'
+      toast(message, 'error')
+    } finally {
+      setFrameCaptureLoading(false)
+    }
+  }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
+
+  const toggleFrameCompare = React.useCallback((time: number) => {
+    setFrameCompareTimes((prev) =>
+      prev.includes(time) ? prev.filter((t) => t !== time) : [...prev, time],
+    )
+  }, [])
+
+  const uploadImageWithRetry = React.useCallback(async (file: File, maxRetry = 2) => {
+    let lastError: any = null
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      try {
+        return await uploadSoraImage(undefined, file)
+      } catch (err) {
+        lastError = err
+        if (attempt === maxRetry) {
+          throw err
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+      }
+    }
+    throw lastError
+  }, [])
+
+  const ensureFrameRemoteUrl = React.useCallback(
+    async (frame: FrameSample): Promise<string> => {
+      const cached = frameSampleUploadsRef.current.get(frame.url)
+      if (cached) return cached
+
+      let blob = frame.blob
+      if (!blob) {
+        const res = await fetch(frame.url)
+        if (!res.ok) {
+          throw new Error('读取帧数据失败')
+        }
+        blob = await res.blob()
+      }
+      const mime = blob.type || 'image/png'
+      const ext = mime.includes('jpeg') || mime.includes('jpg')
+        ? 'jpg'
+        : mime.includes('webp')
+          ? 'webp'
+          : 'png'
+      const fileName = `frame-${Math.round(frame.time * 1000)}.${ext}`
+      const file = new File([blob], fileName, { type: mime })
+      const result = await uploadImageWithRetry(file)
+      const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer
+      if (!remoteUrl) {
+        throw new Error('帧上传失败，请稍后重试')
+      }
+      frameSampleUploadsRef.current.set(frame.url, remoteUrl)
+      return remoteUrl
+    },
+    [uploadImageWithRetry],
+  )
+
+  const updateFrameSample = React.useCallback((time: number, patch: Partial<FrameSample>) => {
+    setFrameSamples((prev) =>
+      prev.map((fs) => (fs.time === time ? { ...fs, ...patch } : fs)),
+    )
+  }, [])
+
+  const handleCompareCharacters = React.useCallback(async () => {
+    const sources = frameCompareTimes.length
+      ? frameCompareTimes
+          .map((t) => frameSamples.find((f) => f.time === t))
+          .filter((f): f is { url: string; time: number } => Boolean(f))
+      : frameSamples
+
+    const picks = sources.slice(0, 4)
+    if (!picks.length) {
+      toast('请先抽帧或选择帧', 'error')
+      return
+    }
+
+    setFrameCompareLoading(true)
+    setFrameCompareResult(null)
+    try {
+      const descriptions: Array<{ time: number; text: string }> = []
+      for (const f of picks) {
+        const remoteUrl = await ensureFrameRemoteUrl(f)
+        updateFrameSample(f.time, { remoteUrl })
+        const task = await runTaskByVendor('openai', {
+          kind: 'image_to_prompt',
+          prompt: '用简短中文描述画面中的人物外观、性别、年龄段、发型、服饰、表情、动作。不要写场景或镜头信息。',
+          extras: {
+            imageUrl: remoteUrl,
+            systemPrompt:
+              '你是人物识别助手。请用中文一两句话只描述人物的外观（性别、年龄段、脸型、发型、服饰颜色款式、表情、动作），不要写镜头、背景、光线。',
+            nodeId: id,
+          },
+        })
+        const text = extractTextFromTaskResult(task)
+        descriptions.push({ time: f.time, text: text || '(无描述)' })
+      }
+
+      const list = descriptions
+        .map((d, idx) => `${idx + 1}. t=${d.time.toFixed(2)}s -> ${d.text}`)
+        .join('\n')
+      const judgePrompt = [
+        '你是镜头连续性助手。下面是同一段视频中不同时间点的帧描述，请判断这些帧中的主体是否为同一角色。',
+        '输出严格的 JSON，不要额外文字：',
+        '{ "same": true | false | "unknown", "reason": "简要中文理由", "tags": ["外观标签"], "frames": [{"time": number, "desc": "原描述"}]}',
+        '判断标准：只有在高度确定是同一人时 same=true；明显不同 same=false；不确定则 same="unknown"。',
+        '帧描述列表：',
+        list,
+      ].join('\n')
+
+      const judgeTask = await runTaskByVendor('openai', {
+        kind: 'prompt_refine',
+        prompt: judgePrompt,
+        extras: {
+          systemPrompt:
+            '你是一个严谨的镜头角色判定助手。只输出 JSON，键使用英文，内容使用中文，避免幻觉，不确定则 same="unknown".',
+          modelKey: 'gpt-5.1',
+        },
+      })
+      const resultText = extractTextFromTaskResult(judgeTask)
+      setFrameCompareResult(resultText?.trim() || '无结果')
+    } catch (err: any) {
+      console.error('handleCompareCharacters error', err)
+      toast(err?.message || '角色判定失败，请稍后重试', 'error')
+    } finally {
+      setFrameCompareLoading(false)
+    }
+  }, [frameCompareTimes, frameSamples, ensureFrameRemoteUrl, id, updateFrameSample])
+
+
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
   const [characterTokenError, setCharacterTokenError] = React.useState<string | null>(null)
@@ -775,6 +1198,246 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>(
     (data as any)?.orientation || 'landscape'
   )
+  const activeVideoDuration = React.useMemo(() => {
+    const candidate = videoResults[videoPrimaryIndex]?.duration ?? videoDuration
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
+      return candidate
+    }
+    return null
+  }, [videoResults, videoPrimaryIndex, videoDuration])
+
+  const handleGenerateCharacterCards = React.useCallback(async () => {
+    if (!frameSamples.length) {
+      toast('请先抽帧后再生成角色卡', 'error')
+      return
+    }
+
+    setCharacterCardLoading(true)
+    setCharacterCardError(null)
+    setCharacterCards([])
+    try {
+      const ordered = [...frameSamples].sort((a, b) => a.time - b.time)
+      const descriptions: Array<{ time: number; desc: string; remoteUrl: string }> = []
+
+      for (const frame of ordered) {
+        try {
+          updateFrameSample(frame.time, { describing: true })
+          const remoteUrl = await ensureFrameRemoteUrl(frame)
+          updateFrameSample(frame.time, { remoteUrl })
+          let desc = frame.description?.trim()
+          if (!desc) {
+            const describeTask = await runTaskByVendor('openai', {
+              kind: 'image_to_prompt',
+              prompt: '用一句中文总结画面里人物的性别/年龄段/发型/服饰/神态/动作。不要描述背景。',
+              extras: {
+                imageUrl: remoteUrl,
+                systemPrompt:
+                  '你是视频角色识别助手。限定用简洁中文，只描述人物的外观特征与动作，不要写镜头或背景。',
+                modelKey: 'gpt-5.1',
+                nodeId: id,
+              },
+            })
+            desc = extractTextFromTaskResult(describeTask).trim() || '(无描述)'
+            updateFrameSample(frame.time, { description: desc })
+          }
+          descriptions.push({ time: frame.time, desc, remoteUrl })
+        } catch (frameErr) {
+          console.error('handleGenerateCharacterCards frame error', frameErr)
+          const message = frameErr instanceof Error ? frameErr.message : '解析帧失败'
+          toast(`帧 ${frame.time.toFixed(2)}s 处理失败：${message}`, 'error')
+        } finally {
+          updateFrameSample(frame.time, { describing: false })
+        }
+      }
+
+      if (!descriptions.length) {
+        setCharacterCardError('没有可用的帧描述')
+        return
+      }
+
+      const list = descriptions
+        .map((d, idx) => `${idx + 1}. t=${d.time.toFixed(2)}s -> ${d.desc}`)
+        .join('\n')
+      const cardPrompt = [
+        '你是角色卡生成助手，请把下面帧描述按角色聚类。',
+        '输出严格 JSON：{ "characters": [ { "name": "string", "summary": "中文概述", "tags": ["特征"], "frames": [{ "time": number, "desc": "原描述" }], "keyframes": { "start": number, "end": number } } ] }',
+        '要求：',
+        '1. 同一角色至少包含 2 帧；',
+        '2. name 可自拟（如 “角色A”），summary 用 1-2 句中文概括外貌/动作/情绪；',
+        '3. tags 最多 5 个；',
+        '4. keyframes.start/ end 取该角色最早/最晚出现的 time，且片段长度控制在 1.2-3 秒。',
+        '帧描述列表：',
+        list,
+      ].join('\n')
+
+      const cardsTask = await runTaskByVendor('openai', {
+        kind: 'prompt_refine',
+        prompt: cardPrompt,
+        extras: {
+          systemPrompt:
+            '只输出 JSON，键使用英文，值使用中文，不要加入解释。严格聚类，无法判断时 characters 返回空数组。',
+          modelKey: 'gpt-5.1',
+        },
+      })
+      const rawText = extractTextFromTaskResult(cardsTask)
+      const parsed = parseCharacterCardResult(rawText)
+      if (!parsed) {
+        setCharacterCardError('角色卡结果解析失败')
+        return
+      }
+
+      const cards: CharacterCard[] = parsed.characters
+        .map((char: any, idx: number) => {
+          const frames = Array.isArray(char?.frames)
+            ? char.frames
+                .map((frame: any) => {
+                  const time = typeof frame?.time === 'number' ? frame.time : Number(frame?.time)
+                  const desc = typeof frame?.desc === 'string' ? frame.desc.trim() : ''
+                  return Number.isFinite(time) && desc
+                    ? { time, desc }
+                    : null
+                })
+                .filter((f: { time: number; desc: string } | null): f is { time: number; desc: string } => Boolean(f))
+                .sort((a, b) => a.time - b.time)
+            : []
+          if (!frames.length) return null
+          const clipWindow = clampCharacterClipWindow(frames, activeVideoDuration)
+          const clampedFrames = frames.filter((frame) => frame.time >= clipWindow.start - 0.05 && frame.time <= clipWindow.end + 0.05)
+          const framesForCard = clampedFrames.length > 0 ? clampedFrames : frames
+          const startFrame = findNearestFrameSample(clipWindow.start)
+          const endFrame = findNearestFrameSample(clipWindow.end)
+          return {
+            id: `character-${idx}`,
+            name: typeof char?.name === 'string' && char.name.trim() ? char.name.trim() : `角色 ${idx + 1}`,
+            summary: typeof char?.summary === 'string' ? char.summary.trim() : undefined,
+            tags: Array.isArray(char?.tags)
+              ? char.tags
+                  .map((tag: any) => (typeof tag === 'string' ? tag.trim() : ''))
+                  .filter((tag: string) => Boolean(tag))
+                  .slice(0, 5)
+              : undefined,
+            frames: framesForCard,
+            startFrame: startFrame ? { time: clipWindow.start, url: startFrame.url } : undefined,
+            endFrame: endFrame ? { time: clipWindow.end, url: endFrame.url } : undefined,
+            clipRange: clipWindow,
+          }
+        })
+        .filter((card): card is CharacterCard => Boolean(card))
+
+      if (!cards.length) {
+        setCharacterCardError('模型未返回有效的角色卡')
+        return
+      }
+      setCharacterCards(cards)
+    } catch (error: any) {
+      console.error('handleGenerateCharacterCards error', error)
+      setCharacterCardError(error?.message || '角色卡生成失败')
+    } finally {
+      setCharacterCardLoading(false)
+    }
+  }, [frameSamples, ensureFrameRemoteUrl, findNearestFrameSample, id, updateFrameSample, activeVideoDuration])
+
+  const selectedCharacterTokenId: string | null = (data as any)?.soraTokenId ?? null
+  const selectedCharacter = React.useMemo(() => {
+    const payload: any = data || {}
+    const id = payload.soraCharacterId || null
+    const usernameRaw = payload.soraCharacterUsername || ''
+    const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+    const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : '')
+    const avatar = payload.characterAvatarUrl || null
+    const cover = payload.characterCoverUrl || null
+    const description = payload.characterDescription || payload.prompt || ''
+    if (!id && !username && !displayName) return null
+    return {
+      id,
+      username,
+      displayName: displayName || (username ? `@${username}` : '角色'),
+      avatar,
+      cover,
+      description,
+    }
+  }, [data])
+  const characterPrimaryImage = React.useMemo(() => {
+    if (!selectedCharacter) return null
+    return selectedCharacter.cover || selectedCharacter.avatar || null
+  }, [selectedCharacter])
+  const characterRefs = React.useMemo(() => {
+    return nodesForCharacters
+      .filter((node) => {
+        const nodeKind = (node.data as any)?.kind
+        const nodeSchema = getTaskNodeSchema(nodeKind)
+        return nodeSchema.category === 'character' || nodeSchema.features.includes('character')
+      })
+      .map((node) => {
+        const payload: any = node.data || {}
+        const usernameRaw = payload.soraCharacterUsername || ''
+        const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+        const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : node.id)
+        return { nodeId: node.id, username, displayName, rawLabel: payload.label || '' }
+      })
+      .filter((ref) => ref.username || ref.displayName)
+  }, [nodesForCharacters])
+  const characterRefMap = React.useMemo(() => {
+    const map = new Map<string, { nodeId: string; username: string; displayName: string }>()
+    characterRefs.forEach((ref) => map.set(ref.nodeId, ref))
+    return map
+  }, [characterRefs])
+
+  const handleOpenCharacterCreatorModal = React.useCallback(
+    (card: CharacterCard) => {
+      setCharacterCreatorCard(card)
+      setCharacterCreatorModalOpen(true)
+      if (selectedCharacterTokenId) {
+        setCharacterCreatorTokenId(selectedCharacterTokenId)
+      } else if (characterTokens.length > 0) {
+        setCharacterCreatorTokenId(characterTokens[0].id)
+      } else {
+        setCharacterCreatorTokenId(null)
+      }
+    },
+    [characterTokens, selectedCharacterTokenId],
+  )
+
+  const closeCharacterCreatorModal = React.useCallback(() => {
+    setCharacterCreatorModalOpen(false)
+    setCharacterCreatorCard(null)
+    setCharacterCreatorTokenId(null)
+  }, [])
+
+  const handleConfirmCharacterCreatorModal = React.useCallback(() => {
+    if (!characterCreatorCard) return
+    if (!characterCreatorTokenId) {
+      toast('暂无可用的 Sora Token，请先前往资产面板绑定', 'error')
+      return
+    }
+    requestCharacterCreator({
+      source: 'character-card',
+      name: characterCreatorCard.name,
+      summary: characterCreatorCard.summary,
+      tags: characterCreatorCard.tags,
+      soraTokenId: characterCreatorTokenId,
+      clipRange: characterCreatorCard.clipRange
+        ? {
+            start: characterCreatorCard.clipRange.start,
+            end: characterCreatorCard.clipRange.end,
+          }
+        : undefined,
+    })
+    setActivePanel('assets')
+    closeCharacterCreatorModal()
+  }, [characterCreatorCard, characterCreatorTokenId, closeCharacterCreatorModal, requestCharacterCreator, setActivePanel])
+
+  React.useEffect(() => {
+    if (!characterCreatorModalOpen) return
+    if (characterCreatorTokenId) return
+    if (selectedCharacterTokenId) {
+      setCharacterCreatorTokenId(selectedCharacterTokenId)
+      return
+    }
+    if (characterTokens.length > 0) {
+      setCharacterCreatorTokenId(characterTokens[0].id)
+    }
+  }, [characterCreatorModalOpen, characterCreatorTokenId, selectedCharacterTokenId, characterTokens])
 
   const activeModelKey = isImageNode
         ? imageModel
@@ -888,51 +1551,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [mentionLoading, setMentionLoading] = React.useState(false)
   const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
   const rewriteRequestIdRef = React.useRef(0)
-  const selectedCharacterTokenId: string | null = (data as any)?.soraTokenId ?? null
-  const selectedCharacter = React.useMemo(() => {
-    const payload: any = data || {}
-    const id = payload.soraCharacterId || null
-    const usernameRaw = payload.soraCharacterUsername || ''
-    const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
-    const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : '')
-    const avatar = payload.characterAvatarUrl || null
-    const cover = payload.characterCoverUrl || null
-    const description = payload.characterDescription || payload.prompt || ''
-    if (!id && !username && !displayName) return null
-    return {
-      id,
-      username,
-      displayName: displayName || (username ? `@${username}` : '角色'),
-      avatar,
-      cover,
-      description,
-    }
-  }, [data])
-  const characterPrimaryImage = React.useMemo(() => {
-    if (!selectedCharacter) return null
-    return selectedCharacter.cover || selectedCharacter.avatar || null
-  }, [selectedCharacter])
-  const characterRefs = React.useMemo(() => {
-    return nodesForCharacters
-      .filter((node) => {
-        const nodeKind = (node.data as any)?.kind
-        const nodeSchema = getTaskNodeSchema(nodeKind)
-        return nodeSchema.category === 'character' || nodeSchema.features.includes('character')
-      })
-      .map((node) => {
-        const payload: any = node.data || {}
-        const usernameRaw = payload.soraCharacterUsername || ''
-        const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
-        const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : node.id)
-        return { nodeId: node.id, username, displayName, rawLabel: payload.label || '' }
-      })
-      .filter((ref) => ref.username || ref.displayName)
-  }, [nodesForCharacters])
-  const characterRefMap = React.useMemo(() => {
-    const map = new Map<string, { nodeId: string; username: string; displayName: string }>()
-    characterRefs.forEach((ref) => map.set(ref.nodeId, ref))
-    return map
-  }, [characterRefs])
+
   const autoCharacterOptions = React.useMemo(() => {
     if (!characterRefs.length) return []
     const connected = new Set<string>()
@@ -1399,12 +2018,7 @@ const rewritePromptWithCharacters = React.useCallback(
   })
 
   React.useEffect(() => {
-    if (!isCharacterNode) {
-      setCharacterTokens([])
-      setCharacterTokenError(null)
-      setCharacterTokensLoading(false)
-      return
-    }
+    if (!isCharacterNode && !characterCreatorModalOpen) return
     let canceled = false
     const loadTokens = async () => {
       setCharacterTokensLoading(true)
@@ -1438,7 +2052,7 @@ const rewritePromptWithCharacters = React.useCallback(
     return () => {
       canceled = true
     }
-  }, [isCharacterNode])
+  }, [isCharacterNode, characterCreatorModalOpen])
 
   React.useEffect(() => {
     if (!isCharacterNode) return
@@ -1597,8 +2211,6 @@ const rewritePromptWithCharacters = React.useCallback(
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
   const hasAiText = lastText.trim().length > 0
 
-  const edgeRoute = useUIStore(s => s.edgeRoute)
-
   const connectFromText = (targetKind: 'image' | 'video') => {
     const all = useRFStore.getState().nodes
     const self = all.find((n: any) => n.id === id)
@@ -1631,22 +2243,6 @@ const rewritePromptWithCharacters = React.useCallback(
       return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
     })
   }
-
-  const uploadImageWithRetry = React.useCallback(async (file: File, maxRetry = 2) => {
-    let lastError: any = null
-    for (let attempt = 0; attempt <= maxRetry; attempt++) {
-      try {
-        return await uploadSoraImage(undefined, file)
-      } catch (err) {
-        lastError = err
-        if (attempt === maxRetry) {
-          throw err
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
-      }
-    }
-    throw lastError
-  }, [])
 
   // Handle image upload with Sora API
   const handleImageUpload = async (file: File) => {
@@ -2364,6 +2960,46 @@ const rewritePromptWithCharacters = React.useCallback(
               </Button>
             </Group>
           </Group>
+          <Group gap={6} justify="space-between">
+            <Button
+              size="compact-xs"
+              variant="light"
+              leftSection={<IconPhotoSearch size={12} />}
+              loading={frameCaptureLoading}
+              onClick={handleCaptureVideoFrames}
+            >
+              抽帧预览
+            </Button>
+            {frameSamples.length > 0 && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                onClick={cleanupFrameSamples}
+              >
+                清空帧
+              </Button>
+            )}
+          </Group>
+          {frameSamples.length > 0 && (
+            <Group gap={6} justify="space-between">
+              <Button
+                size="compact-xs"
+                variant="default"
+                loading={frameCompareLoading}
+                onClick={handleCompareCharacters}
+              >
+                AI 判同人
+              </Button>
+              <Button
+                size="compact-xs"
+                variant="light"
+                loading={characterCardLoading}
+                onClick={handleGenerateCharacterCards}
+              >
+                生成角色卡
+              </Button>
+            </Group>
+          )}
 
           {videoUrl ? (
             <video
@@ -2400,6 +3036,232 @@ const rewritePromptWithCharacters = React.useCallback(
             <Text size="xs" lineClamp={1} c="dimmed">
               {videoTitle}
             </Text>
+          )}
+          {frameSamples.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 6 }}>
+              {frameSamples.map((f) => {
+                const active = frameCompareTimes.includes(f.time)
+                return (
+                  <div
+                    key={`${f.url}-${f.time}`}
+                    style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer' }}
+                    onClick={() => toggleFrameCompare(f.time)}
+                    title={active ? '已加入对比，点击取消' : '加入对比'}
+                  >
+                    <div
+                      style={{
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        background: mediaFallbackSurface,
+                        border: active ? `2px solid ${accentPrimary}` : `1px solid ${inlineDividerColor}`,
+                        width: '100%',
+                        aspectRatio: '4 / 3',
+                        boxShadow: active ? `0 0 0 2px ${rgba(accentPrimary, 0.2)}` : 'none',
+                      }}
+                    >
+                      <img
+                        src={f.url}
+                        alt={`frame-${f.time.toFixed(2)}s`}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    </div>
+                    <Tooltip
+                      label={(!f.describing && f.description) ? f.description : undefined}
+                      disabled={!f.description || f.describing}
+                      withinPortal
+                      multiline
+                      maw={280}
+                      position="top"
+                      withArrow
+                    >
+                      <Text size="xs" c="dimmed">
+                        {f.time.toFixed(2)}s
+                      </Text>
+                    </Tooltip>
+                    {f.describing && (
+                      <Text size="xs" c="dimmed">
+                        解析中...
+                      </Text>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {frameCompareTimes.length > 0 && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Group justify="space-between" gap={6}>
+                <Text size="xs" fw={600}>
+                  对比视图（{frameCompareTimes.length}）
+                </Text>
+                <Button size="compact-xs" variant="subtle" onClick={() => setFrameCompareTimes([])}>
+                  清空对比
+                </Button>
+              </Group>
+              <div style={{ display: 'grid', gridTemplateColumns: frameCompareTimes.length > 1 ? 'repeat(auto-fit, minmax(120px, 1fr))' : '1fr', gap: 8 }}>
+                {frameCompareTimes.map((t) => {
+                  const f = frameSamples.find((fs) => fs.time === t)
+                  if (!f) return null
+                  return (
+                    <div key={`compare-${t}`} style={{ border: `1px solid ${inlineDividerColor}`, borderRadius: 10, overflow: 'hidden', background: mediaFallbackSurface }}>
+                      <img src={f.url} alt={`compare-${t}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      <div style={{ padding: '6px 8px' }}>
+                        <Text size="xs" c="dimmed">
+                          {t.toFixed(2)}s
+                        </Text>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          {frameCompareResult && (
+            <Paper shadow="xs" radius="md" withBorder p="sm" style={{ marginTop: 8, background: mediaOverlayBackground, color: mediaOverlayText }}>
+              <Group justify="space-between" gap={6} mb={4}>
+                <Text size="xs" fw={600}>
+                  AI 判定
+                </Text>
+                {frameCompareVerdict && (
+                  <Badge size="xs" color={frameCompareVerdict.color} variant="filled">
+                    {frameCompareVerdict.label}
+                  </Badge>
+                )}
+              </Group>
+              {frameCompareSummary ? (
+                <>
+                  {frameCompareSummary.reason && (
+                    <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      理由：{frameCompareSummary.reason}
+                    </Text>
+                  )}
+                  {frameCompareSummary.tags && frameCompareSummary.tags.length > 0 && (
+                    <Group gap={4} mt={frameCompareSummary.reason ? 6 : 0} wrap="wrap">
+                      {frameCompareSummary.tags.map((tag) => (
+                        <Badge key={tag} size="xs" variant="light" color="blue">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </Group>
+                  )}
+                  {frameCompareSummary.frames && frameCompareSummary.frames.length > 0 && (
+                    <Stack gap={4} mt={frameCompareSummary.tags && frameCompareSummary.tags.length > 0 ? 6 : 10}>
+                      {frameCompareSummary.frames.map((frame, idx) => (
+                        <Group key={`frame-summary-${frame.time ?? idx}`} gap={6} align="flex-start" wrap="nowrap">
+                          <Badge size="xs" variant="outline" color="gray">
+                            {typeof frame.time === 'number' ? `${frame.time.toFixed(2)}s` : `帧 ${idx + 1}`}
+                          </Badge>
+                          <Text size="xs" style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {frame.desc || '无描述'}
+                          </Text>
+                        </Group>
+                      ))}
+                    </Stack>
+                  )}
+                </>
+              ) : (
+                <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {frameCompareResult}
+                </Text>
+              )}
+            </Paper>
+          )}
+          {characterCardLoading && (
+            <Text size="xs" c="dimmed" mt={8}>
+              正在生成角色卡… (已解析 {describedFrameCount} 帧)
+            </Text>
+          )}
+          {characterCardError && (
+            <Text size="xs" c="red" mt={4}>
+              {characterCardError}
+            </Text>
+          )}
+          {characterCards.length > 0 && (
+            <Stack gap={6} mt={8}>
+              <Text size="xs" fw={600}>
+                角色卡（{characterCards.length}）
+              </Text>
+              <Stack gap={8}>
+                {characterCards.map((card) => (
+                  <Paper key={card.id} withBorder radius="md" p="sm" style={{ background: mediaOverlayBackground, color: mediaOverlayText }}>
+                    <Group justify="space-between" gap={6} mb={6} align="flex-start">
+                      <div>
+                        <Text size="sm" fw={600}>
+                          {card.name}
+                        </Text>
+                        {card.summary && (
+                          <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                            {card.summary}
+                          </Text>
+                        )}
+                        {card.clipRange && (
+                          <Text size="xs" c="dimmed">
+                            片段 {card.clipRange.start.toFixed(2)}s - {card.clipRange.end.toFixed(2)}s（{(card.clipRange.end - card.clipRange.start).toFixed(2)}s）
+                          </Text>
+                        )}
+                      </div>
+                      {card.tags && card.tags.length > 0 && (
+                        <Group gap={4} wrap="wrap" justify="flex-end">
+                          {card.tags.map((tag) => (
+                            <Badge key={`${card.id}-${tag}`} size="xs" variant="light" color="blue">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </Group>
+                      )}
+                    </Group>
+                      {(card.startFrame || card.endFrame) && (
+                        <Group gap={8} mb={6} align="stretch">
+                        {card.startFrame && (
+                          <div style={{ flex: 1 }}>
+                            <Text size="xs" c="dimmed" mb={2}>
+                              首次出现 {card.startFrame.time.toFixed(2)}s
+                            </Text>
+                            <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                              <img src={card.startFrame.url} alt={`${card.name}-start`} style={{ width: '100%', display: 'block' }} />
+                            </div>
+                          </div>
+                        )}
+                        {card.endFrame && (
+                          <div style={{ flex: 1 }}>
+                            <Text size="xs" c="dimmed" mb={2}>
+                              最后出现 {card.endFrame.time.toFixed(2)}s
+                            </Text>
+                            <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                              <img src={card.endFrame.url} alt={`${card.name}-end`} style={{ width: '100%', display: 'block' }} />
+                            </div>
+                          </div>
+                        )}
+                      </Group>
+                    )}
+                    <Stack gap={4}>
+                      {card.frames.map((frame) => (
+                        <Group key={`${card.id}-${frame.time}`} gap={6} align="flex-start">
+                          <Badge size="xs" variant="outline" color="gray">
+                            {frame.time.toFixed(2)}s
+                          </Badge>
+                          <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                            {frame.desc}
+                          </Text>
+                        </Group>
+                      ))}
+                    </Stack>
+                    <Group justify="flex-end" gap={6} mt={8}>
+                      <Tooltip label="打开创建角色弹窗" withArrow>
+                        <Button
+                          size="compact-xs"
+                          variant="outline"
+                          leftSection={<IconUserPlus size={12} />}
+                          onClick={() => handleOpenCharacterCreatorModal(card)}
+                        >
+                          一键创建角色
+                        </Button>
+                      </Tooltip>
+                    </Group>
+                  </Paper>
+                ))}
+              </Stack>
+            </Stack>
           )}
         </div>
       )}
@@ -3374,6 +4236,94 @@ const rewritePromptWithCharacters = React.useCallback(
         onClose={() => setPromptSamplesOpen(false)}
         onApplySample={handleApplyPromptSample}
       />
+
+      <Modal
+        opened={characterCreatorModalOpen}
+        onClose={closeCharacterCreatorModal}
+        title="一键创建角色"
+        centered
+        withinPortal
+        zIndex={12010}
+      >
+        <Stack gap="sm">
+          {characterCreatorCard ? (
+            <div>
+              <Text size="sm" fw={500}>{characterCreatorCard.name}</Text>
+              {characterCreatorCard.summary && (
+                <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+                  {characterCreatorCard.summary}
+                </Text>
+              )}
+              <Text size="xs" c="dimmed" mt={6}>
+                {characterCreatorClipPreview
+                  ? `默认截取 ${characterCreatorClipPreview.start.toFixed(2)}s - ${characterCreatorClipPreview.end.toFixed(2)}s，最长 ${CHARACTER_CLIP_MAX}s`
+                  : `默认截取 ${CHARACTER_CLIP_MAX}s 片段，可在下一步微调`}
+              </Text>
+            </div>
+          ) : (
+            <Text size="sm" c="dimmed">
+              请选择需要创建的角色卡
+            </Text>
+          )}
+
+          {characterTokensLoading ? (
+            <Group gap="xs">
+              <Loader size="xs" />
+              <Text size="xs" c="dimmed">正在加载 Sora Token…</Text>
+            </Group>
+          ) : characterTokens.length > 0 ? (
+            <Select
+              label="Sora Token"
+              placeholder="请选择 Token"
+              data={characterTokens.map((t) => ({
+                value: t.id,
+                label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
+              }))}
+              value={characterCreatorTokenId}
+              onChange={(value) => setCharacterCreatorTokenId(value)}
+              withinPortal
+              size="xs"
+            />
+          ) : (
+            <Stack gap={4}>
+              <Text size="xs" c="red">
+                暂无可用的 Sora Token
+              </Text>
+              <Text size="xs" c="dimmed">
+                请先前往资产面板绑定密钥，再尝试创建角色。
+              </Text>
+            </Stack>
+          )}
+          {characterTokenError && (
+            <Text size="xs" c="red">
+              {characterTokenError}
+            </Text>
+          )}
+          <Group justify="flex-end" mt="xs">
+            {characterTokens.length === 0 && (
+              <Button
+                variant="subtle"
+                size="xs"
+                onClick={() => {
+                  setActivePanel('assets')
+                  closeCharacterCreatorModal()
+                }}
+              >
+                管理 Token
+              </Button>
+            )}
+            <Button variant="default" onClick={closeCharacterCreatorModal}>
+              取消
+            </Button>
+            <Button
+              onClick={handleConfirmCharacterCreatorModal}
+              disabled={!characterCreatorCard || !characterCreatorTokenId}
+            >
+              开始创建
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {/* 图片结果弹窗：选择主图 + 全屏预览 */}
       {isImageNode && imageResults.length > 1 && (
