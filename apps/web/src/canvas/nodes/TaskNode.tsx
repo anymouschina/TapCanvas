@@ -57,6 +57,7 @@ import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { VideoRealismTips } from '../components/shared/VideoRealismTips'
+import { getHandleTypeLabel } from '../utils/handleLabels'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -78,6 +79,72 @@ const ORIENTATION_OPTIONS = [
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
 
 const REMOTE_IMAGE_URL_REGEX = /^https?:\/\//i
+const HANDLE_HORIZONTAL_OFFSET = 36
+const HANDLE_VERTICAL_OFFSET = 36
+
+type HandleLayout = { id: string; pos: Position }
+
+const computeHandleLayout = (handles: HandleLayout[]) => {
+  const layout = new Map<string, { top?: string; left?: string }>()
+  const grouped = new Map<Position, HandleLayout[]>()
+
+  handles.forEach((handle) => {
+    const key = handle.pos ?? Position.Left
+    const group = grouped.get(key) || []
+    group.push(handle)
+    grouped.set(key, group)
+  })
+
+  grouped.forEach((group, pos) => {
+    const total = group.length
+    group.forEach((handle, index) => {
+      if (pos === Position.Left || pos === Position.Right) {
+        const topPercent = total === 1 ? 50 : ((index + 1) / (total + 1)) * 100
+        layout.set(handle.id, { top: `${topPercent}%` })
+      } else if (pos === Position.Top || pos === Position.Bottom) {
+        const leftPercent = total === 1 ? 50 : ((index + 1) / (total + 1)) * 100
+        layout.set(handle.id, { left: `${leftPercent}%` })
+      }
+    })
+  })
+
+  return layout
+}
+
+const getHandlePositionName = (pos?: Position) => {
+  if (pos === Position.Right) return 'right'
+  if (pos === Position.Top) return 'top'
+  if (pos === Position.Bottom) return 'bottom'
+  return 'left'
+}
+
+const buildHandleStyle = (handle: HandleLayout, layout: Map<string, { top?: string; left?: string }>) => {
+  const pos = handle.pos ?? Position.Left
+  const coords = layout.get(handle.id) || {}
+  const style: React.CSSProperties = {
+    position: 'absolute',
+    pointerEvents: 'auto',
+  }
+
+  if (pos === Position.Left) {
+    style.left = -HANDLE_HORIZONTAL_OFFSET
+    style.top = coords.top ?? '50%'
+  } else if (pos === Position.Right) {
+    style.right = -HANDLE_HORIZONTAL_OFFSET
+    style.top = coords.top ?? '50%'
+  } else if (pos === Position.Top) {
+    style.top = -HANDLE_VERTICAL_OFFSET
+    style.left = coords.left ?? '50%'
+  } else if (pos === Position.Bottom) {
+    style.bottom = -HANDLE_VERTICAL_OFFSET
+    style.left = coords.left ?? '50%'
+  } else {
+    style.top = coords.top ?? '50%'
+    style.left = coords.left ?? '50%'
+  }
+
+  return style
+}
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -287,63 +354,59 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const theme = useMantineTheme()
   const isDarkUi = colorScheme === 'dark'
   const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
-  const lightCards = ['#fefeff', '#f4f7ff']
-  const darkCards = ['rgba(19, 22, 40, 0.98)', 'rgba(12, 14, 26, 0.96)']
+  const accentPrimary = theme.colors.blue?.[isDarkUi ? 4 : 6] || '#4c6ef5'
+  const accentSecondary = theme.colors.cyan?.[isDarkUi ? 4 : 5] || '#22d3ee'
+  const lightCards = ['rgba(255,255,255,0.96)', 'rgba(234,241,255,0.98)']
+  const darkCards = ['rgba(18,25,48,0.97)', 'rgba(7,11,26,0.95)']
   const nodeShellBackground = isDarkUi
-    ? `linear-gradient(145deg, ${darkCards[0]}, ${darkCards[1]})`
-    : `linear-gradient(145deg, ${lightCards[0]}, ${lightCards[1]})`
+    ? `linear-gradient(155deg, ${darkCards[0]}, ${darkCards[1]})`
+    : `linear-gradient(155deg, ${lightCards[0]}, ${lightCards[1]})`
   const nodeShellBorder = 'none'
   const nodeShellShadow = isDarkUi
-    ? '0 18px 38px rgba(5, 8, 23, 0.75)'
-    : '0 30px 55px rgba(79, 120, 255, 0.2)'
-  const nodeShellGlow = isDarkUi
-    ? '0 0 32px rgba(96, 165, 250, 0.35)'
-    : '0 0 32px rgba(96, 165, 250, 0.45)'
-  const nodeShellText = isDarkUi ? theme.white : theme.colors.gray[8] // 使用更深的颜色提高日间模式对比度
-  const nodeShellMuted = isDarkUi ? theme.colors.gray[4] : theme.colors.gray[7] // 提高日间模式下次要文本的对比度
-  const quickActionBackgroundActive = isDarkUi ? rgba(theme.white, 0.08) : rgba(theme.colors.gray[1], 0.8)
-  const quickActionIconColor = nodeShellMuted
-  const quickActionIconActive = nodeShellText
-  const quickActionHint = nodeShellMuted
-  const quickActionDividerColor = rgba(nodeShellText, 0.65)
-  const mediaCardBackground = isDarkUi ? theme.colors.dark[8] : theme.white
-  const mediaOverlayBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.85) : rgba(theme.colors.gray[0], 0.95)
+    ? '0 32px 60px rgba(0, 0, 0, 0.65)'
+    : '0 26px 55px rgba(15, 23, 42, 0.16)'
+  const nodeShellGlow = `0 0 50px ${rgba(accentPrimary, isDarkUi ? 0.28 : 0.35)}`
+  const nodeShellText = isDarkUi ? theme.white : (theme.colors.gray?.[9] || '#111321')
+  const nodeShellMuted = isDarkUi ? rgba(theme.white, 0.65) : rgba(theme.colors.gray?.[7] || '#475569', 0.85)
+  const quickActionBackgroundActive = isDarkUi ? rgba(accentPrimary, 0.25) : rgba(accentPrimary, 0.12)
+  const quickActionIconColor = rgba(nodeShellText, 0.55)
+  const quickActionIconActive = accentPrimary
+  const quickActionHint = rgba(nodeShellText, 0.55)
+  const mediaCardBackground = isDarkUi ? 'rgba(7, 12, 26, 0.92)' : 'rgba(255,255,255,0.95)'
+  const mediaOverlayBackground = isDarkUi ? 'rgba(4, 7, 16, 0.92)' : 'rgba(246, 248, 255, 0.95)'
   const mediaOverlayText = nodeShellText
-  const toolbarBackground = isDarkUi ? 'rgba(23, 28, 50, 0.94)' : '#ffffff'
-  const toolbarBorder = 'none'
-  const toolbarShadow = isDarkUi ? '0 18px 32px rgba(2,4,10,0.55)' : '0 18px 32px rgba(29,78,216,0.15)'
-  const detailPanelBackground = isDarkUi
-    ? 'linear-gradient(145deg, rgba(12,15,32,0.97), rgba(6,8,18,0.96))'
-    : 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(241,246,255,0.95))'
-  const detailPanelBorder = 'none'
-  const detailPanelShadow = isDarkUi ? '0 18px 45px rgba(1,2,8,0.7)' : '0 25px 60px rgba(54,79,199,0.15)'
-  const overlayCardBorder = `1px solid ${isDarkUi ? theme.colors.gray[4] : theme.colors.gray[3]}`
-  const subtleOverlayBackground = isDarkUi ? rgba(theme.colors.dark[5], 0.6) : rgba(theme.colors.gray[3], 0.3)
-  const mediaFallbackSurface = isDarkUi ? theme.colors.dark[9] : theme.colors.gray[0]
-  const mediaFallbackText = isDarkUi ? theme.colors.gray[3] : theme.colors.gray[7] // 提高日间模式下媒体回退文本的对比度
-  const videoSurface = isDarkUi ? theme.colors.dark[6] : theme.colors.gray[2]
-  const summaryChipAccent = theme.colors.blue?.[5] || '#4c6ef5'
-  const controlLabelColor = rgba(nodeShellText, 0.6)
+  const toolbarBackground = isDarkUi ? 'rgba(4, 7, 16, 0.9)' : 'rgba(255,255,255,0.96)'
+  const toolbarShadow = isDarkUi ? '0 22px 45px rgba(0,0,0,0.6)' : '0 22px 50px rgba(15,23,42,0.14)'
+  const subtleOverlayBackground = isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)'
+  const mediaFallbackSurface = isDarkUi ? 'rgba(3,6,12,0.92)' : 'rgba(244,247,255,0.95)'
+  const mediaFallbackText = isDarkUi ? rgba(theme.colors.gray?.[4] || '#94a3b8', 0.85) : rgba(theme.colors.gray?.[6] || '#64748b', 0.85)
+  const videoSurface = isDarkUi ? 'rgba(11, 16, 28, 0.9)' : 'rgba(236, 241, 255, 0.9)'
+  const summaryChipAccent = accentPrimary
+  const controlLabelColor = rgba(nodeShellText, 0.5)
+  const inlineDividerColor = rgba(nodeShellText, 0.12)
+  const summaryChipBorderColor = rgba(nodeShellText, 0.15)
+  const sleekChipBorderColor = rgba(nodeShellText, 0.08)
+  const toolbarButtonBorderColor = rgba(nodeShellText, 0.12)
   const summaryChipStyles = React.useMemo(() => ({
-    borderRadius: 0,
-    border: 'none',
-    background: 'transparent',
+    borderRadius: 999,
+    background: isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
     color: nodeShellText,
     cursor: 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
-    padding: '4px 8px',
-    fontWeight: 500,
+    padding: '4px 10px',
+    fontWeight: 600,
     fontSize: 12,
-    height: 32,
+    height: 30,
     lineHeight: 1.1,
-  }), [nodeShellText])
+    letterSpacing: 0.25,
+  }), [isDarkUi, nodeShellText, summaryChipBorderColor])
   const controlLabelStyle = React.useMemo(() => ({
     fontSize: 11,
-    fontWeight: 500,
+    fontWeight: 600,
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    letterSpacing: 0.6,
     color: controlLabelColor,
   }), [controlLabelColor])
   const controlValueStyle = React.useMemo(() => ({
@@ -351,7 +414,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     fontWeight: 600,
     color: nodeShellText,
   }), [nodeShellText])
-  const inlineDividerColor = rgba(nodeShellText, 0.15)
   const sleekChipBase = React.useMemo(() => ({
     padding: '6px 12px',
     display: 'flex',
@@ -362,41 +424,40 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     color: nodeShellText,
     lineHeight: 1.2,
     whiteSpace: 'nowrap',
-  }), [isDarkUi, nodeShellText])
+    borderRadius: 999,
+    background: isDarkUi ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
+  }), [isDarkUi, nodeShellText, sleekChipBorderColor])
   const toolbarActionIconStyles = React.useMemo(() => ({
     root: {
-      width: 28,
-      height: 28,
-      borderRadius: 0,
-      border: 'none',
-      background: 'transparent',
+      width: 32,
+      height: 32,
+      borderRadius: 12,
+      background: isDarkUi ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
       color: nodeShellText,
       padding: 0,
     },
     icon: {
       fontSize: 16,
     },
-  }), [nodeShellText])
+  }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
   const toolbarTextButtonStyle = React.useMemo(() => ({
-    borderRadius: 0,
-    border: 'none',
-    background: 'transparent',
+    borderRadius: 999,
+    background: isDarkUi ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.02)',
     color: nodeShellText,
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '0 8px',
+    padding: '4px 12px',
     fontSize: 12,
-    fontWeight: 500,
-    height: 32,
+    fontWeight: 600,
+    height: 30,
     cursor: 'pointer',
-  }), [nodeShellText])
+  }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
   const overlayIconButton = React.useMemo(() => ({
-    width: 28,
-    height: 28,
-    borderRadius: 10,
-    border: 'none',
-    background: isDarkUi ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,42,0.6)',
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    background: isDarkUi ? 'rgba(2,6,18,0.85)' : 'rgba(15,23,42,0.65)',
     color: '#fff',
     display: 'flex',
     alignItems: 'center',
@@ -404,17 +465,17 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     cursor: 'pointer',
     padding: 0,
   }), [isDarkUi])
-  const galleryCardBackground = isDarkUi ? rgba(theme.colors.dark[7], 0.95) : theme.white
-  const galleryBorderDefault = `1px solid ${isDarkUi ? rgba(theme.white, 0.2) : theme.colors.gray[3]}`
-  const galleryBorderActive = `2px solid ${isDarkUi ? theme.colors.blue[4] : theme.colors.blue[6]}`
-  const suggestionHighlight = isDarkUi ? rgba(theme.colors.gray[4], 0.35) : rgba(theme.colors.blue[2], 0.35)
+  const galleryCardBackground = isDarkUi ? 'rgba(7,12,24,0.96)' : 'rgba(255,255,255,0.96)'
+
+  const suggestionHighlight = rgba(accentPrimary, isDarkUi ? 0.4 : 0.3)
   const placeholderIconColor = nodeShellText
-  // 主题适配的深色内容块背景
-  const darkContentBackground = isDarkUi ? rgba(theme.colors.dark[8], 0.9) : rgba(theme.colors.gray[1], 0.95)
-  const darkContentBorder = isDarkUi ? rgba(theme.colors.gray[6], 0.7) : rgba(theme.colors.gray[4], 0.7)
-  const darkCardShadow = isDarkUi ? '0 10px 25px rgba(0, 0, 0, 0.55)' : '0 4px 12px rgba(0, 0, 0, 0.1)'
-  const lightContentBackground = isDarkUi ? rgba(theme.colors.dark[8], 0.4) : rgba(theme.colors.gray[2], 0.8)
-  const lightContentBorder = isDarkUi ? rgba(theme.colors.gray[6], 0.7) : rgba(theme.colors.gray[4], 0.7)
+  const iconBadgeBackground = isDarkUi
+    ? `linear-gradient(140deg, ${rgba(accentPrimary, 0.5)}, ${rgba(accentSecondary, 0.45)})`
+    : `linear-gradient(140deg, ${rgba(accentPrimary, 0.2)}, ${rgba(accentSecondary, 0.25)})`
+   const iconBadgeShadow = isDarkUi ? '0 14px 26px rgba(0,0,0,0.45)' : '0 16px 28px rgba(15,23,42,0.12)'
+  const darkContentBackground = isDarkUi ? 'rgba(5,8,16,0.92)' : 'rgba(244,247,255,0.94)'
+   const darkCardShadow = isDarkUi ? '0 18px 36px rgba(0, 0, 0, 0.55)' : '0 18px 36px rgba(15, 23, 42, 0.12)'
+  const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.4)' : 'rgba(227,235,255,0.8)'
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
@@ -473,6 +534,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     targets.push({ id: 'in-any', type: 'any', pos: Position.Left })
     sources.push({ id: 'out-any', type: 'any', pos: Position.Right })
   }
+  const handleLayoutMap = computeHandleLayout([...targets, ...sources])
 
   const [editing, setEditing] = React.useState(false)
   const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
@@ -1716,16 +1778,17 @@ const rewritePromptWithCharacters = React.useCallback(
   return (
     <div
       style={{
-        border: 'none',
-        borderRadius: 18,
-        padding: '16px 18px 18px',
+        border: nodeShellBorder,
+        borderRadius: 22,
+        padding: '20px 22px 22px',
         background: nodeShellBackground,
         color: nodeShellText,
         boxShadow: shellShadow,
         backdropFilter: 'blur(18px)',
-        transition: 'box-shadow 180ms ease, border-color 180ms ease, transform 180ms ease',
+        transition: 'box-shadow 180ms ease, transform 180ms ease',
         transform: selected ? 'translateY(-2px)' : 'translateY(0)',
         position: 'relative',
+        outline: shellOutline,
         ...(fixedWidth ? { width: fixedWidth } : {}),
       } as React.CSSProperties}
     >
@@ -1733,15 +1796,16 @@ const rewritePromptWithCharacters = React.useCallback(
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
           <div
             style={{
-              width: 36,
-              height: 36,
-              borderRadius: 12,
-              background: isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)',
+              width: 40,
+              height: 40,
+              borderRadius: 14,
+              background: iconBadgeBackground,
+              boxShadow: iconBadgeShadow,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
-              color: summaryChipAccent,
+              color: '#fff',
             }}
           >
             <NodeIcon size={18} />
@@ -1810,7 +1874,6 @@ const rewritePromptWithCharacters = React.useCallback(
               gap: 8,
               padding: '6px 12px',
               borderRadius: 999,
-              border: toolbarBorder,
               background: toolbarBackground,
               boxShadow: toolbarShadow,
               backdropFilter: 'blur(18px)',
@@ -1937,42 +2000,42 @@ const rewritePromptWithCharacters = React.useCallback(
         </div>
       </NodeToolbar>
       <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        {targets.map(h => (
-          <Handle
-            key={h.id}
-            id={h.id}
-            className="tc-handle"
-            type="target"
-            position={h.pos}
-            style={{
-              position: 'absolute',
-              left: h.pos===Position.Left ? -28 : undefined,
-              right: h.pos===Position.Right ? -28 : undefined,
-              top: '50%',
-              pointerEvents: 'auto',
-            }}
-            data-handle-type={h.type}
-            title={`输入: ${h.type}`}
-          />
-        ))}
-        {sources.map(h => (
-          <Handle
-            key={h.id}
-            id={h.id}
-            className="tc-handle"
-            type="source"
-            position={h.pos}
-            style={{
-              position: 'absolute',
-              right: h.pos===Position.Right ? -28 : undefined,
-              left: h.pos===Position.Left ? -28 : undefined,
-              top: '50%',
-              pointerEvents: 'auto',
-            }}
-            data-handle-type={h.type}
-            title={`输出: ${h.type}`}
-          />
-        ))}
+        {targets.map((h) => {
+          const handleLabel = getHandleTypeLabel(h.type)
+          const handlePositionName = getHandlePositionName(h.pos)
+          return (
+            <Handle
+              key={h.id}
+              id={h.id}
+              className="tc-handle"
+              type="target"
+              position={h.pos}
+              style={buildHandleStyle(h, handleLayoutMap)}
+              data-handle-type={h.type}
+              data-handle-position={handlePositionName}
+              title={`输入: ${handleLabel}`}
+              aria-label={`输入: ${handleLabel}`}
+            />
+          )
+        })}
+        {sources.map((h) => {
+          const handleLabel = getHandleTypeLabel(h.type)
+          const handlePositionName = getHandlePositionName(h.pos)
+          return (
+            <Handle
+              key={h.id}
+              id={h.id}
+              className="tc-handle"
+              type="source"
+              position={h.pos}
+              style={buildHandleStyle(h, handleLayoutMap)}
+              data-handle-type={h.type}
+              data-handle-position={handlePositionName}
+              title={`输出: ${handleLabel}`}
+              aria-label={`输出: ${handleLabel}`}
+            />
+          )
+        })}
       </div>
       {/* Content Area for Character/Image/Video/Text kinds */}
       {isCharacterNode && (
@@ -2909,7 +2972,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         key={scene.id}
                         radius="md"
                         p="xs"
-                        style={{ background: lightContentBackground, borderColor: lightContentBorder }}
+                        style={{ background: lightContentBackground }}
                       >
                         <Group justify="space-between" align="flex-start" mb={6}>
                           <div>

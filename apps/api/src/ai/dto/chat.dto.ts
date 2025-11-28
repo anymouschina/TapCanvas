@@ -52,6 +52,9 @@ export interface ChatRequestDto {
   maxToolRoundtrips?: number
   maxTokens?: number
   headers?: Record<string, string>
+  intelligentMode?: boolean
+  enableThinking?: boolean
+  sessionId?: string
 }
 
 export interface AssistantActionDto {

@@ -24,6 +24,7 @@ interface UseChatAssistantProps {
   onClose: () => void
   position?: AssistantPosition
   width?: number
+  intelligentMode?: boolean
 }
 
 const OPENAI_DEFAULT_MODEL = 'gpt-5.1-codex'
@@ -33,6 +34,7 @@ const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
 ]
 const ASSISTANT_MODEL_SET = new Set(ASSISTANT_MODEL_PRESETS.map(option => option.value))
 const MAX_IMAGE_PROMPT_ATTACHMENTS = 2
+const AI_DEBUG_LOGS_ENABLED = (import.meta as any).env?.VITE_DEBUG_AI_LOGS === 'true'
 
 const collectTextFromParts = (parts?: any): string => {
   if (!Array.isArray(parts)) return ''
@@ -161,7 +163,7 @@ const normalizeFileList = (files: FileList | File[]): File[] => {
  * 暗夜AI助手（流式版），基于 @ai-sdk/react 的 useChat。
  * 匹配原 SimpleAIAssistant 的弹窗行为，使用后端 /ai/chat SSE。
  */
-export function UseChatAssistant({ opened, onClose, position = 'right', width = 420 }: UseChatAssistantProps) {
+export function UseChatAssistant({ opened, onClose, position = 'right', width = 420, intelligentMode = true }: UseChatAssistantProps) {
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
@@ -229,12 +231,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
   const body = useMemo(() => ({
     model,
-    temperature: 0.2,
     context: canvasContext,
     provider,
-    clientToolExecution: true,
+    clientToolExecution: true, // 始终让前端执行工具，智能模式仍由后端 sidecar 提供
     maxToolRoundtrips: 4,
-  }), [model, canvasContext, provider])
+    intelligentMode,
+    enableThinking: true,
+  }), [model, canvasContext, provider, intelligentMode])
 
   const chatId = useMemo(() => `${model}-${nanoid()}`, [model])
 
@@ -268,7 +271,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         }
       }
     }
-  }), [apiRoot, body, model])
+  }), [apiRoot, body, model, intelligentMode])
 
   const parseJsonIfNeeded = (value: any) => {
     if (typeof value === 'string') {
@@ -352,10 +355,14 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       console.warn('[UseChatAssistant] handler not found', toolName)
       return { errorText: `未找到工具：${toolName}` }
     }
-    console.debug('[UseChatAssistant] executing tool', { toolName, toolCallId: call.toolCallId, input: call.input })
+    if (AI_DEBUG_LOGS_ENABLED) {
+      console.debug('[UseChatAssistant] executing tool', { toolName, toolCallId: call.toolCallId, input: call.input })
+    }
     try {
       const result = await handler(call.input || {})
-      console.debug('[UseChatAssistant] tool completed', { toolName, toolCallId: call.toolCallId, result })
+      if (AI_DEBUG_LOGS_ENABLED) {
+        console.debug('[UseChatAssistant] tool completed', { toolName, toolCallId: call.toolCallId, result })
+      }
       return { output: result }
     } catch (err) {
       console.error('[UseChatAssistant] tool failed', toolName, err)
@@ -563,7 +570,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         })
         .filter(Boolean)
     )
-    if (toolCalls.length) {
+    if (AI_DEBUG_LOGS_ENABLED && toolCalls.length) {
       console.debug('[UseChatAssistant] detected tool calls', toolCalls)
     }
     toolCalls.forEach(async (call) => {

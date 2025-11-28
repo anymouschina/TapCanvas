@@ -80,7 +80,7 @@ export class AiModule {}
 #### 1.2 新增的API接口
 
 - `POST /api/ai/chat/intelligent` - 智能聊天接口
-- `POST /api/ai/chat/intelligent/stream` - 智能流式聊天
+- `POST /api/ai/chat/stream` - 流式聊天（携带 `intelligentMode=true` 时走智能流程；原 `/api/ai/chat/intelligent/stream` 已代理到此）
 - `GET /api/ai/intelligent/stats` - 智能系统统计
 - `POST /api/ai/intelligent/clear` - 清理会话
 

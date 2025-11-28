@@ -25,7 +25,9 @@ import {
   IconClock,
   IconAlertTriangle,
   IconCircleCheck,
-  IconCircle
+  IconCircle,
+  IconChevronDown,
+  IconChevronUp
 } from '@tabler/icons-react'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
 import { subscribeToolEvents, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
@@ -43,6 +45,7 @@ export const ThinkingProcess: React.FC<ThinkingProcessProps> = ({
   isProcessing,
   maxHeight = 400
 }) => {
+  const [collapsed, setCollapsed] = React.useState(true)
 
   const getThinkingIcon = (type: ThinkingEvent['type']) => {
     const iconMap = {
@@ -97,97 +100,109 @@ const getThinkingColor = (type: ThinkingEvent['type']) => {
             </Badge>
           )}
         </Group>
-        <Text size="xs" color="dimmed">
-          {events.length} 个思考步骤
-        </Text>
+        <Group spacing="xs">
+          <Text size="xs" color="dimmed">
+            {events.length} 个思考步骤
+          </Text>
+          <ActionIcon
+            variant="subtle"
+            size="sm"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? '展开思考过程' : '收起思考过程'}
+          >
+            {collapsed ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+          </ActionIcon>
+        </Group>
       </Group>
 
-      <ScrollArea.Autosize mah={maxHeight}>
-        <Timeline bulletSize={20} lineWidth={2}>
-          {events.map((event, index) => (
-            <Timeline.Item
-              key={event.id}
-              bullet={getThinkingIcon(event.type)}
-              color={getThinkingColor(event.type)}
-            >
-              <Stack spacing="xs">
-                <Group spacing="xs" align="center">
-                  <Text size="sm" weight={500}>
-                    {getThinkingTitle(event.type)}
+      <Collapse in={!collapsed}>
+        <ScrollArea.Autosize mah={maxHeight}>
+          <Timeline bulletSize={20} lineWidth={2}>
+            {events.map((event, index) => (
+              <Timeline.Item
+                key={event.id}
+                bullet={getThinkingIcon(event.type)}
+                color={getThinkingColor(event.type)}
+              >
+                <Stack spacing="xs">
+                  <Group spacing="xs" align="center">
+                    <Text size="sm" weight={500}>
+                      {getThinkingTitle(event.type)}
+                    </Text>
+                    {event.metadata?.confidence && (
+                      <Badge
+                        size="xs"
+                        color={event.metadata.confidence > 0.8 ? 'green' :
+                               event.metadata.confidence > 0.6 ? 'yellow' : 'red'}
+                      >
+                        {(event.metadata.confidence * 100).toFixed(0)}%
+                      </Badge>
+                    )}
+                  </Group>
+
+                  <Text size="xs" color="dimmed">
+                    {event.content}
                   </Text>
+
+                  {/* 置信度进度条 */}
                   {event.metadata?.confidence && (
-                    <Badge
+                    <Progress
+                      value={event.metadata.confidence * 100}
                       size="xs"
                       color={event.metadata.confidence > 0.8 ? 'green' :
                              event.metadata.confidence > 0.6 ? 'yellow' : 'red'}
-                    >
-                      {(event.metadata.confidence * 100).toFixed(0)}%
-                    </Badge>
+                    />
                   )}
-                </Group>
 
-                <Text size="xs" color="dimmed">
-                  {event.content}
+                  {/* 备选方案 */}
+                  {event.metadata?.alternatives &&
+                   event.metadata.alternatives.length > 0 && (
+                    <Collapse in label="查看备选方案">
+                      <Stack spacing="xs" mt="xs">
+                        {event.metadata.alternatives.map((alt, i) => (
+                          <Group key={i} spacing="xs">
+                            <Text size="xs" color="blue">
+                              {alt.option}
+                            </Text>
+                            <Text size="xs" color="dimmed">
+                              ({alt.reason})
+                            </Text>
+                          </Group>
+                        ))}
+                      </Stack>
+                    </Collapse>
+                  )}
+
+                  {/* 参数信息 */}
+                  {event.metadata?.parameters &&
+                   Object.keys(event.metadata.parameters).length > 0 && (
+                    <Box mt="xs">
+                      <Text size="xs" color="dimmed" mb="xs">
+                        提取参数:
+                      </Text>
+                      <Group spacing="xs">
+                        {Object.entries(event.metadata.parameters).map(([key, value]) => (
+                          <Badge key={key} size="xs" variant="outline">
+                            {key}: {String(value)}
+                          </Badge>
+                        ))}
+                      </Group>
+                    </Box>
+                  )}
+                </Stack>
+              </Timeline.Item>
+            ))}
+
+            {isProcessing && (
+              <Timeline.Item bullet={<IconClock size={16} />} color="gray">
+                <Text size="sm" color="dimmed" italic>
+                  正在思考中...
                 </Text>
-
-                {/* 置信度进度条 */}
-                {event.metadata?.confidence && (
-                  <Progress
-                    value={event.metadata.confidence * 100}
-                    size="xs"
-                    color={event.metadata.confidence > 0.8 ? 'green' :
-                           event.metadata.confidence > 0.6 ? 'yellow' : 'red'}
-                  />
-                )}
-
-                {/* 备选方案 */}
-                {event.metadata?.alternatives &&
-                 event.metadata.alternatives.length > 0 && (
-                  <Collapse in label="查看备选方案">
-                    <Stack spacing="xs" mt="xs">
-                      {event.metadata.alternatives.map((alt, i) => (
-                        <Group key={i} spacing="xs">
-                          <Text size="xs" color="blue">
-                            {alt.option}
-                          </Text>
-                          <Text size="xs" color="dimmed">
-                            ({alt.reason})
-                          </Text>
-                        </Group>
-                      ))}
-                    </Stack>
-                  </Collapse>
-                )}
-
-                {/* 参数信息 */}
-                {event.metadata?.parameters &&
-                 Object.keys(event.metadata.parameters).length > 0 && (
-                  <Box mt="xs">
-                    <Text size="xs" color="dimmed" mb="xs">
-                      提取参数:
-                    </Text>
-                    <Group spacing="xs">
-                      {Object.entries(event.metadata.parameters).map(([key, value]) => (
-                        <Badge key={key} size="xs" variant="outline">
-                          {key}: {String(value)}
-                        </Badge>
-                      ))}
-                    </Group>
-                  </Box>
-                )}
-              </Stack>
-            </Timeline.Item>
-          ))}
-
-          {isProcessing && (
-            <Timeline.Item bullet={<IconClock size={16} />} color="gray">
-              <Text size="sm" color="dimmed" italic>
-                正在思考中...
-              </Text>
-            </Timeline.Item>
-          )}
-        </Timeline>
-      </ScrollArea.Autosize>
+              </Timeline.Item>
+            )}
+          </Timeline>
+        </ScrollArea.Autosize>
+      </Collapse>
     </Paper>
   )
 }
@@ -221,6 +236,7 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
   }
 
   const summary = plan.summary || {}
+  const [collapsed, setCollapsed] = useState(true)
 
   return (
     <Paper p="md" withBorder shadow="sm" mt="md">
@@ -232,86 +248,98 @@ export const ExecutionPlanDisplay: React.FC<ExecutionPlanDisplayProps> = ({
             {plan.steps.length} 个步骤
           </Badge>
         </Group>
-        {summary.estimatedTime && (
-          <Text size="xs" color="dimmed">
-            预计 {summary.estimatedTime}s
-          </Text>
-        )}
+        <Group spacing="xs">
+          {summary.estimatedTime && (
+            <Text size="xs" color="dimmed">
+              预计 {summary.estimatedTime}s
+            </Text>
+          )}
+          <ActionIcon
+            variant="subtle"
+            size="sm"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? '展开执行计划' : '收起执行计划'}
+          >
+            {collapsed ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+          </ActionIcon>
+        </Group>
       </Group>
 
-      {plan.explanation && (
-        <Text size="xs" color="dimmed" mb="sm">
-          {plan.explanation}
-        </Text>
-      )}
+      <Collapse in={!collapsed}>
+        {plan.explanation && (
+          <Text size="xs" color="dimmed" mb="sm">
+            {plan.explanation}
+          </Text>
+        )}
 
-      {summary.strategy && (
-        <Group mb="md">
-          <Text size="sm" weight={500}>策略:</Text>
-          <Badge color="blue" variant="light">
-            {summary.strategy}
-          </Badge>
-        </Group>
-      )}
+        {summary.strategy && (
+          <Group mb="md">
+            <Text size="sm" weight={500}>策略:</Text>
+            <Badge color="blue" variant="light">
+              {summary.strategy}
+            </Badge>
+          </Group>
+        )}
 
-      <Stack spacing="sm">
-        {plan.steps.map((step, index) => {
-          const acceptance = (step as any).acceptance || (step as any).acceptanceCriteria
-          return (
-          <Paper
-            key={step.id}
-            p="sm"
-            withBorder
-            style={{
-              cursor: onStepClick ? 'pointer' : 'default'
-            }}
-            onClick={() => onStepClick?.(step.id)}
-          >
-            <Group position="apart" align="flex-start">
-              <Group spacing="xs" align="flex-start">
-                <Text size="sm" weight={500}>
-                  {index + 1}.
-                </Text>
-                <div>
+        <Stack spacing="sm">
+          {plan.steps.map((step, index) => {
+            const acceptance = (step as any).acceptance || (step as any).acceptanceCriteria
+            return (
+            <Paper
+              key={step.id}
+              p="sm"
+              withBorder
+              style={{
+                cursor: onStepClick ? 'pointer' : 'default'
+              }}
+              onClick={() => onStepClick?.(step.id)}
+            >
+              <Group position="apart" align="flex-start">
+                <Group spacing="xs" align="flex-start">
                   <Text size="sm" weight={500}>
-                    {step.name}
+                    {index + 1}.
                   </Text>
-                  <Text size="xs" color="dimmed">
-                    {step.description}
-                  </Text>
-                  {step.reasoning && (
-                    <Text size="xs" color="dimmed">
-                      {step.reasoning}
+                  <div>
+                    <Text size="sm" weight={500}>
+                      {step.name}
                     </Text>
-                  )}
-                  {acceptance && acceptance.length > 0 && (
-                    <Stack gap={4} mt={6}>
-                      {acceptance.map((item: string) => (
-                        <Group key={item} spacing={6} align="flex-start">
-                          {step.status === 'completed' ? (
-                            <IconCircleCheck size={14} color="#16a34a" />
-                          ) : (
-                            <IconCircle size={14} color="#94a3b8" />
-                          )}
-                          <Text size="xs" color="dimmed">
-                            {item}
-                          </Text>
-                        </Group>
-                      ))}
-                    </Stack>
-                  )}
-                </div>
+                    <Text size="xs" color="dimmed">
+                      {step.description}
+                    </Text>
+                    {step.reasoning && (
+                      <Text size="xs" color="dimmed">
+                        {step.reasoning}
+                      </Text>
+                    )}
+                    {acceptance && acceptance.length > 0 && (
+                      <Stack gap={4} mt={6}>
+                        {acceptance.map((item: string) => (
+                          <Group key={item} spacing={6} align="flex-start">
+                            {step.status === 'completed' ? (
+                              <IconCircleCheck size={14} color="#16a34a" />
+                            ) : (
+                              <IconCircle size={14} color="#94a3b8" />
+                            )}
+                            <Text size="xs" color="dimmed">
+                              {item}
+                            </Text>
+                          </Group>
+                        ))}
+                      </Stack>
+                    )}
+                  </div>
+                </Group>
+                <Badge
+                  color={STEP_STATUS_COLOR[step.status] || 'gray'}
+                  variant="light"
+                >
+                  {STEP_STATUS_LABEL[step.status] || step.status}
+                </Badge>
               </Group>
-              <Badge
-                color={STEP_STATUS_COLOR[step.status] || 'gray'}
-                variant="light"
-              >
-                {STEP_STATUS_LABEL[step.status] || step.status}
-              </Badge>
-            </Group>
-          </Paper>
-        )})}
-      </Stack>
+            </Paper>
+          )})}
+        </Stack>
+      </Collapse>
     </Paper>
   )
 }

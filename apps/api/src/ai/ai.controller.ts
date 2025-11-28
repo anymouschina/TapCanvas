@@ -23,6 +23,12 @@ export class AiController {
    */
   @Post('chat/stream')
   async chatStream(@Body() body: ChatRequestDto, @Req() req: any, @Res() res: Response) {
+    if (body?.intelligentMode) {
+      void this.intelligentAiService.runSidecarStreaming(String(req.user.sub), body).catch((err) => {
+        // 静默旁路异常，主流仍返回
+        console.error('[chat/stream] intelligent sidecar failed', err)
+      })
+    }
     await this.aiService.chatStream(String(req.user.sub), body, res)
   }
 
@@ -35,11 +41,11 @@ export class AiController {
   }
 
   /**
-   * 🧠 智能流式聊天接口
+   * 🧠 智能流式聊天接口（已融合到 /ai/chat/stream，通过 intelligentMode 控制）
    */
   @Post('chat/intelligent/stream')
   async chatStreamIntelligent(@Body() body: ChatRequestDto, @Req() req: any, @Res() res: Response) {
-    await this.intelligentAiService.chatStreamIntelligent(String(req.user.sub), body, res)
+    await this.chatStream({ ...body, intelligentMode: true } as ChatRequestDto, req, res)
   }
 
   @Get('prompt-samples')
