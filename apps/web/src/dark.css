@@ -88,19 +88,20 @@ button { color: var(--mantine-color-text); }
   border: 1px solid rgba(59,130,246,0.35) !important;
 }
 :root[data-mantine-color-scheme="dark"] .react-flow__handle {
-  width: 8px; height: 8px;
-  background: #1a1d24 !important;
-  border: 1px solid rgba(255,255,255,0.18) !important;
+  width: 12px; height: 12px;
+  background: #0f172a !important;
+  border: 2px solid rgba(255,255,255,0.28) !important;
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.10);
+  z-index: 3;
+}
+:root[data-mantine-color-scheme="dark"] .react-flow__node.selected .react-flow__handle {
+  box-shadow: 0 0 0 6px rgba(99,102,241,0.25), 0 0 0 1px rgba(255,255,255,0.35);
+  border-color: rgba(255,255,255,0.32) !important;
+  background: #111827 !important;
 }
 :root[data-mantine-color-scheme="dark"] .react-flow__handle::after {
   background: transparent;
   border-color: transparent;
-}
-:root[data-mantine-color-scheme="dark"] .react-flow__handle:hover { border-color: rgba(255,255,255,0.28) !important; }
-:root[data-mantine-color-scheme="dark"] .react-flow__handle:hover::after,
-:root[data-mantine-color-scheme="dark"] .react-flow__handle:focus-visible::after {
-  border-color: rgba(255,255,255,0.2);
-  background: rgba(255,255,255,0.08);
 }
 :root[data-mantine-color-scheme="dark"] .react-flow__edge-path { opacity: .85; transition: opacity .12s ease; }
 :root[data-mantine-color-scheme="dark"] .react-flow__edge:hover .react-flow__edge-path { opacity: 1; }

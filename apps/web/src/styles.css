@@ -1,8 +1,9 @@
 :root {
   color-scheme: light dark;
-  --handle-hit-outside: 16px;
-  --handle-hit-inside: 4px;
-  --handle-hit-vertical: 10px;
+  /* Handle hover/click radius (tunable). Keep moderate to avoid全局触发 */
+  --handle-hit-outside: 22px;
+  --handle-hit-inside: 6px;
+  --handle-hit-vertical: 22px;
 }
 
 body {
@@ -125,4 +126,25 @@ html, body, #root {
 .react-flow__handle-bottom::after {
   top: calc(-1 * var(--handle-hit-inside));
   bottom: calc(-1 * var(--handle-hit-outside));
+}
+
+/* Task node handles: fixed transform, separate layer */
+.tc-handle-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.tc-handle-layer .tc-handle {
+  position: absolute;
+  pointer-events: auto;
+  transform: translate(0, -50%) !important;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+.tc-handle-layer .tc-handle.react-flow__handle-left:hover,
+[data-connecting-active="true"] .tc-handle-layer .tc-handle.react-flow__handle-left {
+  transform: translate(-8px, -50%) !important;
+}
+.tc-handle-layer .tc-handle.react-flow__handle-right:hover,
+[data-connecting-active="true"] .tc-handle-layer .tc-handle.react-flow__handle-right {
+  transform: translate(8px, -50%) !important;
 }

@@ -33,6 +33,9 @@ export interface CanvasContextDto {
   summary?: Record<string, any>
   characters?: CanvasCharacterContextDto[]
   videoBindings?: CanvasVideoBindingContextDto[]
+  timeline?: Array<Record<string, any>>
+  pendingNodes?: Array<Record<string, any>>
+  currentRun?: Record<string, any>
 }
 
 export interface ChatRequestDto {

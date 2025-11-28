@@ -1727,7 +1727,7 @@ const rewritePromptWithCharacters = React.useCallback(
         transform: selected ? 'translateY(-2px)' : 'translateY(0)',
         position: 'relative',
         ...(fixedWidth ? { width: fixedWidth } : {}),
-      }}
+      } as React.CSSProperties}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
@@ -1936,17 +1936,44 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       </NodeToolbar>
-      {targets.map(h => (
-        <Handle
-          key={h.id}
-          id={h.id}
-          type="target"
-          position={h.pos}
-          style={{ left: h.pos===Position.Left? -6: undefined, right: h.pos===Position.Right? -6: undefined }}
-          data-handle-type={h.type}
-          title={`输入: ${h.type}`}
-        />
-      ))}
+      <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {targets.map(h => (
+          <Handle
+            key={h.id}
+            id={h.id}
+            className="tc-handle"
+            type="target"
+            position={h.pos}
+            style={{
+              position: 'absolute',
+              left: h.pos===Position.Left ? -28 : undefined,
+              right: h.pos===Position.Right ? -28 : undefined,
+              top: '50%',
+              pointerEvents: 'auto',
+            }}
+            data-handle-type={h.type}
+            title={`输入: ${h.type}`}
+          />
+        ))}
+        {sources.map(h => (
+          <Handle
+            key={h.id}
+            id={h.id}
+            className="tc-handle"
+            type="source"
+            position={h.pos}
+            style={{
+              position: 'absolute',
+              right: h.pos===Position.Right ? -28 : undefined,
+              left: h.pos===Position.Left ? -28 : undefined,
+              top: '50%',
+              pointerEvents: 'auto',
+            }}
+            data-handle-type={h.type}
+            title={`输出: ${h.type}`}
+          />
+        ))}
+      </div>
       {/* Content Area for Character/Image/Video/Text kinds */}
       {isCharacterNode && (
         <div style={{ position: 'relative', marginTop: 6 }}>
@@ -2320,18 +2347,6 @@ const rewritePromptWithCharacters = React.useCallback(
           <div style={{ width: `${Math.min(100, Math.max(0, data?.progress ?? 0))}%`, height: '100%', background: color, borderRadius: 4 }} />
         </div>
       )}
-      {sources.map(h => (
-        <Handle
-          key={h.id}
-          id={h.id}
-          type="source"
-          position={h.pos}
-          style={{ right: h.pos===Position.Right? -6: undefined, left: h.pos===Position.Left? -6: undefined }}
-          data-handle-type={h.type}
-          title={`输出: ${h.type}`}
-        />
-      ))}
-
       {/* Bottom detail panel near node */}
       <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
         <div
