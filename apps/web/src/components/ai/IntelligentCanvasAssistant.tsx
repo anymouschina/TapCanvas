@@ -6,6 +6,7 @@ import { useIntelligentChat } from '../../hooks/useIntelligentChat'
 import { useReactFlow } from '@xyflow/react'
 import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
+import { CanvasService } from '../../ai/canvasService'
 
 interface IntelligentCanvasAssistantProps {
   userId: string
@@ -44,6 +45,10 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
         handleOptimizationOperation(operation.payload)
         break
 
+      case 'canvas_connection.operation':
+        handleConnectionOperation(operation.payload)
+        break
+
       case 'canvas_operation': {
         const domain = operation.params?.domain
         const parameters = operation.params?.parameters || operation.payload || {}
@@ -68,17 +73,22 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
 
     switch (action) {
       case 'create':
+        const rawConfig = config || {}
+        const { autoRun, ...restConfig } = rawConfig
         const newNode = {
           id: `node_${Date.now()}`,
           type: 'taskNode', // 统一使用 taskNode 类型
           position: position || { x: 100, y: 100 },
           data: {
             label: nodeType === 'image' ? '小红书封面' : `${nodeType} 节点`,
-            kind: config?.kind || nodeType,
-            ...config
+            kind: rawConfig.kind || nodeType,
+            ...restConfig
           }
         }
         setNodes(prev => [...prev, newNode])
+        if (autoRun && newNode.id) {
+          void CanvasService.runNode({ nodeId: newNode.id })
+        }
         break
 
       case 'update':
@@ -152,6 +162,38 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
       nodeTypes: [...new Set(nodes.map(n => n.type))],
       connectionDensity: edges.length / (nodes.length * (nodes.length - 1))
     })
+  }
+
+  const handleConnectionOperation = (payload: any) => {
+    const { action, sourceNodeId, targetNodeId, edgeId, connections } = payload || {}
+
+    const connectPair = (source: string, target: string) => {
+      void CanvasService.connectNodes({ sourceNodeId: source, targetNodeId: target })
+    }
+
+    if (Array.isArray(connections) && connections.length) {
+      connections.forEach((pair: any) => {
+        if (pair?.sourceNodeId && pair?.targetNodeId) {
+          connectPair(pair.sourceNodeId, pair.targetNodeId)
+        }
+      })
+      return
+    }
+
+    if (action === 'disconnect') {
+      const existing = edges.find(e =>
+        (edgeId && e.id === edgeId) ||
+        (!edgeId && sourceNodeId && targetNodeId && e.source === sourceNodeId && e.target === targetNodeId)
+      )
+      if (existing?.id) {
+        void CanvasService.disconnectNodes({ edgeId: existing.id })
+      }
+      return
+    }
+
+    if (sourceNodeId && targetNodeId) {
+      connectPair(sourceNodeId, targetNodeId)
+    }
   }
 
   return (

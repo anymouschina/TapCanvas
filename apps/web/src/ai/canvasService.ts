@@ -3,7 +3,6 @@ import { useRFStore } from '../canvas/store'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeRemote } from '../runner/remoteRunner'
 import { FunctionResult } from './types'
-import { buildVideoRealismPrompt } from '../creative/videoRealism'
 
 /**
  * Canvas操作服务层
@@ -20,7 +19,7 @@ const REMOTE_RUN_KINDS = new Set([
   'textToImage',
 ])
 
-const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage', 'composevideo'])
+const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage'])
 
 export class CanvasService {
 
@@ -154,17 +153,6 @@ export class CanvasService {
     const data: Record<string, any> = { ...baseData, ...restConfig }
     if (!data.prompt && label) {
       data.prompt = label
-    }
-
-    const enhancedPrompt = CanvasService.enhanceCreativePrompt(baseData.kind || logicalKinds[rawType] || rawType, data.prompt)
-    if (enhancedPrompt) {
-      data.prompt = enhancedPrompt.prompt
-      if (!data.negativePrompt) {
-        data.negativePrompt = enhancedPrompt.negativePrompt
-      }
-      if (!data.keywords && enhancedPrompt.keywords.length) {
-        data.keywords = enhancedPrompt.keywords
-      }
     }
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
@@ -512,54 +500,6 @@ export class CanvasService {
     }
   }
 
-  /**
-   * 创意提示词润色，补充镜头语言与细节
-   */
-  private static enhanceCreativePrompt(kind?: string, prompt?: string) {
-    if (!kind) return null
-    const normalizedKind = kind.toLowerCase()
-    if (!CREATIVE_PROMPT_KINDS.has(normalizedKind)) return null
-
-    const seed = CanvasService.normalizePromptSeed(prompt)
-    if (seed.length > 180) return null
-    const subject = seed || 'an imaginative concept'
-    const negativePrompt = 'low quality, blurry, lowres, distorted faces, watermark, duplicate, text overlay, bad composition'
-
-    if (normalizedKind === 'composevideo') {
-      const base = [
-        `Cinematic short film shot about ${subject}`,
-        'Describe the scene arc, character intent, and environment layering',
-        'Camera language: tracking shot, low-angle inserts, smooth gimbal motion, controlled handheld energy',
-        'Lighting: volumetric shafts, practical neon accents, dramatic rim light',
-        'Mood: rich film grain, Dolby Vision grading, dynamic depth of field'
-      ].join('. ')
-      const enriched = buildVideoRealismPrompt(base)
-      return {
-        prompt: enriched,
-        negativePrompt,
-        keywords: ['cinematic', 'dynamic lighting', 'story-driven', '4k film', 'volumetric glow']
-      }
-    }
-
-    const enriched = [
-      `Ultra detailed illustration of ${subject}`,
-      'Layered foreground/midground/background storytelling with tactile materials',
-      'Lighting: cinematic rim lights, volumetric glow, high-contrast mood',
-      'Lens: 50mm prime, shallow depth of field, hyperreal focus',
-      'Finish: 8K render, HDR toning, clean composition'
-    ].join('. ')
-
-    return {
-      prompt: enriched,
-      negativePrompt,
-      keywords: ['ultra detailed', '8k render', 'dramatic lighting', 'volumetric glow', 'photoreal texture']
-    }
-  }
-
-  private static normalizePromptSeed(value?: string) {
-    if (!value) return ''
-    return value.replace(/\s+/g, ' ').trim()
-  }
 
   /**
    * 生成默认节点位置

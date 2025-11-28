@@ -6,7 +6,9 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { z } from 'zod'
 import { ACTION_TYPES, SYSTEM_PROMPT, MODEL_PROVIDER_MAP, PROVIDER_VENDOR_ALIASES, type SupportedProvider } from './constants'
+import { VIDEO_REALISM_RULES } from './video-realism'
 import { PROMPT_SAMPLES, formatPromptSample, matchPromptSamples, type PromptSample } from './prompt-samples'
+import { splitNarrativeSections } from './utils/narrative'
 import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
 import { ToolEventsService } from './tool-events.service'
 import type { ModelProvider, ModelToken } from '@prisma/client'
@@ -958,6 +960,21 @@ export class AiService {
           `当前有节点正在运行：${context.currentRun.label || context.currentRun.nodeId}（状态 ${context.currentRun.status}，进度 ${context.currentRun.progress ?? 0}%）。请优先关注其结果或异常，再决定是否继续新的生成。`
         )
       }
+      const existingVideos = context.nodes
+        ?.filter(node => node.kind === 'composeVideo' || node.kind === 'video')
+        ?.slice(0, 3)
+        ?.map(node => `${node.label || node.id} (${node.status || 'unknown'})`)
+      if (existingVideos && existingVideos.length) {
+        pieces.push(`已有视频节点：${existingVideos.join('、')}。若用户要求续写，请读取这些节点的 prompt 与角色后再创作下一镜。`)
+      }
+
+      const existingImages = context.nodes
+        ?.filter(node => node.kind === 'image' || node.kind === 'textToImage')
+        ?.slice(0, 3)
+        ?.map(node => node.label || node.id)
+      if (existingImages && existingImages.length) {
+        pieces.push(`参考图像：${existingImages.join('、')}。若无特别说明，请沿用这些节点的画风/色彩。`)
+      }
     }
 
     if (latestUserText && latestUserText.trim()) {
@@ -965,6 +982,12 @@ export class AiService {
       if (samples.length) {
         const formatted = samples.map(formatPromptSample).join('\n\n')
         pieces.push(`提示词案例匹配（根据用户意图自动挑选）：\n${formatted}`)
+      }
+
+      const scenes = this.extractNarrativeScenes(latestUserText)
+      if (scenes.length > 1) {
+        const sceneLines = scenes.map((scene, idx) => `镜头${idx + 1}：${scene}`)
+        pieces.push(`检测到长篇剧情，请按以下镜头逐步生成 composeVideo：\n${sceneLines.join('\n')}\n注意：每个镜头需单独创建/更新节点，执行完一镜后再继续下一镜，保持人物/光影/情绪承接。`)
       }
     }
 
@@ -981,6 +1004,125 @@ export class AiService {
       .map(message => this.mapToUiMessage(message))
       .filter((msg): msg is NonNullable<ReturnType<typeof AiService.prototype.mapToUiMessage>> => !!msg && msg.parts.length > 0)
     return convertToCoreMessages(uiMessages as any)
+  }
+
+  private extractNarrativeScenes(text: string): string[] {
+    if (!text) return []
+    const cleaned = text.replace(/\r/g, '\n').trim()
+    if (cleaned.length < 320) return []
+
+    const sections = splitNarrativeSections(cleaned, {
+      maxScenes: 6,
+      minLength: 60,
+      targetLength: 240,
+      maxChunkLength: 340
+    })
+
+    if (sections.length <= 1) return []
+
+    return sections.slice(0, 6).map(section => {
+      if (section.length <= 80) return section
+      return `${section.slice(0, 80)}…`
+    })
+  }
+
+  async generateScenePrompt(userId: string, request: ScenePromptRequest): Promise<ScenePromptResult> {
+    const modelName = request.model || 'gemini-2.5-flash'
+    const provider = this.resolveProvider(modelName, request.baseUrl, request.provider)
+    const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, request.apiKey, request.baseUrl)
+    const model = this.buildModel(provider, modelName, apiKey, baseUrl)
+
+    const schema = z.object({
+      title: z.string().min(4).max(120),
+      prompt: z.string().min(80),
+      negativePrompt: z.string().min(20).default(DEFAULT_NEGATIVE_PROMPT),
+      keywords: z.array(z.string()).min(4).max(12),
+      realismRules: z.array(z.string()).min(3).max(9),
+      durationSeconds: z.number().min(5).max(15).default(10),
+      orientation: z.enum(['landscape', 'portrait']).default('landscape'),
+      cameraPlan: z.string().min(40),
+      environmentNotes: z.string().min(10).optional(),
+      microNarrative: z.string().min(10).optional(),
+      beatOutline: z.array(z.string()).min(2).max(6),
+      modelSuggestion: z.string().optional()
+    })
+
+    const result = await generateObject({
+      model,
+      system: this.composeScenePromptSystem(),
+      messages: [
+        {
+          role: 'user',
+          content: this.composeScenePromptUserMessage(request)
+        }
+      ],
+      schema,
+      temperature: request.temperature ?? 0.35,
+      maxRetries: 1
+    })
+
+    const realismSet = new Set(VIDEO_REALISM_RULES.map(rule => rule.id))
+    const filteredRules = (result.object.realismRules || []).filter(rule => realismSet.has(rule))
+
+    return {
+      title: result.object.title,
+      prompt: result.object.prompt,
+      negativePrompt: result.object.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+      keywords: result.object.keywords,
+      realismRules: filteredRules,
+      durationSeconds: result.object.durationSeconds,
+      orientation: result.object.orientation,
+      cameraPlan: result.object.cameraPlan,
+      environmentNotes: result.object.environmentNotes,
+      microNarrative: result.object.microNarrative,
+      beatOutline: result.object.beatOutline,
+      modelSuggestion: result.object.modelSuggestion
+    }
+  }
+
+  private composeScenePromptSystem() {
+    const realismGuide = VIDEO_REALISM_RULES
+      .map(rule => `${rule.id}: ${rule.promptLine}`)
+      .join('\n')
+    return [
+      'You are TapCanvas\'s cinematic scene prompt architect.',
+      'Convert the provided narrative into a concise 10-second video prompt with explicit camera moves, subjects, lighting logic, and emotional arc.',
+      'Blend realism naturally—never dump checklists. Mention lighting temperature, camera stability, and micro actions as part of the prose.',
+      'Respect continuity cues (characters, wardrobe, weather, props).',
+      'Choose 3-6 relevant realism rules from the list below and weave them organically into the prompt text.',
+      'Return structured JSON that matches the schema.',
+      'Realism rulebook:',
+      realismGuide
+    ].join('\n')
+  }
+
+  private composeScenePromptUserMessage(request: ScenePromptRequest) {
+    const excerpt = request.sceneText.length > 1600
+      ? `${request.sceneText.slice(0, 1600)}…`
+      : request.sceneText
+    const contextLines = [
+      request.contextSummary ? `Canvas context:\n${request.contextSummary}` : '',
+      request.characterNotes?.length ? `Characters to keep: ${request.characterNotes.join('; ')}` : '',
+      request.styleNotes?.length ? `Visual style refs: ${request.styleNotes.join('; ')}` : '',
+      request.videoNotes?.length ? `Existing video beats: ${request.videoNotes.join(' | ')}` : ''
+    ].filter(Boolean)
+    const hintLine = request.hints?.length ? `Scene hints: ${request.hints.join(', ')}` : ''
+
+    return [
+      `Scene ${request.sceneIndex} / ${request.sceneCount}`,
+      hintLine,
+      contextLines.join('\n'),
+      request.userIntent ? `User briefing: ${request.userIntent}` : '',
+      `Summary: ${request.sceneSummary}`,
+      'Source text:',
+      excerpt,
+      '',
+      'Output requirements:',
+      '- Prompt: cinematic English paragraph with subject, motion, lighting, material interactions, micro gestures.',
+      '- Camera plan: describe exact movement timing (push, hold, occlusion).',
+      '- Beat outline: 2-5 bullet beats summarizing moment-by-moment arc.',
+      '- Mention realism touches (lighting logic, handheld jitter, DOF, lens flaws, micro motion) as prose, not bullet list.'
+    ].filter(Boolean).join('\n')
   }
 
   private emitToolCallEvents(userId: string, chunk: any) {
@@ -1114,4 +1256,37 @@ export class AiService {
     })
     return shared?.baseUrl ?? null
   }
+}
+
+export interface ScenePromptRequest {
+  model: string
+  baseUrl?: string | null
+  provider?: string | null
+  apiKey?: string
+  sceneIndex: number
+  sceneCount: number
+  sceneSummary: string
+  sceneText: string
+  hints?: string[]
+  contextSummary?: string
+  characterNotes?: string[]
+  styleNotes?: string[]
+  videoNotes?: string[]
+  userIntent?: string
+  temperature?: number
+}
+
+export interface ScenePromptResult {
+  title: string
+  prompt: string
+  negativePrompt: string
+  keywords: string[]
+  realismRules: string[]
+  durationSeconds: number
+  orientation: 'landscape' | 'portrait'
+  cameraPlan: string
+  environmentNotes?: string
+  microNarrative?: string
+  beatOutline: string[]
+  modelSuggestion?: string
 }

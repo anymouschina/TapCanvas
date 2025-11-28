@@ -57,6 +57,10 @@ export class WebExecutionEngine {
           result = await this.executeProjectManagement(operation, context)
           break
 
+        case CanvasActionDomain.CONNECTION_FLOW:
+          result = await this.executeConnectionFlow(operation, context)
+          break
+
         default:
           throw new Error(`Unsupported operation domain: ${operation.capability.domain}`)
       }
@@ -342,6 +346,43 @@ export class WebExecutionEngine {
   }
 
   /**
+   * 执行连线调整
+   */
+  private async executeConnectionFlow(
+    operation: CanvasOperation,
+    context: ExecutionContext
+  ): Promise<ExecutionResult> {
+    const { parameters } = operation
+
+    const toolCallId = `connection_flow_${Date.now()}`
+    const eventPayload: ToolEvent = {
+      type: 'tool-call',
+      toolCallId,
+      toolName: 'canvas.connection.operation',
+      input: {
+        action: parameters.action || 'connect',
+        sourceNodeId: parameters.sourceNodeId,
+        targetNodeId: parameters.targetNodeId,
+        edgeId: parameters.edgeId,
+        connections: parameters.connections
+      }
+    }
+
+    this.toolEvents.emit(context.userId, eventPayload)
+
+    return {
+      success: true,
+      operation,
+      result: {
+        message: `连接操作"${parameters.action || 'connect'}"已发送到前端`,
+        affectedElements: parameters.connections || [parameters.edgeId].filter(Boolean)
+      },
+      duration: 0,
+      affectedElements: parameters.connections || []
+    }
+  }
+
+  /**
    * 验证操作的有效性
    */
   private async validateOperation(
@@ -369,6 +410,10 @@ export class WebExecutionEngine {
 
       case CanvasActionDomain.EXECUTION_DEBUG:
         await this.validateExecutionDebug(operation)
+        break
+
+      case CanvasActionDomain.CONNECTION_FLOW:
+        await this.validateConnectionFlow(operation)
         break
     }
   }
@@ -417,6 +462,23 @@ export class WebExecutionEngine {
     }
   }
 
+  private async validateConnectionFlow(operation: CanvasOperation): Promise<void> {
+    const { parameters } = operation
+    const action = parameters.action || 'connect'
+
+    if (action === 'connect' || action === 'reconnect') {
+      if (!parameters.connections && (!parameters.sourceNodeId || !parameters.targetNodeId)) {
+        throw new Error('Connection actions require sourceNodeId and targetNodeId or a connections list')
+      }
+    }
+
+    if (action === 'disconnect') {
+      if (!parameters.edgeId && !parameters.sourceNodeId && !parameters.targetNodeId) {
+        throw new Error('Disconnect action requires edgeId or a source/target pair')
+      }
+    }
+  }
+
   /**
    * 获取执行统计信息
    */
@@ -428,6 +490,7 @@ export class WebExecutionEngine {
         'canvas.layout.apply',
         'canvas.optimization.analyze',
         'canvas.view.navigate',
+        'canvas.connection.operation',
         'project.operation'
       ]
     }

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { AiService } from './ai.service'
+import type { ScenePromptResult } from './ai.service'
 import { CanvasIntentRecognizer } from './intelligence/intent-recognizer'
 import { ThinkingStream } from './intelligence/thinking-stream'
 import { WebExecutionEngine } from './execution/web-execution-engine'
@@ -10,10 +11,15 @@ import {
   CanvasOperation,
   ParsedCanvasIntent,
   ExecutionContext,
-  ExecutionResult
+  ExecutionResult,
+  CanvasActionDomain
 } from './core/types/canvas-intelligence.types'
-import type { ChatRequestDto } from './dto/chat.dto'
+import type { ChatRequestDto, CanvasContextDto } from './dto/chat.dto'
 import { PlanManager } from './intelligence/plan-manager'
+import { canvasCapabilityRegistry } from './core/canvas-registry'
+import { splitNarrativeSections } from './utils/narrative'
+
+type NarrativeScene = { index: number; summary: string; raw: string; hints: string[] }
 
 const DEFAULT_INTELLIGENT_MODEL = 'gemini-2.5-flash'
 
@@ -81,6 +87,17 @@ export class IntelligentAiService {
       )
 
       // 4. 带思考过程的执行规划
+      const narrativeScenes = this.splitNarrativeIntoScenes(originalInput)
+      if (narrativeScenes.length > 0) {
+        return await this.handleNarrativeScenes(
+          narrativeScenes,
+          userId,
+          payload,
+          executionContext,
+          originalInput
+        )
+      }
+
       const { plan, operations } = await this.thinkingStream.processWithThinking(
         intent,
         payload.context,
@@ -155,6 +172,7 @@ export class IntelligentAiService {
     }
   }
 
+
   /**
    * 流式智能聊天
    */
@@ -173,6 +191,7 @@ export class IntelligentAiService {
 
     const userMessage = this.getLastUserMessage(payload)
     const originalInput = userMessage?.content || ''
+    let activePlanId: string | undefined
 
     try {
       // 实时思考过程推送
@@ -518,6 +537,338 @@ export class IntelligentAiService {
    */
   clearSession() {
     this.thinkingStream.clear()
+    this.thinkingStream.clear()
     this.planManager.clear()
+  }
+
+  private splitNarrativeIntoScenes(source: string) {
+    const sections = splitNarrativeSections(source, {
+      maxScenes: 12,
+      minLength: 60,
+      targetLength: 260,
+      maxChunkLength: 360
+    })
+
+    return sections.map((text, index) => ({
+      index: index + 1,
+      summary: this.buildSceneSummary(text),
+      raw: text,
+      hints: this.buildVideoHints(text)
+    }))
+  }
+
+  private async handleNarrativeScenes(
+    scenes: NarrativeScene[],
+    userId: string,
+    payload: ChatRequestDto,
+    executionContext: ExecutionContext,
+    originalInput: string
+  ): Promise<IntelligentChatResponseDto> {
+    if (!scenes.length) {
+      return {
+        reply: '未能解析出有效镜头，请重新描述需要生成的视频剧情。',
+        plan: [],
+        actions: [],
+        thinkingEvents: [],
+        intent: {
+          type: CanvasActionDomain.NODE_MANIPULATION,
+          confidence: 0.4,
+          reasoning: '无有效剧情片段可执行',
+          planSteps: []
+        }
+      }
+    }
+
+    const plan = this.buildNarrativeExecutionPlan(scenes)
+    this.planManager.startPlan(
+      userId,
+      executionContext.sessionId,
+      plan,
+      '检测到长篇剧情，启动智能分镜并自动创建 composeVideo 节点'
+    )
+
+    const nodeCapability = canvasCapabilityRegistry.getCapabilityByName(
+      CanvasActionDomain.NODE_MANIPULATION,
+      '智能节点操作'
+    )
+    if (!nodeCapability) {
+      throw new Error('未注册智能节点操作能力，无法自动创建 composeVideo 节点')
+    }
+
+    const model = payload.model || DEFAULT_INTELLIGENT_MODEL
+    const continuity = this.summarizeCanvasContinuity(payload.context)
+    const created: Array<{ label: string; rules: string[]; outline: string[] }> = []
+
+    try {
+      for (const scene of scenes) {
+        const planStepId = this.resolvePlanStepId(plan, scene.index)
+        if (planStepId) {
+          this.planManager.markStepInProgress(userId, plan.id, planStepId, `第 ${scene.index} 镜提示词编写中`)
+        }
+
+        const scenePrompt = await this.aiService.generateScenePrompt(userId, {
+          model,
+          sceneIndex: scene.index,
+          sceneCount: scenes.length,
+          sceneSummary: scene.summary,
+          sceneText: scene.raw,
+          hints: scene.hints,
+          contextSummary: continuity.description,
+          characterNotes: continuity.characterNotes,
+          styleNotes: continuity.styleNotes,
+          videoNotes: continuity.videoNotes,
+          userIntent: originalInput
+        })
+
+        const label = this.buildSceneLabel(scene, scenePrompt.title)
+        const config = this.composeSceneNodeConfig(
+          label,
+          scene,
+          scenePrompt,
+          scenes.length,
+          continuity
+        )
+        const operation: CanvasOperation = {
+          id: `scene_${scene.index}_${Date.now()}`,
+          capability: nodeCapability,
+          parameters: {
+            action: 'create',
+            nodeType: 'video',
+            position: this.computeScenePosition(scene.index),
+            config
+          },
+          context: executionContext,
+          priority: 5
+        }
+
+        await this.executionEngine.executeOperation(operation, executionContext)
+        created.push({ label, rules: scenePrompt.realismRules, outline: scenePrompt.beatOutline })
+
+        if (planStepId) {
+          this.planManager.markStepCompleted(
+            userId,
+            plan.id,
+            planStepId,
+            `已创建 ${label} 并写入 prompt`
+          )
+        }
+      }
+
+      this.planManager.completePlan(userId, plan.id, '所有镜头已创建，等待视频生成完成')
+
+      const replyLines = [
+        '已进入智能分镜模式，为该段剧情创建以下 composeVideo 节点：',
+        ...created.map((scene, idx) => {
+          const realism = scene.rules.length ? `｜Realism：${scene.rules.join(', ')}` : ''
+          const outline = scene.outline.length ? `｜Beats：${scene.outline.join(' / ')}` : ''
+          return `${idx + 1}. ${scene.label} ${realism}${outline}`
+        }),
+        '',
+        '提示词和负面词已自动写入节点并触发执行，可在画布检查日志/结果，若需调整可直接编辑节点重新运行。'
+      ]
+
+      return {
+        reply: replyLines.join('\n'),
+        plan: plan.steps.map(step => step.description),
+        actions: [],
+        thinkingEvents: [],
+        intent: {
+          type: CanvasActionDomain.NODE_MANIPULATION,
+          confidence: 0.92,
+          reasoning: '长篇剧情已拆解并写入 composeVideo，等待生成结果。',
+          planSteps: plan.steps.map(step => step.description)
+        }
+      }
+    } catch (error) {
+      this.planManager.abortPlan(userId, plan.id, '镜头生成失败，已终止智能分镜流程')
+      this.logger.error('Narrative scene execution failed', error as any)
+      return {
+        reply: `拆镜过程中出现异常：${(error as Error).message}。请检查网络或稍后重试。`,
+        plan: plan.steps.map(step => `${step.name}（失败）`),
+        actions: [],
+        thinkingEvents: [],
+        intent: {
+          type: CanvasActionDomain.NODE_MANIPULATION,
+          confidence: 0.35,
+          reasoning: '智能分镜执行失败，需人工干预',
+          planSteps: plan.steps.map(step => `${step.description}（失败）`)
+        }
+      }
+    }
+  }
+
+  private buildNarrativeExecutionPlan(scenes: NarrativeScene[]): ExecutionPlan {
+    const planId = `narrative_${Date.now()}`
+    const steps = scenes.map(scene => ({
+      id: `scene-${scene.index}`,
+      name: `Scene ${scene.index}`,
+      description: `Scene ${scene.index}：${scene.summary}`,
+      status: 'pending' as const,
+      reasoning: '自动创建 composeVideo 节点并写入提示词',
+      estimatedTime: 2,
+      dependencies: [],
+      acceptanceCriteria: [`已创建 Scene ${scene.index} 的 composeVideo 节点并填入 prompt`]
+    }))
+
+    const dependencyEdges = steps.slice(1).map((step, idx) => ({
+      source: steps[idx].id,
+      target: step.id
+    }))
+
+    return {
+      id: planId,
+      strategy: {
+        name: 'Narrative Scene Builder',
+        description: '拆解长篇剧情并按镜头生成 composeVideo 节点',
+        efficiency: 'medium',
+        risk: 'medium',
+        reasoning: '自动分镜 + 提示词生成'
+      },
+      steps,
+      dependencies: {
+        nodes: steps.map(step => step.id),
+        edges: dependencyEdges
+      },
+      parallelGroups: [],
+      risks: [],
+      estimatedTime: steps.length * 2,
+      estimatedCost: steps.length,
+      rollbackPlan: { possible: false, steps: [] }
+    }
+  }
+
+  private resolvePlanStepId(plan: ExecutionPlan, sceneIndex: number) {
+    const step = plan.steps.find(entry => entry.id === `scene-${sceneIndex}`)
+    return step?.id
+  }
+
+  private composeSceneNodeConfig(
+    label: string,
+    scene: NarrativeScene,
+    prompt: ScenePromptResult,
+    totalScenes: number,
+    continuity: ReturnType<typeof this.summarizeCanvasContinuity>
+  ) {
+    return {
+      kind: 'composeVideo',
+      label,
+      prompt: prompt.prompt,
+      videoPrompt: prompt.prompt,
+      negativePrompt: prompt.negativePrompt,
+      keywords: prompt.keywords,
+      videoDurationSeconds: prompt.durationSeconds,
+      duration: prompt.durationSeconds,
+      orientation: prompt.orientation,
+      videoOrientation: prompt.orientation,
+      videoModel: prompt.modelSuggestion || 'sy_8',
+      sceneIndex: scene.index,
+      sceneCount: totalScenes,
+      sceneSummary: scene.summary,
+      sceneHints: scene.hints,
+      sceneOutline: prompt.beatOutline,
+      cameraPlan: prompt.cameraPlan,
+      environmentNotes: prompt.environmentNotes,
+      microNarrative: prompt.microNarrative,
+      realismRuleIds: prompt.realismRules,
+      continuitySnapshot: continuity.description,
+      continuityCharacters: continuity.characterNotes,
+      continuityStyleRefs: continuity.styleNotes,
+      continuityVideoRefs: continuity.videoNotes,
+      autoRun: true
+    }
+  }
+
+  private computeScenePosition(index: number) {
+    const columnSize = 3
+    const spacingX = 420
+    const spacingY = 340
+    const col = (index - 1) % columnSize
+    const row = Math.floor((index - 1) / columnSize)
+    return {
+      x: 120 + col * spacingX,
+      y: 80 + row * spacingY
+    }
+  }
+
+  private buildSceneLabel(scene: NarrativeScene, aiTitle?: string) {
+    const safeTitle = (aiTitle || scene.summary || `Scene ${scene.index}`).replace(/\s+/g, ' ').trim()
+    const short = safeTitle.length > 42 ? `${safeTitle.slice(0, 42)}…` : safeTitle
+    const indexText = String(scene.index).padStart(2, '0')
+    return `Scene ${indexText} · ${short || 'Untitled'}`
+  }
+
+  private summarizeCanvasContinuity(context?: CanvasContextDto | null) {
+    if (!context) {
+      return {
+        description: 'No existing canvas continuity. Treat this as a fresh establishing shot.',
+        characterNotes: [] as string[],
+        styleNotes: [] as string[],
+        videoNotes: [] as string[]
+      }
+    }
+
+    const characterNotes = (context.characters || [])
+      .slice(0, 6)
+      .map(character => {
+        const username = character.username ? `@${character.username}` : character.label || character.nodeId
+        const desc = character.description ? ` - ${character.description}` : ''
+        return `${username}${desc}`
+      })
+
+    const styleNotes = (context.nodes || [])
+      .filter(node => ['image', 'textToImage'].includes(String((node as any).kind || '')))
+      .slice(0, 4)
+      .map(node => `${node.label || node.id} (${(node as any).kind || 'image'})`)
+
+    const videoNotes = (context.videoBindings || [])
+      .slice(0, 5)
+      .map(binding => {
+        const chars = binding.characters?.map(char => char.label || char.username || char.nodeId).join(', ')
+        const prompt = binding.promptPreview ? ` prompt: ${binding.promptPreview}` : ''
+        return `${binding.label || binding.nodeId}${chars ? ` — ${chars}` : ''}${prompt}`
+      })
+
+    const timelineEntries = Array.isArray((context as any)?.timeline)
+      ? ((context as any).timeline as Array<any>).slice(0, 4).map((entry: any) => {
+          const chars = Array.isArray(entry.characters)
+            ? entry.characters.map((c: any) => c.label || c.username).join(', ')
+            : ''
+          return `${entry.label || entry.nodeId} (${entry.status || 'unknown'})${chars ? ` ｜ ${chars}` : ''}`
+        })
+      : []
+
+    const lines = [
+      characterNotes.length ? `Characters: ${characterNotes.join('; ')}` : '',
+      styleNotes.length ? `Image style refs: ${styleNotes.join('; ')}` : '',
+      videoNotes.length ? `Existing video beats: ${videoNotes.join(' | ')}` : '',
+      timelineEntries.length ? `Timeline: ${timelineEntries.join(' -> ')}` : ''
+    ].filter(Boolean)
+
+    return {
+      description: lines.length
+        ? lines.join('\n')
+        : 'No notable characters or prior shots, you can establish tone freely.',
+      characterNotes,
+      styleNotes,
+      videoNotes
+    }
+  }
+
+  private buildSceneSummary(text: string) {
+    const trimmed = text.trim()
+    if (trimmed.length <= 64) return trimmed
+    return `${trimmed.slice(0, 64)}…`
+  }
+
+  private buildVideoHints(text: string) {
+    const hints: string[] = []
+    const normalized = text
+    if (/僧|和尚|佛/.test(normalized)) hints.push('monks inside lotus altars')
+    if (/血|首|尸/.test(normalized)) hints.push('blood-soaked horror beats')
+    if (/雨|风|伞/.test(normalized)) hints.push('cold mountain rain and gusts')
+    if (/李长安/.test(normalized)) hints.push('protagonist Li Changan must appear')
+    if (/余云寺|寺|佛/.test(normalized)) hints.push('ruined temples and lotus pedestals')
+    if (/魂|鬼|空衍/.test(normalized)) hints.push('spectral monks or ghostly presences')
+    return hints
   }
 }

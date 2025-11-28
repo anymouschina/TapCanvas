@@ -112,6 +112,7 @@ const TOOL_NAME_TO_EVENT: Record<string, string> = {
   'canvas.layout.apply': 'canvas_layout.apply',
   'canvas.optimization.analyze': 'canvas_optimization.analyze',
   'canvas.view.navigate': 'canvas_view.navigate',
+  'canvas.connection.operation': 'canvas_connection.operation',
   'project.operation': 'project.operation'
 }
 

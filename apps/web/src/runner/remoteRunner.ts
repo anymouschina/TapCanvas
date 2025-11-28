@@ -566,9 +566,31 @@ async function runVideoTask(ctx: RunnerContext) {
       }
     }
 
+    // 如果有上游图片，避免把图片的提示词重复塞进视频提示词；保留用户写的内容并注明参考上游图片风格
+    let finalPrompt = effectivePrompt
+    if (imageUrlForUpload) {
+      const inboundImages = inbound
+        .map((edge) => nodes.find((n: Node) => n.id === edge.source))
+        .filter((n): n is Node => Boolean(n && IMAGE_NODE_KINDS.has((n.data as any)?.kind)))
+      const upstreamPrompts = inboundImages
+        .map((n) => (n.data as any)?.prompt as string | undefined)
+        .filter((p): p is string => Boolean(p && p.trim().length > 0))
+      upstreamPrompts.forEach((upPrompt) => {
+        if (finalPrompt.includes(upPrompt)) {
+          finalPrompt = finalPrompt.replace(upPrompt, '').trim()
+        }
+      })
+      const refNote = '参考上游图片风格。'
+      if (!finalPrompt) {
+        finalPrompt = refNote
+      } else if (!finalPrompt.includes(refNote)) {
+        finalPrompt = `${finalPrompt}\n${refNote}`
+      }
+    }
+
     const preferredTokenId = (data as any)?.videoTokenId as string | undefined
     const res = await createSoraVideo({
-      prompt: effectivePrompt,
+      prompt: finalPrompt,
       orientation,
       size: 'small',
       n_frames: nFrames,
@@ -610,7 +632,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoTaskId: taskId || null,
       videoInpaintFileId: inpaintFileId || null,
       videoOrientation: orientation,
-      videoPrompt: effectivePrompt,
+      videoPrompt: finalPrompt,
       videoDurationSeconds,
       videoTokenId: usedTokenId || null,
       videoModel: generatedModel,
@@ -634,7 +656,7 @@ async function runVideoTask(ctx: RunnerContext) {
         videoTaskId: null,
         videoInpaintFileId: inpaintFileId || null,
         videoOrientation: orientation,
-        videoPrompt: effectivePrompt,
+        videoPrompt: finalPrompt,
         videoDurationSeconds,
         videoTokenId: usedTokenId || null,
       })
@@ -890,7 +912,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoTaskId: taskId,
       videoInpaintFileId: inpaintFileId || null,
       videoOrientation: orientation,
-        videoPrompt: effectivePrompt,
+      videoPrompt: finalPrompt,
       videoDurationSeconds,
       videoUrl: videoUrl ? rewriteSoraVideoResourceUrl(videoUrl) : (data as any)?.videoUrl || null,
       videoThumbnailUrl: thumbnailUrl ? rewriteSoraVideoResourceUrl(thumbnailUrl) : (data as any)?.videoThumbnailUrl || null,

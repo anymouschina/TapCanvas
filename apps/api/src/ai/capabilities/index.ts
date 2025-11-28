@@ -11,6 +11,7 @@ import {
 import {
   registerXiaohongshuCoverCapability
 } from './xiaohongshu-cover.capability'
+import { registerConnectionFlowCapability } from './connection-flow.capability'
 
 @Injectable()
 export class CapabilityRegistryService implements OnModuleInit {
@@ -39,6 +40,10 @@ export class CapabilityRegistryService implements OnModuleInit {
       // 注册小红书封面生成能力
       registerXiaohongshuCoverCapability()
       this.logger.debug('✅ Xiaohongshu Cover capability registered')
+
+      // 注册连线调整能力
+      registerConnectionFlowCapability()
+      this.logger.debug('✅ Connection Flow capability registered')
 
       // TODO: 添加更多能力注册
       // registerViewNavigationCapability()
