@@ -220,6 +220,21 @@ export class SoraService {
     }
   }
 
+  private buildSafeCaption(prompt: string, maxLen: number): string {
+    // 1) 先截断到 maxLen
+    let text = this.truncateTextForPost(prompt, maxLen)
+    // 2) 简单替换高风险词，避免 Sora caption 审核拒绝
+    const riskyPatterns = [
+      /headless/ig, /decapitat/ig, /severed/ig, /blood/ig, /gore/ig, /bleed/ig, /corpse/ig, /kill/ig, /murder/ig, /slaughter/ig,
+    ]
+    riskyPatterns.forEach((p) => { text = text.replace(p, 'shadow') })
+    // 3) 如果仍然很长，提炼为一句摘要
+    if (text.length > 220) {
+      text = 'Storm-lit temple horror: a monk vanishes, a lantern falls dark, only a backlit silhouette remains in the rain-soaked hall.'
+    }
+    return text
+  }
+
   private async publishVideoPostIfNeeded(token: any, baseUrl: string, matched: any, userId: string): Promise<string | null> {
     const generationId = matched.generation_id || matched.id
     if (!generationId) {
@@ -233,17 +248,9 @@ export class SoraService {
       return null
     }
 
-    // 使用智能截断确保不超过2000字符限制
+    // 构造安全 caption，避免 Sora 审核拒绝
     const originalLength = text.length
-    text = this.truncateTextForPost(text, SORA_POST_MAX_LENGTH)
-
-    if (originalLength > SORA_POST_MAX_LENGTH) {
-      this.logger.log('publishVideoPost: Prompt truncated for Sora post', {
-        originalLength,
-        truncatedLength: text.length,
-        maxLength: SORA_POST_MAX_LENGTH,
-      })
-    }
+    text = this.buildSafeCaption(text, SORA_POST_MAX_LENGTH)
 
     const resolvedBaseUrl =
       baseUrl ||

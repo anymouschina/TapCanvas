@@ -209,6 +209,12 @@ export class CanvasService {
         const logs: string[] = []
         if (typeof params.config.prompt === 'string') {
           logs.push(`prompt 写入（${params.config.prompt.length} 字符）`)
+          const p = params.config.prompt
+          const hasDialogue = /["“”'’‘:：]/.test(p)
+          const hasSound = /\b(sfx|sound|whisper|wind|rain|footstep|thud|voice|dialog|dialogue)\b/i.test(p)
+          if (!hasDialogue && !hasSound) {
+            logs.push('⚠ 未检测到对白/音效描述')
+          }
         }
         if (typeof params.config.negativePrompt === 'string') {
           logs.push(`negativePrompt 写入（${params.config.negativePrompt.length} 字符）`)

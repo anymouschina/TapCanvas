@@ -46,6 +46,18 @@ export default function ParamModal(): JSX.Element {
               </Group>
             </>
           )}
+          {(kind === 'composeVideo' || kind === 'storyboard' || kind === 'image' || kind === 'textToImage') && (
+            <>
+              <Textarea
+                label="Prompt"
+                autosize
+                minRows={4}
+                value={form.prompt || ''}
+                onChange={(e) => setField('prompt', e.currentTarget.value)}
+                placeholder="填写或粘贴生成提示词（英文，可含动作/光影/对白/音效描述）"
+              />
+            </>
+          )}
           {kind === 'subtitleAlign' && (
             <>
               <TextInput label="音频 URL" value={form.audioUrl||''} onChange={(e)=>setField('audioUrl', e.currentTarget.value)} />
