@@ -80,12 +80,13 @@ export function useModelOptions(kind?: NodeKind): ModelOption[] {
   }, [])
 
   useEffect(() => {
-    if (kind && kind !== 'text') return
     let canceled = false
     getAvailableModelOptions()
       .then((remote) => {
         if (canceled || !remote.length) return
-        setOptions((prev) => mergeOptions(prev, remote))
+        const filtered = filterRemoteOptionsByKind(remote, kind)
+        if (!filtered.length) return
+        setOptions((prev) => mergeOptions(prev, filtered))
       })
       .catch(() => {
         // ignore; fallback to static list
@@ -139,4 +140,34 @@ function getProfileKindsForNode(kind?: NodeKind): ProfileKind[] {
     default:
       return ['chat', 'prompt_refine']
   }
+}
+
+const IMAGE_KEYWORDS = ['image', 'img', 'vision', 'dall', 'flux', 'sd', 'stable', 'art', 'picture', 'photo']
+const VIDEO_KEYWORDS = ['video', 'sora', 'veo', 'luma', 'runway', 'pika', 'animate', 'movie', 'film']
+
+function isImageModelValue(value: string): boolean {
+  const lower = value.toLowerCase()
+  return IMAGE_KEYWORDS.some((keyword) => lower.includes(keyword))
+}
+
+function isVideoModelValue(value: string): boolean {
+  const lower = value.toLowerCase()
+  return VIDEO_KEYWORDS.some((keyword) => lower.includes(keyword))
+}
+
+function isTextModelValue(value: string): boolean {
+  return !isImageModelValue(value) && !isVideoModelValue(value)
+}
+
+function filterRemoteOptionsByKind(options: ModelOption[], kind?: NodeKind): ModelOption[] {
+  if (!kind || kind === 'text' || kind === 'character' || kind === 'audio' || kind === 'subtitle') {
+    return options.filter((opt) => isTextModelValue(opt.value))
+  }
+  if (kind === 'image') {
+    return options.filter((opt) => isImageModelValue(opt.value))
+  }
+  if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
+    return options.filter((opt) => isVideoModelValue(opt.value))
+  }
+  return options
 }

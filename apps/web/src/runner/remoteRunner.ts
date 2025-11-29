@@ -973,7 +973,14 @@ async function runGenericTask(ctx: RunnerContext) {
       ? ((data as any)?.imageModelVendor as string | undefined)
       : ((data as any)?.modelVendor as string | undefined)
     const vendor = explicitVendor || (taskKind === 'text_to_image'
-      ? (modelLower.includes('gemini') ? 'gemini' : 'qwen')
+      ? modelLower.includes('gemini')
+        ? 'gemini'
+        : modelLower.includes('gpt') ||
+            modelLower.includes('openai') ||
+            modelLower.includes('dall') ||
+            modelLower.includes('o3-')
+          ? 'openai'
+          : 'qwen'
       : isAnthropicModel(selectedModel) ||
         modelLower.includes('claude') ||
         modelLower.includes('glm')

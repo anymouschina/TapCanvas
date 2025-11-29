@@ -5,11 +5,16 @@ import type {
   ImageToPromptRequest,
   ProviderAdapter,
   ProviderContext,
+  TaskAsset,
   TaskResult,
+  TextToImageRequest,
 } from '../task.types'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com'
 const DEFAULT_MODEL = 'gpt-5.1-codex'
+const DEFAULT_IMAGE_MODEL = 'gpt-image-1'
+const DEFAULT_IMAGE_SIZE = '1024x1024'
+const OPENAI_IMAGE_SIZE_REGEX = /^\d{2,4}x\d{2,4}$/i
 
 type OpenAIContentPart =
   | { type: 'text'; text: string }
@@ -205,6 +210,46 @@ function buildChatUrl(baseUrl: string): string {
   return `${normalized}${hasVersion ? '' : '/v1'}/chat/completions`
 }
 
+function buildImageGenerationUrl(baseUrl: string): string {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (/\/images\/generations$/i.test(normalized)) {
+    return normalized
+  }
+  const hasVersion = /\/v\d+(?:beta)?$/i.test(normalized)
+  return `${normalized}${hasVersion ? '' : '/v1'}/images/generations`
+}
+
+function toDimension(value?: number | null): number | null {
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return null
+  const clamped = Math.min(2048, Math.max(64, Math.round(value)))
+  return clamped
+}
+
+function normalizeImageSize(req: TextToImageRequest, extras: Record<string, any>): string {
+  const explicit = typeof extras.size === 'string' ? extras.size.trim().toLowerCase() : ''
+  if (explicit && OPENAI_IMAGE_SIZE_REGEX.test(explicit)) {
+    return explicit
+  }
+  const widthDim = toDimension(
+    typeof extras.width === 'number'
+      ? extras.width
+      : typeof req.width === 'number'
+        ? req.width
+        : null,
+  )
+  const heightDim = toDimension(
+    typeof extras.height === 'number'
+      ? extras.height
+      : typeof req.height === 'number'
+        ? req.height
+        : null,
+  )
+  if (widthDim && heightDim) return `${widthDim}x${heightDim}`
+  if (widthDim) return `${widthDim}x${widthDim}`
+  if (heightDim) return `${heightDim}x${heightDim}`
+  return DEFAULT_IMAGE_SIZE
+}
+
 async function callOpenAIChat(
   prompt: string,
   ctx: ProviderContext,
@@ -304,7 +349,7 @@ async function callOpenAIChat(
 
 export const openaiAdapter: ProviderAdapter = {
   name: 'openai',
-  supports: ['chat', 'prompt_refine', 'image_to_prompt'],
+  supports: ['chat', 'prompt_refine', 'text_to_image', 'image_to_prompt'],
 
   async runChat(req: BaseTaskRequest, ctx: ProviderContext): Promise<TaskResult> {
     const extras = _reqExtras(req)
@@ -335,6 +380,128 @@ export const openaiAdapter: ProviderAdapter = {
         text,
       },
     }
+  },
+
+  async textToImage(req: TextToImageRequest, ctx: ProviderContext): Promise<TaskResult> {
+    const apiKey = (ctx.apiKey || '').trim()
+    if (!apiKey) {
+      throw new Error('OpenAI API key not configured for current provider/user')
+    }
+
+    const extras = _reqExtras(req)
+    const url = buildImageGenerationUrl(ctx.baseUrl)
+    const model =
+      (typeof extras.modelKey === 'string' && extras.modelKey.trim()) ||
+      (ctx.modelKey && ctx.modelKey.trim()) ||
+      DEFAULT_IMAGE_MODEL
+
+    const responseFormat =
+      typeof extras.responseFormat === 'string' && extras.responseFormat.trim().toLowerCase() === 'url'
+        ? 'url'
+        : 'b64_json'
+    const imageFormat =
+      (typeof extras.imageFormat === 'string' && extras.imageFormat.trim().toLowerCase()) || 'png'
+    const size = normalizeImageSize(req, extras)
+    const background =
+      typeof extras.background === 'string' && extras.background.trim()
+        ? extras.background.trim()
+        : undefined
+    const quality =
+      typeof extras.quality === 'string' && extras.quality.trim()
+        ? extras.quality.trim()
+        : undefined
+    const style =
+      typeof extras.style === 'string' && extras.style.trim() ? extras.style.trim() : undefined
+    const user = ctx.userId
+    const negativePrompt =
+      typeof extras.negativePrompt === 'string' && extras.negativePrompt.trim()
+        ? extras.negativePrompt.trim()
+        : req.negativePrompt?.trim()
+    const prompt =
+      negativePrompt && negativePrompt.length
+        ? `${req.prompt}\n\nNegative prompt: ${negativePrompt}`
+        : req.prompt
+    const countRaw =
+      typeof extras.n === 'number'
+        ? extras.n
+        : typeof extras.samples === 'number'
+          ? extras.samples
+          : 1
+    const n = Math.min(4, Math.max(1, Math.floor(countRaw)))
+
+    const body: Record<string, any> = {
+      model,
+      prompt,
+      size,
+      n,
+      response_format: responseFormat,
+    }
+    if (typeof req.seed === 'number' && Number.isFinite(req.seed)) {
+      body.seed = req.seed
+    } else if (typeof extras.seed === 'number' && Number.isFinite(extras.seed)) {
+      body.seed = extras.seed
+    }
+    if (background) body.background = background
+    if (quality) body.quality = quality
+    if (style) body.style = style
+    if (user) body.user = user
+
+    const res = await axios.post(url, body, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      timeout: 60000,
+      validateStatus: () => true,
+    })
+
+    if (res.status < 200 || res.status >= 300) {
+      const msg =
+        (res.data && (res.data.error?.message || res.data.message)) ||
+        `OpenAI image generation failed with status ${res.status}`
+      const err = new Error(msg)
+      ;(err as any).status = res.status
+      ;(err as any).response = res.data
+      throw err
+    }
+
+    const raw = res.data
+    const dataEntries = Array.isArray(raw?.data) ? raw.data : []
+    const assets: TaskAsset[] = dataEntries
+      .map((entry: any): TaskAsset | null => {
+        if (responseFormat === 'url') {
+          const imageUrl = typeof entry?.url === 'string' ? entry.url.trim() : ''
+          if (!imageUrl) return null
+          return { type: 'image', url: imageUrl, thumbnailUrl: null }
+        }
+        const encoded = typeof entry?.b64_json === 'string' ? entry.b64_json.trim() : ''
+        if (!encoded) return null
+        const sanitized = encoded.replace(/\s+/g, '')
+        const dataUrl = `data:image/${imageFormat};base64,${sanitized}`
+        return { type: 'image', url: dataUrl, thumbnailUrl: null }
+      })
+      .filter((asset: TaskAsset | null): asset is TaskAsset => Boolean(asset))
+
+    const revisedPrompt =
+      dataEntries
+        .map((entry: any) =>
+          typeof entry?.revised_prompt === 'string' ? entry.revised_prompt.trim() : '',
+        )
+        .filter(Boolean)
+        .join('\n') || undefined
+    const id = raw?.id || `openai-img-${Date.now().toString(36)}`
+    const result: TaskResult = {
+      id,
+      kind: 'text_to_image',
+      status: assets.length ? 'succeeded' : 'failed',
+      assets,
+      raw: {
+        provider: 'openai',
+        response: raw,
+        text: revisedPrompt,
+      },
+    }
+    return result
   },
 
   async imageToPrompt(req: ImageToPromptRequest, ctx: ProviderContext): Promise<TaskResult> {
