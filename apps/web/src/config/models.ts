@@ -6,24 +6,25 @@ import { isAnthropicModel } from './modelSource'
 export interface ModelOption {
   value: string
   label: string
+  vendor?: string
 }
 
 export const TEXT_MODELS: ModelOption[] = [
-  { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
-  { value: 'glm-4.6', label: 'GLM-4.6 (Claude兼容)' },
-  { value: 'glm-4.5', label: 'GLM-4.5' },
-  { value: 'glm-4.5-air', label: 'GLM-4.5-Air' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+  { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', vendor: 'openai' },
+  { value: 'glm-4.6', label: 'GLM-4.6 (Claude兼容)', vendor: 'anthropic' },
+  { value: 'glm-4.5', label: 'GLM-4.5', vendor: 'anthropic' },
+  { value: 'glm-4.5-air', label: 'GLM-4.5-Air', vendor: 'anthropic' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vendor: 'gemini' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', vendor: 'gemini' },
+  { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', vendor: 'gemini' },
 ]
 
 export const IMAGE_MODELS: ModelOption[] = [
-  { value: 'qwen-image-plus', label: 'Qwen Image Plus' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' }
+  { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' }
 ]
 
-export const VIDEO_MODELS: ModelOption[] = [{ value: 'sora-2', label: 'Sora 2' }]
+export const VIDEO_MODELS: ModelOption[] = [{ value: 'sora-2', label: 'Sora 2', vendor: 'sora' }]
 
 export type NodeKind =
   | 'text'

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common'
-import type { ModelProvider, ModelToken } from '@prisma/client'
+import type { ModelProvider, ModelToken, ProfileKind } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
 
@@ -135,6 +136,97 @@ export class ModelService {
         where: { id },
       })
     })
+  }
+
+  listProfiles(
+    userId: string,
+    filter?: { providerId?: string; kinds?: ProfileKind[] }
+  ) {
+    const kindFilter = filter?.kinds && filter.kinds.length > 0 ? { kind: { in: filter.kinds } } : {}
+    return this.prisma.modelProfile.findMany({
+      where: {
+        ownerId: userId,
+        ...(filter?.providerId ? { providerId: filter.providerId } : {}),
+        ...kindFilter,
+      },
+      include: {
+        provider: {
+          select: {
+            id: true,
+            name: true,
+            vendor: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+  }
+
+  async upsertProfile(
+    input: {
+      id?: string
+      providerId: string
+      name: string
+      kind: ProfileKind
+      modelKey: string
+      settings?: Record<string, any> | null
+    },
+    userId: string,
+  ) {
+    const provider = await this.prisma.modelProvider.findFirst({
+      where: { id: input.providerId, ownerId: userId },
+    })
+    if (!provider) {
+      throw new Error('provider not found or unauthorized')
+    }
+
+    const normalizeSettings = (value?: Record<string, any> | null) => {
+      if (value === undefined) return undefined
+      if (value === null) return Prisma.JsonNull
+      return value as Prisma.JsonValue
+    }
+
+    const payload = {
+      name: input.name.trim() || input.modelKey.trim(),
+      modelKey: input.modelKey.trim(),
+      kind: input.kind,
+      settings: normalizeSettings(input.settings) ?? Prisma.JsonNull,
+    }
+
+    if (input.id) {
+      const existing = await this.prisma.modelProfile.findFirst({
+        where: { id: input.id, ownerId: userId },
+      })
+      if (!existing) {
+        throw new Error('profile not found or unauthorized')
+      }
+      return this.prisma.modelProfile.update({
+        where: { id: input.id },
+        data: payload,
+      })
+    }
+
+    return this.prisma.modelProfile.create({
+      data: {
+        ownerId: userId,
+        providerId: provider.id,
+        name: payload.name,
+        modelKey: payload.modelKey,
+        kind: payload.kind,
+        settings: payload.settings,
+      },
+    })
+  }
+
+  async deleteProfile(id: string, userId: string) {
+    const existing = await this.prisma.modelProfile.findFirst({
+      where: { id, ownerId: userId },
+    })
+    if (!existing) {
+      throw new Error('profile not found or unauthorized')
+    }
+    await this.prisma.modelProfile.delete({ where: { id } })
+    return { success: true }
   }
 
   listEndpoints(providerId: string, userId: string) {

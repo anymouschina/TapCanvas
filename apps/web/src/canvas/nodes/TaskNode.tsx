@@ -1445,23 +1445,64 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           ? videoModel
           : modelKey
   const modelList = useModelOptions(kind as NodeKind)
+  const findVendorForModel = React.useCallback(
+    (value: string | null | undefined) => {
+      if (!value) return null
+      const match = modelList.find((opt) => opt.value === value)
+      return match?.vendor || null
+    },
+    [modelList],
+  )
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = isVideoNode
   const showResolutionMenu = isVideoNode || isImageNode
   const showOrientationMenu = isVideoNode
   React.useEffect(() => {
     if (!modelList.some((m) => m.value === activeModelKey) && modelList.length) {
-      const first = modelList[0].value
-      setModelKey(first)
-      setImageModel(first)
-      setVideoModel(first)
+      const first = modelList[0]
+      setModelKey(first.value)
+      setImageModel(first.value)
+      setVideoModel(first.value)
       updateNodeData(id, {
-        geminiModel: first,
-        imageModel: first,
-        videoModel: first,
+        geminiModel: first.value,
+        imageModel: first.value,
+        videoModel: first.value,
+        modelVendor: first.vendor || null,
+        imageModelVendor: first.vendor || null,
+        videoModelVendor: first.vendor || null,
       })
     }
-  }, [activeModelKey, modelList, id])
+  }, [activeModelKey, modelList, id, updateNodeData])
+
+  const existingModelVendor = (data as any)?.modelVendor
+  const existingImageVendor = (data as any)?.imageModelVendor
+  const existingVideoVendor = (data as any)?.videoModelVendor
+
+  React.useEffect(() => {
+    if (existingModelVendor || !modelKey) return
+    const vendor = findVendorForModel(modelKey)
+    if (vendor) {
+      updateNodeData(id, { modelVendor: vendor })
+    }
+  }, [existingModelVendor, modelKey, findVendorForModel, id, updateNodeData])
+
+  React.useEffect(() => {
+    if (!isImageNode) return
+    if (existingImageVendor || !imageModel) return
+    const vendor = findVendorForModel(imageModel)
+    if (vendor) {
+      updateNodeData(id, { imageModelVendor: vendor })
+    }
+  }, [existingImageVendor, imageModel, findVendorForModel, updateNodeData, id, isImageNode])
+
+  React.useEffect(() => {
+    if (!isVideoNode) return
+    if (existingVideoVendor || !videoModel) return
+    const vendor = findVendorForModel(videoModel)
+    if (vendor) {
+      updateNodeData(id, { videoModelVendor: vendor })
+    }
+  }, [existingVideoVendor, videoModel, findVendorForModel, updateNodeData, id, isVideoNode])
   const summaryModelLabel = getModelLabel(kind, activeModelKey)
   const summaryDuration =
     isVideoNode
@@ -1520,11 +1561,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
     if (isImageNode) {
       patch.imageModel = imageModel
+      patch.imageModelVendor = findVendorForModel(imageModel)
       patch.sampleCount = sampleCount
     }
     if (isComposerNode) {
       patch.sampleCount = sampleCount
       patch.videoModel = videoModel
+      patch.videoModelVendor = findVendorForModel(videoModel)
       patch.videoDurationSeconds = videoDuration
       patch.orientation = orientation
       // Include upstream Sora file_id if available
@@ -1542,6 +1585,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (isImageNode) {
       setPrompt(nextPrompt)
     }
+    patch.modelVendor = findVendorForModel(modelKey)
     updateNodeData(id, patch)
     runSelected()
   }
@@ -3322,6 +3366,9 @@ const rewritePromptWithCharacters = React.useCallback(
                           geminiModel: option.value,
                           imageModel: option.value,
                           videoModel: option.value,
+                          modelVendor: option.vendor || null,
+                          imageModelVendor: option.vendor || null,
+                          videoModelVendor: option.vendor || null,
                         })
                       }}
                     >
