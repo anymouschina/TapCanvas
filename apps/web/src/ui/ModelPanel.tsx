@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea, ActionIcon, Tooltip, FileInput } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea, ActionIcon, Tooltip, Select } from '@mantine/core'
 import { IconDownload, IconUpload, IconTrash } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useUIStore } from './uiStore'
@@ -9,14 +9,48 @@ import {
   listModelEndpoints,
   listModelProviders,
   listModelTokens,
+  listModelProfiles,
+  type ModelProfileDto,
+  type ProfileKind,
   upsertModelEndpoint,
   upsertModelProvider,
   upsertModelToken,
+  upsertModelProfile,
   type ModelProviderDto,
   type ModelTokenDto,
   type ModelEndpointDto,
+  deleteModelProfile,
 } from '../api/server'
 import { notifyModelOptionsRefresh } from '../config/useModelOptions'
+import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
+const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
+  chat: '文本',
+  prompt_refine: '指令优化',
+  text_to_image: '图片',
+  image_to_prompt: '图像理解',
+  image_to_video: '图像转视频',
+  text_to_video: '视频',
+  image_edit: '图像编辑',
+}
+
+const PROFILE_KIND_OPTIONS: Array<{ value: ProfileKind; label: string }> = [
+  { value: 'chat', label: '文本模型' },
+  { value: 'prompt_refine', label: '指令优化' },
+  { value: 'text_to_image', label: '图片模型' },
+  { value: 'text_to_video', label: '视频模型' },
+  { value: 'image_to_prompt', label: '图像理解' },
+  { value: 'image_edit', label: '图像编辑' },
+]
+
+type PredefinedModel = { value: string; label: string; kind: ProfileKind }
+
+function getPredefinedModelsForVendor(vendor: string | undefined): PredefinedModel[] {
+  if (!vendor) return []
+  const text = TEXT_MODELS.filter((m) => m.vendor === vendor).map((m) => ({ value: m.value, label: m.label, kind: 'chat' as ProfileKind }))
+  const image = IMAGE_MODELS.filter((m) => m.vendor === vendor).map((m) => ({ value: m.value, label: m.label, kind: 'text_to_image' as ProfileKind }))
+  const video = VIDEO_MODELS.filter((m) => m.vendor === vendor).map((m) => ({ value: m.value, label: m.label, kind: 'text_to_video' as ProfileKind }))
+  return [...text, ...image, ...video]
+}
 
 export default function ModelPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
@@ -120,6 +154,8 @@ export default function ModelPanel(): JSX.Element | null {
           }
         })
       )
+      const refreshedProviders = await listModelProviders()
+      setProviders(refreshedProviders)
       setTokens([])
       setGeminiTokens([])
       setAnthropicTokens([])
@@ -136,6 +172,7 @@ export default function ModelPanel(): JSX.Element | null {
       setVideosUrl('')
       setVideoUrl('')
       setSoraUrl('')
+      setProviderProfiles({})
       notifications.show({ color: 'green', title: '已清空', message: '所有模型配置与密钥已清空' })
     } catch (error) {
       notifications.show({
@@ -262,6 +299,7 @@ export default function ModelPanel(): JSX.Element | null {
               setGeminiBaseUrl(gemini.baseUrl || '')
               const geminiTokenData = await listModelTokens(gemini.id)
               setGeminiTokens(geminiTokenData)
+              await refreshProviderProfiles(gemini.id)
             }
 
             // 刷新Anthropic数据
@@ -276,6 +314,7 @@ export default function ModelPanel(): JSX.Element | null {
               setAnthropicBaseShared(!!anthropic.sharedBaseUrl)
               const anthropicTokenData = await listModelTokens(anthropic.id)
               setAnthropicTokens(anthropicTokenData)
+              await refreshProviderProfiles(anthropic.id)
             }
 
             // 刷新Qwen数据
@@ -284,6 +323,7 @@ export default function ModelPanel(): JSX.Element | null {
               setQwenProvider(qwen)
               const qwenTokenData = await listModelTokens(qwen.id)
               setQwenTokens(qwenTokenData)
+              await refreshProviderProfiles(qwen.id)
             }
 
             // 刷新OpenAI数据
@@ -298,11 +338,13 @@ export default function ModelPanel(): JSX.Element | null {
               setOpenaiBaseShared(!!openai.sharedBaseUrl)
               const openaiTokenData = await listModelTokens(openai.id)
               setOpenaiTokens(openaiTokenData)
+              await refreshProviderProfiles(openai.id)
             } else {
               setOpenaiTokens([])
               setOpenaiBaseUrl('')
               setOpenaiBaseShared(false)
             }
+
           } catch (error) {
             console.error('Failed to refresh data:', error)
           }
@@ -389,6 +431,23 @@ export default function ModelPanel(): JSX.Element | null {
   const [openaiLabel, setOpenaiLabel] = React.useState('')
   const [openaiSecret, setOpenaiSecret] = React.useState('')
   const [openaiShared, setOpenaiShared] = React.useState(false)
+  const [providerProfiles, setProviderProfiles] = React.useState<Record<string, ModelProfileDto[]>>({})
+  const [presetSelections, setPresetSelections] = React.useState<Record<string, string | null>>({})
+  const [profileModal, setProfileModal] = React.useState<{ provider: ModelProviderDto; profile: ModelProfileDto | null } | null>(null)
+  const [profileName, setProfileName] = React.useState('')
+  const [profileModelKey, setProfileModelKey] = React.useState('')
+  const [profileKind, setProfileKind] = React.useState<ProfileKind>('chat')
+  const [profileSaving, setProfileSaving] = React.useState(false)
+
+  const refreshProviderProfiles = React.useCallback(async (providerId: string) => {
+    if (!providerId) return
+    try {
+      const list = await listModelProfiles({ providerId })
+      setProviderProfiles((prev) => ({ ...prev, [providerId]: list }))
+    } catch (error) {
+      console.warn('Failed to load model profiles for provider', providerId, error)
+    }
+  }, [])
 
   React.useEffect(() => {
     if (!mounted) return
@@ -429,6 +488,7 @@ export default function ModelPanel(): JSX.Element | null {
         setGeminiBaseUrl(gemini.baseUrl || '')
         const gTokens = await listModelTokens(gemini.id)
         setGeminiTokens(gTokens)
+        await refreshProviderProfiles(gemini.id)
 
         // 初始化 Anthropic 提供方
         let anthropic = ps.find((p) => p.vendor === 'anthropic')
@@ -441,6 +501,7 @@ export default function ModelPanel(): JSX.Element | null {
         setAnthropicBaseShared(!!anthropic.sharedBaseUrl)
         const aTokens = await listModelTokens(anthropic.id)
         setAnthropicTokens(aTokens)
+        await refreshProviderProfiles(anthropic.id)
 
         // 初始化 Qwen 提供方
         let qwen = ps.find((p) => p.vendor === 'qwen')
@@ -451,6 +512,7 @@ export default function ModelPanel(): JSX.Element | null {
         setQwenProvider(qwen)
         const qTokens = await listModelTokens(qwen.id)
         setQwenTokens(qTokens)
+        await refreshProviderProfiles(qwen.id)
 
         // 初始化 OpenAI 提供方
         let openai = ps.find((p) => p.vendor === 'openai')
@@ -464,16 +526,18 @@ export default function ModelPanel(): JSX.Element | null {
         if (openai) {
           const openaiTokenData = await listModelTokens(openai.id)
           setOpenaiTokens(openaiTokenData)
+          await refreshProviderProfiles(openai.id)
         } else {
           setOpenaiTokens([])
         }
       })
       .catch(() => {})
-  }, [mounted])
+  }, [mounted, refreshProviderProfiles])
 
   if (!mounted) return null
 
   const ensureSecretPresent = (value: string) => !!value?.trim()
+
 
   const openModalForNew = () => {
     setEditingToken(null)
@@ -650,6 +714,154 @@ export default function ModelPanel(): JSX.Element | null {
     notifyModelOptionsRefresh('openai')
   }
 
+  const openProfileModal = (
+    provider: ModelProviderDto,
+    profile?: ModelProfileDto | null,
+    defaults?: { name?: string; modelKey?: string; kind?: ProfileKind },
+  ) => {
+    setProfileModal({ provider, profile: profile || null })
+    setProfileName(profile?.name || defaults?.name || '')
+    setProfileModelKey(profile?.modelKey || defaults?.modelKey || '')
+    setProfileKind(profile?.kind || defaults?.kind || 'chat')
+  }
+
+  const handleSaveProfile = async () => {
+    if (!profileModal) return
+    const trimmedKey = profileModelKey.trim()
+    if (!trimmedKey) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请输入模型 ID' })
+      return
+    }
+    setProfileSaving(true)
+    try {
+      await upsertModelProfile({
+        id: profileModal.profile?.id,
+        providerId: profileModal.provider.id,
+        name: profileName.trim() || trimmedKey,
+        kind: profileKind,
+        modelKey: trimmedKey,
+      })
+      await refreshProviderProfiles(profileModal.provider.id)
+      setProfileModal(null)
+      setProfileName('')
+      setProfileModelKey('')
+      setProfileKind('chat')
+      notifications.show({ color: 'green', title: '已保存', message: '模型配置已更新' })
+      notifyModelOptionsRefresh('all')
+    } catch (error) {
+      console.error('Failed to save profile', error)
+      notifications.show({ color: 'red', title: '保存失败', message: error instanceof Error ? error.message : '未知错误' })
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const handleDeleteProfile = async (providerId: string, profileId: string) => {
+    if (!confirm('确定删除该模型配置吗？')) return
+    try {
+      await deleteModelProfile(profileId)
+      await refreshProviderProfiles(providerId)
+      notifications.show({ color: 'green', title: '已删除', message: '模型配置已删除' })
+      notifyModelOptionsRefresh('all')
+    } catch (error) {
+      console.error('Failed to delete profile', error)
+      notifications.show({ color: 'red', title: '删除失败', message: error instanceof Error ? error.message : '未知错误' })
+    }
+  }
+
+  const renderProviderProfiles = (provider: ModelProviderDto | null) => {
+    if (!provider) return null
+    const list = providerProfiles[provider.id] || []
+    const presets = getPredefinedModelsForVendor(provider.vendor)
+    const selectOptions = [
+      ...presets.map((opt) => ({
+        value: `preset:${opt.value}`,
+        label: `[预设] ${opt.label} · ${opt.value}`,
+        type: 'preset' as const,
+        preset: opt,
+      })),
+      ...list.map((profile) => ({
+        value: `custom:${profile.id}`,
+        label: `[自定义] ${profile.name} · ${profile.modelKey}`,
+        type: 'custom' as const,
+        profile,
+      })),
+    ]
+    return (
+      <Stack gap={4} mt="xs">
+        <Group justify="flex-end" align="center">
+          <Button size="xs" variant="subtle" onClick={() => openProfileModal(provider)}>
+            新增模型
+          </Button>
+        </Group>
+        {selectOptions.length > 0 && (
+          <Select
+            size="xs"
+            placeholder="选择模型快速引用"
+            data={selectOptions}
+            value={presetSelections[provider.id] || null}
+            maxDropdownHeight={160}
+            onChange={(value) => {
+              if (!value) return
+              setPresetSelections((prev) => ({ ...prev, [provider.id]: value }))
+              const selected = selectOptions.find((opt) => opt.value === value)
+              if (!selected) return
+              if (selected.type === 'preset') {
+                openProfileModal(provider, null, {
+                  name: selected.preset.label,
+                  modelKey: selected.preset.value,
+                  kind: selected.preset.kind,
+                })
+              } else if (selected.profile) {
+                openProfileModal(provider, selected.profile)
+              }
+              setTimeout(() => {
+                setPresetSelections((prev) => ({ ...prev, [provider.id]: null }))
+              }, 0)
+            }}
+            searchable
+            clearable
+          />
+        )}
+        {list.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            尚未配置模型 ID。
+          </Text>
+        ) : (
+          list.map((profile) => (
+            <Group
+              key={profile.id}
+              justify="space-between"
+              align="center"
+              style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '6px 8px' }}
+            >
+              <div>
+                <Group gap={6}>
+                  <Text size="sm">{profile.name}</Text>
+                  <Badge size="xs" color="blue">
+                    {PROFILE_KIND_LABELS[profile.kind] || profile.kind}
+                  </Badge>
+                </Group>
+                <Text size="xs" c="dimmed">
+                  {profile.modelKey}
+                </Text>
+              </div>
+              <Group gap={4}>
+                <Button size="xs" variant="subtle" onClick={() => openProfileModal(provider, profile)}>
+                  编辑
+                </Button>
+                <Button size="xs" variant="light" color="red" onClick={() => handleDeleteProfile(provider.id, profile.id)}>
+                  删除
+                </Button>
+              </Group>
+            </Group>
+          ))
+        )}
+      </Stack>
+    )
+  }
+
+
   const bulkShareTokens = async (
     provider: ModelProviderDto | null,
     list: ModelTokenDto[],
@@ -797,15 +1009,6 @@ export default function ModelPanel(): JSX.Element | null {
                         <Button size="xs" onClick={openModalForNew}>
                           管理密钥
                         </Button>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          onClick={() =>
-                            window.open('https://sora.chatgpt.com/api/auth/session', '_blank', 'noopener')
-                          }
-                        >
-                          获取 session
-                        </Button>
                       </Group>
                     </Group>
                     <Text size="xs" c="dimmed" mb={2}>
@@ -833,6 +1036,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Text size="xs" c="dimmed">
                       已配置密钥：{geminiTokens.length}
                     </Text>
+                    {renderProviderProfiles(geminiProvider)}
                   </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
@@ -852,6 +1056,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Text size="xs" c="dimmed">
                       已配置密钥：{openaiTokens.length}
                     </Text>
+                    {renderProviderProfiles(openaiProvider)}
                   </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
@@ -880,6 +1085,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Text size="xs" c="dimmed">
                       已配置密钥：{anthropicTokens.length}
                     </Text>
+                    {renderProviderProfiles(anthropicProvider)}
                   </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
@@ -899,6 +1105,7 @@ export default function ModelPanel(): JSX.Element | null {
                     <Text size="xs" c="dimmed">
                       已配置密钥：{qwenTokens.length}
                     </Text>
+                    {renderProviderProfiles(qwenProvider)}
                   </Paper>
                 </Stack>
               </div>
@@ -1569,6 +1776,60 @@ export default function ModelPanel(): JSX.Element | null {
                   </Stack>
                 </Paper>
               </div>
+            </Modal>
+            <Modal
+              opened={!!profileModal}
+              onClose={() => {
+                setProfileModal(null)
+                setProfileName('')
+                setProfileModelKey('')
+                setProfileKind('chat')
+              }}
+              withinPortal
+              zIndex={200}
+              title={profileModal?.profile ? '编辑模型' : '新增模型'}
+            >
+              <Stack gap="sm">
+                {profileModal?.provider && (
+                  <Text size="sm" c="dimmed">
+                    {profileModal.provider.name} · {profileModal.provider.vendor}
+                  </Text>
+                )}
+                <TextInput
+                  label="显示名称"
+                  placeholder="例如：GPT-4o-mini 自定义"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.currentTarget.value)}
+                />
+                <TextInput
+                  label="模型 ID"
+                  placeholder="例如：gpt-4.1-mini"
+                  value={profileModelKey}
+                  onChange={(e) => setProfileModelKey(e.currentTarget.value)}
+                />
+                <Select
+                  label="模型类型"
+                  data={PROFILE_KIND_OPTIONS}
+                  value={profileKind}
+                  onChange={(value) => value && setProfileKind(value as ProfileKind)}
+                />
+                <Group justify="flex-end" mt="sm">
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      setProfileModal(null)
+                      setProfileName('')
+                      setProfileModelKey('')
+                      setProfileKind('chat')
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button onClick={handleSaveProfile} loading={profileSaving} disabled={!profileModelKey.trim()}>
+                    保存
+                  </Button>
+                </Group>
+              </Stack>
             </Modal>
             <Modal
               opened={modalOpen}

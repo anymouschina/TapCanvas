@@ -226,7 +226,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
   const canvasContext = useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
 
-  const provider = useMemo(() => getModelProvider(model), [model])
+  const provider = useMemo(() => {
+    const match = textModelOptions.find((opt) => opt.value === model)
+    if (match?.vendor) {
+      if (match.vendor === 'gemini') return 'google'
+      if (['openai', 'anthropic', 'google'].includes(match.vendor)) {
+        return match.vendor as ReturnType<typeof getModelProvider>
+      }
+    }
+    return getModelProvider(model)
+  }, [model, textModelOptions])
   const isGptModel = provider === 'openai'
 
   const body = useMemo(() => ({

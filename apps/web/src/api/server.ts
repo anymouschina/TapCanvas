@@ -29,6 +29,26 @@ export type ModelEndpointDto = {
   shared?: boolean
 }
 
+export type ProfileKind =
+  | 'chat'
+  | 'prompt_refine'
+  | 'text_to_image'
+  | 'image_to_prompt'
+  | 'image_to_video'
+  | 'text_to_video'
+  | 'image_edit'
+
+export type ModelProfileDto = {
+  id: string
+  ownerId: string
+  providerId: string
+  name: string
+  kind: ProfileKind
+  modelKey: string
+  settings?: any
+  provider?: { id: string; name: string; vendor: string }
+}
+
 export type AvailableModelDto = {
   value: string
   label: string
@@ -243,6 +263,41 @@ export async function upsertModelEndpoint(payload: {
   }))
   if (!r.ok) throw new Error(`save endpoint failed: ${r.status}`)
   return r.json()
+}
+
+export async function listModelProfiles(params?: { providerId?: string; kinds?: ProfileKind[] }): Promise<ModelProfileDto[]> {
+  const qs = new URLSearchParams()
+  if (params?.providerId) qs.set('providerId', params.providerId)
+  if (params?.kinds?.length) {
+    params.kinds.forEach((kind) => qs.append('kind', kind))
+  }
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/models/profiles?${query}` : `${API_BASE}/models/profiles`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) throw new Error(`list profiles failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelProfile(payload: {
+  id?: string
+  providerId: string
+  name: string
+  kind: ProfileKind
+  modelKey: string
+  settings?: any
+}): Promise<ModelProfileDto> {
+  const r = await fetch(`${API_BASE}/models/profiles`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`save profile failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deleteModelProfile(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/models/profiles/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete profile failed: ${r.status}`)
 }
 
 export async function listAvailableModels(vendor?: string): Promise<AvailableModelDto[]> {

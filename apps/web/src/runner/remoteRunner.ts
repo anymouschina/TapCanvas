@@ -377,7 +377,8 @@ async function runTextTask(ctx: RunnerContext) {
     }
   }
   try {
-    const vendor = isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini'
+    const explicitVendor = typeof (data as any)?.modelVendor === 'string' ? (data as any).modelVendor : null
+    const vendor = explicitVendor || (isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini')
     appendLog(
       id,
       `[${nowLabel()}] 调用${vendor === 'anthropic' ? 'Anthropic/Claude' : 'Gemini'} 文案模型批量生成提示词 x${sampleCount}（并行）…`,
@@ -965,10 +966,13 @@ async function runGenericTask(ctx: RunnerContext) {
   try {
     const selectedModel = taskKind === 'text_to_image'
       ? (data.imageModel as string) || 'qwen-image-plus'
-      : (data.model as string) || 'gemini-2.5-flash'
+      : (data.geminiModel as string) || (data.model as string) || 'gemini-2.5-flash'
     const modelLower = selectedModel.toLowerCase()
 
-    const vendor = taskKind === 'text_to_image'
+    const explicitVendor = taskKind === 'text_to_image'
+      ? ((data as any)?.imageModelVendor as string | undefined)
+      : ((data as any)?.modelVendor as string | undefined)
+    const vendor = explicitVendor || (taskKind === 'text_to_image'
       ? (modelLower.includes('gemini') ? 'gemini' : 'qwen')
       : isAnthropicModel(selectedModel) ||
         modelLower.includes('claude') ||
@@ -979,7 +983,7 @@ async function runGenericTask(ctx: RunnerContext) {
           modelLower.includes('o3-') ||
           modelLower.includes('codex')
           ? 'openai'
-          : 'gemini'
+          : 'gemini')
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null

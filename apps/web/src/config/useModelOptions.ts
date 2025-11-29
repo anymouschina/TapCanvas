@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { listAvailableModels, type AvailableModelDto } from '../api/server'
+import { listAvailableModels, listModelProfiles, type AvailableModelDto, type ModelProfileDto, type ProfileKind } from '../api/server'
 import type { ModelOption, NodeKind } from './models'
 import { getAllowedModelsByKind } from './models'
 
@@ -28,7 +28,8 @@ function normalizeAvailableModels(items: AvailableModelDto[]): ModelOption[] {
       const value = item?.value || (item as any)?.id
       if (!value || typeof value !== 'string') return null
       const label = typeof item?.label === 'string' && item.label.trim() ? item.label.trim() : value
-      return { value, label }
+      const vendor = typeof item?.vendor === 'string' ? item.vendor : undefined
+      return { value, label, vendor }
     })
     .filter(Boolean) as ModelOption[]
 }
@@ -94,5 +95,48 @@ export function useModelOptions(kind?: NodeKind): ModelOption[] {
     }
   }, [kind, refreshSeq])
 
+  useEffect(() => {
+    const profileKinds = getProfileKindsForNode(kind)
+    if (!profileKinds.length) return
+    let canceled = false
+    listModelProfiles({ kinds: profileKinds })
+      .then((profiles) => {
+        if (canceled || !profiles.length) return
+        const mapped = normalizeProfiles(profiles)
+        setOptions((prev) => mergeOptions(prev, mapped))
+      })
+      .catch(() => {})
+    return () => {
+      canceled = true
+    }
+  }, [kind, refreshSeq])
+
   return options
+}
+
+function normalizeProfiles(items: ModelProfileDto[]): ModelOption[] {
+  return items
+    .map((profile) => {
+      if (!profile?.modelKey) return null
+      const value = profile.modelKey
+      const label = profile.name?.trim() || profile.modelKey
+      const vendor = profile.provider?.vendor
+      return { value, label, vendor }
+    })
+    .filter(Boolean) as ModelOption[]
+}
+
+function getProfileKindsForNode(kind?: NodeKind): ProfileKind[] {
+  switch (kind) {
+    case 'image':
+      return ['text_to_image']
+    case 'composeVideo':
+    case 'storyboard':
+    case 'video':
+      return ['text_to_video']
+    case 'text':
+    case 'character':
+    default:
+      return ['chat', 'prompt_refine']
+  }
 }
