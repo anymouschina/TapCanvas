@@ -42,6 +42,7 @@ model User {
   taskTokenMappings TaskTokenMapping[]
   taskStatuses   TaskStatus[]
   videoGenerationHistories VideoGenerationHistory[]
+  promptSamples PromptSample[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -210,6 +211,26 @@ model ModelProfile {
   updatedAt  DateTime      @updatedAt
 
   @@index([ownerId, kind])
+}
+
+model PromptSample {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  nodeKind    String
+  scene       String
+  commandType String
+  title       String
+  prompt      String
+  description String?
+  inputHint   String?
+  outputNote  String?
+  keywords    String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, nodeKind])
 }
 
 enum ProfileKind {

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Post, Query, Req, Res, Sse, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, Sse, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '../auth/jwt.guard'
 import { AiService } from './ai.service'
 import { IntelligentAiService } from './intelligent-ai.service'
 import type { ChatRequestDto, ToolResultDto } from './dto/chat.dto'
+import type { PromptSampleParseRequestDto, PromptSamplePayloadDto } from './dto/prompt-sample.dto'
 import type { Response } from 'express'
 
 @UseGuards(JwtGuard)
@@ -49,8 +50,37 @@ export class AiController {
   }
 
   @Get('prompt-samples')
-  listPromptSamples(@Query('q') q?: string, @Query('nodeKind') nodeKind?: string) {
-    return this.aiService.listPromptSamples(q, nodeKind)
+  listPromptSamples(
+    @Req() req: any,
+    @Query('q') q?: string,
+    @Query('nodeKind') nodeKind?: string,
+    @Query('source') source?: string,
+  ) {
+    return this.aiService.listPromptSamples(String(req.user.sub), q, nodeKind, source)
+  }
+
+  @Post('prompt-samples/parse')
+  parsePromptSample(@Req() req: any, @Body() body: PromptSampleParseRequestDto) {
+    return this.aiService.parsePromptSample(String(req.user.sub), body)
+  }
+
+  @Post('prompt-samples')
+  createPromptSample(@Req() req: any, @Body() body: PromptSamplePayloadDto) {
+    return this.aiService.createPromptSample(String(req.user.sub), body)
+  }
+
+  @Patch('prompt-samples/:id')
+  updatePromptSample(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: PromptSamplePayloadDto,
+  ) {
+    return this.aiService.updatePromptSample(String(req.user.sub), id, body)
+  }
+
+  @Delete('prompt-samples/:id')
+  deletePromptSample(@Req() req: any, @Param('id') id: string) {
+    return this.aiService.deletePromptSample(String(req.user.sub), id)
   }
 
   @Sse('tool-events')

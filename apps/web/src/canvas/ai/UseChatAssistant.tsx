@@ -564,16 +564,18 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
   useEffect(() => {
     const toolCalls = messages.flatMap(msg =>
-      msg.parts
+      (msg.parts || [])
         .filter((part: any) => isToolCallPart(part))
         .map((part: any) => {
           const parsedInput = parseJsonIfNeeded(part.input ?? part.arguments ?? {})
           const hasPayload = parsedInput && typeof parsedInput === 'object' && Object.keys(parsedInput).length > 0
           const ready = part.state === 'input-available' || part.type === 'tool-input-available' || hasPayload
-          if (!ready) return null
+          const toolCallId = typeof part.toolCallId === 'string' && part.toolCallId.trim() ? part.toolCallId.trim() : undefined
+          const toolName = resolveToolName(part)
+          if (!ready || !toolCallId || !toolName) return null
           return {
-            toolCallId: part.toolCallId || part.id,
-            toolName: resolveToolName(part),
+            toolCallId,
+            toolName,
             input: parsedInput
           }
         })
@@ -605,9 +607,15 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         if (event.type === 'tool-call') {
           if (!event.toolCallId || handledToolCalls.current.has(event.toolCallId)) return
           handledToolCalls.current.add(event.toolCallId)
+          const toolName = event.toolName
+          if (!toolName) {
+            console.warn('[UseChatAssistant] tool-call missing name from stream', event)
+            await reportToolResult({ toolCallId: event.toolCallId, toolName: 'unknown', errorText: '未提供工具名称' })
+            return
+          }
           const normalizedInput = parseJsonIfNeeded(event.input)
-          const { output, errorText } = await runToolHandler({ ...event, input: normalizedInput })
-          await reportToolResult({ toolCallId: event.toolCallId, toolName: event.toolName, output, errorText })
+          const { output, errorText } = await runToolHandler({ ...event, toolName, input: normalizedInput })
+          await reportToolResult({ toolCallId: event.toolCallId, toolName, output, errorText })
           return
         }
 

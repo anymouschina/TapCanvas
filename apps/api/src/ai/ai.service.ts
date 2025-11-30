@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from 'nestjs-prisma'
-import { convertToCoreMessages, generateObject, streamText, tool, type CoreMessage, type ToolChoice } from 'ai'
+import { convertToCoreMessages, generateObject, generateText, streamText, tool, type CoreMessage, type ToolChoice } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -10,8 +10,9 @@ import { VIDEO_REALISM_RULES } from './video-realism'
 import { PROMPT_SAMPLES, formatPromptSample, matchPromptSamples, type PromptSample } from './prompt-samples'
 import { splitNarrativeSections } from './utils/narrative'
 import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
+import type { PromptSamplePayloadDto, PromptSampleParseRequestDto, PromptSampleResponseDto, PromptSampleNodeKind } from './dto/prompt-sample.dto'
 import { ToolEventsService } from './tool-events.service'
-import type { ModelProvider, ModelToken } from '@prisma/client'
+import type { ModelProvider, ModelToken, PromptSample as PrismaPromptSample } from '@prisma/client'
 import { ProxyService } from '../proxy/proxy.service'
 
 const actionEnum = z.enum(ACTION_TYPES)
@@ -359,25 +360,161 @@ export class AiService {
     })
   }
 
-  listPromptSamples(query?: string, nodeKind?: string) {
+  async listPromptSamples(userId: string, query?: string, nodeKind?: string, source?: string) {
     const normalizedKind = this.normalizePromptSampleKind(nodeKind)
     const normalizedQuery = (query || '').trim()
+    const normalizedSource = this.normalizePromptSampleSource(source)
     const limit = 12
 
-    const baseList = normalizedKind ? PROMPT_SAMPLES.filter((s) => s.nodeKind === normalizedKind) : PROMPT_SAMPLES
+    const includeOfficial = normalizedSource !== 'custom'
+    const includeCustom = normalizedSource !== 'official'
 
-    if (!normalizedQuery) {
-      return { samples: baseList.slice(0, limit) }
+    const officialPool = includeOfficial
+      ? (normalizedKind ? PROMPT_SAMPLES.filter((s) => s.nodeKind === normalizedKind) : PROMPT_SAMPLES)
+      : []
+
+    const customRecords = includeCustom
+      ? await this.prisma.promptSample.findMany({
+          where: {
+            userId,
+            ...(normalizedKind ? { nodeKind: normalizedKind } : {}),
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: normalizedQuery ? 50 : limit * 2,
+        })
+      : []
+
+    const customSamples = customRecords.map((record) => this.mapCustomPromptSample(record))
+    const officialSamples = officialPool.map((sample) => this.mapOfficialPromptSample(sample))
+
+    let filteredCustom = customSamples
+    if (normalizedQuery) {
+      filteredCustom = this.filterCustomPromptSamples(customSamples, normalizedQuery)
     }
 
-    const matched = matchPromptSamples(normalizedQuery, limit * 2)
-    const filteredMatched = normalizedKind ? matched.filter((s) => s.nodeKind === normalizedKind) : matched
-
-    if (filteredMatched.length > 0) {
-      return { samples: filteredMatched.slice(0, limit) }
+    let filteredOfficial = officialSamples
+    if (normalizedQuery) {
+      const matched = matchPromptSamples(normalizedQuery, limit * 2)
+      const filteredMatched = normalizedKind ? matched.filter((s) => s.nodeKind === normalizedKind) : matched
+      filteredOfficial = filteredMatched.map((sample) => this.mapOfficialPromptSample(sample))
     }
 
-    return { samples: baseList.slice(0, limit) }
+    const combined: PromptSampleResponseDto[] = []
+    if (includeCustom) {
+      combined.push(...filteredCustom)
+    }
+    if (combined.length < limit && includeOfficial) {
+      combined.push(...filteredOfficial)
+    }
+
+    if (!normalizedQuery && includeOfficial && combined.length < limit) {
+      combined.push(
+        ...officialSamples.filter((sample) => !filteredOfficial.some((match) => match.id === sample.id)),
+      )
+    }
+
+    return { samples: combined.slice(0, limit) }
+  }
+
+  async parsePromptSample(userId: string, payload: PromptSampleParseRequestDto) {
+    const rawPrompt = (payload.rawPrompt || '').trim()
+    if (!rawPrompt) {
+      throw new BadRequestException('rawPrompt 不能为空')
+    }
+    const nodeKind = this.normalizePromptSampleKind(payload.nodeKind) || 'composeVideo'
+    const modelName = payload.model || 'gpt-5.1'
+    const provider = this.resolveProvider(modelName, payload.baseUrl, payload.provider)
+    const { apiKey, baseUrl } = await this.resolveCredentials(userId, provider, undefined, payload.baseUrl)
+    const model = this.buildModel(provider, modelName, apiKey, baseUrl)
+
+    const schema = z.object({
+      scene: z.string().min(2).max(60),
+      commandType: z.string().min(2).max(60),
+      title: z.string().min(2).max(80),
+      prompt: z.string().min(40),
+      description: z.string().max(200).optional().default(''),
+      inputHint: z.string().max(160).optional().default(''),
+      outputNote: z.string().max(160).optional().default(''),
+      keywords: z.array(z.string()).min(3).max(12).default([]),
+    })
+
+    let objectResult: any = null
+    let lastError: any = null
+
+    try {
+      objectResult = await generateObject({
+        model,
+        system: this.composePromptSampleParserSystem(),
+        messages: [
+          {
+            role: 'user',
+            content: this.composePromptSampleParserUserMessage(rawPrompt, nodeKind),
+          },
+        ],
+        schema,
+        temperature: 0.2,
+        maxRetries: 1,
+      })
+    } catch (error: any) {
+      lastError = error
+      if (!this.isInvalidJsonResponseError(error)) throw error
+      this.logger.warn('[PromptSampleParse] JSON schema 调用失败，尝试按文本解析', {
+        provider,
+        model: modelName,
+        message: error?.message,
+      })
+    }
+
+    if (objectResult?.object) {
+      return this.normalizeParsedPromptSample(objectResult.object, nodeKind)
+    }
+
+    try {
+      const fallback = await this.parsePromptSampleWithTextFallback({
+        model,
+        rawPrompt,
+        nodeKind,
+      })
+      return this.normalizeParsedPromptSample(fallback, nodeKind)
+    } catch (error: any) {
+      this.logger.error('[PromptSampleParse] 文本解析仍然失败', {
+        provider,
+        model: modelName,
+        message: error?.message,
+        originalError: lastError?.message,
+      })
+      throw error
+    }
+  }
+
+  async createPromptSample(userId: string, payload: PromptSamplePayloadDto) {
+    const data = this.normalizePromptSamplePayload(payload)
+    const saved = await this.prisma.promptSample.create({
+      data: {
+        ...data,
+        userId,
+      },
+    })
+    return this.mapCustomPromptSample(saved)
+  }
+
+  async updatePromptSample(userId: string, id: string, payload: PromptSamplePayloadDto) {
+    const data = this.normalizePromptSamplePayload(payload)
+    const existing = await this.prisma.promptSample.findFirst({ where: { id, userId } })
+    if (!existing) {
+      throw new BadRequestException('未找到该案例或无权编辑')
+    }
+    const saved = await this.prisma.promptSample.update({ where: { id }, data })
+    return this.mapCustomPromptSample(saved)
+  }
+
+  async deletePromptSample(userId: string, id: string) {
+    const existing = await this.prisma.promptSample.findFirst({ where: { id, userId } })
+    if (!existing) {
+      throw new BadRequestException('未找到该案例或无权删除')
+    }
+    await this.prisma.promptSample.delete({ where: { id } })
+    return { success: true }
   }
 
   /**
@@ -424,6 +561,247 @@ export class AiService {
         return 'storyboard'
       default:
         return undefined
+    }
+  }
+
+  private normalizePromptSampleSource(source?: string | null): 'official' | 'custom' | 'all' {
+    if (!source) return 'all'
+    const lower = source.toLowerCase()
+    if (lower === 'official') return 'official'
+    if (lower === 'custom') return 'custom'
+    return 'all'
+  }
+
+  private mapOfficialPromptSample(sample: PromptSample): PromptSampleResponseDto {
+    return {
+      ...sample,
+      source: 'official',
+    }
+  }
+
+  private mapCustomPromptSample(record: PrismaPromptSample): PromptSampleResponseDto {
+    return {
+      id: record.id,
+      scene: record.scene,
+      commandType: record.commandType,
+      title: record.title,
+      nodeKind: (this.normalizePromptSampleKind(record.nodeKind) ?? 'image'),
+      prompt: record.prompt,
+      description: record.description || undefined,
+      inputHint: record.inputHint || undefined,
+      outputNote: record.outputNote || undefined,
+      keywords: record.keywords || [],
+      source: 'custom',
+    }
+  }
+
+  private filterCustomPromptSamples(samples: PromptSampleResponseDto[], query: string) {
+    const haystack = query.toLowerCase()
+    const scored = samples
+      .map((sample) => ({ sample, score: this.computeCustomPromptSampleScore(sample, haystack) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.sample)
+    return scored.length ? scored : samples
+  }
+
+  private computeCustomPromptSampleScore(sample: PromptSampleResponseDto, query: string) {
+    let score = 0
+    const collect = [
+      sample.title,
+      sample.scene,
+      sample.commandType,
+      sample.prompt,
+      sample.description,
+      sample.inputHint,
+      sample.outputNote,
+    ]
+    collect.forEach((field) => {
+      if (field && field.toLowerCase().includes(query)) {
+        score += field === sample.prompt ? 3 : 2
+      }
+    })
+    sample.keywords?.forEach((keyword) => {
+      if (keyword.toLowerCase().includes(query)) {
+        score += 2
+      }
+    })
+    return score
+  }
+
+  private normalizePromptSamplePayload(payload: PromptSamplePayloadDto) {
+    const nodeKind = this.normalizePromptSampleKind(payload.nodeKind)
+    if (!nodeKind) {
+      throw new BadRequestException('nodeKind 必须是 image/composeVideo/storyboard')
+    }
+    const title = (payload.title || '').trim()
+    const scene = (payload.scene || '').trim()
+    const commandType = (payload.commandType || '').trim()
+    const prompt = (payload.prompt || '').trim()
+    if (!title || !scene || !commandType || !prompt) {
+      throw new BadRequestException('标题、场景、指令类型与提示词不能为空')
+    }
+    const keywords = (payload.keywords || []).map((keyword) => keyword.trim()).filter(Boolean)
+    return {
+      nodeKind,
+      title,
+      scene,
+      commandType,
+      prompt,
+      description: payload.description?.trim() || null,
+      inputHint: payload.inputHint?.trim() || null,
+      outputNote: payload.outputNote?.trim() || null,
+      keywords,
+    }
+  }
+
+  private composePromptSampleParserSystem() {
+    return [
+      'You are a prompt library curator. Read the raw description and extract clean metadata for the prompt collection.',
+      'Return concise Chinese text for scene/commandType/title/description fields. Keep prompt field in its original language.',
+      'Keywords should be 3~8 short tags without punctuation.',
+    ].join('\n')
+  }
+
+  private composePromptSampleParserUserMessage(rawPrompt: string, nodeKind: PromptSampleNodeKind) {
+    return [
+      `目标节点类型: ${nodeKind}`,
+      '请将下面的提示词拆解成结构化字段（scene、commandType、title、prompt、description、inputHint、outputNote、keywords）。',
+      '原始提示词：',
+      rawPrompt,
+    ].join('\n\n')
+  }
+
+  private normalizeParsedPromptSample(payload: any, nodeKind: PromptSampleNodeKind): PromptSamplePayloadDto {
+    const keywords = Array.isArray(payload?.keywords)
+      ? payload.keywords.map((keyword: string) => (keyword || '').trim()).filter(Boolean)
+      : []
+    return {
+      scene: (payload?.scene || '').trim(),
+      commandType: (payload?.commandType || '').trim(),
+      title: (payload?.title || '').trim(),
+      nodeKind,
+      prompt: (payload?.prompt || '').trim(),
+      description: payload?.description?.trim() || undefined,
+      inputHint: payload?.inputHint?.trim() || undefined,
+      outputNote: payload?.outputNote?.trim() || undefined,
+      keywords,
+    }
+  }
+
+  private isInvalidJsonResponseError(error: any) {
+    if (!error) return false
+    const message = error?.message || error?.toString?.() || ''
+    return message.includes('Invalid JSON response')
+  }
+
+  private async parsePromptSampleWithTextFallback(params: {
+    model: ReturnType<AiService['buildModel']>
+    rawPrompt: string
+    nodeKind: PromptSampleNodeKind
+  }) {
+    this.logger.warn('[PromptSampleParse] JSON schema失败，自动降级为文本解析', {
+      provider: params.model.provider,
+    })
+    const prompt = this.composePromptSampleTextFallbackPrompt(params.rawPrompt, params.nodeKind)
+    const text = await this.generatePromptSampleTextResponse({
+      model: params.model,
+      systemPrompt: prompt.systemPrompt,
+      userMessage: prompt.userMessage,
+    })
+    const parsed = this.extractJsonFromText(text)
+    if (!parsed) {
+      throw new BadRequestException('AI 返回的结果无法解析，请检查模型设置或稍后再试')
+    }
+    return parsed
+  }
+
+  private composePromptSampleTextFallbackPrompt(rawPrompt: string, nodeKind: PromptSampleNodeKind) {
+    const systemPrompt = [
+      this.composePromptSampleParserSystem(),
+      '如果无法遵循 JSON schema，请仍以 JSON 字符串形式返回，禁止额外说明或前缀。',
+    ].join('\n')
+    const userMessage = [
+      this.composePromptSampleParserUserMessage(rawPrompt, nodeKind),
+      '',
+      '输出格式：严格的 JSON 对象，包含 scene、commandType、title、prompt、description、inputHint、outputNote、keywords（字符串数组）。',
+    ].join('\n')
+    return { systemPrompt, userMessage }
+  }
+
+  private async generatePromptSampleTextResponse(params: {
+    model: ReturnType<AiService['buildModel']>
+    systemPrompt: string
+    userMessage: string
+  }) {
+    try {
+      const response = await generateText({
+        model: params.model,
+        system: params.systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: params.userMessage,
+          },
+        ],
+        temperature: 0.2,
+        maxRetries: 1,
+      })
+      return response.text || ''
+    } catch (error: any) {
+      if (!this.isInvalidJsonResponseError(error)) throw error
+      this.logger.warn('[PromptSampleParse] 文本解析 JSON 响应无效，尝试流式解析', {
+        provider: params.model.provider,
+        message: error?.message,
+      })
+      return this.generatePromptSampleTextViaStreaming(params)
+    }
+  }
+
+  private async generatePromptSampleTextViaStreaming(params: {
+    model: ReturnType<AiService['buildModel']>
+    systemPrompt: string
+    userMessage: string
+  }) {
+    const streamResult = await streamText({
+      model: params.model,
+      system: params.systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: params.userMessage,
+        },
+      ],
+      temperature: 0.2,
+      maxRetries: 1,
+    })
+    const chunks: string[] = []
+    for await (const delta of streamResult.textStream) {
+      if (typeof delta === 'string' && delta.length) {
+        chunks.push(delta)
+      }
+    }
+    return chunks.join('')
+  }
+
+  private extractJsonFromText(text: string): any | null {
+    const trimmed = text.trim()
+    if (!trimmed) return null
+    const fence = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)
+    const candidate = fence ? fence[1] : trimmed
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      try {
+        const start = candidate.indexOf('{')
+        const end = candidate.lastIndexOf('}')
+        if (start >= 0 && end > start) {
+          return JSON.parse(candidate.slice(start, end + 1))
+        }
+      } catch {
+        return null
+      }
+      return null
     }
   }
 

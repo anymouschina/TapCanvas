@@ -94,17 +94,56 @@ export type PromptSampleDto = {
   inputHint?: string
   outputNote?: string
   keywords: string[]
+  source?: 'official' | 'custom'
 }
 
-export async function fetchPromptSamples(params?: { query?: string; nodeKind?: string }): Promise<{ samples: PromptSampleDto[] }> {
+export type PromptSampleInput = {
+  scene: string
+  commandType: string
+  title: string
+  nodeKind: 'image' | 'composeVideo' | 'storyboard'
+  prompt: string
+  description?: string
+  inputHint?: string
+  outputNote?: string
+  keywords?: string[]
+}
+
+export async function fetchPromptSamples(params?: { query?: string; nodeKind?: string; source?: 'official' | 'custom' | 'all' }): Promise<{ samples: PromptSampleDto[] }> {
   const qs = new URLSearchParams()
   if (params?.query) qs.set('q', params.query)
   if (params?.nodeKind) qs.set('nodeKind', params.nodeKind)
+  if (params?.source) qs.set('source', params.source)
   const query = qs.toString()
   const url = query ? `${API_BASE}/ai/prompt-samples?${query}` : `${API_BASE}/ai/prompt-samples`
   const r = await fetch(url, withAuth())
   if (!r.ok) throw new Error(`fetch prompt samples failed: ${r.status}`)
   return r.json()
+}
+
+export async function parsePromptSample(payload: { rawPrompt: string; nodeKind?: string }): Promise<PromptSampleInput> {
+  const r = await fetch(`${API_BASE}/ai/prompt-samples/parse`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`parse prompt sample failed: ${r.status}`)
+  return r.json()
+}
+
+export async function createPromptSample(payload: PromptSampleInput): Promise<PromptSampleDto> {
+  const r = await fetch(`${API_BASE}/ai/prompt-samples`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`create prompt sample failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deletePromptSample(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/ai/prompt-samples/${id}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete prompt sample failed: ${r.status}`)
 }
 
 export async function listServerFlows(): Promise<FlowDto[]> {

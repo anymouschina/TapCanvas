@@ -1,7 +1,29 @@
 import React from 'react'
-import { ActionIcon, Badge, Button, Drawer, Group, Loader, Paper, ScrollArea, Select, Stack, Tabs, Text, TextInput, Textarea } from '@mantine/core'
-import { IconPlus, IconSearch, IconTrash } from '@tabler/icons-react'
-import { fetchPromptSamples, type PromptSampleDto } from '../../api/server'
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Drawer,
+  Group,
+  Loader,
+  Paper,
+  ScrollArea,
+  Select,
+  Stack,
+  Tabs,
+  Text,
+  TextInput,
+  Textarea,
+} from '@mantine/core'
+import { IconPlus, IconSearch, IconTrash, IconWand } from '@tabler/icons-react'
+import {
+  createPromptSample,
+  deletePromptSample,
+  fetchPromptSamples,
+  parsePromptSample,
+  type PromptSampleDto,
+  type PromptSampleInput,
+} from '../../api/server'
 
 export type PromptSampleDrawerProps = {
   opened: boolean
@@ -24,62 +46,29 @@ const normalizeKindForRequest = (kind?: string) => {
   return undefined
 }
 
-const CUSTOM_STORAGE_KEY = 'tapcanvas.customPromptSamples'
-
-const loadCustomSamples = (): PromptSampleDto[] => {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(CUSTOM_STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is PromptSampleDto => typeof item?.id === 'string' && typeof item?.prompt === 'string')
-  } catch (error) {
-    console.warn('failed to load custom prompt samples', error)
-    return []
-  }
-}
-
-const persistCustomSamples = (samples: PromptSampleDto[]) => {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(CUSTOM_STORAGE_KEY, JSON.stringify(samples))
-  } catch (error) {
-    console.warn('failed to save custom prompt samples', error)
-  }
-}
-
-const matchesQuery = (sample: PromptSampleDto, query: string) => {
-  if (!query.trim()) return true
-  const haystack = [
-    sample.title,
-    sample.scene,
-    sample.commandType,
-    sample.description,
-    sample.prompt,
-    sample.outputNote,
-    sample.inputHint,
-    ...(sample.keywords || [])
-  ].join(' ').toLowerCase()
-  return haystack.includes(query.trim().toLowerCase())
-}
-
 const nodeKindOptions = [
   { value: 'composeVideo', label: '视频节点' },
   { value: 'image', label: '图像节点' },
-  { value: 'storyboard', label: '分镜节点' }
+  { value: 'storyboard', label: '分镜节点' },
 ]
 
 export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }: PromptSampleDrawerProps) {
   const effectiveKind = React.useMemo(() => normalizeKindForRequest(nodeKind), [nodeKind])
   const [queryInput, setQueryInput] = React.useState('')
   const [query, setQuery] = React.useState('')
-  const [samples, setSamples] = React.useState<PromptSampleDto[]>([])
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
+  const [officialSamples, setOfficialSamples] = React.useState<PromptSampleDto[]>([])
   const [customSamples, setCustomSamples] = React.useState<PromptSampleDto[]>([])
+  const [officialLoading, setOfficialLoading] = React.useState(false)
+  const [customLoading, setCustomLoading] = React.useState(false)
+  const [officialError, setOfficialError] = React.useState<string | null>(null)
   const [customError, setCustomError] = React.useState<string | null>(null)
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [formSuccess, setFormSuccess] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'official' | 'custom'>('official')
+  const [saving, setSaving] = React.useState(false)
+  const [parsing, setParsing] = React.useState(false)
+  const [rawPrompt, setRawPrompt] = React.useState('')
+  const [deletingId, setDeletingId] = React.useState<string | null>(null)
   const [customForm, setCustomForm] = React.useState({
     title: '',
     scene: '',
@@ -89,89 +78,10 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
     description: '',
     inputHint: '',
     outputNote: '',
-    nodeKind: (effectiveKind as PromptSampleDto['nodeKind']) || 'composeVideo'
+    nodeKind: (effectiveKind as PromptSampleDto['nodeKind']) || 'composeVideo',
   })
 
-  React.useEffect(() => {
-    setCustomSamples(loadCustomSamples())
-  }, [])
-
-  React.useEffect(() => {
-    if (!opened) {
-      setQueryInput('')
-      setQuery('')
-      setCustomError(null)
-      setCustomForm((prev) => ({ ...prev, title: '', scene: '', commandType: '', prompt: '', keywords: '', description: '', inputHint: '', outputNote: '' }))
-    }
-  }, [opened])
-
-  React.useEffect(() => {
-    if (!opened) return
-    let canceled = false
-    setLoading(true)
-    setError(null)
-    fetchPromptSamples({ query: query || undefined, nodeKind: effectiveKind })
-      .then((res) => {
-        if (canceled) return
-        setSamples(res.samples || [])
-      })
-      .catch((err) => {
-        if (canceled) return
-        console.error('fetchPromptSamples failed', err)
-        setError('加载提示词案例失败，请稍后再试')
-      })
-      .finally(() => {
-        if (!canceled) setLoading(false)
-      })
-    return () => {
-      canceled = true
-    }
-  }, [opened, query, effectiveKind])
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    setQuery(queryInput.trim())
-  }
-
-  const filteredCustomSamples = React.useMemo(() => {
-    return customSamples.filter((sample) => {
-      const kindMatches = effectiveKind ? sample.nodeKind === effectiveKind : true
-      return kindMatches && matchesQuery(sample, query)
-    })
-  }, [customSamples, effectiveKind, query])
-
-  const handleCustomFieldChange = (field: keyof typeof customForm, value: string) => {
-    setCustomForm((prev) => ({ ...prev, [field]: value }))
-  }
-
-  const handleAddCustomSample = () => {
-    if (!customForm.title.trim() || !customForm.prompt.trim()) {
-      setCustomError('标题和提示词不能为空')
-      return
-    }
-    if (!customForm.scene.trim()) {
-      setCustomError('请填写场景描述')
-      return
-    }
-    setCustomError(null)
-    const newSample: PromptSampleDto = {
-      id: `custom-${Date.now()}`,
-      scene: customForm.scene.trim(),
-      commandType: customForm.commandType.trim() || '自定义模块',
-      title: customForm.title.trim(),
-      nodeKind: (customForm.nodeKind as PromptSampleDto['nodeKind']) || 'composeVideo',
-      prompt: customForm.prompt.trim(),
-      description: customForm.description.trim() || undefined,
-      inputHint: customForm.inputHint.trim() || undefined,
-      outputNote: customForm.outputNote.trim() || undefined,
-      keywords: customForm.keywords
-        .split(',')
-        .map((word) => word.trim())
-        .filter(Boolean)
-    }
-    const next = [newSample, ...customSamples]
-    setCustomSamples(next)
-    persistCustomSamples(next)
+  const resetForm = React.useCallback(() => {
     setCustomForm((prev) => ({
       ...prev,
       title: '',
@@ -181,23 +91,161 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
       keywords: '',
       description: '',
       inputHint: '',
-      outputNote: ''
+      outputNote: '',
+      nodeKind: (effectiveKind as PromptSampleDto['nodeKind']) || 'composeVideo',
+    }))
+    setRawPrompt('')
+    setFormError(null)
+    setFormSuccess(null)
+  }, [effectiveKind])
+
+  React.useEffect(() => {
+    if (!opened) {
+      setQueryInput('')
+      setQuery('')
+      resetForm()
+      setActiveTab('official')
+    }
+  }, [opened, resetForm])
+
+  const loadOfficialSamples = React.useCallback(() => {
+    if (!opened) return
+    setOfficialLoading(true)
+    setOfficialError(null)
+    fetchPromptSamples({ query: query || undefined, nodeKind: effectiveKind, source: 'official' })
+      .then((res) => setOfficialSamples(res.samples || []))
+      .catch((err: any) => {
+        console.error('fetch official prompt samples failed', err)
+        setOfficialError(err?.message || '加载提示词案例失败')
+      })
+      .finally(() => setOfficialLoading(false))
+  }, [opened, query, effectiveKind])
+
+  const loadCustomSamples = React.useCallback(() => {
+    if (!opened) return
+    setCustomLoading(true)
+    setCustomError(null)
+    fetchPromptSamples({ query: query || undefined, nodeKind: effectiveKind, source: 'custom' })
+      .then((res) => setCustomSamples(res.samples || []))
+      .catch((err: any) => {
+        console.error('fetch custom prompt samples failed', err)
+        setCustomError(err?.message || '加载自定义案例失败')
+      })
+      .finally(() => setCustomLoading(false))
+  }, [opened, query, effectiveKind])
+
+  React.useEffect(() => {
+    if (!opened) return
+    loadOfficialSamples()
+    loadCustomSamples()
+  }, [opened, loadOfficialSamples, loadCustomSamples])
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = queryInput.trim()
+    setQuery(trimmed)
+  }
+
+  const handleCustomFieldChange = (field: keyof typeof customForm, value: string) => {
+    setCustomForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const applyParsedResult = (result: PromptSampleInput) => {
+    setCustomForm((prev) => ({
+      ...prev,
+      nodeKind: result.nodeKind,
+      scene: result.scene || '',
+      commandType: result.commandType || '',
+      title: result.title || '',
+      prompt: result.prompt || '',
+      description: result.description || '',
+      inputHint: result.inputHint || '',
+      outputNote: result.outputNote || '',
+      keywords: (result.keywords || []).join(', '),
     }))
   }
 
-  const handleRemoveCustom = (id: string) => {
-    const next = customSamples.filter((sample) => sample.id !== id)
-    setCustomSamples(next)
-    persistCustomSamples(next)
+  const handleParse = async () => {
+    if (!rawPrompt.trim()) {
+      setFormError('请先粘贴原始提示词')
+      setFormSuccess(null)
+      return
+    }
+    setParsing(true)
+    setFormError(null)
+    setFormSuccess(null)
+    try {
+      const parsed = await parsePromptSample({ rawPrompt: rawPrompt.trim(), nodeKind: customForm.nodeKind })
+      applyParsedResult(parsed)
+      setFormSuccess('已自动提取字段，可根据需要修改后保存')
+    } catch (err: any) {
+      setFormError(err?.message || '解析失败，请稍后再试')
+    } finally {
+      setParsing(false)
+    }
   }
 
-  const kindBadge = effectiveKind ? <Badge variant="light" color="blue" size="sm">{nodeKindLabel[effectiveKind]}</Badge> : null
+  const handleSave = async () => {
+    if (!customForm.title.trim() || !customForm.prompt.trim() || !customForm.scene.trim()) {
+      setFormError('标题、场景和提示词不能为空')
+      setFormSuccess(null)
+      return
+    }
+    setSaving(true)
+    setFormError(null)
+    setFormSuccess(null)
+    const keywords = customForm.keywords
+      .split(',')
+      .map((word) => word.trim())
+      .filter(Boolean)
+    const payload: PromptSampleInput = {
+      title: customForm.title.trim(),
+      scene: customForm.scene.trim(),
+      commandType: customForm.commandType.trim() || '自定义模块',
+      nodeKind: (customForm.nodeKind as PromptSampleDto['nodeKind']) || 'composeVideo',
+      prompt: customForm.prompt.trim(),
+      description: customForm.description.trim() || undefined,
+      inputHint: customForm.inputHint.trim() || undefined,
+      outputNote: customForm.outputNote.trim() || undefined,
+      keywords,
+    }
+    try {
+      await createPromptSample(payload)
+      setFormSuccess('已保存到支持共享配置')
+      setFormError(null)
+      loadCustomSamples()
+    } catch (err: any) {
+      setFormError(err?.message || '保存失败，请稍后再试')
+      setFormSuccess(null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('确定删除该案例？')) return
+    setDeletingId(id)
+    try {
+      await deletePromptSample(id)
+      loadCustomSamples()
+    } catch (err: any) {
+      setCustomError(err?.message || '删除失败')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const kindBadge = effectiveKind ? (
+    <Badge variant="light" color="blue" size="sm">
+      {nodeKindLabel[effectiveKind]}
+    </Badge>
+  ) : null
 
   return (
     <Drawer
       opened={opened}
       onClose={onClose}
-      title="提示词案例库"
+      title="提示词支持共享配置"
       position="right"
       size="lg"
       overlayProps={{ opacity: 0.55, blur: 2 }}
@@ -217,7 +265,14 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
             <Button type="submit" variant="light">
               搜索
             </Button>
-            <Button type="button" variant="subtle" onClick={() => { setQueryInput(''); setQuery('') }}>
+            <Button
+              type="button"
+              variant="subtle"
+              onClick={() => {
+                setQueryInput('')
+                setQuery('')
+              }}
+            >
               重置
             </Button>
           </Group>
@@ -227,12 +282,12 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
 
         <Tabs value={activeTab} onChange={(value) => setActiveTab((value as 'official' | 'custom') || 'official')}>
           <Tabs.List>
-            <Tabs.Tab value="official">官方案例</Tabs.Tab>
+            <Tabs.Tab value="official">公共案例</Tabs.Tab>
             <Tabs.Tab value="custom">自定义案例</Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="official" pt="sm">
-            {loading && (
+            {officialLoading && (
               <Group justify="center" py="md">
                 <Loader size="sm" />
                 <Text size="sm" c="dimmed">
@@ -241,25 +296,25 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
               </Group>
             )}
 
-            {!loading && error && (
+            {!officialLoading && officialError && (
               <Paper withBorder p="md">
                 <Text size="sm" c="red.5">
-                  {error}
+                  {officialError}
                 </Text>
               </Paper>
             )}
 
-            {!loading && !error && (
+            {!officialLoading && !officialError && (
               <ScrollArea h="70vh" type="always">
                 <Stack gap="sm">
-                  {samples.length === 0 && (
+                  {officialSamples.length === 0 && (
                     <Paper withBorder p="md">
                       <Text size="sm" c="dimmed">
                         暂无匹配的案例，可以尝试其他关键字。
                       </Text>
                     </Paper>
                   )}
-                  {samples.map((sample) => (
+                  {officialSamples.map((sample) => (
                     <Paper key={sample.id} withBorder radius="md" p="md" shadow="xs">
                       <Stack gap={4}>
                         <Group justify="space-between" align="flex-start">
@@ -321,8 +376,26 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                     <Group justify="space-between" align="center">
                       <Text fw={600}>自定义案例</Text>
                       <Text size="xs" c="dimmed">
-                        数据仅保存在当前浏览器
+                        存储在服务器，可跨设备复用
                       </Text>
+                    </Group>
+                    <Textarea
+                      label="原始提示词"
+                      placeholder="粘贴长提示词，AI 将自动提取字段"
+                      minRows={4}
+                      value={rawPrompt}
+                      onChange={(e) => setRawPrompt(e.currentTarget.value)}
+                    />
+                    <Group justify="flex-end">
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={<IconWand size={14} />}
+                        onClick={handleParse}
+                        loading={parsing}
+                      >
+                        AI 自动提取
+                      </Button>
                     </Group>
                     <Select
                       label="节点类型"
@@ -354,7 +427,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                     <Textarea
                       label="提示词"
                       minRows={4}
-                      placeholder="完整英文提示词"
+                      placeholder="完整英文/中文提示词"
                       value={customForm.prompt}
                       onChange={(e) => handleCustomFieldChange('prompt', e.currentTarget.value)}
                     />
@@ -381,95 +454,117 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                       value={customForm.keywords}
                       onChange={(e) => handleCustomFieldChange('keywords', e.currentTarget.value)}
                     />
-                    {customError && (
+                    {formError && (
                       <Text size="xs" c="red.6">
-                        {customError}
+                        {formError}
+                      </Text>
+                    )}
+                    {formSuccess && (
+                      <Text size="xs" c="teal.6">
+                        {formSuccess}
                       </Text>
                     )}
                     <Group justify="flex-end">
-                      <Button
-                        size="xs"
-                        variant="gradient"
-                        leftSection={<IconPlus size={14} />}
-                        onClick={handleAddCustomSample}
-                      >
+                      <Button size="xs" variant="subtle" onClick={resetForm}>
+                        重置表单
+                      </Button>
+                      <Button size="xs" onClick={handleSave} loading={saving}>
                         保存案例
                       </Button>
                     </Group>
                   </Stack>
                 </Paper>
 
-                {filteredCustomSamples.length === 0 ? (
+                {customLoading && (
+                  <Group justify="center" py="md">
+                    <Loader size="sm" />
+                    <Text size="sm" c="dimmed">
+                      正在加载自定义案例...
+                    </Text>
+                  </Group>
+                )}
+
+                {!customLoading && customError && (
+                  <Paper withBorder p="md">
+                    <Text size="sm" c="red.5">
+                      {customError}
+                    </Text>
+                  </Paper>
+                )}
+
+                {!customLoading && !customError && customSamples.length === 0 && (
                   <Paper withBorder p="md" radius="md">
                     <Text size="sm" c="dimmed">
                       暂无自定义案例，填写上方表单即可创建。
                     </Text>
                   </Paper>
-                ) : (
-                  filteredCustomSamples.map((sample) => (
-                    <Paper key={sample.id} withBorder radius="md" p="md" shadow="xs">
-                      <Stack gap={4}>
-                        <Group justify="space-between" align="flex-start">
-                          <div>
+                )}
+
+                {!customLoading && !customError && customSamples.map((sample) => (
+                  <Paper key={sample.id} withBorder radius="md" p="md" shadow="xs">
+                    <Stack gap={4}>
+                      <Group justify="space-between" align="flex-start">
+                        <div>
+                          <Group gap={6}>
                             <Text fw={600} size="sm">
                               {sample.title}
                             </Text>
-                            <Text size="xs" c="dimmed">
-                              {sample.scene} ｜ {sample.commandType}
-                            </Text>
-                          </div>
-                          <Group gap={6}>
                             <Badge color="orange" variant="light">
                               自定义
                             </Badge>
-                            <Badge color="gray" variant="light">
-                              {nodeKindLabel[sample.nodeKind]}
-                            </Badge>
-                            <ActionIcon
-                              size="sm"
-                              variant="subtle"
-                              color="red"
-                              onClick={() => handleRemoveCustom(sample.id)}
-                              aria-label="删除案例"
-                            >
-                              <IconTrash size={14} />
-                            </ActionIcon>
                           </Group>
-                        </Group>
-                        {sample.description && (
-                          <Text size="sm" c="dimmed">
-                            {sample.description}
+                          <Text size="xs" c="dimmed">
+                            {sample.scene} ｜ {sample.commandType}
                           </Text>
-                        )}
-                        <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-                          {sample.prompt}
+                        </div>
+                        <Group gap={6}>
+                          <Badge color="gray" variant="light">
+                            {nodeKindLabel[sample.nodeKind]}
+                          </Badge>
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => handleDelete(sample.id)}
+                            disabled={deletingId === sample.id}
+                          >
+                            {deletingId === sample.id ? <Loader size="xs" color="red" /> : <IconTrash size={14} />}
+                          </ActionIcon>
+                        </Group>
+                      </Group>
+                      {sample.description && (
+                        <Text size="sm" c="dimmed">
+                          {sample.description}
                         </Text>
-                        {sample.outputNote && (
-                          <Text size="xs" c="dimmed">
-                            效果：{sample.outputNote}
-                          </Text>
-                        )}
-                        {sample.inputHint && (
-                          <Text size="xs" c="dimmed">
-                            输入建议：{sample.inputHint}
-                          </Text>
-                        )}
-                        <Group justify="space-between" mt="sm">
-                          <Group gap={4}>
-                            {sample.keywords.slice(0, 3).map((keyword) => (
-                              <Badge key={keyword} size="xs" color="dark" variant="outline">
-                                {keyword}
-                              </Badge>
-                            ))}
-                          </Group>
-                          <Button size="xs" onClick={() => onApplySample(sample)}>
-                            应用
-                          </Button>
+                      )}
+                      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+                        {sample.prompt}
+                      </Text>
+                      {sample.outputNote && (
+                        <Text size="xs" c="dimmed">
+                          效果：{sample.outputNote}
+                        </Text>
+                      )}
+                      {sample.inputHint && (
+                        <Text size="xs" c="dimmed">
+                          输入建议：{sample.inputHint}
+                        </Text>
+                      )}
+                      <Group justify="space-between" mt="sm">
+                        <Group gap={4}>
+                          {sample.keywords.slice(0, 3).map((keyword) => (
+                            <Badge key={keyword} size="xs" color="dark" variant="outline">
+                              {keyword}
+                            </Badge>
+                          ))}
                         </Group>
-                      </Stack>
-                    </Paper>
-                  ))
-                )}
+                        <Button size="xs" onClick={() => onApplySample(sample)}>
+                          应用
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Paper>
+                ))}
               </Stack>
             </ScrollArea>
           </Tabs.Panel>

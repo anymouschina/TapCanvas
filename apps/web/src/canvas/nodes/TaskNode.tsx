@@ -845,16 +845,20 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   })
 
   React.useEffect(() => {
-    if (typeof rawSystemPrompt === 'string' && rawSystemPrompt !== systemPrompt) {
+    if (typeof rawSystemPrompt === 'string') {
       setSystemPrompt(rawSystemPrompt)
     }
-  }, [rawSystemPrompt, systemPrompt])
+  }, [rawSystemPrompt])
 
   React.useEffect(() => {
-    if (typeof rawShowSystemPrompt === 'boolean' && rawShowSystemPrompt !== showSystemPrompt) {
+    if (typeof rawShowSystemPrompt === 'boolean') {
       setShowSystemPrompt(rawShowSystemPrompt)
+      return
     }
-  }, [rawShowSystemPrompt, showSystemPrompt])
+    if (rawShowSystemPrompt === undefined) {
+      setShowSystemPrompt(isImageNode || isVideoNode)
+    }
+  }, [rawShowSystemPrompt, isImageNode, isVideoNode])
 
   React.useEffect(() => {
     const previous = typeof rawSystemPrompt === 'string' ? rawSystemPrompt : ''
@@ -4483,7 +4487,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     variant="subtle"
                     size="xs"
                     onClick={() => setPromptSamplesOpen(true)}
-                    title="打开提示词案例库"
+                    title="打开提示词支持共享配置"
                       style={{
                         border: 'none',
                         background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
