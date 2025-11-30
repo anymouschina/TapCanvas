@@ -25,6 +25,10 @@ export interface TextToImageRequest extends BaseTaskRequest {
   kind: 'text_to_image'
 }
 
+export interface ImageEditRequest extends BaseTaskRequest {
+  kind: 'image_edit'
+}
+
 export interface TextToVideoRequest extends BaseTaskRequest {
   kind: 'text_to_video'
   durationSeconds?: number
@@ -37,6 +41,7 @@ export interface ImageToPromptRequest extends BaseTaskRequest {
 export type AnyTaskRequest =
   | BaseTaskRequest
   | TextToImageRequest
+  | ImageEditRequest
   | TextToVideoRequest
   | ImageToPromptRequest
 
@@ -59,6 +64,28 @@ export interface ProviderContext {
   apiKey: string
   userId: string
   modelKey?: string | null
+  onProgress?: (update: ProviderProgressUpdate) => void
+}
+
+export interface TaskProgressEvent {
+  taskId?: string
+  nodeId?: string
+  nodeKind?: string
+  taskKind?: TaskKind
+  vendor?: string
+  status: TaskStatus
+  progress?: number
+  message?: string
+  assets?: TaskAsset[]
+  raw?: any
+  timestamp?: number
+}
+
+export interface ProviderProgressUpdate {
+  status?: TaskStatus
+  progress?: number
+  message?: string
+  data?: any
 }
 
 export interface ProviderAdapter {
@@ -67,6 +94,7 @@ export interface ProviderAdapter {
 
   runChat?(req: BaseTaskRequest, ctx: ProviderContext): Promise<TaskResult>
   textToImage?(req: TextToImageRequest, ctx: ProviderContext): Promise<TaskResult>
+  imageEdit?(req: ImageEditRequest, ctx: ProviderContext): Promise<TaskResult>
   textToVideo?(req: TextToVideoRequest, ctx: ProviderContext): Promise<TaskResult>
   imageToPrompt?(req: ImageToPromptRequest, ctx: ProviderContext): Promise<TaskResult>
 }

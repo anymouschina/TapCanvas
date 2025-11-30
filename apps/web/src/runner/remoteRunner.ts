@@ -11,6 +11,7 @@ import {
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
 import { isAnthropicModel } from '../config/modelSource'
+import { getDefaultModel, isImageEditModel } from '../config/models'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -55,6 +56,7 @@ const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
+const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
   const provider = providers.find((p) => p.vendor === 'anthropic' || (p.baseUrl || '').toLowerCase().includes('anthropic'))
@@ -163,6 +165,72 @@ function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
   } catch {
     return url
   }
+}
+
+function buildSoraPublicPostUrl(postId?: string | null): string | null {
+  if (!postId) return null
+  const normalized = postId.trim()
+  if (!normalized) return null
+  const targetId = normalized.startsWith('p/') ? normalized.slice(2) : normalized
+  const base = useUIStore.getState().soraVideoBaseUrl
+  if (base) {
+    try {
+      const parsed = new URL(base)
+      parsed.pathname = `/p/${targetId}`
+      parsed.search = ''
+      parsed.hash = ''
+      return parsed.toString()
+    } catch {
+      // ignore malformed base URL
+    }
+  }
+  return `https://sora.chatgpt.com/p/${targetId}`
+}
+
+function extractSoraDraftStatus(draft: any): string | null {
+  if (!draft) return null
+  const rawStatus = typeof draft.status === 'string'
+    ? draft.status
+    : typeof draft.raw?.status === 'string'
+      ? draft.raw.status
+      : null
+  return rawStatus || null
+}
+
+function extractSoraDraftProgress(draft: any): number | null {
+  if (!draft) return null
+  const source = typeof draft.progress === 'number'
+    ? draft.progress
+    : typeof draft.raw?.progress === 'number'
+      ? draft.raw.progress
+      : null
+  if (typeof source !== 'number' || Number.isNaN(source)) return null
+  const normalized = source <= 1 ? source * 100 : source
+  return Math.max(0, Math.min(100, normalized))
+}
+
+function collectReferenceImages(state: any, targetId: string): string[] {
+  if (!state) return []
+  const edges = Array.isArray(state.edges) ? state.edges : []
+  const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
+  const inbound = edges.filter((e: any) => e.target === targetId)
+  const collected: string[] = []
+  for (const edge of inbound) {
+    const src = nodes.find((n: Node) => n.id === edge.source)
+    if (!src) continue
+    const data: any = src.data || {}
+    const kind: string | undefined = data.kind
+    if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
+    const primary = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    if (primary) collected.push(primary)
+    const results = Array.isArray(data.imageResults) ? data.imageResults : []
+    for (const item of results) {
+      if (!item) continue
+      const url = typeof item.url === 'string' ? item.url.trim() : ''
+      if (url) collected.push(url)
+    }
+  }
+  return Array.from(new Set(collected))
 }
 
 function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
@@ -693,7 +761,11 @@ async function runVideoTask(ctx: RunnerContext) {
       videoUrl: string | null
       postId?: string | null
       duration?: number
+      status?: string | null
+      progress?: number | null
+      raw?: any
     } | null = null
+    let progress = 10
 
     const syncDraftVideo = async (force = false) => {
       if (!force && draftSynced) return null
@@ -717,7 +789,21 @@ async function runVideoTask(ctx: RunnerContext) {
         if (draft.title) {
           patch.videoTitle = draft.title
         }
+        const draftProgress = extractSoraDraftProgress(draft)
+        const draftStatus = extractSoraDraftStatus(draft)
+        if (draftStatus) {
+          patch.videoDraftStatus = draftStatus
+        }
+        if (draft.videoUrl) {
+          patch.progress = 100
+        } else if (draftProgress !== null) {
+          const normalized = Math.max(progress, Math.max(5, Math.round(draftProgress)))
+          patch.progress = Math.min(95, normalized)
+        }
         setNodeStatus(id, 'running', patch)
+        if (typeof patch.progress === 'number') {
+          progress = patch.progress
+        }
         if (draft.videoUrl) {
           appendLog(
             id,
@@ -749,7 +835,6 @@ async function runVideoTask(ctx: RunnerContext) {
       }
     }
 
-    let progress = 10
     const pollIntervalMs = 3000
     let finishedFromPending = false
 
@@ -870,8 +955,10 @@ async function runVideoTask(ctx: RunnerContext) {
     const thumbnailUrl = finalDraft?.thumbnailUrl
     const title = finalDraft?.title
     const duration = finalDraft?.duration
+    const fallbackPostUrl = buildSoraPublicPostUrl(finalDraft?.postId || (data as any)?.videoPostId || null)
+    const resolvedVideoUrl = videoUrl || fallbackPostUrl
 
-    if (pollTimedOut || !videoUrl) {
+    if (pollTimedOut || !resolvedVideoUrl) {
       const errorMessage = pollTimedOut
         ? 'Sora 视频生成超时（已等待超过 300 秒），请稍后在 Sora 控制台确认任务状态'
         : (lastSyncError?.message || '未能获取 Sora 草稿，任务可能已失败，请稍后再试')
@@ -886,8 +973,8 @@ async function runVideoTask(ctx: RunnerContext) {
       typeof (data as any)?.videoPrimaryIndex === 'number'
         ? Math.max(0, (data as any).videoPrimaryIndex as number)
         : null
-    if (videoUrl) {
-      const rewrittenUrl = rewriteSoraVideoResourceUrl(videoUrl)
+    if (resolvedVideoUrl) {
+      const rewrittenUrl = rewriteSoraVideoResourceUrl(resolvedVideoUrl)
       const rewrittenThumb = rewriteSoraVideoResourceUrl(thumbnailUrl)
       updatedVideoResults = [
         ...updatedVideoResults,
@@ -904,7 +991,7 @@ async function runVideoTask(ctx: RunnerContext) {
     let nextPrimaryIndex = previousPrimaryIndex ?? 0
     if (updatedVideoResults.length === 0) {
       nextPrimaryIndex = 0
-    } else if (videoUrl) {
+    } else if (resolvedVideoUrl) {
       nextPrimaryIndex = updatedVideoResults.length - 1
     } else if (previousPrimaryIndex !== null) {
       nextPrimaryIndex = Math.min(updatedVideoResults.length - 1, previousPrimaryIndex)
@@ -916,8 +1003,8 @@ async function runVideoTask(ctx: RunnerContext) {
         id: taskId || '',
         at: Date.now(),
         kind,
-        preview: videoUrl
-          ? { type: 'video', src: rewriteSoraVideoResourceUrl(videoUrl) }
+        preview: resolvedVideoUrl
+          ? { type: 'video', src: rewriteSoraVideoResourceUrl(resolvedVideoUrl) }
           : preview,
       },
       prompt: finalPrompt,
@@ -927,7 +1014,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoOrientation: orientation,
       videoPrompt: finalPrompt,
       videoDurationSeconds,
-      videoUrl: videoUrl ? rewriteSoraVideoResourceUrl(videoUrl) : (data as any)?.videoUrl || null,
+      videoUrl: resolvedVideoUrl ? rewriteSoraVideoResourceUrl(resolvedVideoUrl) : (data as any)?.videoUrl || null,
       videoThumbnailUrl: thumbnailUrl ? rewriteSoraVideoResourceUrl(thumbnailUrl) : (data as any)?.videoThumbnailUrl || null,
       videoTitle: title,
       videoDuration: duration,
@@ -964,11 +1051,12 @@ async function runGenericTask(ctx: RunnerContext) {
     isImageTask,
     kind,
     prompt,
+    state,
   } = ctx
 
   try {
     const selectedModel = taskKind === 'text_to_image'
-      ? (data.imageModel as string) || 'qwen-image-plus'
+      ? (data.imageModel as string) || DEFAULT_IMAGE_MODEL
       : (data.geminiModel as string) || (data.model as string) || 'gemini-2.5-flash'
     const modelLower = selectedModel.toLowerCase()
 
@@ -994,6 +1082,22 @@ async function runGenericTask(ctx: RunnerContext) {
           modelLower.includes('codex')
           ? 'openai'
           : 'gemini')
+    const referenceImages = isImageTask ? collectReferenceImages(state, id) : []
+    const wantsImageEdit = isImageTask && referenceImages.length > 0
+    if (wantsImageEdit && !isImageEditModel(selectedModel)) {
+      const msg = '当前模型不支持图片编辑，请切换到支持图片编辑的模型（如 Nano Banana 系列）'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      ctx.endRunToken(id)
+      return
+    }
+    const effectiveTaskKind: TaskKind = wantsImageEdit ? 'image_edit' : taskKind
+    const aspectRatio =
+      typeof (data as any)?.aspect === 'string' && (data as any)?.aspect.trim()
+        ? (data as any).aspect.trim()
+        : 'auto'
+
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
@@ -1016,19 +1120,26 @@ async function runGenericTask(ctx: RunnerContext) {
             : vendor === 'openai'
               ? 'OpenAI'
               : 'Gemini'
-      const modelType = taskKind === 'text_to_image' ? '图像' : '文案'
+      const modelType =
+        effectiveTaskKind === 'image_edit'
+          ? '图像编辑'
+          : effectiveTaskKind === 'text_to_image'
+            ? '图像'
+            : '文案'
       appendLog(
         id,
         `[${nowLabel()}] 调用${vendorName} ${modelType}模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
       )
 
       const res = await runTaskByVendor(vendor, {
-        kind: taskKind,
+        kind: effectiveTaskKind,
         prompt,
         extras: {
           nodeKind: kind,
           nodeId: id,
           modelKey: selectedModel,
+          ...(isImageTask ? { aspectRatio } : {}),
+          ...(wantsImageEdit ? { referenceImages } : {}),
         },
       })
 
@@ -1080,10 +1191,12 @@ async function runGenericTask(ctx: RunnerContext) {
     if (isImageTask && allImageAssets.length) {
       const existing = (data.imageResults as { url: string }[] | undefined) || []
       const merged = [...existing, ...allImageAssets]
+      const newPrimaryIndex = existing.length
       patchExtra = {
         ...patchExtra,
         imageUrl: firstImage!.url,
         imageResults: merged,
+        imagePrimaryIndex: newPrimaryIndex,
       }
     }
     if (allTexts.length) {

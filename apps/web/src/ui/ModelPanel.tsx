@@ -1258,7 +1258,7 @@ export default function ModelPanel(): JSX.Element | null {
               onClose={() => setAnthropicModalOpen(false)}
               fullScreen
               withinPortal
-              zIndex={8000}
+              zIndex={300}
               title="Anthropic 身份配置"
               styles={{
                 content: {
@@ -1430,7 +1430,7 @@ export default function ModelPanel(): JSX.Element | null {
               onClose={() => setGeminiModalOpen(false)}
               fullScreen
               withinPortal
-              zIndex={8000}
+              zIndex={300}
               title="Gemini 身份配置"
               styles={{
                 content: {
@@ -1567,7 +1567,7 @@ export default function ModelPanel(): JSX.Element | null {
               onClose={() => setOpenaiModalOpen(false)}
               fullScreen
               withinPortal
-              zIndex={8000}
+              zIndex={300}
               title="OpenAI / Codex 身份配置"
               styles={{
                 content: {
@@ -1807,7 +1807,7 @@ export default function ModelPanel(): JSX.Element | null {
               onClose={() => setQwenModalOpen(false)}
               fullScreen
               withinPortal
-              zIndex={8000}
+              zIndex={300}
               title="Qwen 身份配置"
               styles={{
                 content: {
@@ -2042,7 +2042,7 @@ export default function ModelPanel(): JSX.Element | null {
               onClose={() => setModalOpen(false)}
               fullScreen
               withinPortal
-              zIndex={8000}
+              zIndex={300}
               title="Sora 身份配置"
               styles={{
                 content: {

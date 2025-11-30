@@ -1,12 +1,16 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, MessageEvent, Post, Req, Sse, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '../auth/jwt.guard'
 import { TaskService } from './task.service'
 import type { AnyTaskRequest } from './task.types'
+import { TaskProgressService } from './task-progress.service'
 
 @UseGuards(JwtGuard)
 @Controller('tasks')
 export class TaskController {
-  constructor(private readonly service: TaskService) {}
+  constructor(
+    private readonly service: TaskService,
+    private readonly progress: TaskProgressService,
+  ) {}
 
   @Post()
   runTask(
@@ -30,5 +34,10 @@ export class TaskController {
       return this.service.executeWithVendor(userId, body.vendor, body.request)
     }
     throw new Error('either profileId or vendor must be provided')
+  }
+
+  @Sse('stream')
+  stream(@Req() req: any): ReturnType<TaskProgressService['stream']> {
+    return this.progress.stream(String(req.user.sub))
   }
 }

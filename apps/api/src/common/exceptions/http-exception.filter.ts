@@ -8,6 +8,30 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+function normalizeErrorDetail(detail: unknown): any {
+  if (!detail) return null;
+  if (detail instanceof Error) {
+    return {
+      message: detail.message,
+      stack: detail.stack,
+    };
+  }
+  if (typeof detail === 'object') {
+    return detail;
+  }
+  return { value: detail };
+}
+
+function formatLogDetail(detail: unknown): string | null {
+  if (!detail) return null;
+  if (typeof detail === 'string') return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return '[Unserializable error detail]';
+  }
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -20,6 +44,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let errorDetails: any = null;
+    let providerResponse: unknown = null;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -45,6 +70,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (errorWithStatus.status) {
         status = errorWithStatus.status;
       }
+      providerResponse = errorWithStatus.response ?? null;
+    }
+
+    if (!errorDetails && providerResponse) {
+      errorDetails = normalizeErrorDetail(providerResponse);
     }
 
     // 构建错误响应
@@ -57,11 +87,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ...(errorDetails && { details: errorDetails }),
     };
 
-    // 记录错误日志
-    this.logger.error(
-      `${request.method} ${request.url} - Status: ${status} - Message: ${message}`,
-      exception instanceof Error ? exception.stack : exception,
-    );
+    // 记录错误日志（携带第三方响应，便于定位问题）
+    const providerDetail = formatLogDetail(providerResponse);
+    const logMessage = providerDetail
+      ? `${request.method} ${request.url} - Status: ${status} - Message: ${message} - ProviderResponse: ${providerDetail}`
+      : `${request.method} ${request.url} - Status: ${status} - Message: ${message}`;
+    this.logger.error(logMessage, exception instanceof Error ? exception.stack : exception);
 
     // 返回错误给客户端
     response.status(status).json(errorResponse);
