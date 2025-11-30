@@ -138,6 +138,86 @@ export class ModelService {
     })
   }
 
+  async getProxyConfig(userId: string, vendor: string) {
+    const record = await this.prisma.proxyProvider.findUnique({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor,
+        },
+      },
+    })
+    if (!record) return null
+    return {
+      id: record.id,
+      name: record.name,
+      vendor: record.vendor,
+      baseUrl: record.baseUrl || '',
+      enabled: record.enabled,
+      enabledVendors: record.enabledVendors || [],
+      hasApiKey: !!record.apiKey,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }
+  }
+
+  async upsertProxyConfig(
+    userId: string,
+    input: {
+      vendor: string
+      name?: string
+      baseUrl?: string
+      apiKey?: string | null
+      enabled?: boolean
+      enabledVendors?: string[]
+    },
+  ) {
+    const vendor = input.vendor.trim().toLowerCase()
+    const name = input.name?.trim() || vendor.toUpperCase()
+    const baseUrl = input.baseUrl?.trim() || null
+    const enabled = input.enabled ?? true
+    const enabledVendors = Array.isArray(input.enabledVendors) ? Array.from(new Set(input.enabledVendors)) : []
+
+    const data: any = {
+      name,
+      baseUrl,
+      enabled,
+      enabledVendors,
+    }
+
+    if (typeof input.apiKey === 'string') {
+      const trimmed = input.apiKey.trim()
+      data.apiKey = trimmed.length ? trimmed : null
+    }
+
+    const record = await this.prisma.proxyProvider.upsert({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor,
+        },
+      },
+      update: data,
+      create: {
+        ownerId: userId,
+        vendor,
+        ...data,
+      },
+    })
+
+    return {
+      id: record.id,
+      name: record.name,
+      vendor: record.vendor,
+      baseUrl: record.baseUrl || '',
+      enabled: record.enabled,
+      enabledVendors: record.enabledVendors || [],
+      hasApiKey: !!record.apiKey,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }
+  }
+
   listProfiles(
     userId: string,
     filter?: { providerId?: string; kinds?: ProfileKind[] }

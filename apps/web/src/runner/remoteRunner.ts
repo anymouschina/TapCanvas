@@ -152,6 +152,9 @@ function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
   if (!base) return url
   try {
     const parsed = new URL(url)
+    const host = parsed.host.toLowerCase()
+    const shouldRewrite = host.includes('openai.com') || host.startsWith('videos.') || (host.includes('sora') && host.includes('video'))
+    if (!shouldRewrite) return url
     const baseParsed = new URL(base)
     parsed.protocol = baseParsed.protocol
     parsed.host = baseParsed.host

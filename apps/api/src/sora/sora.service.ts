@@ -11,6 +11,16 @@ const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 // Sora 发布相关的常量
 const SORA_POST_MAX_LENGTH = 2000
 
+type ProxyTaskResult = {
+  id: string
+  status: string
+  progress: number | null
+  results: any[]
+  failure_reason?: string | null
+  error?: string | null
+  raw: any
+}
+
 @Injectable()
 export class SoraService {
   private readonly logger = new Logger(SoraService.name)
@@ -839,6 +849,15 @@ export class SoraService {
       }
     })
 
+    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora')
+    if (proxyConfig) {
+      return this.createVideoTaskViaProxy({
+        userId,
+        payload,
+        proxy: proxyConfig,
+      })
+    }
+
     let token: any
 
     // 如果指定了 remixTargetId，需要先解析原视频使用的Token
@@ -1465,6 +1484,200 @@ export class SoraService {
     }
   }
 
+  private async createVideoTaskViaProxy(params: {
+    userId: string
+    payload: {
+      prompt: string
+      orientation?: 'portrait' | 'landscape' | 'square'
+      size?: string
+      n_frames?: number
+      inpaintFileId?: string | null
+      imageUrl?: string | null
+      remixTargetId?: string | null
+      operation?: string | null
+      title?: string | null
+    }
+    proxy: {
+      id: string
+      vendor: string
+      name: string
+      baseUrl: string | null
+      apiKey: string | null
+    }
+  }): Promise<any> {
+    const { userId, payload, proxy } = params
+    if (!proxy.baseUrl || !proxy.apiKey) {
+      throw new HttpException({ message: '代理服务未配置 Host 或 API Key' }, HttpStatus.BAD_REQUEST)
+    }
+
+    const proxyBaseUrl = proxy.baseUrl
+    const url = new URL('/v1/video/sora-video', proxyBaseUrl).toString()
+    const durationSeconds = this.estimateProxyDuration(payload.n_frames)
+    const aspectRatio = this.mapOrientationToAspectRatio(payload.orientation)
+    const proxyProvider = this.detectProxyProvider(proxyBaseUrl)
+
+    const body: Record<string, any> = {
+      model: 'sora-2',
+      prompt: payload.prompt,
+      aspectRatio,
+      duration: durationSeconds,
+      size: payload.size || 'small',
+      webHook: '-1',
+      shutProgress: false,
+      characters: [],
+    }
+    if (payload.imageUrl) body.url = payload.imageUrl
+    if (payload.remixTargetId) body.remixTargetId = payload.remixTargetId
+    if (payload.operation) body.operation = payload.operation
+    if (payload.title) body.title = payload.title
+
+    this.logger.log('createVideoTaskViaProxy: sending request', {
+      userId,
+      proxyVendor: proxy.vendor,
+      proxyBaseUrl,
+      payload: {
+        promptLength: payload.prompt?.length || 0,
+        aspectRatio,
+        durationSeconds,
+        hasImage: !!payload.imageUrl,
+        remixTargetId: payload.remixTargetId,
+      },
+    })
+
+    try {
+      const res = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${proxy.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+        validateStatus: () => true,
+      })
+
+      if (res.status < 200 || res.status >= 300) {
+        const upstreamError = res.data?.error || res.data?.msg || res.data?.message
+        const msg = upstreamError || `Proxy video create failed with status ${res.status}`
+        throw new HttpException(
+          {
+            message: msg,
+            upstreamStatus: res.status,
+            upstreamData: res.data ?? null,
+          },
+          res.status,
+        )
+      }
+
+      const upstream = res.data ?? {}
+      if (typeof upstream.code === 'number' && upstream.code !== 0) {
+        const msg = upstream.msg || upstream.message || 'Proxy API returned error'
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: upstream },
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+
+      const dataNode = upstream?.data ?? upstream
+      const jobId = dataNode?.id || dataNode?.task_id || dataNode?.generation_id || upstream?.id
+      if (!jobId) {
+        throw new HttpException(
+          { message: 'Proxy API did not return task id', upstreamData: upstream },
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+
+      const normalized: any = {
+        ...dataNode,
+        id: jobId,
+        generation_id: dataNode?.generation_id || jobId,
+        status: dataNode?.status || 'running',
+        progress: typeof dataNode?.progress === 'number' ? dataNode.progress : null,
+        progress_pct:
+          typeof dataNode?.progress === 'number'
+            ? Math.max(0, Math.min(1, dataNode.progress / 100))
+            : null,
+        results: Array.isArray(dataNode?.results) ? dataNode.results : [],
+        model: dataNode?.model || upstream?.model || 'sora-2',
+        proxyProvider,
+        __mode: 'proxy',
+      }
+
+      const statusData = {
+        ...normalized,
+        mode: 'proxy',
+        proxyProvider,
+        proxyBaseUrl,
+        proxyVendor: proxy.vendor,
+        userId,
+        prompt: payload.prompt,
+      }
+      await this.tokenRouter.updateTaskStatus(jobId, 'sora', 'running', statusData, userId)
+
+      await this.videoHistory.recordVideoGeneration(
+        userId,
+        '',
+        undefined,
+        payload.prompt,
+        {
+          orientation: payload.orientation,
+          size: payload.size,
+          n_frames: payload.n_frames,
+          imageUrl: payload.imageUrl,
+          remixTargetId: payload.remixTargetId,
+          proxyMode: true,
+          proxyProvider,
+          proxyBaseUrl,
+        },
+        jobId,
+        'pending',
+        {
+          provider: 'sora',
+          model: normalized.model || 'sora-2',
+          remixTargetId: payload.remixTargetId || undefined,
+          tokenId: undefined,
+        }
+      )
+
+      const normalizedStatus = (normalized.status || '').toLowerCase()
+      if (normalizedStatus === 'succeeded' || normalizedStatus === 'success') {
+        await this.handleProxyTaskCompletion({
+          userId,
+          proxy,
+          taskId: jobId,
+          result: {
+            id: jobId,
+            status: normalized.status,
+            progress: normalized.progress,
+            results: normalized.results,
+            failure_reason: normalized.failure_reason,
+            error: normalized.error,
+            raw: normalized,
+          },
+        })
+      }
+
+      return normalized
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Proxy video create request failed'
+
+      throw new HttpException(
+        {
+          message,
+          upstreamStatus: err?.response?.status ?? null,
+          upstreamData: err?.response?.data ?? null,
+        },
+        status,
+      )
+    }
+  }
+
   async uploadProfileAsset(
     userId: string,
     tokenId: string | undefined,
@@ -1837,7 +2050,11 @@ export class SoraService {
   async getPendingVideos(userId: string, tokenId?: string) {
     // 如果指定了tokenId，使用原有的逻辑
     if (tokenId) {
-      return this.getPendingVideosForToken(userId, tokenId)
+      const token = await this.resolveSoraToken(userId, tokenId)
+      if (!token || token.provider.vendor !== 'sora') {
+        throw new Error('token not found or not a Sora token')
+      }
+      return this.getPendingVideosForToken(userId, token.id, token)
     }
 
     // 查询用户所有的Sora Token
@@ -1855,9 +2072,8 @@ export class SoraService {
       tokenCount: userTokens.length
     })
 
-    // 并发查询所有Token的pending任务
     const pendingResults = await Promise.allSettled(
-      userTokens.map(token => this.getPendingVideosForToken(userId, token.id))
+      userTokens.map(token => this.getPendingVideosForToken(userId, token.id, token))
     )
 
     // 合并结果并去重
@@ -1894,12 +2110,41 @@ export class SoraService {
       return timeB - timeA
     })
 
+    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora')
+    let proxySuccess = 0
+    if (proxyConfig) {
+      try {
+        const proxyResult = await this.getProxyPendingVideos(userId, proxyConfig)
+        allItems.push(...proxyResult.items)
+        proxySuccess = 1
+      } catch (err: any) {
+        this.logger.warn('Failed to query proxy pending videos', {
+          userId,
+          error: err?.message,
+        })
+      }
+    }
+
     return {
       items: allItems,
-      cursor: null, // 合并查询不支持分页
-      totalTokens: userTokens.length,
-      successfulTokens: pendingResults.filter(r => r.status === 'fulfilled').length
+      cursor: null,
+      totalTokens: userTokens.length + (proxyConfig ? 1 : 0),
+      successfulTokens: pendingResults.filter(r => r.status === 'fulfilled').length + proxySuccess,
     }
+  }
+
+  async getVideoHistory(
+    userId: string,
+    params: { limit?: number; offset?: number; status?: string } = {},
+  ) {
+    const limit = typeof params.limit === 'number' ? Math.min(100, Math.max(1, params.limit)) : 20
+    const offset = typeof params.offset === 'number' ? Math.max(0, params.offset) : 0
+    return this.videoHistory.getUserHistory(userId, {
+      limit,
+      offset,
+      status: params.status,
+      provider: 'sora',
+    })
   }
 
   /**
@@ -1953,8 +2198,8 @@ export class SoraService {
   /**
    * 查询单个Token的pending任务
    */
-  private async getPendingVideosForToken(userId: string, tokenId: string): Promise<any> {
-    const token = await this.resolveSoraToken(userId, tokenId)
+  private async getPendingVideosForToken(userId: string, tokenId: string, preloadedToken?: any): Promise<any> {
+    const token = preloadedToken || (await this.resolveSoraToken(userId, tokenId))
     if (!token || token.provider.vendor !== 'sora') {
       throw new Error('token not found or not a Sora token')
     }
@@ -2014,6 +2259,173 @@ export class SoraService {
         status,
       )
     }
+  }
+
+  private async getProxyPendingVideos(userId: string, proxy: { vendor: string; baseUrl: string | null; apiKey: string | null }): Promise<{ items: any[] }> {
+    if (!proxy.baseUrl || !proxy.apiKey) {
+      return { items: [] }
+    }
+    const proxyProvider = this.detectProxyProvider(proxy.baseUrl)
+    const andConditions: any[] = [{ data: { path: ['mode'], equals: 'proxy' } }]
+    if (proxy.vendor) {
+      andConditions.push({ data: { path: ['proxyVendor'], equals: proxy.vendor } })
+    }
+    const statuses = await this.prisma.taskStatus.findMany({
+      where: {
+        provider: 'sora',
+        userId,
+        status: { in: ['pending', 'running'] },
+        AND: andConditions,
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+    })
+
+    const items: any[] = []
+    for (const statusRecord of statuses) {
+      const taskId = statusRecord.taskId
+      try {
+        const result = await this.fetchProxyTaskResult(proxy, taskId)
+        const normalizedStatus = (result.status || '').toLowerCase()
+        const didError = normalizedStatus === 'failed' || normalizedStatus === 'error'
+        items.push({
+          id: taskId,
+          status: result.status,
+          progress_pct:
+            typeof result.progress === 'number'
+              ? Math.max(0, Math.min(1, result.progress / 100))
+              : null,
+          progress: result.progress,
+          queue_position: null,
+          did_error: didError,
+          error_message: result.error || result.failure_reason || null,
+          __isProxy: true,
+          __proxyVendor: proxy.vendor,
+        })
+
+        const statusPayload = {
+          ...result,
+          mode: 'proxy',
+          proxyProvider,
+          proxyBaseUrl: proxy.baseUrl,
+          proxyVendor: proxy.vendor,
+          userId,
+        }
+
+        if (normalizedStatus === 'succeeded' || normalizedStatus === 'success') {
+          await this.handleProxyTaskCompletion({
+            userId,
+            proxy,
+            taskId,
+            result,
+          })
+        } else if (didError) {
+          await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', statusPayload, userId)
+        } else {
+          await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'running', statusPayload, userId)
+        }
+      } catch (error: any) {
+        this.logger.warn('getProxyPendingVideos: fetch result failed', {
+          userId,
+          taskId,
+          error: error?.message,
+        })
+      }
+    }
+
+    return { items }
+  }
+
+  private async fetchProxyTaskResult(proxy: { baseUrl: string | null; apiKey: string | null; vendor: string }, taskId: string): Promise<ProxyTaskResult> {
+    if (!proxy.baseUrl || !proxy.apiKey) {
+      throw new HttpException({ message: '代理服务未配置 Host 或 API Key' }, HttpStatus.BAD_REQUEST)
+    }
+    const url = new URL('/v1/draw/result', proxy.baseUrl).toString()
+    try {
+      const res = await axios.post(
+        url,
+        { id: taskId },
+        {
+          headers: {
+            Authorization: `Bearer ${proxy.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+          validateStatus: () => true,
+        },
+      )
+
+      if (res.status < 200 || res.status >= 300) {
+        const msg = res.data?.message || res.data?.error || res.data?.msg || `Proxy result failed with status ${res.status}`
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: res.data ?? null },
+          res.status,
+        )
+      }
+
+      const body = res.data ?? {}
+      if (typeof body.code === 'number' && body.code !== 0) {
+        const msg = body.msg || body.message || 'Proxy result API returned error'
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status, upstreamData: body },
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+
+      const dataNode = body?.data ?? body
+      return {
+        id: dataNode?.id || taskId,
+        status: dataNode?.status || 'running',
+        progress: typeof dataNode?.progress === 'number' ? dataNode.progress : null,
+        results: Array.isArray(dataNode?.results) ? dataNode.results : [],
+        failure_reason: dataNode?.failure_reason || null,
+        error: dataNode?.error || null,
+        raw: dataNode,
+      }
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const status = err?.response?.status ?? HttpStatus.BAD_GATEWAY
+      const message =
+        err?.response?.data?.message ||
+        err?.response?.statusText ||
+        err?.message ||
+        'Proxy result request failed'
+      throw new HttpException(
+        { message, upstreamStatus: err?.response?.status ?? null, upstreamData: err?.response?.data ?? null },
+        status,
+      )
+    }
+  }
+
+  private async handleProxyTaskCompletion(params: {
+    userId: string
+    proxy: { baseUrl: string | null; apiKey: string | null; vendor: string }
+    taskId: string
+    result: ProxyTaskResult
+  }): Promise<void> {
+    const { userId, proxy, taskId, result } = params
+    if (!proxy.baseUrl) return
+    const proxyProvider = this.detectProxyProvider(proxy.baseUrl)
+    const primary = Array.isArray(result.results) && result.results.length ? result.results[0] : null
+    const thumbnail = primary?.thumbnail || primary?.thumbnailUrl || null
+
+    await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'success', {
+      ...result,
+      mode: 'proxy',
+      proxyProvider,
+      proxyBaseUrl: proxy.baseUrl,
+      proxyVendor: proxy.vendor,
+      userId,
+    }, userId)
+
+    await this.videoHistory.updateVideoGeneration(taskId, {
+      status: 'success',
+      videoUrl: primary?.url || undefined,
+      thumbnailUrl: thumbnail || undefined,
+      generationId: primary?.pid || undefined,
+    })
   }
 
   /**
@@ -2263,6 +2675,11 @@ export class SoraService {
         status: taskStatus.status,
         updatedAt: taskStatus.updatedAt
       })
+    }
+
+    const taskMode = taskStatus?.data as any
+    if (taskMode && taskMode.mode === 'proxy') {
+      return this.getProxyDraftByTaskId(userId, tokenId, taskId, taskMode)
     }
 
     this.logger.log('Proceeding with draft search', {
@@ -2741,6 +3158,47 @@ export class SoraService {
     }
   }
 
+  private async getProxyDraftByTaskId(userId: string, _fallbackTokenId: string | undefined, taskId: string, meta: any) {
+    if (meta?.userId && meta.userId !== userId) {
+      throw new HttpException({ message: 'Task not found' }, HttpStatus.NOT_FOUND)
+    }
+
+    const proxyVendor = meta?.proxyVendor || meta?.proxyProvider || undefined
+    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora', proxyVendor)
+    if (!proxyConfig || !proxyConfig.baseUrl || !proxyConfig.apiKey) {
+      throw new HttpException({ message: '代理服务未配置或已禁用' }, HttpStatus.BAD_REQUEST)
+    }
+
+    const result = await this.fetchProxyTaskResult(proxyConfig, taskId)
+    const normalizedStatus = (result.status || '').toLowerCase()
+    const statusPayload = {
+      ...result,
+      mode: 'proxy',
+      proxyProvider: this.detectProxyProvider(proxyConfig.baseUrl),
+      proxyBaseUrl: proxyConfig.baseUrl,
+      proxyVendor: proxyConfig.vendor,
+      userId,
+    }
+    if (normalizedStatus === 'succeeded' || normalizedStatus === 'success') {
+      await this.handleProxyTaskCompletion({ userId, proxy: proxyConfig, taskId, result })
+    } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
+      await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'error', statusPayload, userId)
+    } else {
+      await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'running', statusPayload, userId)
+    }
+
+    const primary = Array.isArray(result.results) && result.results.length ? result.results[0] : null
+    return {
+      id: result.id,
+      title: meta?.title || null,
+      prompt: meta?.prompt || null,
+      thumbnailUrl: primary?.thumbnail || primary?.thumbnailUrl || null,
+      videoUrl: primary?.url || null,
+      postId: primary?.pid || null,
+      raw: result.raw || result,
+    }
+  }
+
   private async resolveSoraToken(userId: string, tokenId?: string) {
     const includeConfig = {
       provider: {
@@ -2945,6 +3403,34 @@ export class SoraService {
     }
   }
 
+  private async findProxyConfigForVendor(userId: string, vendor: string, preferredProxyVendor?: string) {
+    const proxies = await this.prisma.proxyProvider.findMany({
+      where: {
+        ownerId: userId,
+        enabled: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    const list = [...proxies]
+    if (preferredProxyVendor) {
+      list.sort((a, b) => {
+        if (a.vendor === preferredProxyVendor && b.vendor !== preferredProxyVendor) return -1
+        if (b.vendor === preferredProxyVendor && a.vendor !== preferredProxyVendor) return 1
+        return 0
+      })
+    }
+
+    for (const proxy of list) {
+      if (!proxy.baseUrl || !proxy.apiKey) continue
+      if (!proxy.enabledVendors || proxy.enabledVendors.length === 0) continue
+      if (!proxy.enabledVendors.includes(vendor)) continue
+      return proxy
+    }
+
+    return null
+  }
+
   private async resolveBaseUrl(
     token: {
       provider: {
@@ -3004,6 +3490,9 @@ export class SoraService {
     if (!url) return null
     try {
       const parsed = new URL(url)
+      if (!this.shouldRewriteVideoHost(parsed)) {
+        return url
+      }
       const baseParsed = new URL(proxyBase)
       parsed.protocol = baseParsed.protocol
       parsed.host = baseParsed.host
@@ -3011,6 +3500,40 @@ export class SoraService {
     } catch {
       return url
     }
+  }
+
+  private shouldRewriteVideoHost(parsed: URL): boolean {
+    const host = parsed.host.toLowerCase()
+    if (host.includes('openai.com')) return true
+    if (host.startsWith('videos.')) return true
+    if (host.includes('sora') && host.includes('video')) return true
+    return false
+  }
+
+  private mapOrientationToAspectRatio(orientation?: string): string {
+    const val = (orientation || '').toLowerCase()
+    if (val === 'portrait') return '9:16'
+    if (val === 'square') return '1:1'
+    return '16:9'
+  }
+
+  private estimateProxyDuration(nFrames?: number): number {
+    const frames = typeof nFrames === 'number' && !Number.isNaN(nFrames) ? nFrames : 300
+    const seconds = Math.max(2, Math.round(frames / 30))
+    if (seconds <= 10) return 10
+    return 15
+  }
+
+  private detectProxyProvider(baseUrl: string): string {
+    let host = ''
+    try {
+      host = baseUrl ? new URL(baseUrl).host.toLowerCase() : ''
+    } catch {
+      host = (baseUrl || '').toLowerCase()
+    }
+    if (host.includes('dakka') || host.includes('grsai')) return 'grsai'
+    if (host.includes('api') && host.includes('sora')) return 'sora-proxy'
+    return 'custom-proxy'
   }
 
   private async registerSharedFailure(tokenId: string) {

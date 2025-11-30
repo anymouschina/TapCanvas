@@ -216,6 +216,22 @@ export class SoraController {
     return this.service.getPendingVideos(String(req.user.sub), tokenId)
   }
 
+  @Get('video/history')
+  getVideoHistory(
+    @Query('limit') limit: string | undefined,
+    @Query('offset') offset: string | undefined,
+    @Query('status') status: string | undefined,
+    @Req() req: any,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) || undefined : undefined
+    const parsedOffset = offset ? parseInt(offset, 10) || undefined : undefined
+    return this.service.getVideoHistory(String(req.user.sub), {
+      limit: parsedLimit,
+      offset: parsedOffset,
+      status: status || undefined,
+    })
+  }
+
   @Get('video/draft-by-task')
   getVideoDraftByTask(
     @Query('tokenId') tokenId: string | undefined,

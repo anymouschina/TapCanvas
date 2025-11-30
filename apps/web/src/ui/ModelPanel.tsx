@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea, ActionIcon, Tooltip, Select } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Modal, TextInput, Badge, Switch, Textarea, ActionIcon, Tooltip, Select, Alert, Checkbox } from '@mantine/core'
 import { IconDownload, IconUpload, IconTrash } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useUIStore } from './uiStore'
@@ -20,6 +20,9 @@ import {
   type ModelTokenDto,
   type ModelEndpointDto,
   deleteModelProfile,
+  getProxyConfig,
+  upsertProxyConfig,
+  type ProxyConfigDto,
 } from '../api/server'
 import { notifyModelOptionsRefresh } from '../config/useModelOptions'
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
@@ -40,6 +43,13 @@ const PROFILE_KIND_OPTIONS: Array<{ value: ProfileKind; label: string }> = [
   { value: 'text_to_video', label: '视频模型' },
   { value: 'image_to_prompt', label: '图像理解' },
   { value: 'image_edit', label: '图像编辑' },
+]
+
+const PROXY_VENDOR_KEY = 'grsai'
+const PROXY_TARGET_OPTIONS = [{ value: 'sora', label: 'Sora 视频' }]
+const PROXY_HOST_PRESETS = [
+  { label: '海外节点', value: 'https://api.grsai.com' },
+  { label: '国内直连', value: 'https://grsai.dakka.com.cn' },
 ]
 
 type PredefinedModel = { value: string; label: string; kind: ProfileKind }
@@ -169,10 +179,13 @@ export default function ModelPanel(): JSX.Element | null {
       setVideosEndpoint(null)
       setVideoEndpoint(null)
       setSoraEndpoint(null)
+      setSoraProxyEndpoint(null)
       setVideosUrl('')
       setVideoUrl('')
       setSoraUrl('')
+      setSoraProxyUrl('')
       setProviderProfiles({})
+      setSoraProxyShared(false)
       notifications.show({ color: 'green', title: '已清空', message: '所有模型配置与密钥已清空' })
     } catch (error) {
       notifications.show({
@@ -395,6 +408,15 @@ export default function ModelPanel(): JSX.Element | null {
   const [videosShared, setVideosShared] = React.useState(false)
   const [videoShared, setVideoShared] = React.useState(false)
   const [soraShared, setSoraShared] = React.useState(false)
+  const [proxyConfig, setProxyConfig] = React.useState<ProxyConfigDto | null>(null)
+  const [proxyLoading, setProxyLoading] = React.useState(false)
+  const [proxyModalOpen, setProxyModalOpen] = React.useState(false)
+  const [proxyHost, setProxyHost] = React.useState('')
+  const [proxyEnabled, setProxyEnabled] = React.useState(false)
+  const [proxyEnabledVendors, setProxyEnabledVendors] = React.useState<string[]>([])
+  const [proxyApiKey, setProxyApiKey] = React.useState('')
+  const [proxyApiKeyTouched, setProxyApiKeyTouched] = React.useState(false)
+  const [proxySaving, setProxySaving] = React.useState(false)
   const [sessionModalOpen, setSessionModalOpen] = React.useState(false)
   const [sessionJson, setSessionJson] = React.useState('')
   const [sessionError, setSessionError] = React.useState('')
@@ -533,8 +555,6 @@ export default function ModelPanel(): JSX.Element | null {
       })
       .catch(() => {})
   }, [mounted, refreshProviderProfiles])
-
-  if (!mounted) return null
 
   const ensureSecretPresent = (value: string) => !!value?.trim()
 
@@ -900,6 +920,87 @@ export default function ModelPanel(): JSX.Element | null {
   const handleShareAllQwenTokens = (sharedFlag: boolean) => bulkShareTokens(qwenProvider, qwenTokens, sharedFlag, setQwenTokens)
   const handleShareAllOpenAITokens = (sharedFlag: boolean) => bulkShareTokens(openaiProvider, openaiTokens, sharedFlag, setOpenaiTokens)
 
+  const syncProxyForm = React.useCallback((cfg: ProxyConfigDto | null) => {
+    setProxyHost(cfg?.baseUrl || '')
+    setProxyEnabled(!!cfg?.enabled)
+    setProxyEnabledVendors(cfg?.enabledVendors || [])
+    setProxyApiKey('')
+    setProxyApiKeyTouched(false)
+  }, [])
+
+  const refreshProxyConfig = React.useCallback(async () => {
+    setProxyLoading(true)
+    try {
+      const cfg = await getProxyConfig(PROXY_VENDOR_KEY)
+      setProxyConfig(cfg)
+      syncProxyForm(cfg)
+    } catch (error: any) {
+      console.error('Failed to load proxy config', error)
+    } finally {
+      setProxyLoading(false)
+    }
+  }, [syncProxyForm])
+
+  React.useEffect(() => {
+    if (!mounted) return
+    refreshProxyConfig().catch(() => {})
+  }, [mounted, refreshProxyConfig])
+
+  const isSoraProxyActive = !!(proxyConfig?.enabled && proxyConfig.enabledVendors?.includes('sora'))
+  const proxyVendorLabels = (proxyConfig?.enabledVendors || []).map((v) => {
+    const found = PROXY_TARGET_OPTIONS.find((opt) => opt.value === v)
+    return found ? found.label : v
+  })
+
+  const handleOpenProxyModal = () => {
+    if (!proxyConfig && !proxyLoading) {
+      refreshProxyConfig().catch(() => {})
+    } else {
+      syncProxyForm(proxyConfig)
+    }
+    setProxyModalOpen(true)
+  }
+
+  const handleCloseProxyModal = () => {
+    setProxyModalOpen(false)
+    syncProxyForm(proxyConfig)
+  }
+
+  const handleSaveProxyConfig = async () => {
+    const trimmedHost = proxyHost.trim()
+    if (proxyEnabled && !trimmedHost) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请填写代理 Host 地址' })
+      return
+    }
+    if (proxyEnabled && proxyEnabledVendors.length === 0) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请选择至少一个需要走代理的厂商' })
+      return
+    }
+    setProxySaving(true)
+    try {
+      const payload: any = {
+        baseUrl: trimmedHost,
+        enabled: proxyEnabled,
+        enabledVendors: proxyEnabled ? proxyEnabledVendors : [],
+        name: 'grsai',
+      }
+      if (proxyApiKeyTouched) {
+        payload.apiKey = proxyApiKey.trim()
+      }
+      const saved = await upsertProxyConfig(PROXY_VENDOR_KEY, payload)
+      setProxyConfig(saved)
+      syncProxyForm(saved)
+      setProxyModalOpen(false)
+      notifications.show({ color: 'teal', title: '已保存', message: '代理服务配置已更新' })
+    } catch (error: any) {
+      notifications.show({ color: 'red', title: '保存失败', message: error?.message || '未知错误' })
+    } finally {
+      setProxySaving(false)
+    }
+  }
+
+  if (!mounted) return null
+
   // 计算安全的最大高度
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
@@ -997,6 +1098,41 @@ export default function ModelPanel(): JSX.Element | null {
               </Group>
               <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
                 <Stack gap="sm">
+                  <Paper withBorder radius="md" p="sm">
+                    <Group justify="space-between" align="flex-start">
+                      <div>
+                        <Group gap={6} mb={4} align="center">
+                          <Title order={6}>代理服务</Title>
+                          {proxyLoading && <Badge size="xs" color="gray">加载中</Badge>}
+                          {proxyConfig?.enabled && !proxyLoading && (
+                            <Badge size="xs" color="grape">已启用</Badge>
+                          )}
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          使用 grsai API Key 统一代理 Sora 等厂商的调用，稳定访问海外接口。
+                        </Text>
+                        {proxyConfig?.enabled && proxyVendorLabels.length > 0 ? (
+                          <Group gap={6} mt={6} wrap="wrap">
+                            <Badge size="xs" color="grape" variant="light">
+                              厂商：{proxyVendorLabels.join('、')}
+                            </Badge>
+                            {proxyConfig.baseUrl && (
+                              <Text size="xs" c="dimmed">
+                                Host: {proxyConfig.baseUrl}
+                              </Text>
+                            )}
+                          </Group>
+                        ) : (
+                          <Text size="xs" c="dimmed" mt={6}>
+                            当前未启用代理服务
+                          </Text>
+                        )}
+                      </div>
+                      <Button size="xs" variant="light" onClick={handleOpenProxyModal}>
+                        配置
+                      </Button>
+                    </Group>
+                  </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
                     <Group justify="space-between" align="flex-start" mb={4}>
                       <Group gap={6}>
@@ -1004,6 +1140,9 @@ export default function ModelPanel(): JSX.Element | null {
                         <Badge color="blue" size="xs">
                           Beta
                         </Badge>
+                        {isSoraProxyActive && (
+                          <Badge color="grape" size="xs">grsai 代理</Badge>
+                        )}
                       </Group>
                       <Group spacing="xs">
                         <Button size="xs" onClick={openModalForNew}>
@@ -1832,6 +1971,69 @@ export default function ModelPanel(): JSX.Element | null {
               </Stack>
             </Modal>
             <Modal
+              opened={proxyModalOpen}
+              onClose={handleCloseProxyModal}
+              title="代理服务（grsai）"
+              centered
+              size="lg"
+            >
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  配置一次 grsai API Key 和 Host，即可让选定的厂商走该代理，无需逐个粘贴密钥。
+                </Text>
+                <Group gap="xs">
+                  {PROXY_HOST_PRESETS.map((preset) => (
+                    <Button key={preset.value} size="xs" variant="light" onClick={() => setProxyHost(preset.value)}>
+                      {preset.label}
+                    </Button>
+                  ))}
+                </Group>
+                <TextInput
+                  label="代理 Host"
+                  placeholder="例如：https://api.grsai.com"
+                  value={proxyHost}
+                  onChange={(e) => setProxyHost(e.currentTarget.value)}
+                  required
+                />
+                <TextInput
+                  label="grsai API Key"
+                  placeholder={proxyConfig?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 grsai 提供的 API Key'}
+                  type="password"
+                  value={proxyApiKey}
+                  onChange={(e) => {
+                    setProxyApiKey(e.currentTarget.value)
+                    setProxyApiKeyTouched(true)
+                  }}
+                />
+                <Switch
+                  label="启用代理服务"
+                  checked={proxyEnabled}
+                  onChange={(event) => setProxyEnabled(event.currentTarget.checked)}
+                />
+                <Checkbox.Group
+                  label="选择需要走代理的厂商"
+                  description="至少勾选一个厂商，未勾选的厂商仍走官方接口"
+                  value={proxyEnabledVendors}
+                  onChange={setProxyEnabledVendors}
+                  disabled={!proxyEnabled}
+                >
+                  <Stack gap={4} pt={4}>
+                    {PROXY_TARGET_OPTIONS.map((opt) => (
+                      <Checkbox key={opt.value} value={opt.value} label={opt.label} disabled={!proxyEnabled} />
+                    ))}
+                  </Stack>
+                </Checkbox.Group>
+                <Group justify="flex-end" mt="sm">
+                  <Button variant="default" onClick={handleCloseProxyModal}>
+                    取消
+                  </Button>
+                  <Button onClick={handleSaveProxyConfig} loading={proxySaving}>
+                    保存
+                  </Button>
+                </Group>
+              </Stack>
+            </Modal>
+            <Modal
               opened={modalOpen}
               onClose={() => setModalOpen(false)}
               fullScreen
@@ -1859,6 +2061,11 @@ export default function ModelPanel(): JSX.Element | null {
                   <Text size="sm" c="dimmed">
                     你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
                   </Text>
+                  {isSoraProxyActive && (
+                    <Alert color="grape" title="已启用 grsai 代理" radius="md">
+                      当前视频任务会通过 {proxyConfig?.baseUrl || 'grsai'} 中转，无需公开 Sora 官方接口，代理结果会自动同步到节点。
+                    </Alert>
+                  )}
                   <Group spacing="xs">
                     <Button
                       size="xs"

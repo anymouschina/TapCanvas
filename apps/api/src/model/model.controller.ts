@@ -102,4 +102,32 @@ export class ModelController {
       }
     }
   }
+
+  @Get('proxy/:vendor')
+  getProxyConfig(@Param('vendor') vendor: string, @Req() req: any) {
+    return this.service.getProxyConfig(String(req.user.sub), vendor)
+  }
+
+  @Post('proxy/:vendor')
+  upsertProxyConfig(
+    @Param('vendor') vendor: string,
+    @Body()
+    body: {
+      baseUrl?: string
+      apiKey?: string | null
+      enabled?: boolean
+      enabledVendors?: string[]
+      name?: string
+    },
+    @Req() req: any,
+  ) {
+    return this.service.upsertProxyConfig(String(req.user.sub), {
+      vendor,
+      baseUrl: body.baseUrl,
+      apiKey: body.apiKey,
+      enabled: body.enabled,
+      enabledVendors: body.enabledVendors,
+      name: body.name,
+    })
+  }
 }

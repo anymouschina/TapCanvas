@@ -29,6 +29,34 @@ export type ModelEndpointDto = {
   shared?: boolean
 }
 
+export type ProxyConfigDto = {
+  id: string
+  name: string
+  vendor: string
+  baseUrl: string
+  enabled: boolean
+  enabledVendors: string[]
+  hasApiKey: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type VideoHistoryRecord = {
+  id: string
+  prompt: string | null
+  taskId: string
+  generationId?: string | null
+  status: string
+  videoUrl?: string | null
+  thumbnailUrl?: string | null
+  duration?: number | null
+  width?: number | null
+  height?: number | null
+  provider: string
+  model?: string | null
+  createdAt: string
+}
+
 export type ProfileKind =
   | 'chat'
   | 'prompt_refine'
@@ -263,6 +291,106 @@ export async function upsertModelEndpoint(payload: {
   }))
   if (!r.ok) throw new Error(`save endpoint failed: ${r.status}`)
   return r.json()
+}
+
+export async function getProxyConfig(vendor: string): Promise<ProxyConfigDto | null> {
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth())
+  if (!r.ok) {
+    if (r.status === 404) return null
+    throw new Error(`get proxy config failed: ${r.status}`)
+  }
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!body) return null
+  return {
+    id: body.id,
+    name: body.name,
+    vendor: body.vendor,
+    baseUrl: body.baseUrl || '',
+    enabled: !!body.enabled,
+    enabledVendors: Array.isArray(body.enabledVendors) ? body.enabledVendors : [],
+    hasApiKey: !!body.hasApiKey,
+    createdAt: body.createdAt,
+    updatedAt: body.updatedAt,
+  }
+}
+
+export async function upsertProxyConfig(
+  vendor: string,
+  payload: {
+    baseUrl: string
+    apiKey?: string | null
+    enabled?: boolean
+    enabledVendors?: string[]
+    name?: string
+  },
+): Promise<ProxyConfigDto> {
+  const body: any = {
+    baseUrl: payload.baseUrl,
+    enabled: payload.enabled ?? true,
+    enabledVendors: Array.isArray(payload.enabledVendors) ? payload.enabledVendors : [],
+    name: payload.name,
+  }
+  if (typeof payload.apiKey !== 'undefined') {
+    body.apiKey = payload.apiKey
+  }
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  let resBody: any = null
+  try {
+    resBody = await r.json()
+  } catch {
+    resBody = null
+  }
+  if (!r.ok) {
+    const msg = (resBody && (resBody.message || resBody.error)) || `save proxy config failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    id: resBody.id,
+    name: resBody.name,
+    vendor: resBody.vendor,
+    baseUrl: resBody.baseUrl || '',
+    enabled: !!resBody.enabled,
+    enabledVendors: Array.isArray(resBody.enabledVendors) ? resBody.enabledVendors : [],
+    hasApiKey: !!resBody.hasApiKey,
+    createdAt: resBody.createdAt,
+    updatedAt: resBody.updatedAt,
+  }
+}
+
+export async function listSoraVideoHistory(params?: {
+  limit?: number
+  offset?: number
+  status?: string
+}): Promise<{ records: VideoHistoryRecord[]; total: number }> {
+  const qs = new URLSearchParams()
+  if (typeof params?.limit === 'number') qs.set('limit', String(params.limit))
+  if (typeof params?.offset === 'number') qs.set('offset', String(params.offset))
+  if (params?.status) qs.set('status', params.status)
+  const url = `${API_BASE}/sora/video/history${qs.toString() ? `?${qs.toString()}` : ''}`
+  const r = await fetch(url, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `list sora video history failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    records: Array.isArray(body?.records) ? body.records : [],
+    total: typeof body?.total === 'number' ? body.total : 0,
+  }
 }
 
 export async function listModelProfiles(params?: { providerId?: string; kinds?: ProfileKind[] }): Promise<ModelProfileDto[]> {
