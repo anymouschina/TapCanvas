@@ -58,7 +58,6 @@ import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } f
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
-import { VideoRealismTips } from '../components/shared/VideoRealismTips'
 import { SystemPromptPanel } from '../components/SystemPromptPanel'
 import { getHandleTypeLabel } from '../utils/handleLabels'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
@@ -671,8 +670,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isComposerNode = schema.category === 'composer' || isStoryboardNode
   const hasVideoOutputs = schemaFeatures.has('video') || schemaFeatures.has('videoResults')
   const isVideoNode = hasVideoOutputs || isComposerNode
-  const showVideoRealismTips =
-    isComposerNode || schema.category === 'video' || (kind === 'composeVideo' || (data as any)?.kind === 'composeVideo')
   const isStandaloneVideoNode = hasVideoOutputs && !isComposerNode
   const isImageNode =
     schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults')
@@ -1526,6 +1523,26 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     return map
   }, [characterRefs])
 
+  const activeModelKey = isImageNode
+        ? imageModel
+        : isVideoNode
+          ? videoModel
+          : modelKey
+  const modelList = useModelOptions(kind as NodeKind)
+  const findVendorForModel = React.useCallback(
+    (value: string | null | undefined) => {
+      if (!value) return null
+      const match = modelList.find((opt) => opt.value === value)
+      return match?.vendor || null
+    },
+    [modelList],
+  )
+  const existingModelVendor = (data as any)?.modelVendor
+  const existingImageVendor = (data as any)?.imageModelVendor
+  const existingVideoVendor = (data as any)?.videoModelVendor
+  const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
+  const isSoraVideoNode = isVideoNode && resolvedVideoVendor === 'sora'
+
   const handleOpenCharacterCreatorModal = React.useCallback(
     (card: CharacterCard) => {
       setCharacterCreatorCard(card)
@@ -1653,20 +1670,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
   }, [characterCreatorModalOpen, characterCreatorTokenId, selectedCharacterTokenId, characterTokens, videoTokenId, characterCreatorSource])
 
-  const activeModelKey = isImageNode
-        ? imageModel
-        : isVideoNode
-          ? videoModel
-          : modelKey
-  const modelList = useModelOptions(kind as NodeKind)
-  const findVendorForModel = React.useCallback(
-    (value: string | null | undefined) => {
-      if (!value) return null
-      const match = modelList.find((opt) => opt.value === value)
-      return match?.vendor || null
-    },
-    [modelList],
-  )
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = isVideoNode
   const showResolutionMenu = isVideoNode || isImageNode
@@ -1688,11 +1691,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
   }, [activeModelKey, modelList, id, updateNodeData])
 
-  const existingModelVendor = (data as any)?.modelVendor
-  const existingImageVendor = (data as any)?.imageModelVendor
-  const existingVideoVendor = (data as any)?.videoModelVendor
-  const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
-  const isSoraVideoNode = isVideoNode && resolvedVideoVendor === 'sora'
   const trimmedFirstFrameUrl = veoFirstFrameUrl.trim()
   const trimmedLastFrameUrl = veoLastFrameUrl.trim()
   const firstFrameLocked = Boolean(trimmedFirstFrameUrl)
@@ -4746,11 +4744,6 @@ const rewritePromptWithCharacters = React.useCallback(
                   onEnabledChange={handleSystemPromptToggle}
                   onChange={handleSystemPromptChange}
                 />
-              )}
-              {showVideoRealismTips && (
-                <div style={{ marginTop: 10 }}>
-                  <VideoRealismTips onInsertSnippet={applyVideoRealismSnippet} />
-                </div>
               )}
             </>
           )}

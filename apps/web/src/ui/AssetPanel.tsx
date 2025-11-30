@@ -365,8 +365,6 @@ React.useEffect(() => {
     setActivePanel(null)
   }
 
-  if (!mounted) return null
-
   const handlePickCharacterVideo = () => {
     if (!selectedTokenId) {
       alert('请先选择一个 Sora Token')
@@ -515,6 +513,8 @@ React.useEffect(() => {
     canceled = true
   }
 }, [characterCreatorRequest, mounted, selectedTokenId, soraTokens, clearCharacterCreatorRequest, prepareCharacterFromUrl])
+
+  if (!mounted) return null
 
   const handleCharacterFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
