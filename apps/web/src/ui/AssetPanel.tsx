@@ -285,39 +285,6 @@ React.useEffect(() => {
   fetchSoraHistory(true).catch(() => {})
 }, [mounted, tab, fetchSoraHistory])
 
-  React.useEffect(() => {
-    if (!characterCreatorRequest || !mounted) return
-    const clip = characterCreatorRequest.payload?.clipRange
-    if (clip) {
-      const rawStart = Number(clip.start)
-      const rawEnd = Number(clip.end)
-      const start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0
-      const endCandidate = Number.isFinite(rawEnd) ? rawEnd : start + MAX_CHARACTER_TRIM_SECONDS
-      const safeEnd = Math.max(start, endCandidate)
-      const end = Math.min(start + MAX_CHARACTER_TRIM_SECONDS, safeEnd)
-      setCreateCharDefaultRange({ start, end })
-    } else {
-      setCreateCharDefaultRange(null)
-    }
-    setTab('sora-characters')
-    const requestedTokenId = characterCreatorRequest.payload?.soraTokenId || null
-    const fallbackTokenId = selectedTokenId || requestedTokenId || soraTokens[0]?.id || null
-    if (!fallbackTokenId) {
-      toast('暂无可用的 Sora Token，请先在右上角绑定密钥', 'error')
-      setCreateCharDefaultRange(null)
-      clearCharacterCreatorRequest()
-      return
-    }
-    if (selectedTokenId !== fallbackTokenId) {
-      setSelectedTokenId(fallbackTokenId)
-    }
-    setPickCharError(null)
-    setPickCharVideoOpen(true)
-    setPickCharTab('local')
-    setPickCharSelected(null)
-    clearCharacterCreatorRequest()
-  }, [characterCreatorRequest, mounted, selectedTokenId, soraTokens, clearCharacterCreatorRequest])
-
   const loadMoreDrafts = async () => {
     if (!draftCursor) return
     if (!selectedTokenId && !soraUsingShared) return
@@ -449,12 +416,16 @@ React.useEffect(() => {
     v.src = url
   })
 
-  const prepareCharacterFromUrl = async (url: string | null, title: string) => {
+  const prepareCharacterFromUrl = async (url: string | null, title: string, tokenOverride?: string | null): Promise<boolean> => {
     if (!url) {
       setPickCharError('该视频没有可用的播放地址')
-      return
+      return false
     }
-    if (!selectedTokenId) return
+    const effectiveTokenId = tokenOverride ?? selectedTokenId
+    if (!effectiveTokenId) {
+      setPickCharError('暂无可用的 Sora Token')
+      return false
+    }
     setPickCharLoading(true)
     setPickCharError(null)
     try {
@@ -478,13 +449,72 @@ React.useEffect(() => {
       setPickCharSelected(null)
       setPickCharTab('local')
       setCreateCharTrimOpen(true)
+      return true
     } catch (err: any) {
       console.error(err)
       setPickCharError(err?.message || '无法使用该视频，请稍后再试')
+      return false
     } finally {
       setPickCharLoading(false)
     }
   }
+
+React.useEffect(() => {
+  if (!characterCreatorRequest || !mounted) return
+  let canceled = false
+  const handleRequest = async () => {
+    const clip = characterCreatorRequest.payload?.clipRange
+    if (clip) {
+      const rawStart = Number(clip.start)
+      const rawEnd = Number(clip.end)
+      const start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0
+      const endCandidate = Number.isFinite(rawEnd) ? rawEnd : start + MAX_CHARACTER_TRIM_SECONDS
+      const safeEnd = Math.max(start, endCandidate)
+      const end = Math.min(start + MAX_CHARACTER_TRIM_SECONDS, safeEnd)
+      setCreateCharDefaultRange({ start, end })
+    } else {
+      setCreateCharDefaultRange(null)
+    }
+    setTab('sora-characters')
+    const requestedTokenId = characterCreatorRequest.payload?.soraTokenId || characterCreatorRequest.payload?.videoTokenId || null
+    const fallbackTokenId = selectedTokenId || requestedTokenId || soraTokens[0]?.id || null
+    if (!fallbackTokenId) {
+      toast('暂无可用的 Sora Token，请先在右上角绑定密钥', 'error')
+      setCreateCharDefaultRange(null)
+      clearCharacterCreatorRequest()
+      return
+    }
+    if (selectedTokenId !== fallbackTokenId) {
+      setSelectedTokenId(fallbackTokenId)
+    }
+    setPickCharError(null)
+    setPickCharTab('local')
+    setPickCharSelected(null)
+
+    const autoVideoUrl = characterCreatorRequest.payload?.videoUrl || null
+    let shouldOpenPicker = true
+    if (autoVideoUrl) {
+      const title = characterCreatorRequest.payload?.videoTitle || 'sora-video'
+      const success = await prepareCharacterFromUrl(autoVideoUrl, title, fallbackTokenId)
+      shouldOpenPicker = !success
+      if (!success) {
+        toast('自动读取视频失败，请手动选择来源', 'error')
+      }
+    }
+
+    if (!canceled) {
+      setPickCharVideoOpen(shouldOpenPicker)
+    }
+    clearCharacterCreatorRequest()
+  }
+  handleRequest().catch((err) => {
+    console.error('characterCreatorRequest failed', err)
+    clearCharacterCreatorRequest()
+  })
+  return () => {
+    canceled = true
+  }
+}, [characterCreatorRequest, mounted, selectedTokenId, soraTokens, clearCharacterCreatorRequest, prepareCharacterFromUrl])
 
   const handleCharacterFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,

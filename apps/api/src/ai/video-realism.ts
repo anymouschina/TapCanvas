@@ -83,7 +83,7 @@ export const VIDEO_REALISM_SYSTEM_GUIDE = [
   ...VIDEO_REALISM_RULES.map(
     rule => `- ${rule.title}：${rule.summary}，并在 prompt 中用英文描述其细节。`
   ),
-  '提醒：所有写入节点的 prompt 仍需遵循全英文、10s-15s 视频节奏、描述镜头运动与角色目标。'
+  '提醒：所有写入节点的 prompt 仍需遵循全英文、<=10s 视频节奏、描述镜头运动与角色目标，并在遇到更长剧情时拆成多个镜头分段执行。'
 ].join('\n')
 
 export const VIDEO_REALISM_PROMPT_BLOCK = VIDEO_REALISM_RULES.map(

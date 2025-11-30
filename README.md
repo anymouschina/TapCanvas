@@ -12,6 +12,14 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 
 [📘 使用指引（飞书文档）](https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b)
 
+### ✨ 最新能力速览
+
+- **全新暗夜设计语言**：UI 基于 Mantine 与 React Flow 重新梳理，顶部信息条、右侧面板与 Storyboard/资产面板能够在同一画布内无刷新切换，聚焦模式和组管理让复杂节点也能在统一视觉体系下保持清晰。
+- **Nano Banana 三档模型**：默认图像节点已经接入 Nano Banana / Fast / Pro 模型，可通过同一个表单拖拽提示词、参考图，快速在国内环境中完成高质量文生图或参考图变换。
+- **Sora 2 + Veo 3.1 双引擎**：视频节点即插即用 Sora 2 与 Veo3.1 Fast/Pro，支持 Remix、参考第一帧/最后一帧、复用 Storyboard 片段，让多镜头视频在画布内一气呵成。
+- **图生图链路**：图像节点支持上传参考图、抽帧、资产拖拽，任何生成的图片都可以作为下一次调用的输入，实现文本→图像→图像（图生图）→视频的完整闭环。
+- **GRSAI 中转站适配**：内置 grsai 代理配置面板，可以一次性填入 Host 与 API Key，同步展示积分与可用模型状态，将 Nano Banana、Sora 2、Veo 3 等请求稳定转发到海外节点或国内直连。
+
 **🎨 创新的可视化工作流**
 
 - 首创将复杂AI创作流程转化为直观的节点连线操作
@@ -84,8 +92,19 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 
 👉 [查看完整《AI 视频真实感指南》](AI_VIDEO_REALISM_GUIDE.md)
 
+### 🔁 图生图与帧参考
+
+- **参考图上传 & 反推**：图像节点内建 `imageUpload` 能力，可直接拖拽本地素材、Sora 抽帧或资产库图片，作为 Nano Banana/Qwen 等模型的图生图参考；还支持一键反推当前图片的提示词，方便继续沿用。
+- **多帧串联至视频**：任意图像节点输出都能直接连接 Sora 2 或 Veo 3.1 节点，形成「文生图 → 图生图 → 图生视频」链路；Veo 节点额外支持第一帧、最后一帧和多张参考图配置，确保构图与角色在每一镜保持一致。
+- **素材资产流转**：资产面板、模板面板、AI 助手回传结果都可以拖到画布，快速创建含参考图的新节点，实现跨项目的图生图复现。
+
 ## 📅 更新日志
 
+- **2025-11-29**： README 补充近期设计与模型更新，突出 Nano Banana / Sora 2 / Veo 3.1 支持、图生图链路与 grsai 中转适配。
+  - 画布视觉与信息架构描述升级，强调暗夜主题、聚焦模式与工作流工具栏。
+  - 模型能力表新增 Nano Banana 家族与 Veo 3.1 Fast/Pro，方便理解最新覆盖范围。
+  - 新增图生图工作流说明，介绍参考图上传、帧抽取与二次创作方法。
+  - 文档中加入 grsai 代理配置说明，覆盖 API Key、Host、积分/健康检查面板等能力。
 - **2025-11-28**：新增「节点类型-序号」自动命名规则，并在登录入口补充「游客模式体验」。现在通过画布面板、右键菜单、资产/模板面板或 AI 助手创建 Task 节点时，会根据节点 kind 自动生成诸如 `图像-1`、`文生视频-2` 的标签；重复类型顺序递增，引用资产或模板时可保留原名。此外，未绑定 GitHub 的用户可直接点击游客模式按钮快速体验，所有数据保存在本地浏览器，便于演示和测试。
 - **2025-11-27**：发布「反推提示词」与「AI 助手图片理解」更新，并补充最新截图。
   - Task 节点图片卡片新增【反推提示词】按钮，自动把当前图片传给 GPT、生成纯英文 Prompt 并写回输入框，支持远程 Sora 链接与本地资产。界面示例：![反推提示词示例](assets/2025-11-27.pic.jpg)
@@ -116,8 +135,8 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 
 | 节点类型                  | 支持的模型                                                                                                                                                                        | 功能说明                                 |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **🎬 Video 节点**   | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion           | 图生视频、文生视频、视频合成、动画制作   |
-| **🖼️ Image 节点** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图像生成、多种分辨率、风格转换   |
+| **🎬 Video 节点**   | **Sora 2**, **Veo 3.1 Pro/Fast**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | 图生视频、文生视频、参考帧过渡、视频合成、动画制作   |
+| **🖼️ Image 节点** | **Nano Banana / Fast / Pro**, **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图生图、图像生成、多种分辨率、风格转换   |
 | **📝 Text 节点**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                  | 文本生成、提示词优化、智能建议、内容创作 |
 
 ### 配置步骤
@@ -138,14 +157,14 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 **新手推荐配置**：
 
 - 📝 **Text**: Gemini 2.5 Flash（性价比高）
-- 🖼️ **Image**: Qwen Image Plus 或 FLUX.1 Pro（质量好）
-- 🎬 **Video**: Sora 2（功能最强）
+- 🖼️ **Image**: Nano Banana Fast（grsai 中转）或 Qwen Image Plus，兼顾文生图与图生图
+- 🎬 **Video**: Sora 2（功能最强，可选 grsai 中转以提高稳定性）
 
 **专业级配置**：
 
 - 📝 **Text**: Gemini 2.5 Pro 或 Claude 3.5 Sonnet
-- 🖼️ **Image**: DALL-E 3 或 Midjourney V6
-- 🎬 **Video**: Runway Gen-3 或 Pika Labs V2
+- 🖼️ **Image**: Nano Banana Pro、DALL-E 3 或 Midjourney V6（高细节与一致性）
+- 🎬 **Video**: Sora 2 + Veo 3.1 Pro（双引擎，支持参考帧与 Remix），Runway Gen-3 补充风格化视频
 
 ## 🚀 快速运行
 
@@ -352,6 +371,13 @@ SORA_API_KEY="your_sora_api_key"
 ## 🌐 代理配置说明
 
 由于国内网络环境的不可抗力因素，部分 AI 服务可能无法直接访问。推荐使用 Cloudflare Workers 和 Durable Objects 配置代理来解决这个问题。
+
+### GRSAI 中转站完美适配
+
+- **一站式配置**：在右侧「模型配置」→「代理服务 (grsai)」区域填写 `https://api.grsai.com` 或 `https://grsai.dakka.com.cn` 等 Host，并粘贴 grsai API Key，即可让勾选的厂商（Sora 2、Veo 3、Nano Banana、Runway 等）统一走中转站，无需逐一维护密钥。
+- **实时状态看板**：应用顶部会展示 grsai 积分、模型健康状态，两处按钮可手动刷新，方便在批量渲染前检查额度与线路是否可用。
+- **Veo/Sora 专属扩展**：Veo 配置面板支持一键套用海外/国内 Host，Veo/Sora 任务结果会自动同步回画布，确保通过 grsai 返回的资源也能追踪到节点历史。
+- **安全共享**：grsai 密钥可选择是否对其他成员共享，便于在团队间复用统一的代理管道。
 
 ### 前置条件
 
@@ -612,6 +638,7 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 ### 🎨 可视化画布编辑器
 
 - **节点式工作流**：通过拖拽节点和连接线构建复杂的 AI 生成流程
+- **暗夜设计主题**：最新 UI 在 Mantine + React Flow 上重绘，顶部信息条与右侧面板可无缝切换，聚焦模式与组管理让海量节点保持整洁
 - **智能连接**：自动类型匹配，确保节点间数据流向正确
 - **多种节点类型**：
   - **文本节点**：输入提示词，支持 AI 优化建议
@@ -624,27 +651,29 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 
 - **文本生成**：
 
-  - **Gemini 2.5 Flash / Pro**：先进的文本生成模型
+- **Gemini 2.5 Flash / Pro**：先进的文本生成模型
+  - **OpenAI GPT、Claude、DeepSeek**：用于多轮对话、剧本创作与 Storyboard 拆解
   - **智能提示词优化**：自动优化和改进输入提示词
   - **文本增强**：支持文本续写和风格转换
 - **图像生成**：
 
-  - **Qwen Image Plus**：高性能图像生成模型
+  - **Nano Banana / Fast / Pro**：grsai 节点直连，擅长写实角色与设计稿
+  - **Qwen Image Plus、DALL-E、Stable Diffusion、FLUX**：覆盖动漫、艺术、商业插画等多风格
   - **多分辨率支持**：16:9、1:1、9:16 三种常用比例
-  - **批量生成**：支持1-5张图片同时生成
-  - **文生图**：从文本描述生成高质量图像
+  - **批量生成 + 图生图**：支持 1-5 张图片同时生成，引用参考图继续润色
 - **视频生成**：
 
-  - **Sora 2**：OpenAI 最新视频生成模型
-  - **角色引用**：支持@提及功能，精确控制视频角色
-  - **多时长选项**：支持10秒、15秒视频生成
-  - **图生视频**：从静态图像生成动态视频
+  - **Sora 2**：OpenAI 最新视频生成模型，支持角色 @ 引用与 Storyboard 场景映射
+  - **Veo 3.1 Pro/Fast**：通过 grsai 代理调用，支持第一帧/最后一帧、参考图阵列保证一致性
+  - **Runway / Pika / Luma**：扩展不同风格、时长与快速试错
+  - **图生视频**：从静态图像生成动态视频，适配 Sora/Veo 参考帧
   - **文生视频**：直接从文本生成视频内容
 - **模型管理**：
 
   - **灵活配置**：支持自定义模型端点和参数
-  - **多提供商**：可集成不同AI模型提供商
-  - **API密钥管理**：安全的密钥存储和管理
+  - **多提供商**：可集成 Sora、Veo、Gemini、Qwen、Nano Banana、Runway 等模型提供商
+  - **API密钥管理**：安全的密钥存储和管理，支持密钥共享、游客模式体验
+  - **GRSAI 统一代理**：一次配置 Host + API Key，即可让 Sora / Veo / Nano Banana 请求全部走代理；仪表盘实时显示积分与模型状态
 
 ### 🛠️ 高级编辑功能
 
