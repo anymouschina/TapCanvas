@@ -12,6 +12,7 @@ import { splitNarrativeSections } from './utils/narrative'
 import type { ChatRequestDto, ChatResponseDto, CanvasContextDto, ChatMessageDto, ToolResultDto } from './dto/chat.dto'
 import { ToolEventsService } from './tool-events.service'
 import type { ModelProvider, ModelToken } from '@prisma/client'
+import { ProxyService } from '../proxy/proxy.service'
 
 const actionEnum = z.enum(ACTION_TYPES)
 
@@ -123,6 +124,7 @@ export class AiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly toolEvents: ToolEventsService,
+    private readonly proxyService: ProxyService,
   ) {}
 
   async chat(userId: string, payload: ChatRequestDto): Promise<ChatResponseDto> {
@@ -665,11 +667,30 @@ export class AiService {
     return 'google'
   }
 
-  private async resolveCredentials(userId: string, provider: SupportedProvider, overrideKey?: string, overrideBaseUrl?: string | null): Promise<{ apiKey: string; baseUrl?: string | null }> {
+  private async resolveCredentials(
+    userId: string,
+    provider: SupportedProvider,
+    overrideKey?: string,
+    overrideBaseUrl?: string | null,
+  ): Promise<{ apiKey: string; baseUrl?: string | null }> {
     if (overrideKey) {
       return { apiKey: overrideKey, baseUrl: overrideBaseUrl }
     }
     const aliases = PROVIDER_VENDOR_ALIASES[provider] || [provider]
+
+    for (const alias of aliases) {
+      const proxy = await this.proxyService.findProxyConfig(userId, alias, 'grsai')
+      if (proxy) {
+        this.logger.debug('Resolved provider credentials via proxy', {
+          userId,
+          providerVendor: alias,
+          proxyVendor: proxy.vendor,
+          proxyBaseUrl: proxy.baseUrl,
+        })
+        return { apiKey: proxy.apiKey, baseUrl: overrideBaseUrl ?? proxy.baseUrl }
+      }
+    }
+
     let providerRecord = await this.prisma.modelProvider.findFirst({
       where: { ownerId: userId, vendor: { in: aliases } },
       orderBy: { createdAt: 'asc' },
@@ -896,6 +917,7 @@ export class AiService {
       if (summary) {
         pieces.push(`当前画布概要：${summary}`)
       }
+      pieces.push('⚠️你已经获得上面的画布概要/节点列表，它们视为真实可见的画布状态；不要再声称自己无法看到画布或无法访问屏幕。')
 
       if (context.nodes?.length) {
         const preview = context.nodes.slice(0, 8).map((node, index) => {
@@ -1038,7 +1060,7 @@ export class AiService {
       negativePrompt: z.string().min(20).default(DEFAULT_NEGATIVE_PROMPT),
       keywords: z.array(z.string()).min(4).max(12),
       realismRules: z.array(z.string()).min(3).max(9),
-      durationSeconds: z.number().min(5).max(15).default(10),
+      durationSeconds: z.number().min(5).max(10).default(10),
       orientation: z.enum(['landscape', 'portrait']).default('landscape'),
       cameraPlan: z.string().min(40),
       environmentNotes: z.string().min(10).optional(),

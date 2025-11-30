@@ -59,6 +59,7 @@ import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { VideoRealismTips } from '../components/shared/VideoRealismTips'
+import { SystemPromptPanel } from '../components/SystemPromptPanel'
 import { getHandleTypeLabel } from '../utils/handleLabels'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 
@@ -832,12 +833,63 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     [isStoryboardNode, storyboardScenes],
   )
 
-  const [systemPrompt, setSystemPrompt] = React.useState<string>(
-    (data as any)?.systemPrompt || '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。',
+  const rawSystemPrompt = (data as any)?.systemPrompt as string | undefined
+  const [systemPrompt, setSystemPrompt] = React.useState<string>(() => {
+    if (typeof rawSystemPrompt === 'string' && rawSystemPrompt.trim().length > 0) {
+      return rawSystemPrompt
+    }
+    return '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。'
+  })
+
+  const rawShowSystemPrompt = (data as any)?.showSystemPrompt as boolean | undefined
+  const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(() => {
+    if (typeof rawShowSystemPrompt === 'boolean') return rawShowSystemPrompt
+    return isImageNode || isVideoNode
+  })
+
+  React.useEffect(() => {
+    if (typeof rawSystemPrompt === 'string' && rawSystemPrompt !== systemPrompt) {
+      setSystemPrompt(rawSystemPrompt)
+    }
+  }, [rawSystemPrompt, systemPrompt])
+
+  React.useEffect(() => {
+    if (typeof rawShowSystemPrompt === 'boolean' && rawShowSystemPrompt !== showSystemPrompt) {
+      setShowSystemPrompt(rawShowSystemPrompt)
+    }
+  }, [rawShowSystemPrompt, showSystemPrompt])
+
+  React.useEffect(() => {
+    const previous = typeof rawSystemPrompt === 'string' ? rawSystemPrompt : ''
+    if ((previous || '') !== (systemPrompt || '')) {
+      updateNodeData(id, { systemPrompt })
+    }
+  }, [rawSystemPrompt, systemPrompt, id, updateNodeData])
+
+  React.useEffect(() => {
+    if (typeof rawShowSystemPrompt === 'boolean') {
+      if (rawShowSystemPrompt !== showSystemPrompt) {
+        updateNodeData(id, { showSystemPrompt })
+      }
+      return
+    }
+    updateNodeData(id, { showSystemPrompt })
+  }, [rawShowSystemPrompt, showSystemPrompt, id, updateNodeData])
+
+  const handleSystemPromptChange = React.useCallback(
+    (next: string) => {
+      setSystemPrompt(next)
+      updateNodeData(id, { systemPrompt: next })
+    },
+    [id, updateNodeData],
   )
 
-  const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(
-    (data as any)?.showSystemPrompt || false,
+  const handleSystemPromptToggle = React.useCallback(
+    (next: boolean) => {
+      setShowSystemPrompt(next)
+      updateNodeData(id, { showSystemPrompt: next })
+    },
+    [id, updateNodeData],
   )
 
   const nodesForCharacters = useRFStore(s => s.nodes)
@@ -903,6 +955,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
+  const videoPrompt = (data as any)?.videoPrompt as string | undefined
+  const videoTokenId = ((data as any)?.videoTokenId as string | undefined) || null
 
   // Video history results (similar to imageResults)
   const videoResults = React.useMemo(() => {
@@ -935,6 +989,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         : persistedVideoPrimaryIndex ?? 0
     setVideoPrimaryIndex((prev) => (prev === clamped ? prev : clamped))
   }, [persistedVideoPrimaryIndex, videoResults.length])
+  const hasPrimaryVideo = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
   const frameSampleUrlsRef = React.useRef<string[]>([])
   const frameSampleUploadsRef = React.useRef<Map<string, string>>(new Map())
@@ -960,6 +1015,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterCreatorModalOpen, setCharacterCreatorModalOpen] = React.useState(false)
   const [characterCreatorCard, setCharacterCreatorCard] = React.useState<CharacterCard | null>(null)
   const [characterCreatorTokenId, setCharacterCreatorTokenId] = React.useState<string | null>(null)
+  const [characterCreatorSource, setCharacterCreatorSource] = React.useState<{
+    videoUrl?: string | null
+    videoTitle?: string | null
+    videoTokenId?: string | null
+  } | null>(null)
   const characterCreatorClipPreview = React.useMemo(() => {
     if (!characterCreatorCard?.clipRange) return null
     const start = Math.max(0, characterCreatorCard.clipRange.start)
@@ -1196,6 +1256,19 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
   const [characterTokenError, setCharacterTokenError] = React.useState<string | null>(null)
+  const characterTokenOptions = React.useMemo(() => {
+    const options = characterTokens.map((t) => ({
+      value: t.id,
+      label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
+    }))
+    if (
+      characterCreatorTokenId &&
+      !options.some((opt) => opt.value === characterCreatorTokenId)
+    ) {
+      options.push({ value: characterCreatorTokenId, label: '当前视频 Token（共享）' })
+    }
+    return options
+  }, [characterTokens, characterCreatorTokenId])
   const [characterList, setCharacterList] = React.useState<any[]>([])
   const [characterCursor, setCharacterCursor] = React.useState<string | null>(null)
   const [characterLoading, setCharacterLoading] = React.useState(false)
@@ -1456,6 +1529,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const handleOpenCharacterCreatorModal = React.useCallback(
     (card: CharacterCard) => {
       setCharacterCreatorCard(card)
+      setCharacterCreatorSource(null)
       setCharacterCreatorModalOpen(true)
       if (selectedCharacterTokenId) {
         setCharacterCreatorTokenId(selectedCharacterTokenId)
@@ -1468,24 +1542,86 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     [characterTokens, selectedCharacterTokenId],
   )
 
+  const handleQuickCreateCharacter = React.useCallback(() => {
+    if (!isVideoNode || resolvedVideoVendor !== 'sora') {
+      toast('该功能仅支持 Sora 视频节点', 'error')
+      return
+    }
+    if (!videoTokenId) {
+      toast('当前视频缺少 Sora Token 信息，请重新生成或绑定密钥', 'error')
+      return
+    }
+    const activeVideo = videoResults[videoPrimaryIndex] || null
+    const primaryUrl = activeVideo?.url || videoUrl || null
+    if (!primaryUrl) {
+      toast('暂无可用的视频结果，无法创建角色', 'error')
+      return
+    }
+    const displayTitle = activeVideo?.title || videoTitle || 'Sora 角色'
+    const rawDuration = activeVideo?.duration ?? activeVideoDuration ?? videoDuration
+    const normalizedDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0
+      ? rawDuration
+      : CHARACTER_CLIP_MAX
+    const clipEnd = normalizedDuration >= CHARACTER_CLIP_MIN
+      ? Math.min(normalizedDuration, CHARACTER_CLIP_MAX)
+      : normalizedDuration
+    const quickCard: CharacterCard = {
+      id: `video-${Date.now().toString(36)}`,
+      name: displayTitle,
+      summary: videoPrompt || prompt || undefined,
+      frames: [],
+      clipRange: { start: 0, end: clipEnd },
+    }
+    setCharacterCreatorCard(quickCard)
+    setCharacterCreatorSource({
+      videoUrl: primaryUrl,
+      videoTitle: displayTitle,
+      videoTokenId,
+    })
+    setCharacterCreatorModalOpen(true)
+    setCharacterCreatorTokenId(videoTokenId)
+  }, [
+    isVideoNode,
+    resolvedVideoVendor,
+    videoTokenId,
+    videoResults,
+    videoPrimaryIndex,
+    videoUrl,
+    videoTitle,
+    videoPrompt,
+    prompt,
+    activeVideoDuration,
+    videoDuration,
+    setCharacterCreatorCard,
+    setCharacterCreatorModalOpen,
+    setCharacterCreatorSource,
+    setCharacterCreatorTokenId,
+    toast,
+  ])
+
   const closeCharacterCreatorModal = React.useCallback(() => {
     setCharacterCreatorModalOpen(false)
     setCharacterCreatorCard(null)
     setCharacterCreatorTokenId(null)
+    setCharacterCreatorSource(null)
   }, [])
 
   const handleConfirmCharacterCreatorModal = React.useCallback(() => {
     if (!characterCreatorCard) return
-    if (!characterCreatorTokenId) {
+    const effectiveTokenId = characterCreatorTokenId || characterCreatorSource?.videoTokenId || null
+    if (!effectiveTokenId) {
       toast('暂无可用的 Sora Token，请先前往资产面板绑定', 'error')
       return
     }
     requestCharacterCreator({
-      source: 'character-card',
+      source: characterCreatorSource ? 'video-node' : 'character-card',
       name: characterCreatorCard.name,
       summary: characterCreatorCard.summary,
       tags: characterCreatorCard.tags,
-      soraTokenId: characterCreatorTokenId,
+      soraTokenId: effectiveTokenId,
+      videoTokenId: effectiveTokenId,
+      videoUrl: characterCreatorSource?.videoUrl || undefined,
+      videoTitle: characterCreatorSource?.videoTitle || undefined,
       clipRange: characterCreatorCard.clipRange
         ? {
             start: characterCreatorCard.clipRange.start,
@@ -1495,19 +1631,27 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     })
     setActivePanel('assets')
     closeCharacterCreatorModal()
-  }, [characterCreatorCard, characterCreatorTokenId, closeCharacterCreatorModal, requestCharacterCreator, setActivePanel])
+  }, [characterCreatorCard, characterCreatorTokenId, characterCreatorSource, closeCharacterCreatorModal, requestCharacterCreator, setActivePanel])
 
   React.useEffect(() => {
     if (!characterCreatorModalOpen) return
     if (characterCreatorTokenId) return
+    if (characterCreatorSource?.videoTokenId) {
+      setCharacterCreatorTokenId(characterCreatorSource.videoTokenId)
+      return
+    }
     if (selectedCharacterTokenId) {
       setCharacterCreatorTokenId(selectedCharacterTokenId)
+      return
+    }
+    if (videoTokenId) {
+      setCharacterCreatorTokenId(videoTokenId)
       return
     }
     if (characterTokens.length > 0) {
       setCharacterCreatorTokenId(characterTokens[0].id)
     }
-  }, [characterCreatorModalOpen, characterCreatorTokenId, selectedCharacterTokenId, characterTokens])
+  }, [characterCreatorModalOpen, characterCreatorTokenId, selectedCharacterTokenId, characterTokens, videoTokenId, characterCreatorSource])
 
   const activeModelKey = isImageNode
         ? imageModel
@@ -1548,6 +1692,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const existingImageVendor = (data as any)?.imageModelVendor
   const existingVideoVendor = (data as any)?.videoModelVendor
   const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
+  const isSoraVideoNode = isVideoNode && resolvedVideoVendor === 'sora'
   const trimmedFirstFrameUrl = veoFirstFrameUrl.trim()
   const trimmedLastFrameUrl = veoLastFrameUrl.trim()
   const firstFrameLocked = Boolean(trimmedFirstFrameUrl)
@@ -3222,6 +3367,17 @@ const rewritePromptWithCharacters = React.useCallback(
               </Button>
             </Group>
           )}
+          {isSoraVideoNode && (
+            <Button
+              size="compact-xs"
+              variant="outline"
+              leftSection={<IconUserPlus size={12} />}
+              onClick={handleQuickCreateCharacter}
+              disabled={!hasPrimaryVideo}
+            >
+              一键创建角色
+            </Button>
+          )}
 
           {videoUrl ? (
             <video
@@ -4582,6 +4738,15 @@ const rewritePromptWithCharacters = React.useCallback(
                 )}
                 </div>
               )}
+              {(isImageNode || isVideoNode) && (
+                <SystemPromptPanel
+                  target={isImageNode ? 'image' : 'video'}
+                  enabled={showSystemPrompt}
+                  value={systemPrompt}
+                  onEnabledChange={handleSystemPromptToggle}
+                  onChange={handleSystemPromptChange}
+                />
+              )}
               {showVideoRealismTips && (
                 <div style={{ marginTop: 10 }}>
                   <VideoRealismTips onInsertSnippet={applyVideoRealismSnippet} />
@@ -4615,6 +4780,11 @@ const rewritePromptWithCharacters = React.useCallback(
                   {characterCreatorCard.summary}
                 </Text>
               )}
+              {characterCreatorSource?.videoUrl && (
+                <Text size="xs" c="dimmed" mt={4}>
+                  将自动使用当前 Sora 视频片段创建角色。
+                </Text>
+              )}
               <Text size="xs" c="dimmed" mt={6}>
                 {characterCreatorClipPreview
                   ? `默认截取 ${characterCreatorClipPreview.start.toFixed(2)}s - ${characterCreatorClipPreview.end.toFixed(2)}s，最长 ${CHARACTER_CLIP_MAX}s`
@@ -4632,19 +4802,23 @@ const rewritePromptWithCharacters = React.useCallback(
               <Loader size="xs" />
               <Text size="xs" c="dimmed">正在加载 Sora Token…</Text>
             </Group>
-          ) : characterTokens.length > 0 ? (
-            <Select
-              label="Sora Token"
-              placeholder="请选择 Token"
-              data={characterTokens.map((t) => ({
-                value: t.id,
-                label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
-              }))}
-              value={characterCreatorTokenId}
-              onChange={(value) => setCharacterCreatorTokenId(value)}
-              withinPortal
-              size="xs"
-            />
+          ) : characterTokenOptions.length > 0 ? (
+            <>
+              <Select
+                label="Sora Token"
+                placeholder="请选择 Token"
+                data={characterTokenOptions}
+                value={characterCreatorTokenId}
+                onChange={(value) => setCharacterCreatorTokenId(value)}
+                withinPortal
+                size="xs"
+              />
+              {characterTokens.length === 0 && characterCreatorTokenId && (
+                <Text size="xs" c="dimmed">
+                  将使用当前视频任务关联的 Sora Token。
+                </Text>
+              )}
+            </>
           ) : (
             <Stack gap={4}>
               <Text size="xs" c="red">

@@ -32,7 +32,32 @@ export default function KeyboardShortcuts() {
   const removeGroupById = useRFStore((s) => s.removeGroupById)
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    let windowFocused = typeof document === 'undefined' ? true : document.hasFocus()
+    let lastInteractionInsideApp = true
+    const handleWindowFocus = () => {
+      windowFocused = true
+    }
+    const handleWindowBlur = () => {
+      windowFocused = false
+      lastInteractionInsideApp = false
+    }
+    const rootEl = document.getElementById('root')
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootEl) {
+        lastInteractionInsideApp = true
+        return
+      }
+      const target = event.target as Node | null
+      lastInteractionInsideApp = target ? rootEl.contains(target) : false
+    }
     function onKey(e: KeyboardEvent) {
+      if (!windowFocused || (typeof document.hasFocus === 'function' && !document.hasFocus())) {
+        return
+      }
+      if (!lastInteractionInsideApp) {
+        return
+      }
       const isMac = navigator.platform.toLowerCase().includes('mac')
       const mod = isMac ? e.metaKey : e.ctrlKey
       const target = e.target as HTMLElement | null
@@ -126,8 +151,17 @@ export default function KeyboardShortcuts() {
         if (g) runSelectedGroup(); else s.runSelected()
       }
     }
+    const pointerOptions: AddEventListenerOptions = { capture: true }
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('pointerdown', handlePointerDown, pointerOptions)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('focus', handleWindowFocus)
+      window.removeEventListener('blur', handleWindowBlur)
+      window.removeEventListener('pointerdown', handlePointerDown, pointerOptions)
+    }
   }, [removeSelected, copySelected, pasteFromClipboard, importWorkflow])
 
   return null

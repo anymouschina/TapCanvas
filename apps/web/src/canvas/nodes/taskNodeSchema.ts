@@ -104,6 +104,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     label: '文生视频',
     features: [
       'prompt',
+      'systemPrompt',
       'video',
       'videoResults',
       'orientation',
@@ -123,6 +124,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     features: [
       'prompt',
       'storyboard',
+      'systemPrompt',
       'video',
       'videoResults',
       'orientation',
@@ -141,6 +143,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     label: '视频',
     features: [
       'prompt',
+      'systemPrompt',
       'video',
       'videoResults',
       'orientation',
@@ -163,7 +166,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     category: 'image',
     icon: IconPhoto,
     label: '图像',
-    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
+    features: ['prompt', 'systemPrompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
@@ -174,7 +177,7 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     category: 'image',
     icon: IconPhoto,
     label: '图像',
-    features: ['prompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
+    features: ['prompt', 'systemPrompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],

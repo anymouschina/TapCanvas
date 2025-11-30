@@ -22,9 +22,11 @@ export const TEXT_MODELS: ModelOption[] = [
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', vendor: 'gemini' },
 ]
 
+const DEFAULT_IMAGE_MODEL_VALUE = 'nano-banana-fast'
+
 export const IMAGE_MODELS: ModelOption[] = [
   { value: 'nano-banana', label: 'Nano Banana', vendor: 'gemini' },
-  { value: 'nano-banana-fast', label: 'Nano Banana Fast', vendor: 'gemini' },
+  { value: DEFAULT_IMAGE_MODEL_VALUE, label: 'Nano Banana Fast', vendor: 'gemini' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
   { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
   { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
@@ -70,6 +72,9 @@ export function getModelLabel(kind: NodeKind | undefined, modelValue: string): s
 }
 
 export function getDefaultModel(kind?: NodeKind): string {
+  if (kind === 'image') {
+    return DEFAULT_IMAGE_MODEL_VALUE
+  }
   const models = getAllowedModelsByKind(kind)
   return models[0]?.value || TEXT_MODELS[0].value
 }
@@ -99,11 +104,7 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'veo3.1-fast': 'google',
 }
 
-const IMAGE_EDIT_MODELS = new Set([
-  'nano-banana',
-  'nano-banana-fast',
-  'nano-banana-pro',
-])
+const IMAGE_EDIT_MODELS = new Set(['nano-banana', DEFAULT_IMAGE_MODEL_VALUE, 'nano-banana-pro'])
 
 const normalizeModelId = (value: string | undefined | null): string => {
   if (!value) return ''
