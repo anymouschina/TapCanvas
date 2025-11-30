@@ -16,6 +16,8 @@ import { geminiAdapter } from './adapters/gemini.adapter'
 import { qwenAdapter } from './adapters/qwen.adapter'
 import { anthropicAdapter } from './adapters/anthropic.adapter'
 import { openaiAdapter } from './adapters/openai.adapter'
+import { fetchVeoResultSnapshot, pollVeoResult } from './adapters/veo.adapter'
+import { veoAdapter } from './adapters/veo.adapter'
 import { TaskProgressService } from './task-progress.service'
 
 @Injectable()
@@ -27,7 +29,92 @@ export class TaskService {
     private readonly proxyService: ProxyService,
     private readonly progress: TaskProgressService,
   ) {
-    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter]
+    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter, veoAdapter]
+  }
+
+  private getAdapterByVendor(vendor: string): ProviderAdapter {
+    const adapter = this.adapters.find((a) => a.name === vendor)
+    if (!adapter) {
+      throw new Error(`no adapter for provider: ${vendor}`)
+    }
+    return adapter
+  }
+
+  private async resolveVendorContext(
+    userId: string,
+    vendor: string,
+    requestModelKey?: string | null,
+  ): Promise<{ adapter: ProviderAdapter; ctx: ProviderContext }> {
+    const adapter = this.getAdapterByVendor(vendor)
+    const proxyCtx = await this.resolveProxyContext(userId, vendor, requestModelKey)
+    if (proxyCtx) {
+      if (requestModelKey) {
+        proxyCtx.modelKey = requestModelKey
+      }
+      return { adapter, ctx: proxyCtx }
+    }
+
+    let provider = await this.prisma.modelProvider.findFirst({
+      where: { vendor, ownerId: userId },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    let apiKey = ''
+    let sharedTokenProvider: ModelProvider | null = null
+
+    if (this.requiresApiKey(vendor)) {
+      if (provider) {
+        const owned = await this.prisma.modelToken.findFirst({
+          where: { providerId: provider.id, userId, enabled: true },
+          orderBy: { createdAt: 'asc' },
+        })
+        if (owned) {
+          apiKey = owned.secretToken
+        } else {
+          const shared = await this.prisma.modelToken.findFirst({
+            where: { providerId: provider.id, shared: true, enabled: true },
+            orderBy: { createdAt: 'asc' },
+          })
+          if (shared) {
+            apiKey = shared.secretToken
+          }
+        }
+      }
+
+      if (!apiKey) {
+        const sharedToken = await this.findSharedTokenForVendor(vendor)
+        if (sharedToken) {
+          apiKey = sharedToken.secretToken
+          sharedTokenProvider = sharedToken.provider
+        }
+      }
+
+      if (!apiKey) {
+        throw new Error(`未找到可用的${vendor} API Key`)
+      }
+    }
+
+    if (!provider && sharedTokenProvider) {
+      provider = sharedTokenProvider
+    }
+
+    if (!provider) {
+      throw new Error(`provider not found for vendor: ${vendor}`)
+    }
+
+    let resolvedBaseUrl = provider.baseUrl || (await this.resolveSharedBaseUrl(vendor)) || ''
+    if (!resolvedBaseUrl && sharedTokenProvider?.baseUrl) {
+      resolvedBaseUrl = sharedTokenProvider.baseUrl
+    }
+
+    const ctx: ProviderContext = {
+      baseUrl: resolvedBaseUrl,
+      apiKey,
+      userId,
+      modelKey: requestModelKey,
+    }
+
+    return { adapter, ctx }
   }
 
   private createProgressEmitter(userId: string, req: AnyTaskRequest, vendor: string) {
@@ -221,83 +308,12 @@ export class TaskService {
   }
 
   async executeWithVendor(userId: string, vendor: string, req: AnyTaskRequest): Promise<TaskResult> {
-    const adapter = this.adapters.find((a) => a.name === vendor)
-    if (!adapter) {
-      throw new Error(`no adapter for provider: ${vendor}`)
-    }
-
     const requestModelKey =
       (req?.extras && typeof (req.extras as any).modelKey === 'string'
         ? ((req.extras as any).modelKey as string)
         : null) || null
 
-    const proxyCtx = await this.resolveProxyContext(userId, vendor, requestModelKey)
-    if (proxyCtx) {
-      if (requestModelKey) {
-        proxyCtx.modelKey = requestModelKey
-      }
-      return this.runAdapter(adapter, req, proxyCtx)
-    }
-
-    let provider = await this.prisma.modelProvider.findFirst({
-      where: { vendor, ownerId: userId },
-      orderBy: { createdAt: 'asc' },
-    })
-
-    let apiKey = ''
-    let sharedTokenProvider: ModelProvider | null = null
-
-    if (this.requiresApiKey(vendor)) {
-      if (provider) {
-        const owned = await this.prisma.modelToken.findFirst({
-          where: { providerId: provider.id, userId, enabled: true },
-          orderBy: { createdAt: 'asc' },
-        })
-        if (owned) {
-          apiKey = owned.secretToken
-        } else {
-          const shared = await this.prisma.modelToken.findFirst({
-            where: { providerId: provider.id, shared: true, enabled: true },
-            orderBy: { createdAt: 'asc' },
-          })
-          if (shared) {
-            apiKey = shared.secretToken
-          }
-        }
-      }
-
-      if (!apiKey) {
-        const sharedToken = await this.findSharedTokenForVendor(vendor)
-        if (sharedToken) {
-          apiKey = sharedToken.secretToken
-          sharedTokenProvider = sharedToken.provider
-        }
-      }
-
-      if (!apiKey) {
-        throw new Error(`未找到可用的${vendor} API Key`)
-      }
-    }
-
-    if (!provider && sharedTokenProvider) {
-      provider = sharedTokenProvider
-    }
-
-    if (!provider) {
-      throw new Error(`provider not found for vendor: ${vendor}`)
-    }
-
-    let resolvedBaseUrl = provider.baseUrl || (await this.resolveSharedBaseUrl(vendor)) || ''
-    if (!resolvedBaseUrl && sharedTokenProvider?.baseUrl) {
-      resolvedBaseUrl = sharedTokenProvider.baseUrl
-    }
-
-    const ctx: ProviderContext = {
-      baseUrl: resolvedBaseUrl,
-      apiKey,
-      userId,
-      modelKey: requestModelKey,
-    }
+    const { adapter, ctx } = await this.resolveVendorContext(userId, vendor, requestModelKey)
 
     const progressEmitter = this.createProgressEmitter(userId, req, adapter.name)
     const ctxWithProgress = progressEmitter
@@ -305,6 +321,37 @@ export class TaskService {
       : ctx
 
     return this.runAdapterWithProgress(adapter, req, ctxWithProgress, progressEmitter?.emit)
+  }
+
+  async fetchVeoResult(userId: string, taskId: string): Promise<TaskResult> {
+    if (!taskId || !taskId.trim()) {
+      throw new Error('taskId is required')
+    }
+    const { ctx } = await this.resolveVendorContext(userId, 'veo', null)
+    const snapshot = await fetchVeoResultSnapshot({ ctx, taskId: taskId.trim() })
+    if (snapshot.asset) {
+      return {
+        id: taskId,
+        kind: 'text_to_video',
+        status: 'succeeded',
+        assets: [snapshot.asset],
+        raw: {
+          provider: 'veo',
+          response: snapshot.raw,
+        },
+      }
+    }
+    return {
+      id: taskId,
+      kind: 'text_to_video',
+      status: snapshot.status,
+      assets: [],
+      raw: {
+        provider: 'veo',
+        response: snapshot.raw,
+        progress: snapshot.progress,
+      },
+    }
   }
 
   private runAdapter(adapter: ProviderAdapter, req: AnyTaskRequest, ctx: ProviderContext): Promise<TaskResult> {
@@ -370,6 +417,6 @@ export class TaskService {
   }
 
   private requiresApiKey(vendor: string) {
-    return vendor === 'gemini' || vendor === 'qwen' || vendor === 'anthropic' || vendor === 'openai'
+    return vendor === 'gemini' || vendor === 'qwen' || vendor === 'anthropic' || vendor === 'openai' || vendor === 'veo'
   }
 }

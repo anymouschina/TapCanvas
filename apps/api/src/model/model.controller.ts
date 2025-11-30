@@ -130,4 +130,21 @@ export class ModelController {
       name: body.name,
     })
   }
+
+  @Get('proxy/:vendor/credits')
+  getProxyCredits(@Param('vendor') vendor: string, @Req() req: any) {
+    return this.service.fetchProxyCredits(String(req.user.sub), vendor)
+  }
+
+  @Get('proxy/:vendor/model-status')
+  getProxyModelStatus(
+    @Param('vendor') vendor: string,
+    @Query('model') model: string,
+    @Req() req: any,
+  ) {
+    if (!model || !model.trim()) {
+      throw new Error('model is required')
+    }
+    return this.service.fetchProxyModelStatus(String(req.user.sub), vendor, model)
+  }
 }

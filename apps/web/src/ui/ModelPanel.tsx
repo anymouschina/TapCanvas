@@ -26,6 +26,7 @@ import {
 } from '../api/server'
 import { notifyModelOptionsRefresh } from '../config/useModelOptions'
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
+import { GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR } from '../constants/grsai'
 const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
   chat: '文本',
   prompt_refine: '指令优化',
@@ -45,11 +46,11 @@ const PROFILE_KIND_OPTIONS: Array<{ value: ProfileKind; label: string }> = [
   { value: 'image_edit', label: '图像编辑' },
 ]
 
-const PROXY_VENDOR_KEY = 'grsai'
 const PROXY_TARGET_OPTIONS = [
   { value: 'sora', label: 'Sora 视频' },
   { value: 'openai', label: 'OpenAI / GPT' },
   { value: 'gemini', label: 'Google Gemini' },
+  { value: 'veo', label: 'Veo (GRSAI)' },
 ]
 const PROXY_HOST_PRESETS = [
   { label: '海外节点', value: 'https://api.grsai.com' },
@@ -343,6 +344,20 @@ export default function ModelPanel(): JSX.Element | null {
               await refreshProviderProfiles(qwen.id)
             }
 
+            // 刷新 Veo 数据
+            let veo = ps.find((p) => p.vendor === 'veo')
+            if (!veo) {
+              veo = await upsertModelProvider({ name: 'Veo (GRSAI)', vendor: 'veo' })
+              setProviders((prev) => [...prev, veo!])
+            }
+            if (veo) {
+              setVeoProvider(veo)
+              setVeoBaseUrl(veo.baseUrl || '')
+              const veoTokenData = await listModelTokens(veo.id)
+              setVeoTokens(veoTokenData)
+              await refreshProviderProfiles(veo.id)
+            }
+
             // 刷新OpenAI数据
             let openai = ps.find((p) => p.vendor === 'openai')
             if (!openai) {
@@ -424,14 +439,22 @@ export default function ModelPanel(): JSX.Element | null {
   const [sessionModalOpen, setSessionModalOpen] = React.useState(false)
   const [sessionJson, setSessionJson] = React.useState('')
   const [sessionError, setSessionError] = React.useState('')
-  const [geminiProvider, setGeminiProvider] = React.useState<ModelProviderDto | null>(null)
-  const [geminiBaseUrl, setGeminiBaseUrl] = React.useState('')
-  const [geminiTokens, setGeminiTokens] = React.useState<ModelTokenDto[]>([])
-  const [geminiModalOpen, setGeminiModalOpen] = React.useState(false)
-  const [geminiEditingToken, setGeminiEditingToken] = React.useState<ModelTokenDto | null>(null)
-  const [geminiLabel, setGeminiLabel] = React.useState('')
-  const [geminiSecret, setGeminiSecret] = React.useState('')
-  const [geminiShared, setGeminiShared] = React.useState(false)
+const [geminiProvider, setGeminiProvider] = React.useState<ModelProviderDto | null>(null)
+const [geminiBaseUrl, setGeminiBaseUrl] = React.useState('')
+const [geminiTokens, setGeminiTokens] = React.useState<ModelTokenDto[]>([])
+const [geminiModalOpen, setGeminiModalOpen] = React.useState(false)
+const [geminiEditingToken, setGeminiEditingToken] = React.useState<ModelTokenDto | null>(null)
+const [geminiLabel, setGeminiLabel] = React.useState('')
+const [geminiSecret, setGeminiSecret] = React.useState('')
+const [geminiShared, setGeminiShared] = React.useState(false)
+const [veoProvider, setVeoProvider] = React.useState<ModelProviderDto | null>(null)
+const [veoBaseUrl, setVeoBaseUrl] = React.useState('')
+const [veoTokens, setVeoTokens] = React.useState<ModelTokenDto[]>([])
+const [veoModalOpen, setVeoModalOpen] = React.useState(false)
+const [veoEditingToken, setVeoEditingToken] = React.useState<ModelTokenDto | null>(null)
+const [veoLabel, setVeoLabel] = React.useState('')
+const [veoSecret, setVeoSecret] = React.useState('')
+const [veoShared, setVeoShared] = React.useState(false)
   const [anthropicProvider, setAnthropicProvider] = React.useState<ModelProviderDto | null>(null)
   const [anthropicBaseUrl, setAnthropicBaseUrl] = React.useState('')
   const [anthropicBaseShared, setAnthropicBaseShared] = React.useState(false)
@@ -540,6 +563,18 @@ export default function ModelPanel(): JSX.Element | null {
         setQwenTokens(qTokens)
         await refreshProviderProfiles(qwen.id)
 
+        // 初始化 Veo 提供方
+        let veo = ps.find((p) => p.vendor === 'veo')
+        if (!veo) {
+          veo = await upsertModelProvider({ name: 'Veo (GRSAI)', vendor: 'veo' })
+          setProviders((prev) => [...prev, veo!])
+        }
+        setVeoProvider(veo)
+        setVeoBaseUrl(veo.baseUrl || '')
+        const veoTokenData = await listModelTokens(veo.id)
+        setVeoTokens(veoTokenData)
+        await refreshProviderProfiles(veo.id)
+
         // 初始化 OpenAI 提供方
         let openai = ps.find((p) => p.vendor === 'openai')
         if (!openai) {
@@ -598,19 +633,27 @@ export default function ModelPanel(): JSX.Element | null {
     setTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
-  const openGeminiModalForNew = () => {
-    setGeminiEditingToken(null)
-    setGeminiLabel('')
-    setGeminiSecret('')
-    setGeminiShared(false)
-    setGeminiModalOpen(true)
-  }
+const openGeminiModalForNew = () => {
+  setGeminiEditingToken(null)
+  setGeminiLabel('')
+  setGeminiSecret('')
+  setGeminiShared(false)
+  setGeminiModalOpen(true)
+}
 
-  const handleSaveGeminiToken = async () => {
-    if (!geminiProvider) return
-    const existingSecret = geminiEditingToken?.secretToken ?? ''
-    const finalSecret = geminiSecret || existingSecret
-    if (!ensureSecretPresent(finalSecret)) return
+const openVeoModalForNew = () => {
+  setVeoEditingToken(null)
+  setVeoLabel('')
+  setVeoSecret('')
+  setVeoShared(false)
+  setVeoModalOpen(true)
+}
+
+const handleSaveGeminiToken = async () => {
+  if (!geminiProvider) return
+  const existingSecret = geminiEditingToken?.secretToken ?? ''
+  const finalSecret = geminiSecret || existingSecret
+  if (!ensureSecretPresent(finalSecret)) return
     const saved = await upsertModelToken({
       id: geminiEditingToken?.id,
       providerId: geminiProvider.id,
@@ -626,11 +669,36 @@ export default function ModelPanel(): JSX.Element | null {
     setGeminiModalOpen(false)
   }
 
-  const handleDeleteGeminiToken = async (id: string) => {
-    if (!confirm('确定删除该密钥吗？')) return
-    await deleteModelToken(id)
-    setGeminiTokens((prev) => prev.filter((t) => t.id !== id))
-  }
+const handleDeleteGeminiToken = async (id: string) => {
+  if (!confirm('确定删除该密钥吗？')) return
+  await deleteModelToken(id)
+  setGeminiTokens((prev) => prev.filter((t) => t.id !== id))
+}
+
+const handleSaveVeoToken = async () => {
+  if (!veoProvider) return
+  const existingSecret = veoEditingToken?.secretToken ?? ''
+  const finalSecret = veoSecret || existingSecret
+  if (!ensureSecretPresent(finalSecret)) return
+  const saved = await upsertModelToken({
+    id: veoEditingToken?.id,
+    providerId: veoProvider.id,
+    label: veoLabel || '未命名密钥',
+    secretToken: finalSecret,
+    shared: veoShared,
+  })
+  const next = veoEditingToken
+    ? veoTokens.map((t) => (t.id === saved.id ? saved : t))
+    : [...veoTokens, saved]
+  setVeoTokens(next)
+  setVeoModalOpen(false)
+}
+
+const handleDeleteVeoToken = async (id: string) => {
+  if (!confirm('确定删除该密钥吗？')) return
+  await deleteModelToken(id)
+  setVeoTokens((prev) => prev.filter((t) => t.id !== id))
+}
 
   const openAnthropicModalForNew = () => {
     setAnthropicEditingToken(null)
@@ -696,11 +764,29 @@ export default function ModelPanel(): JSX.Element | null {
     setQwenModalOpen(false)
   }
 
-  const handleDeleteQwenToken = async (id: string) => {
-    if (!confirm('确定删除该密钥吗？')) return
-    await deleteModelToken(id)
-    setQwenTokens((prev) => prev.filter((t) => t.id !== id))
-  }
+const handleDeleteQwenToken = async (id: string) => {
+  if (!confirm('确定删除该密钥吗？')) return
+  await deleteModelToken(id)
+  setQwenTokens((prev) => prev.filter((t) => t.id !== id))
+}
+
+const handlePersistVeoBaseUrl = React.useCallback(async (nextBaseUrl: string) => {
+  if (!veoProvider) return
+  const saved = await upsertModelProvider({
+    id: veoProvider.id,
+    name: veoProvider.name,
+    vendor: veoProvider.vendor,
+    baseUrl: nextBaseUrl.trim() ? nextBaseUrl.trim() : null,
+  })
+  setVeoProvider(saved)
+  setVeoBaseUrl(saved.baseUrl || '')
+  await refreshProviderProfiles(saved.id)
+}, [veoProvider, refreshProviderProfiles])
+
+const handleApplyVeoHost = React.useCallback((host: string) => {
+  setVeoBaseUrl(host)
+  void handlePersistVeoBaseUrl(host)
+}, [handlePersistVeoBaseUrl])
 
   const openOpenAIModalForNew = () => {
     setOpenaiEditingToken(null)
@@ -919,8 +1005,9 @@ export default function ModelPanel(): JSX.Element | null {
   }
 
   const handleShareAllTokens = (sharedFlag: boolean) => bulkShareTokens(soraProvider, tokens, sharedFlag, setTokens)
-  const handleShareAllGeminiTokens = (sharedFlag: boolean) => bulkShareTokens(geminiProvider, geminiTokens, sharedFlag, setGeminiTokens)
-  const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(anthropicProvider, anthropicTokens, sharedFlag, setAnthropicTokens)
+const handleShareAllGeminiTokens = (sharedFlag: boolean) => bulkShareTokens(geminiProvider, geminiTokens, sharedFlag, setGeminiTokens)
+const handleShareAllVeoTokens = (sharedFlag: boolean) => bulkShareTokens(veoProvider, veoTokens, sharedFlag, setVeoTokens)
+const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(anthropicProvider, anthropicTokens, sharedFlag, setAnthropicTokens)
   const handleShareAllQwenTokens = (sharedFlag: boolean) => bulkShareTokens(qwenProvider, qwenTokens, sharedFlag, setQwenTokens)
   const handleShareAllOpenAITokens = (sharedFlag: boolean) => bulkShareTokens(openaiProvider, openaiTokens, sharedFlag, setOpenaiTokens)
 
@@ -935,7 +1022,7 @@ export default function ModelPanel(): JSX.Element | null {
   const refreshProxyConfig = React.useCallback(async () => {
     setProxyLoading(true)
     try {
-      const cfg = await getProxyConfig(PROXY_VENDOR_KEY)
+      const cfg = await getProxyConfig(GRSAI_PROXY_VENDOR)
       setProxyConfig(cfg)
       syncProxyForm(cfg)
     } catch (error: any) {
@@ -956,16 +1043,16 @@ export default function ModelPanel(): JSX.Element | null {
     return found ? found.label : v
   })
 
-  const handleOpenProxyModal = () => {
-    if (!proxyConfig && !proxyLoading) {
-      refreshProxyConfig().catch(() => {})
-    } else {
-      syncProxyForm(proxyConfig)
-    }
-    setProxyModalOpen(true)
+const handleOpenProxyModal = () => {
+  if (!proxyConfig && !proxyLoading) {
+    refreshProxyConfig().catch(() => {})
+  } else {
+    syncProxyForm(proxyConfig)
   }
+  setProxyModalOpen(true)
+}
 
-  const handleCloseProxyModal = () => {
+const handleCloseProxyModal = () => {
     setProxyModalOpen(false)
     syncProxyForm(proxyConfig)
   }
@@ -986,13 +1073,14 @@ export default function ModelPanel(): JSX.Element | null {
         baseUrl: trimmedHost,
         enabled: proxyEnabled,
         enabledVendors: proxyEnabled ? proxyEnabledVendors : [],
-        name: 'grsai',
+        name: GRSAI_PROXY_VENDOR,
       }
       if (proxyApiKeyTouched) {
         payload.apiKey = proxyApiKey.trim()
       }
-      const saved = await upsertProxyConfig(PROXY_VENDOR_KEY, payload)
+      const saved = await upsertProxyConfig(GRSAI_PROXY_VENDOR, payload)
       setProxyConfig(saved)
+      window.dispatchEvent(new CustomEvent(GRSAI_PROXY_UPDATED_EVENT, { detail: saved }))
       syncProxyForm(saved)
       setProxyModalOpen(false)
       notifications.show({ color: 'teal', title: '已保存', message: '代理服务配置已更新' })
@@ -1000,8 +1088,9 @@ export default function ModelPanel(): JSX.Element | null {
       notifications.show({ color: 'red', title: '保存失败', message: error?.message || '未知错误' })
     } finally {
       setProxySaving(false)
-    }
   }
+}
+
 
   if (!mounted) return null
 
@@ -1113,7 +1202,7 @@ export default function ModelPanel(): JSX.Element | null {
                           )}
                         </Group>
                         <Text size="xs" c="dimmed">
-                          使用 grsai API Key 统一代理 Sora 等厂商的调用，稳定访问海外接口。
+                          使用 grsai API Key 统一代理 Sora / Veo 等厂商的调用，稳定访问海外接口。
                         </Text>
                         {proxyConfig?.enabled && proxyVendorLabels.length > 0 ? (
                           <Group gap={6} mt={6} wrap="wrap">
@@ -1249,6 +1338,42 @@ export default function ModelPanel(): JSX.Element | null {
                       已配置密钥：{qwenTokens.length}
                     </Text>
                     {renderProviderProfiles(qwenProvider)}
+                  </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" align="flex-start" mb={4}>
+                      <Group gap={6}>
+                        <Title order={6}>Veo (GRSAI)</Title>
+                        <Badge color="violet" size="xs">
+                          New
+                        </Badge>
+                      </Group>
+                      <Button size="xs" onClick={openVeoModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed" mb={6}>
+                      支持海外 `https://api.grsai.com` 与国内直连 `https://grsai.dakka.com.cn`，可自定义 Host。
+                    </Text>
+                    <Group gap="xs" align="flex-end" mb={8}>
+                      <TextInput
+                        label="API Host"
+                        placeholder="https://api.grsai.com"
+                        value={veoBaseUrl}
+                        onChange={(e) => setVeoBaseUrl(e.currentTarget.value)}
+                        onBlur={() => handlePersistVeoBaseUrl(veoBaseUrl)}
+                        style={{ flex: 1 }}
+                      />
+                      <Button size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://api.grsai.com')}>
+                        海外
+                      </Button>
+                      <Button size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://grsai.dakka.com.cn')}>
+                        国内
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{veoTokens.length}
+                    </Text>
+                    {renderProviderProfiles(veoProvider)}
                   </Paper>
                 </Stack>
               </div>
@@ -1921,6 +2046,126 @@ export default function ModelPanel(): JSX.Element | null {
               </div>
             </Modal>
             <Modal
+              opened={veoModalOpen}
+              onClose={() => setVeoModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={300}
+              title="Veo (GRSAI) 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      配置 GRSAI Veo API Key，支持 Host：`https://api.grsai.com`（海外）或 `https://grsai.dakka.com.cn`（国内）。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://grsai.com/', '_blank', 'noopener')
+                      }
+                    >
+                      查看文档
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    <Group justify="space-between">
+                      <Title order={5}>已保存的 Veo Key</Title>
+                      <Group gap="xs">
+                        {veoTokens.length > 0 && (
+                          <>
+                            <Button size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(true)}>
+                              全部共享
+                            </Button>
+                            <Button size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(false)}>
+                              取消全部共享
+                            </Button>
+                          </>
+                        )}
+                        <Button size="xs" onClick={openVeoModalForNew}>
+                          新增 Key
+                        </Button>
+                      </Group>
+                    </Group>
+                    <Stack gap="xs">
+                      {veoTokens.map((t) => (
+                        <Group key={t.id} justify="space-between">
+                          <div>
+                            <Text size="sm">{t.label}</Text>
+                            <Text size="xs" c="dimmed">
+                              {t.shared ? '共享' : '仅自己可见'}
+                            </Text>
+                          </div>
+                          <Group gap="xs">
+                            <Button
+                              size="xs"
+                              variant="light"
+                              onClick={() => {
+                                setVeoEditingToken(t)
+                                setVeoLabel(t.label)
+                                setVeoSecret('')
+                                setVeoShared(!!t.shared)
+                                setVeoModalOpen(true)
+                              }}
+                            >
+                              编辑
+                            </Button>
+                            <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteVeoToken(t.id)}>
+                              删除
+                            </Button>
+                          </Group>
+                        </Group>
+                      ))}
+                      {veoTokens.length === 0 && (
+                        <Text size="xs" c="dimmed">
+                          暂无 Veo Key。
+                        </Text>
+                      )}
+                    </Stack>
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{veoEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput label="名称" placeholder="例如：Veo 主账号 Key" value={veoLabel} onChange={(e) => setVeoLabel(e.currentTarget.value)} />
+                    <TextInput
+                      label="API Key"
+                      placeholder={veoEditingToken ? '留空则不修改已有 Key' : '粘贴你的 GRSAI API Key'}
+                      value={veoSecret}
+                      onChange={(e) => setVeoSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此 Key 作为共享配置（其他成员可复用）"
+                      checked={veoShared}
+                      onChange={(e) => setVeoShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setVeoModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveVeoToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+            <Modal
               opened={!!profileModal}
               onClose={() => {
                 setProfileModal(null)
@@ -2009,6 +2254,15 @@ export default function ModelPanel(): JSX.Element | null {
                     setProxyApiKeyTouched(true)
                   }}
                 />
+                <Group justify="flex-end" gap="xs">
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    onClick={() => window.open('https://grsai.com/zh/dashboard/api-keys', '_blank', 'noopener')}
+                  >
+                    获取 API Key
+                  </Button>
+                </Group>
                 <Switch
                   label="启用代理服务"
                   checked={proxyEnabled}

@@ -161,6 +161,65 @@ export class ModelService {
     }
   }
 
+  private async resolveProxyRecord(userId: string, vendor: string) {
+    return this.prisma.proxyProvider.findUnique({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor: vendor.trim().toLowerCase(),
+        },
+      },
+    })
+  }
+
+  async fetchProxyCredits(userId: string, vendor: string) {
+    const record = await this.resolveProxyRecord(userId, vendor)
+    if (!record || !record.enabled) {
+      throw new Error('未启用 grsai 代理，无法获取积分')
+    }
+    const apiKey = record.apiKey?.trim()
+    const baseUrl = record.baseUrl?.trim()
+    if (!apiKey || !baseUrl) {
+      throw new Error('grsai 代理未配置 Host 或 API Key')
+    }
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/client/common/getCredits`
+    const resp = await this.http.get(endpoint, {
+      params: { apikey: apiKey },
+      timeout: 15000,
+    })
+    if (resp.data?.code !== 0) {
+      const msg = resp.data?.msg || resp.data?.message || '获取积分失败'
+      throw new Error(msg)
+    }
+    const credits = Number(resp.data?.data?.credits ?? 0)
+    return { credits }
+  }
+
+  async fetchProxyModelStatus(userId: string, vendor: string, model: string) {
+    const record = await this.resolveProxyRecord(userId, vendor)
+    if (!record || !record.enabled) {
+      throw new Error('未启用 grsai 代理，无法获取模型状态')
+    }
+    const baseUrl = record.baseUrl?.trim()
+    if (!baseUrl) {
+      throw new Error('grsai 代理未配置 Host')
+    }
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/client/common/getModelStatus`
+    const resp = await this.http.get(endpoint, {
+      params: { model },
+      timeout: 15000,
+    })
+    if (resp.data?.code !== 0) {
+      const msg = resp.data?.msg || resp.data?.message || '获取模型状态失败'
+      throw new Error(msg)
+    }
+    const payload = resp.data?.data || {}
+    return {
+      status: Boolean(payload.status),
+      error: typeof payload.error === 'string' ? payload.error : '',
+    }
+  }
+
   async upsertProxyConfig(
     userId: string,
     input: {
