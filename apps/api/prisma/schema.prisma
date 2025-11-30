@@ -36,9 +36,11 @@ model User {
   executions     FlowExecution[]
   modelProviders ModelProvider[]
   modelTokens    ModelToken[]
+  proxyProviders ProxyProvider[]
   externalDrafts ExternalDraft[]
   modelProfiles  ModelProfile[]
   taskTokenMappings TaskTokenMapping[]
+  taskStatuses   TaskStatus[]
   videoGenerationHistories VideoGenerationHistory[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -130,6 +132,24 @@ model ModelEndpoint {
   updatedAt  DateTime      @updatedAt
 
   @@unique([providerId, key])
+}
+
+model ProxyProvider {
+  id              String   @id @default(uuid())
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id])
+  name            String
+  vendor          String   // e.g. grsai
+  baseUrl         String?
+  apiKey          String?
+  enabled         Boolean  @default(false)
+  enabledVendors  String[]
+  settings        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([ownerId, vendor])
+  @@index([ownerId, vendor])
 }
 
 model ExternalDraft {
@@ -234,6 +254,8 @@ model TaskStatus {
   id          String   @id @default(uuid())
   taskId      String   // 任务唯一标识
   provider    String   // 提供商名称
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
   status      String   // pending, running, success, error, canceled
   data        Json?    // 任务相关数据
   createdAt   DateTime @default(now())
@@ -243,6 +265,7 @@ model TaskStatus {
   @@unique([taskId, provider])
   @@index([status])
   @@index([createdAt])
+  @@index([userId, provider])
 }
 
 // 视频生成历史记录表

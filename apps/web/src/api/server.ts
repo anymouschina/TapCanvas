@@ -29,6 +29,54 @@ export type ModelEndpointDto = {
   shared?: boolean
 }
 
+export type ProxyConfigDto = {
+  id: string
+  name: string
+  vendor: string
+  baseUrl: string
+  enabled: boolean
+  enabledVendors: string[]
+  hasApiKey: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type VideoHistoryRecord = {
+  id: string
+  prompt: string | null
+  taskId: string
+  generationId?: string | null
+  status: string
+  videoUrl?: string | null
+  thumbnailUrl?: string | null
+  duration?: number | null
+  width?: number | null
+  height?: number | null
+  provider: string
+  model?: string | null
+  createdAt: string
+}
+
+export type ProfileKind =
+  | 'chat'
+  | 'prompt_refine'
+  | 'text_to_image'
+  | 'image_to_prompt'
+  | 'image_to_video'
+  | 'text_to_video'
+  | 'image_edit'
+
+export type ModelProfileDto = {
+  id: string
+  ownerId: string
+  providerId: string
+  name: string
+  kind: ProfileKind
+  modelKey: string
+  settings?: any
+  provider?: { id: string; name: string; vendor: string }
+}
+
 export type AvailableModelDto = {
   value: string
   label: string
@@ -245,6 +293,154 @@ export async function upsertModelEndpoint(payload: {
   return r.json()
 }
 
+export async function getProxyConfig(vendor: string): Promise<ProxyConfigDto | null> {
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth())
+  if (!r.ok) {
+    if (r.status === 404) return null
+    throw new Error(`get proxy config failed: ${r.status}`)
+  }
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!body) return null
+  return {
+    id: body.id,
+    name: body.name,
+    vendor: body.vendor,
+    baseUrl: body.baseUrl || '',
+    enabled: !!body.enabled,
+    enabledVendors: Array.isArray(body.enabledVendors) ? body.enabledVendors : [],
+    hasApiKey: !!body.hasApiKey,
+    createdAt: body.createdAt,
+    updatedAt: body.updatedAt,
+  }
+}
+
+export async function upsertProxyConfig(
+  vendor: string,
+  payload: {
+    baseUrl: string
+    apiKey?: string | null
+    enabled?: boolean
+    enabledVendors?: string[]
+    name?: string
+  },
+): Promise<ProxyConfigDto> {
+  const body: any = {
+    baseUrl: payload.baseUrl,
+    enabled: payload.enabled ?? true,
+    enabledVendors: Array.isArray(payload.enabledVendors) ? payload.enabledVendors : [],
+    name: payload.name,
+  }
+  if (typeof payload.apiKey !== 'undefined') {
+    body.apiKey = payload.apiKey
+  }
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  let resBody: any = null
+  try {
+    resBody = await r.json()
+  } catch {
+    resBody = null
+  }
+  if (!r.ok) {
+    const msg = (resBody && (resBody.message || resBody.error)) || `save proxy config failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    id: resBody.id,
+    name: resBody.name,
+    vendor: resBody.vendor,
+    baseUrl: resBody.baseUrl || '',
+    enabled: !!resBody.enabled,
+    enabledVendors: Array.isArray(resBody.enabledVendors) ? resBody.enabledVendors : [],
+    hasApiKey: !!resBody.hasApiKey,
+    createdAt: resBody.createdAt,
+    updatedAt: resBody.updatedAt,
+  }
+}
+
+export async function getProxyCredits(vendor: string): Promise<{ credits: number }> {
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/credits`, withAuth())
+  if (!r.ok) throw new Error(`get proxy credits failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getProxyModelStatus(vendor: string, model: string): Promise<{ status: boolean; error?: string }> {
+  const qs = new URLSearchParams({ model })
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/model-status?${qs.toString()}`, withAuth())
+  if (!r.ok) throw new Error(`get proxy model status failed: ${r.status}`)
+  return r.json()
+}
+
+export async function listSoraVideoHistory(params?: {
+  limit?: number
+  offset?: number
+  status?: string
+}): Promise<{ records: VideoHistoryRecord[]; total: number }> {
+  const qs = new URLSearchParams()
+  if (typeof params?.limit === 'number') qs.set('limit', String(params.limit))
+  if (typeof params?.offset === 'number') qs.set('offset', String(params.offset))
+  if (params?.status) qs.set('status', params.status)
+  const url = `${API_BASE}/sora/video/history${qs.toString() ? `?${qs.toString()}` : ''}`
+  const r = await fetch(url, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `list sora video history failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    records: Array.isArray(body?.records) ? body.records : [],
+    total: typeof body?.total === 'number' ? body.total : 0,
+  }
+}
+
+export async function listModelProfiles(params?: { providerId?: string; kinds?: ProfileKind[] }): Promise<ModelProfileDto[]> {
+  const qs = new URLSearchParams()
+  if (params?.providerId) qs.set('providerId', params.providerId)
+  if (params?.kinds?.length) {
+    params.kinds.forEach((kind) => qs.append('kind', kind))
+  }
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/models/profiles?${query}` : `${API_BASE}/models/profiles`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) throw new Error(`list profiles failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelProfile(payload: {
+  id?: string
+  providerId: string
+  name: string
+  kind: ProfileKind
+  modelKey: string
+  settings?: any
+}): Promise<ModelProfileDto> {
+  const r = await fetch(`${API_BASE}/models/profiles`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`save profile failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deleteModelProfile(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/models/profiles/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete profile failed: ${r.status}`)
+}
+
 export async function listAvailableModels(vendor?: string): Promise<AvailableModelDto[]> {
   const qs = vendor ? `?vendor=${encodeURIComponent(vendor)}` : ''
   const r = await fetch(`${API_BASE}/models/available${qs}`, withAuth())
@@ -436,10 +632,28 @@ export async function listSoraPendingVideos(
   return []
 }
 
+export type SoraVideoDraftResponse = {
+  id: string
+  title: string | null
+  prompt: string | null
+  thumbnailUrl: string | null
+  videoUrl: string | null
+  postId?: string | null
+  status?: string | null
+  progress?: number | null
+  raw?: any
+}
+
+function normalizeDraftProgress(value: any): number | null {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  const normalized = value <= 1 ? value * 100 : value
+  return Math.max(0, Math.min(100, normalized))
+}
+
 export async function getSoraVideoDraftByTask(
   taskId: string,
   tokenId?: string | null,
-): Promise<{ id: string; title: string | null; prompt: string | null; thumbnailUrl: string | null; videoUrl: string | null }> {
+): Promise<SoraVideoDraftResponse> {
   const qs = new URLSearchParams({ taskId })
   if (tokenId) qs.set('tokenId', tokenId)
   const url = `${API_BASE}/sora/video/draft-by-task?${qs.toString()}`
@@ -465,12 +679,30 @@ export async function getSoraVideoDraftByTask(
     throw err
   }
   console.debug('[getSoraVideoDraftByTask] success', { taskId, tokenId, body })
+  const raw = typeof body?.raw !== 'undefined' ? body.raw : body
+  const status = typeof body?.status === 'string'
+    ? body.status
+    : typeof raw?.status === 'string'
+      ? raw.status
+      : null
+  const progressValue = normalizeDraftProgress(
+    typeof body?.progress === 'number'
+      ? body.progress
+      : typeof raw?.progress === 'number'
+        ? raw.progress
+        : null,
+  )
+
   return {
     id: body.id,
     title: body.title ?? null,
     prompt: body.prompt ?? null,
     thumbnailUrl: body.thumbnailUrl ?? null,
     videoUrl: body.videoUrl ?? null,
+    postId: body.postId ?? null,
+    status,
+    progress: progressValue,
+    raw,
   }
 }
 
@@ -891,6 +1123,25 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
     const error = new Error(errorMessage) as any
     error.status = r.status
     throw error
+  }
+  return r.json()
+}
+
+export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto> {
+  const r = await fetch(`${API_BASE}/tasks/veo/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId }),
+  }))
+  if (!r.ok) {
+    let msg = `fetch veo result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
   }
   return r.json()
 }

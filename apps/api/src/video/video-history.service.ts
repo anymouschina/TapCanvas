@@ -199,7 +199,8 @@ export class VideoHistoryService {
       limit?: number
       offset?: number
       isFavorite?: boolean
-    } = {}
+      provider?: string | string[]
+    } = {},
   ): Promise<{ records: VideoGenerationRecord[]; total: number }> {
     try {
       const where: any = { userId }
@@ -214,6 +215,14 @@ export class VideoHistoryService {
 
       if (filters.isFavorite !== undefined) {
         where.isFavorite = filters.isFavorite
+      }
+
+      if (filters.provider) {
+        if (Array.isArray(filters.provider)) {
+          where.provider = { in: filters.provider }
+        } else {
+          where.provider = filters.provider
+        }
       }
 
       const [records, total] = await Promise.all([

@@ -1,5 +1,5 @@
 import type { Node } from 'reactflow'
-import type { TaskKind } from '../api/server'
+import type { TaskKind, TaskResultDto } from '../api/server'
 import {
   runTaskByVendor,
   createSoraVideo,
@@ -7,10 +7,12 @@ import {
   getSoraVideoDraftByTask,
   listModelProviders,
   listModelTokens,
+  fetchVeoTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
 import { isAnthropicModel } from '../config/modelSource'
+import { getDefaultModel, isImageEditModel } from '../config/models'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -55,6 +57,12 @@ const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
+const VEO_RESULT_POLL_INTERVAL_MS = 4000
+const VEO_RESULT_POLL_TIMEOUT_MS = 480_000
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
   const provider = providers.find((p) => p.vendor === 'anthropic' || (p.baseUrl || '').toLowerCase().includes('anthropic'))
@@ -152,6 +160,9 @@ function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
   if (!base) return url
   try {
     const parsed = new URL(url)
+    const host = parsed.host.toLowerCase()
+    const shouldRewrite = host.includes('openai.com') || host.startsWith('videos.') || (host.includes('sora') && host.includes('video'))
+    if (!shouldRewrite) return url
     const baseParsed = new URL(base)
     parsed.protocol = baseParsed.protocol
     parsed.host = baseParsed.host
@@ -160,6 +171,87 @@ function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
   } catch {
     return url
   }
+}
+
+function buildSoraPublicPostUrl(postId?: string | null): string | null {
+  if (!postId) return null
+  const normalized = postId.trim()
+  if (!normalized) return null
+  const targetId = normalized.startsWith('p/') ? normalized.slice(2) : normalized
+  const base = useUIStore.getState().soraVideoBaseUrl
+  if (base) {
+    try {
+      const parsed = new URL(base)
+      parsed.pathname = `/p/${targetId}`
+      parsed.search = ''
+      parsed.hash = ''
+      return parsed.toString()
+    } catch {
+      // ignore malformed base URL
+    }
+  }
+  return `https://sora.chatgpt.com/p/${targetId}`
+}
+
+function extractSoraDraftStatus(draft: any): string | null {
+  if (!draft) return null
+  const rawStatus = typeof draft.status === 'string'
+    ? draft.status
+    : typeof draft.raw?.status === 'string'
+      ? draft.raw.status
+      : null
+  return rawStatus || null
+}
+
+function extractSoraDraftProgress(draft: any): number | null {
+  if (!draft) return null
+  const source = typeof draft.progress === 'number'
+    ? draft.progress
+    : typeof draft.raw?.progress === 'number'
+      ? draft.raw.progress
+      : null
+  if (typeof source !== 'number' || Number.isNaN(source)) return null
+  const normalized = source <= 1 ? source * 100 : source
+  return Math.max(0, Math.min(100, normalized))
+}
+
+function collectReferenceImages(state: any, targetId: string): string[] {
+  if (!state) return []
+  const edges = Array.isArray(state.edges) ? state.edges : []
+  const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
+  const inbound = edges.filter((e: any) => e.target === targetId)
+  const collected: string[] = []
+  for (const edge of inbound) {
+    const src = nodes.find((n: Node) => n.id === edge.source)
+    if (!src) continue
+    const data: any = src.data || {}
+    const kind: string | undefined = data.kind
+    if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
+    const primary = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    if (primary) collected.push(primary)
+    const results = Array.isArray(data.imageResults) ? data.imageResults : []
+    for (const item of results) {
+      if (!item) continue
+      const url = typeof item.url === 'string' ? item.url.trim() : ''
+      if (url) collected.push(url)
+    }
+  }
+  return Array.from(new Set(collected))
+}
+
+function normalizeManualReferenceImages(value: any): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+    if (result.length >= 3) break
+  }
+  return result
 }
 
 function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
@@ -377,7 +469,8 @@ async function runTextTask(ctx: RunnerContext) {
     }
   }
   try {
-    const vendor = isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini'
+    const explicitVendor = typeof (data as any)?.modelVendor === 'string' ? (data as any).modelVendor : null
+    const vendor = explicitVendor || (isAnthropicModel(modelKey) || (modelKey && modelKey.toLowerCase().includes('claude')) ? 'anthropic' : 'gemini')
     appendLog(
       id,
       `[${nowLabel()}] 调用${vendor === 'anthropic' ? 'Anthropic/Claude' : 'Gemini'} 文案模型批量生成提示词 x${sampleCount}（并行）…`,
@@ -500,6 +593,14 @@ async function runVideoTask(ctx: RunnerContext) {
       : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
+    const aspectRatioSetting =
+      typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
+        ? (data as any).aspect.trim()
+        : '16:9'
+    const videoModelValue = (data as any)?.videoModel as string | undefined
+    const videoModelVendor = ((data as any)?.videoModelVendor as string | undefined) || null
+    const fallbackVideoVendor = videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora'
+    const videoVendor = videoModelVendor || fallbackVideoVendor
     let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
     if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
       if (isStoryboard) {
@@ -520,6 +621,26 @@ async function runVideoTask(ctx: RunnerContext) {
     const edges = (state.edges || []) as any[]
     const nodes = (state.nodes || []) as Node[]
     const inbound = edges.filter((e) => e.target === id)
+    const autoReferenceImages = collectReferenceImages(state, id)
+    const manualVeoReferenceImages = normalizeManualReferenceImages((data as any)?.veoReferenceImages)
+    const firstFrameUrlValue = typeof (data as any)?.veoFirstFrameUrl === 'string'
+      ? (data as any).veoFirstFrameUrl.trim()
+      : ''
+    const lastFrameUrlValue = typeof (data as any)?.veoLastFrameUrl === 'string'
+      ? (data as any).veoLastFrameUrl.trim()
+      : ''
+    const allowReferenceImages = !firstFrameUrlValue
+    let referenceImagesForVideo = autoReferenceImages
+    if (videoVendor === 'veo') {
+      referenceImagesForVideo = allowReferenceImages
+        ? manualVeoReferenceImages.length
+          ? manualVeoReferenceImages
+          : autoReferenceImages
+        : []
+      if (referenceImagesForVideo.length > 3) {
+        referenceImagesForVideo = referenceImagesForVideo.slice(0, 3)
+      }
+    }
     if (!remixTargetId && inbound.length) {
       for (const edge of inbound) {
         const src = nodes.find((n: Node) => n.id === edge.source)
@@ -530,13 +651,6 @@ async function runVideoTask(ctx: RunnerContext) {
         }
       }
     }
-
-    const initialPatch: any = { progress: 5 }
-    if (remixTargetId) {
-      initialPatch.remixTargetId = remixTargetId
-    }
-    setNodeStatus(id, 'running', initialPatch)
-    appendLog(id, `[${nowLabel()}] 调用 Sora-2 生成视频任务…`)
 
     let inpaintFileId: string | null = null
     let imageUrlForUpload: string | null = null
@@ -593,6 +707,26 @@ async function runVideoTask(ctx: RunnerContext) {
         finalPrompt = `${finalPrompt}\n${refNote}`
       }
     }
+
+    if (videoVendor === 'veo') {
+      await runVeoVideoTask(ctx, {
+        prompt: finalPrompt,
+        model: videoModelValue || 'veo3.1-fast',
+        aspectRatio: aspectRatioSetting,
+        referenceImages: referenceImagesForVideo,
+        durationSeconds: videoDurationSeconds,
+        firstFrameUrl: firstFrameUrlValue,
+        lastFrameUrl: firstFrameUrlValue ? lastFrameUrlValue : '',
+      })
+      return
+    }
+
+    const initialPatch: any = { progress: 5 }
+    if (remixTargetId) {
+      initialPatch.remixTargetId = remixTargetId
+    }
+    setNodeStatus(id, 'running', initialPatch)
+    appendLog(id, `[${nowLabel()}] 调用 Sora-2 生成视频任务…`)
 
     const preferredTokenId = (data as any)?.videoTokenId as string | undefined
     const res = await createSoraVideo({
@@ -689,7 +823,11 @@ async function runVideoTask(ctx: RunnerContext) {
       videoUrl: string | null
       postId?: string | null
       duration?: number
+      status?: string | null
+      progress?: number | null
+      raw?: any
     } | null = null
+    let progress = 10
 
     const syncDraftVideo = async (force = false) => {
       if (!force && draftSynced) return null
@@ -713,7 +851,21 @@ async function runVideoTask(ctx: RunnerContext) {
         if (draft.title) {
           patch.videoTitle = draft.title
         }
+        const draftProgress = extractSoraDraftProgress(draft)
+        const draftStatus = extractSoraDraftStatus(draft)
+        if (draftStatus) {
+          patch.videoDraftStatus = draftStatus
+        }
+        if (draft.videoUrl) {
+          patch.progress = 100
+        } else if (draftProgress !== null) {
+          const normalized = Math.max(progress, Math.max(5, Math.round(draftProgress)))
+          patch.progress = Math.min(95, normalized)
+        }
         setNodeStatus(id, 'running', patch)
+        if (typeof patch.progress === 'number') {
+          progress = patch.progress
+        }
         if (draft.videoUrl) {
           appendLog(
             id,
@@ -745,7 +897,6 @@ async function runVideoTask(ctx: RunnerContext) {
       }
     }
 
-    let progress = 10
     const pollIntervalMs = 3000
     let finishedFromPending = false
 
@@ -866,8 +1017,10 @@ async function runVideoTask(ctx: RunnerContext) {
     const thumbnailUrl = finalDraft?.thumbnailUrl
     const title = finalDraft?.title
     const duration = finalDraft?.duration
+    const fallbackPostUrl = buildSoraPublicPostUrl(finalDraft?.postId || (data as any)?.videoPostId || null)
+    const resolvedVideoUrl = videoUrl || fallbackPostUrl
 
-    if (pollTimedOut || !videoUrl) {
+    if (pollTimedOut || !resolvedVideoUrl) {
       const errorMessage = pollTimedOut
         ? 'Sora 视频生成超时（已等待超过 300 秒），请稍后在 Sora 控制台确认任务状态'
         : (lastSyncError?.message || '未能获取 Sora 草稿，任务可能已失败，请稍后再试')
@@ -882,8 +1035,8 @@ async function runVideoTask(ctx: RunnerContext) {
       typeof (data as any)?.videoPrimaryIndex === 'number'
         ? Math.max(0, (data as any).videoPrimaryIndex as number)
         : null
-    if (videoUrl) {
-      const rewrittenUrl = rewriteSoraVideoResourceUrl(videoUrl)
+    if (resolvedVideoUrl) {
+      const rewrittenUrl = rewriteSoraVideoResourceUrl(resolvedVideoUrl)
       const rewrittenThumb = rewriteSoraVideoResourceUrl(thumbnailUrl)
       updatedVideoResults = [
         ...updatedVideoResults,
@@ -900,7 +1053,7 @@ async function runVideoTask(ctx: RunnerContext) {
     let nextPrimaryIndex = previousPrimaryIndex ?? 0
     if (updatedVideoResults.length === 0) {
       nextPrimaryIndex = 0
-    } else if (videoUrl) {
+    } else if (resolvedVideoUrl) {
       nextPrimaryIndex = updatedVideoResults.length - 1
     } else if (previousPrimaryIndex !== null) {
       nextPrimaryIndex = Math.min(updatedVideoResults.length - 1, previousPrimaryIndex)
@@ -912,8 +1065,8 @@ async function runVideoTask(ctx: RunnerContext) {
         id: taskId || '',
         at: Date.now(),
         kind,
-        preview: videoUrl
-          ? { type: 'video', src: rewriteSoraVideoResourceUrl(videoUrl) }
+        preview: resolvedVideoUrl
+          ? { type: 'video', src: rewriteSoraVideoResourceUrl(resolvedVideoUrl) }
           : preview,
       },
       prompt: finalPrompt,
@@ -923,7 +1076,7 @@ async function runVideoTask(ctx: RunnerContext) {
       videoOrientation: orientation,
       videoPrompt: finalPrompt,
       videoDurationSeconds,
-      videoUrl: videoUrl ? rewriteSoraVideoResourceUrl(videoUrl) : (data as any)?.videoUrl || null,
+      videoUrl: resolvedVideoUrl ? rewriteSoraVideoResourceUrl(resolvedVideoUrl) : (data as any)?.videoUrl || null,
       videoThumbnailUrl: thumbnailUrl ? rewriteSoraVideoResourceUrl(thumbnailUrl) : (data as any)?.videoThumbnailUrl || null,
       videoTitle: title,
       videoDuration: duration,
@@ -948,6 +1101,170 @@ async function runVideoTask(ctx: RunnerContext) {
   }
 }
 
+interface VeoVideoTaskOptions {
+  prompt: string
+  model: string
+  aspectRatio: string
+  referenceImages: string[]
+  durationSeconds: number
+  firstFrameUrl?: string | null
+  lastFrameUrl?: string | null
+}
+
+async function runVeoVideoTask(ctx: RunnerContext, options: VeoVideoTaskOptions) {
+  const { id, data, kind, setNodeStatus, appendLog } = ctx
+  const { prompt, model, aspectRatio, referenceImages, durationSeconds, firstFrameUrl, lastFrameUrl } = options
+  try {
+    setNodeStatus(id, 'running', { progress: 5 })
+    appendLog(id, `[${nowLabel()}] 调用 Veo3 视频模型 ${model}…`)
+
+    const extras: Record<string, any> = {
+      nodeKind: kind,
+      nodeId: id,
+      modelKey: model,
+      aspectRatio,
+      awaitResult: false,
+    }
+    if (firstFrameUrl) {
+      extras.firstFrameUrl = firstFrameUrl
+      if (lastFrameUrl) {
+        extras.lastFrameUrl = lastFrameUrl
+      }
+    }
+    if (referenceImages.length && !firstFrameUrl) {
+      extras.referenceImages = referenceImages
+    }
+
+    const res = await runTaskByVendor('veo', {
+      kind: 'text_to_video',
+      prompt,
+      extras,
+    })
+
+    const pendingTaskId = (res.raw && ((res.raw as any).taskId as string | undefined)) || res.id || null
+
+    if (res.status === 'running' && pendingTaskId) {
+      await pollVeoResultClient(ctx, {
+        taskId: pendingTaskId,
+        prompt,
+        model,
+        durationSeconds,
+      })
+      return
+    }
+
+    applyVeoTaskResult(ctx, res, { prompt, model, durationSeconds })
+  } catch (err: any) {
+    const msg = err?.message || 'Veo 视频任务执行失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    ctx.endRunToken(id)
+  }
+}
+
+interface VeoResultPollOptions {
+  taskId: string
+  prompt: string
+  model: string
+  durationSeconds: number
+}
+
+async function pollVeoResultClient(ctx: RunnerContext, options: VeoResultPollOptions) {
+  const { id, setNodeStatus, appendLog, isCanceled } = ctx
+  const { taskId, prompt, model, durationSeconds } = options
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < VEO_RESULT_POLL_TIMEOUT_MS) {
+    if (isCanceled(id)) {
+      setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+      appendLog(id, `[${nowLabel()}] Veo3 视频任务已取消`)
+      return
+    }
+    await sleep(VEO_RESULT_POLL_INTERVAL_MS)
+    try {
+      const snapshot = await fetchVeoTaskResult(taskId)
+      if (snapshot.status === 'running') {
+        const rawProgress =
+          (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+          (snapshot.raw?.response && (snapshot.raw.response.progress as number | undefined)) ||
+          null
+        if (typeof rawProgress === 'number') {
+          const normalized = Math.min(99, Math.max(5, Math.round(rawProgress)))
+          setNodeStatus(id, 'running', { progress: normalized })
+        }
+        continue
+      }
+      if (snapshot.status === 'failed') {
+        const msg =
+          (snapshot.raw?.response && (snapshot.raw.response.failure_reason || snapshot.raw.response.error)) ||
+          (snapshot.raw && (snapshot.raw.failure_reason || snapshot.raw.error)) ||
+          'Veo 视频任务失败'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+      applyVeoTaskResult(ctx, snapshot, { prompt, model, durationSeconds })
+      return
+    } catch (err: any) {
+      const msg = err?.message || '查询 Veo 结果失败'
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    }
+  }
+  const timeoutMsg = 'Veo 视频任务查询超时，请稍后在控制台确认结果'
+  setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
+  appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
+}
+
+function applyVeoTaskResult(
+  ctx: RunnerContext,
+  result: TaskResultDto,
+  options: { prompt: string; model: string; durationSeconds: number },
+) {
+  const { id, data, kind, setNodeStatus, appendLog } = ctx
+  const { prompt, model, durationSeconds } = options
+  const videoAssets = (result.assets || []).filter((asset) => asset.type === 'video')
+  if (!videoAssets.length) {
+    throw new Error('Veo 未返回视频结果')
+  }
+
+  const existing = (data.videoResults as any[] | undefined) || []
+  const appended = [
+    ...existing,
+    ...videoAssets.map((asset, idx) => ({
+      id: result.id ? `${result.id}-${idx}` : `${Date.now()}-${idx}`,
+      url: asset.url,
+      thumbnailUrl: asset.thumbnailUrl || null,
+      model,
+    })),
+  ]
+  const primary = videoAssets[0]
+  const nextPrimaryIndex = appended.length - 1
+
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    lastResult: {
+      id: result.id || '',
+      at: Date.now(),
+      kind,
+      preview: { type: 'video', src: primary.url },
+    },
+    prompt,
+    videoModel: model,
+    videoTaskId: result.id || null,
+    videoResults: appended,
+    videoPrimaryIndex: nextPrimaryIndex,
+    videoUrl: primary.url,
+    videoThumbnailUrl: primary.thumbnailUrl || null,
+    videoPrompt: prompt,
+    videoDurationSeconds: durationSeconds,
+    videoDuration: (data as any)?.videoDuration || durationSeconds,
+    videoPostId: (data as any)?.videoPostId || null,
+    videoTokenId: (data as any)?.videoTokenId || null,
+  })
+
+  appendLog(id, `[${nowLabel()}] Veo3 视频生成完成，已写入当前节点。`)
+}
+
 async function runGenericTask(ctx: RunnerContext) {
   const {
     id,
@@ -960,16 +1277,27 @@ async function runGenericTask(ctx: RunnerContext) {
     isImageTask,
     kind,
     prompt,
+    state,
   } = ctx
 
   try {
     const selectedModel = taskKind === 'text_to_image'
-      ? (data.imageModel as string) || 'qwen-image-plus'
-      : (data.model as string) || 'gemini-2.5-flash'
+      ? (data.imageModel as string) || DEFAULT_IMAGE_MODEL
+      : (data.geminiModel as string) || (data.model as string) || 'gemini-2.5-flash'
     const modelLower = selectedModel.toLowerCase()
 
-    const vendor = taskKind === 'text_to_image'
-      ? (modelLower.includes('gemini') ? 'gemini' : 'qwen')
+    const explicitVendor = taskKind === 'text_to_image'
+      ? ((data as any)?.imageModelVendor as string | undefined)
+      : ((data as any)?.modelVendor as string | undefined)
+    const vendor = explicitVendor || (taskKind === 'text_to_image'
+      ? modelLower.includes('gemini')
+        ? 'gemini'
+        : modelLower.includes('gpt') ||
+            modelLower.includes('openai') ||
+            modelLower.includes('dall') ||
+            modelLower.includes('o3-')
+          ? 'openai'
+          : 'qwen'
       : isAnthropicModel(selectedModel) ||
         modelLower.includes('claude') ||
         modelLower.includes('glm')
@@ -979,7 +1307,23 @@ async function runGenericTask(ctx: RunnerContext) {
           modelLower.includes('o3-') ||
           modelLower.includes('codex')
           ? 'openai'
-          : 'gemini'
+          : 'gemini')
+    const referenceImages = isImageTask ? collectReferenceImages(state, id) : []
+    const wantsImageEdit = isImageTask && referenceImages.length > 0
+    if (wantsImageEdit && !isImageEditModel(selectedModel)) {
+      const msg = '当前模型不支持图片编辑，请切换到支持图片编辑的模型（如 Nano Banana 系列）'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      ctx.endRunToken(id)
+      return
+    }
+    const effectiveTaskKind: TaskKind = wantsImageEdit ? 'image_edit' : taskKind
+    const aspectRatio =
+      typeof (data as any)?.aspect === 'string' && (data as any)?.aspect.trim()
+        ? (data as any).aspect.trim()
+        : 'auto'
+
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
@@ -1002,19 +1346,26 @@ async function runGenericTask(ctx: RunnerContext) {
             : vendor === 'openai'
               ? 'OpenAI'
               : 'Gemini'
-      const modelType = taskKind === 'text_to_image' ? '图像' : '文案'
+      const modelType =
+        effectiveTaskKind === 'image_edit'
+          ? '图像编辑'
+          : effectiveTaskKind === 'text_to_image'
+            ? '图像'
+            : '文案'
       appendLog(
         id,
         `[${nowLabel()}] 调用${vendorName} ${modelType}模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
       )
 
       const res = await runTaskByVendor(vendor, {
-        kind: taskKind,
+        kind: effectiveTaskKind,
         prompt,
         extras: {
           nodeKind: kind,
           nodeId: id,
           modelKey: selectedModel,
+          ...(isImageTask ? { aspectRatio } : {}),
+          ...(wantsImageEdit ? { referenceImages } : {}),
         },
       })
 
@@ -1066,10 +1417,12 @@ async function runGenericTask(ctx: RunnerContext) {
     if (isImageTask && allImageAssets.length) {
       const existing = (data.imageResults as { url: string }[] | undefined) || []
       const merged = [...existing, ...allImageAssets]
+      const newPrimaryIndex = existing.length
       patchExtra = {
         ...patchExtra,
         imageUrl: firstImage!.url,
         imageResults: merged,
+        imagePrimaryIndex: newPrimaryIndex,
       }
     }
     if (allTexts.length) {

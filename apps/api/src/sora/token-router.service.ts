@@ -57,11 +57,13 @@ export class TokenRouterService {
         update: {
           status: 'pending',
           updatedAt: new Date(),
+          userId,
         },
         create: {
           taskId,
           provider,
           status: 'pending',
+          userId,
         },
       })
 
@@ -184,7 +186,8 @@ export class TokenRouterService {
     taskId: string,
     provider: string,
     status: string,
-    data?: any
+    data?: any,
+    userId?: string,
   ): Promise<void> {
     try {
       const updateData: any = {
@@ -194,6 +197,10 @@ export class TokenRouterService {
 
       if (data) {
         updateData.data = data
+      }
+
+       if (userId) {
+        updateData.userId = userId
       }
 
       if (status === 'success' || status === 'error' || status === 'canceled') {
@@ -213,6 +220,7 @@ export class TokenRouterService {
           provider,
           status,
           data,
+          userId,
         },
       })
 

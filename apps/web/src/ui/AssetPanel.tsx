@@ -1,5 +1,5 @@
 import React from 'react'
-import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center, Modal, TextInput, useMantineColorScheme } from '@mantine/core'
+import { Paper, Title, SimpleGrid, Card, Image, Text, Button, Group, Stack, Transition, Tabs, Select, ActionIcon, Tooltip, Loader, Center, Modal, TextInput, useMantineColorScheme, Badge } from '@mantine/core'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
@@ -26,14 +26,24 @@ import {
   finalizeSoraCharacter,
   setSoraCameoPublic,
   uploadSoraProfileAsset,
+  listSoraVideoHistory,
   type ServerAssetDto,
   type ModelProviderDto,
   type ModelTokenDto,
+  type VideoHistoryRecord,
 } from '../api/server'
 import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload, IconUserPlus } from '@tabler/icons-react'
 import { VideoTrimModal } from './VideoTrimModal'
 
 const MAX_CHARACTER_TRIM_SECONDS = 3
+const SORA_HISTORY_PAGE_SIZE = 12
+
+function historyStatusColor(status: string | undefined) {
+  const normalized = (status || '').toLowerCase()
+  if (normalized === 'success' || normalized === 'succeeded') return 'teal'
+  if (normalized === 'running' || normalized === 'pending') return 'yellow'
+  return 'red'
+}
 
 function PlaceholderImage({ label }: { label: string }) {
   const { colorScheme } = useMantineColorScheme()
@@ -57,7 +67,7 @@ export default function AssetPanel(): JSX.Element | null {
   const characterCreatorRequest = useUIStore(s => s.characterCreatorRequest)
   const clearCharacterCreatorRequest = useUIStore(s => s.clearCharacterCreatorRequest)
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
-  const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-published' | 'sora-characters'>('local')
+  const [tab, setTab] = React.useState<'local' | 'sora' | 'sora-published' | 'sora-characters' | 'sora-history'>('local')
   const [soraProviders, setSoraProviders] = React.useState<ModelProviderDto[]>([])
   const [soraTokens, setSoraTokens] = React.useState<ModelTokenDto[]>([])
   const [selectedTokenId, setSelectedTokenId] = React.useState<string | null>(null)
@@ -105,6 +115,37 @@ export default function AssetPanel(): JSX.Element | null {
   const [pickCharError, setPickCharError] = React.useState<string | null>(null)
   const [pickCharSelected, setPickCharSelected] = React.useState<{ url: string; title: string } | null>(null)
   const [publishingId, setPublishingId] = React.useState<string | null>(null)
+  const [soraHistory, setSoraHistory] = React.useState<VideoHistoryRecord[]>([])
+  const [soraHistoryLoading, setSoraHistoryLoading] = React.useState(false)
+  const [soraHistoryTotal, setSoraHistoryTotal] = React.useState(0)
+const [soraHistoryOffset, setSoraHistoryOffset] = React.useState(0)
+const [soraHistoryError, setSoraHistoryError] = React.useState<string | null>(null)
+const fetchSoraHistory = React.useCallback(
+  async (reset: boolean) => {
+      setSoraHistoryLoading(true)
+      if (reset) {
+        setSoraHistoryError(null)
+      }
+      try {
+        const targetOffset = reset ? 0 : soraHistoryOffset
+        const data = await listSoraVideoHistory({ limit: SORA_HISTORY_PAGE_SIZE, offset: targetOffset })
+        setSoraHistory((prev) => (reset ? data.records : [...prev, ...data.records]))
+        setSoraHistoryTotal(typeof data.total === 'number' ? data.total : 0)
+        setSoraHistoryOffset(targetOffset + (data.records?.length || 0))
+      } catch (err: any) {
+        setSoraHistoryError(err?.message || '加载失败')
+      } finally {
+        setSoraHistoryLoading(false)
+      }
+  },
+  [soraHistoryOffset],
+)
+const historyHasMore = soraHistory.length < soraHistoryTotal
+const handleLoadMoreHistory = React.useCallback(() => {
+  if (historyHasMore && !soraHistoryLoading) {
+    fetchSoraHistory(false).catch(() => {})
+  }
+}, [historyHasMore, soraHistoryLoading, fetchSoraHistory])
   const createCharThumbs = React.useMemo(() => {
     if (!createCharVideoUrl || !createCharDuration) return []
     const usedDuration = Math.min(createCharDuration, MAX_CHARACTER_TRIM_SECONDS)
@@ -117,12 +158,12 @@ export default function AssetPanel(): JSX.Element | null {
     loader.then(setAssets).catch(() => setAssets([]))
   }, [mounted])
 
-  React.useEffect(() => {
-    if (!mounted || (tab !== 'sora' && tab !== 'sora-published' && tab !== 'sora-characters')) return
-    if (tab === 'sora') setDraftLoading(true)
-    if (tab === 'sora-published') setPublishedLoading(true)
-    if (tab === 'sora-characters') setCharLoading(true)
-    listModelProviders()
+React.useEffect(() => {
+  if (!mounted || (tab !== 'sora' && tab !== 'sora-published' && tab !== 'sora-characters')) return
+  if (tab === 'sora') setDraftLoading(true)
+  if (tab === 'sora-published') setPublishedLoading(true)
+  if (tab === 'sora-characters') setCharLoading(true)
+  listModelProviders()
       .then((ps) => {
         const soras = ps.filter((p) => p.vendor === 'sora')
         setSoraProviders(soras)
@@ -234,7 +275,15 @@ export default function AssetPanel(): JSX.Element | null {
         if (tab === 'sora-published') setPublishedLoading(false)
         if (tab === 'sora-characters') setCharLoading(false)
       })
-  }, [mounted, tab, selectedTokenId])
+}, [mounted, tab, selectedTokenId])
+
+React.useEffect(() => {
+  if (!mounted || tab !== 'sora-history') return
+  setSoraHistory([])
+  setSoraHistoryOffset(0)
+  setSoraHistoryTotal(0)
+  fetchSoraHistory(true).catch(() => {})
+}, [mounted, tab, fetchSoraHistory])
 
   React.useEffect(() => {
     if (!characterCreatorRequest || !mounted) return
@@ -798,6 +847,7 @@ export default function AssetPanel(): JSX.Element | null {
                   <Tabs.Tab value="sora">Sora 草稿</Tabs.Tab>
                   <Tabs.Tab value="sora-published">已发布SORA</Tabs.Tab>
                   <Tabs.Tab value="sora-characters">Sora 角色</Tabs.Tab>
+                  <Tabs.Tab value="sora-history">生成记录</Tabs.Tab>
                 </Tabs.List>
                 <Tabs.Panel value="local" pt="xs">
                   <div>
@@ -1426,6 +1476,97 @@ export default function AssetPanel(): JSX.Element | null {
                         </Group>
                       )}
                     </div>
+                  </Stack>
+                </Tabs.Panel>
+                <Tabs.Panel value="sora-history" pt="xs">
+                  <Stack gap="sm">
+                    <Text size="sm" c="dimmed">
+                      展示最近在本地记录的 Sora 视频任务（包含通过代理创建的任务），便于复用或回溯。
+                    </Text>
+                    {soraHistoryError && (
+                      <Text size="xs" c="red">
+                        {soraHistoryError}
+                      </Text>
+                    )}
+                    {soraHistoryLoading && soraHistory.length === 0 && (
+                      <Center py="sm">
+                        <Group gap="xs">
+                          <Loader size="xs" />
+                          <Text size="xs" c="dimmed">正在加载视频记录…</Text>
+                        </Group>
+                      </Center>
+                    )}
+                    {!soraHistoryLoading && soraHistory.length === 0 && !soraHistoryError && (
+                      <Text size="xs" c="dimmed">暂无生成记录。</Text>
+                    )}
+                    {soraHistory.length > 0 && (
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                        {soraHistory.map((record) => (
+                          <Card key={record.id} withBorder radius="md" shadow="sm" padding="sm">
+                            {record.videoUrl ? (
+                              <video
+                                src={record.videoUrl}
+                                muted
+                                controls
+                                style={{ width: '100%', borderRadius: 8, background: '#000' }}
+                              />
+                            ) : (
+                              <PlaceholderImage label="Sora 视频" />
+                            )}
+                            <Stack gap={4} mt="xs">
+                              <Text size="sm" fw={500} lineClamp={2}>
+                                {record.prompt || '未填写提示词'}
+                              </Text>
+                              <Group gap={6}>
+                                <Badge size="xs" color={historyStatusColor(record.status)}>
+                                  {record.status}
+                                </Badge>
+                                <Text size="xs" c="dimmed">
+                                  {new Date(record.createdAt).toLocaleString()}
+                                </Text>
+                              </Group>
+                              <Group gap="xs">
+                                {record.videoUrl && (
+                                  <Button
+                                    size="xs"
+                                    variant="light"
+                                    leftSection={<IconExternalLink size={14} />}
+                                    onClick={() => window.open(record.videoUrl!, '_blank', 'noopener,noreferrer')}
+                                  >
+                                    查看
+                                  </Button>
+                                )}
+                                {record.prompt && (
+                                  <Button
+                                    size="xs"
+                                    variant="subtle"
+                                    leftSection={<IconRepeat size={14} />}
+                                    onClick={() => {
+                                      navigator.clipboard?.writeText(record.prompt || '').then(
+                                        () => toast('提示词已复制', 'success'),
+                                        () => toast('复制失败', 'error'),
+                                      )
+                                    }}
+                                  >
+                                    复制提示词
+                                  </Button>
+                                )}
+                              </Group>
+                            </Stack>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    )}
+                    {historyHasMore && (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        onClick={() => handleLoadMoreHistory()}
+                        disabled={soraHistoryLoading}
+                      >
+                        {soraHistoryLoading ? '加载中…' : '加载更多'}
+                      </Button>
+                    )}
                   </Stack>
                 </Tabs.Panel>
               </Tabs>

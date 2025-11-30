@@ -102,4 +102,49 @@ export class ModelController {
       }
     }
   }
+
+  @Get('proxy/:vendor')
+  getProxyConfig(@Param('vendor') vendor: string, @Req() req: any) {
+    return this.service.getProxyConfig(String(req.user.sub), vendor)
+  }
+
+  @Post('proxy/:vendor')
+  upsertProxyConfig(
+    @Param('vendor') vendor: string,
+    @Body()
+    body: {
+      baseUrl?: string
+      apiKey?: string | null
+      enabled?: boolean
+      enabledVendors?: string[]
+      name?: string
+    },
+    @Req() req: any,
+  ) {
+    return this.service.upsertProxyConfig(String(req.user.sub), {
+      vendor,
+      baseUrl: body.baseUrl,
+      apiKey: body.apiKey,
+      enabled: body.enabled,
+      enabledVendors: body.enabledVendors,
+      name: body.name,
+    })
+  }
+
+  @Get('proxy/:vendor/credits')
+  getProxyCredits(@Param('vendor') vendor: string, @Req() req: any) {
+    return this.service.fetchProxyCredits(String(req.user.sub), vendor)
+  }
+
+  @Get('proxy/:vendor/model-status')
+  getProxyModelStatus(
+    @Param('vendor') vendor: string,
+    @Query('model') model: string,
+    @Req() req: any,
+  ) {
+    if (!model || !model.trim()) {
+      throw new Error('model is required')
+    }
+    return this.service.fetchProxyModelStatus(String(req.user.sub), vendor, model)
+  }
 }

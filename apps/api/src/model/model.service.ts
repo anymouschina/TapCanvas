@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common'
-import type { ModelProvider, ModelToken } from '@prisma/client'
+import type { ModelProvider, ModelToken, ProfileKind } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import axios, { AxiosInstance } from 'axios'
 import { PrismaService } from 'nestjs-prisma'
 
@@ -135,6 +136,236 @@ export class ModelService {
         where: { id },
       })
     })
+  }
+
+  async getProxyConfig(userId: string, vendor: string) {
+    const record = await this.prisma.proxyProvider.findUnique({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor,
+        },
+      },
+    })
+    if (!record) return null
+    return {
+      id: record.id,
+      name: record.name,
+      vendor: record.vendor,
+      baseUrl: record.baseUrl || '',
+      enabled: record.enabled,
+      enabledVendors: record.enabledVendors || [],
+      hasApiKey: !!record.apiKey,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }
+  }
+
+  private async resolveProxyRecord(userId: string, vendor: string) {
+    return this.prisma.proxyProvider.findUnique({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor: vendor.trim().toLowerCase(),
+        },
+      },
+    })
+  }
+
+  async fetchProxyCredits(userId: string, vendor: string) {
+    const record = await this.resolveProxyRecord(userId, vendor)
+    if (!record || !record.enabled) {
+      throw new Error('未启用 grsai 代理，无法获取积分')
+    }
+    const apiKey = record.apiKey?.trim()
+    const baseUrl = record.baseUrl?.trim()
+    if (!apiKey || !baseUrl) {
+      throw new Error('grsai 代理未配置 Host 或 API Key')
+    }
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/client/common/getCredits`
+    const resp = await this.http.get(endpoint, {
+      params: { apikey: apiKey },
+      timeout: 15000,
+    })
+    if (resp.data?.code !== 0) {
+      const msg = resp.data?.msg || resp.data?.message || '获取积分失败'
+      throw new Error(msg)
+    }
+    const credits = Number(resp.data?.data?.credits ?? 0)
+    return { credits }
+  }
+
+  async fetchProxyModelStatus(userId: string, vendor: string, model: string) {
+    const record = await this.resolveProxyRecord(userId, vendor)
+    if (!record || !record.enabled) {
+      throw new Error('未启用 grsai 代理，无法获取模型状态')
+    }
+    const baseUrl = record.baseUrl?.trim()
+    if (!baseUrl) {
+      throw new Error('grsai 代理未配置 Host')
+    }
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/client/common/getModelStatus`
+    const resp = await this.http.get(endpoint, {
+      params: { model },
+      timeout: 15000,
+    })
+    if (resp.data?.code !== 0) {
+      const msg = resp.data?.msg || resp.data?.message || '获取模型状态失败'
+      throw new Error(msg)
+    }
+    const payload = resp.data?.data || {}
+    return {
+      status: Boolean(payload.status),
+      error: typeof payload.error === 'string' ? payload.error : '',
+    }
+  }
+
+  async upsertProxyConfig(
+    userId: string,
+    input: {
+      vendor: string
+      name?: string
+      baseUrl?: string
+      apiKey?: string | null
+      enabled?: boolean
+      enabledVendors?: string[]
+    },
+  ) {
+    const vendor = input.vendor.trim().toLowerCase()
+    const name = input.name?.trim() || vendor.toUpperCase()
+    const baseUrl = input.baseUrl?.trim() || null
+    const enabled = input.enabled ?? true
+    const enabledVendors = Array.isArray(input.enabledVendors) ? Array.from(new Set(input.enabledVendors)) : []
+
+    const data: any = {
+      name,
+      baseUrl,
+      enabled,
+      enabledVendors,
+    }
+
+    if (typeof input.apiKey === 'string') {
+      const trimmed = input.apiKey.trim()
+      data.apiKey = trimmed.length ? trimmed : null
+    }
+
+    const record = await this.prisma.proxyProvider.upsert({
+      where: {
+        ownerId_vendor: {
+          ownerId: userId,
+          vendor,
+        },
+      },
+      update: data,
+      create: {
+        ownerId: userId,
+        vendor,
+        ...data,
+      },
+    })
+
+    return {
+      id: record.id,
+      name: record.name,
+      vendor: record.vendor,
+      baseUrl: record.baseUrl || '',
+      enabled: record.enabled,
+      enabledVendors: record.enabledVendors || [],
+      hasApiKey: !!record.apiKey,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }
+  }
+
+  listProfiles(
+    userId: string,
+    filter?: { providerId?: string; kinds?: ProfileKind[] }
+  ) {
+    const kindFilter = filter?.kinds && filter.kinds.length > 0 ? { kind: { in: filter.kinds } } : {}
+    return this.prisma.modelProfile.findMany({
+      where: {
+        ownerId: userId,
+        ...(filter?.providerId ? { providerId: filter.providerId } : {}),
+        ...kindFilter,
+      },
+      include: {
+        provider: {
+          select: {
+            id: true,
+            name: true,
+            vendor: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+  }
+
+  async upsertProfile(
+    input: {
+      id?: string
+      providerId: string
+      name: string
+      kind: ProfileKind
+      modelKey: string
+      settings?: Record<string, any> | null
+    },
+    userId: string,
+  ) {
+    const provider = await this.prisma.modelProvider.findFirst({
+      where: { id: input.providerId, ownerId: userId },
+    })
+    if (!provider) {
+      throw new Error('provider not found or unauthorized')
+    }
+
+    const normalizeSettings = (value?: Record<string, any> | null) => {
+      if (value === undefined) return undefined
+      if (value === null) return Prisma.JsonNull
+      return value as Prisma.JsonValue
+    }
+
+    const payload = {
+      name: input.name.trim() || input.modelKey.trim(),
+      modelKey: input.modelKey.trim(),
+      kind: input.kind,
+      settings: normalizeSettings(input.settings) ?? Prisma.JsonNull,
+    }
+
+    if (input.id) {
+      const existing = await this.prisma.modelProfile.findFirst({
+        where: { id: input.id, ownerId: userId },
+      })
+      if (!existing) {
+        throw new Error('profile not found or unauthorized')
+      }
+      return this.prisma.modelProfile.update({
+        where: { id: input.id },
+        data: payload,
+      })
+    }
+
+    return this.prisma.modelProfile.create({
+      data: {
+        ownerId: userId,
+        providerId: provider.id,
+        name: payload.name,
+        modelKey: payload.modelKey,
+        kind: payload.kind,
+        settings: payload.settings,
+      },
+    })
+  }
+
+  async deleteProfile(id: string, userId: string) {
+    const existing = await this.prisma.modelProfile.findFirst({
+      where: { id, ownerId: userId },
+    })
+    if (!existing) {
+      throw new Error('profile not found or unauthorized')
+    }
+    await this.prisma.modelProfile.delete({ where: { id } })
+    return { success: true }
   }
 
   listEndpoints(providerId: string, userId: string) {
