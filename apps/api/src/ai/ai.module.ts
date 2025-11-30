@@ -9,6 +9,7 @@ import { WebExecutionEngine } from './execution/web-execution-engine'
 import { ToolEventsService } from './tool-events.service'
 import { CapabilityRegistryService } from './capabilities'
 import { CanvasCapabilityRegistry, canvasCapabilityRegistry } from './core/canvas-registry'
+import { ProxyService } from '../proxy/proxy.service'
 
 @Module({
   controllers: [AiController],
@@ -16,6 +17,7 @@ import { CanvasCapabilityRegistry, canvasCapabilityRegistry } from './core/canva
     // 原有服务
     AiService,
     ToolEventsService,
+    ProxyService,
 
     // 智能系统服务
     IntelligentAiService,

@@ -7,6 +7,9 @@ type CharacterCreatorPayload = {
   tags?: string[]
   soraTokenId?: string | null
   clipRange?: { start: number; end: number }
+  videoUrl?: string | null
+  videoTitle?: string | null
+  videoTokenId?: string | null
 }
 
 type UIState = {

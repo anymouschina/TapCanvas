@@ -1387,11 +1387,11 @@ async function runGenericTask(ctx: RunnerContext) {
         allTexts.push(textOut.trim())
       }
 
-      const imageAssets = (res.assets || []).filter(
-        (a: any) => a.type === 'image',
-      )
+      const imageAssets = (res.assets || [])
+        .filter((a: any) => a?.type === 'image' && typeof a.url === 'string' && a.url.trim().length > 0)
+        .map((a: any) => ({ url: a.url }))
       if (imageAssets.length) {
-        allImageAssets.push(...imageAssets.map((a: any) => ({ url: a.url })))
+        allImageAssets.push(...imageAssets)
       }
 
       if (isCanceled(id)) {

@@ -150,7 +150,8 @@ export class CanvasService {
 
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
     const { remixFromNodeId: configRemixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
-    const data: Record<string, any> = { ...baseData, ...restConfig }
+    const mergedConfig: Record<string, any> = { ...baseData, ...restConfig }
+    const data = CanvasService.ensurePromptFields(mergedConfig)
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
       ? params.remixFromNodeId.trim()
@@ -204,27 +205,31 @@ export class CanvasService {
         appendLog?.(params.nodeId, `[${nowLabel()}] 重命名为「${params.label}」`)
       }
 
-      if (params.config) {
-        updateNodeData(params.nodeId, params.config)
+      const normalizedConfig = params.config
+        ? CanvasService.ensurePromptFields({ ...params.config })
+        : null
+
+      if (normalizedConfig) {
+        updateNodeData(params.nodeId, normalizedConfig)
         const logs: string[] = []
-        if (typeof params.config.prompt === 'string') {
-          logs.push(`prompt 写入（${params.config.prompt.length} 字符）`)
-          const p = params.config.prompt
+        if (typeof normalizedConfig.prompt === 'string') {
+          logs.push(`prompt 写入（${normalizedConfig.prompt.length} 字符）`)
+          const p = normalizedConfig.prompt
           const hasDialogue = /["“”'’‘:：]/.test(p)
           const hasSound = /\b(sfx|sound|whisper|wind|rain|footstep|thud|voice|dialog|dialogue)\b/i.test(p)
           if (!hasDialogue && !hasSound) {
             logs.push('⚠ 未检测到对白/音效描述')
           }
         }
-        if (typeof params.config.negativePrompt === 'string') {
-          logs.push(`negativePrompt 写入（${params.config.negativePrompt.length} 字符）`)
+        if (typeof normalizedConfig.negativePrompt === 'string') {
+          logs.push(`negativePrompt 写入（${normalizedConfig.negativePrompt.length} 字符）`)
         }
-        if (params.config.keywords) {
+        if (normalizedConfig.keywords) {
           const kw =
-            Array.isArray(params.config.keywords)
-              ? params.config.keywords
-              : typeof params.config.keywords === 'string'
-                ? params.config.keywords.split(',').map((s) => s.trim()).filter(Boolean)
+            Array.isArray(normalizedConfig.keywords)
+              ? normalizedConfig.keywords
+              : typeof normalizedConfig.keywords === 'string'
+                ? normalizedConfig.keywords.split(',').map((s) => s.trim()).filter(Boolean)
                 : []
           if (kw.length) {
             logs.push(`keywords 写入（${kw.length} 项）`)
@@ -658,6 +663,26 @@ export class CanvasService {
       x: (index % cols) * spacing + 100,
       y: Math.floor(index / cols) * spacing + 100
     }
+  }
+
+  private static ensurePromptFields<T extends Record<string, any>>(data: T): T {
+    if (!data || typeof data !== 'object') return data
+    const prompt =
+      typeof (data as any).prompt === 'string' && (data as any).prompt.trim()
+        ? (data as any).prompt
+        : undefined
+    const videoPrompt =
+      typeof (data as any).videoPrompt === 'string' && (data as any).videoPrompt.trim()
+        ? (data as any).videoPrompt
+        : undefined
+
+    if (!prompt && videoPrompt) {
+      (data as any).prompt = videoPrompt
+    } else if (prompt && !videoPrompt) {
+      (data as any).videoPrompt = prompt
+    }
+
+    return data
   }
 }
 

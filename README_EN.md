@@ -7,6 +7,14 @@ source docs : [deepwiki](https://deepwiki.com/anymouschina/TapCanvas)
 
 [📘 Usage Guide (Feishu Wiki)](https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b)
 
+### ✨ Latest Highlights
+
+- **New nocturne design system**: Mantine + React Flow UI refresh with a slimmer top info bar, dockable right panel, Storyboard/assets drawers, and focus/group modes so massive flows stay readable without reloading.
+- **Nano Banana triple-stack**: Image nodes now ship with Nano Banana, Fast, and Pro presets. Drag prompts/reference art into a single form to get high-fidelity text-to-image or image-to-image results via domestic-friendly endpoints.
+- **Sora 2 + Veo 3.1 dual engines**: Video nodes can switch between Sora 2 and Veo 3.1 Fast/Pro, reuse Storyboard shots, and configure first/last/reference frames for consistent storytelling.
+- **Image-to-image pipelines**: Every generated image, uploaded asset, or extracted frame can feed the next node, enabling text→image→image→video loops with prompt reverse-engineering and batch refinements.
+- **GRSAI relay integration**: A built-in grsai proxy panel accepts one Host + API Key, shows live credit/model health, and routes Nano Banana, Sora 2, Veo 3, Runway, etc., through overseas or domestic endpoints seamlessly.
+
 ## 📝 Introduction
 
 The TapCanvas project is specially optimized for Sora 2 with dedicated canvas capabilities, supporting direct Remix chain calls and multi-account sharing, enabling users to perfectly preserve their creative footprints. But our vision extends far beyond this:
@@ -73,8 +81,19 @@ Example storyboard:
 | ------------------------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
 | ![Storyboard Overview](assets/2025-11-24-storyboard.jpg) | ![Storyboard Drawer](assets/2025-11-24-storyboard-1.jpg) | ![Storyboard Result](assets/2025-11-24-storyboard-2.pic.jpg) |
 
+### 🔁 Image-to-Image & Frame References
+
+- **Reference uploads & reverse prompts**: Image nodes expose `imageUpload`, so you can drop local art, Sora frame grabs, or assets straight into Nano Banana/Qwen/DALL·E calls. The Reverse Prompt button converts any output into a reusable English prompt for the next iteration.
+- **Multi-frame handoff to video**: Any image node can feed directly into Sora 2 or Veo 3.1 nodes, forming text → image → image (img2img) → video chains. Veo nodes additionally allow first frame, last frame, and up to several reference stills to lock composition and characters per shot.
+- **Asset circulation**: Templates, asset cards, and AI assistant responses can be dragged onto the canvas to spawn new nodes with those references attached, making cross-project img2img reproductions effortless.
+
 ## 📅 Changelog
 
+- **2025-11-29**: README refreshed to highlight the nocturne redesign, Nano Banana trio, Sora 2 + Veo 3.1 support, the img2img workflow, and full grsai proxy integration.
+  - Added a highlight banner plus canvas/AI sections describing the latest UI, Storyboard reuse, and proxy dashboard.
+  - Expanded the model mapping table with Nano Banana tiers and Veo 3.1 Fast/Pro, clarifying reference-frame capabilities.
+  - Documented the img2img pipeline (reference uploads, frame extraction, asset drag-and-drop).
+  - Added a grsai proxy subsection covering Host/API Key setup, credit display, and unified routing for Sora/Veo/Nano Banana.
 - **2025-11-28**: Added automatic “type-sequence” naming for task nodes and exposed a Guest Mode entry point. Whenever you create a node via the canvas panel, context menu, assets/templates panel, or the AI assistant, the label now defaults to something like `Image-1`, `Video-2`, etc., incrementing per kind so both humans and LLMs can identify nodes instantly. Templates/assets keep their original names by passing `autoLabel: false`. Meanwhile, unregistered users can tap **Guest Mode** on the login gate to try the canvas with all data stored locally in the browser—perfect for demos and quick tests.
 - **2025-11-27**: Shipped Reverse Prompt extraction and GPT-only image uploads for the Dark Assistant, plus fresh screenshots.
   - Every task node now shows a “Reverse Prompt” button on the image card. We send the current image to GPT, decode a clean English-only prompt, and write the result back automatically. UI preview: ![Reverse Prompt UI](assets/2025-11-27.pic.jpg)
@@ -109,8 +128,8 @@ Different AI models support different node types. Please configure them correctl
 
 | Node Type                 | Supported Models                                                                                                                                                                  | Function Description                                                      |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **🎬 Video Node**   | **Sora 2**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion           | Image-to-Video, Text-to-Video, Video Composition, Animation Creation      |
-| **🖼️ Image Node** | **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | Text-to-Image, Image Generation, Multiple Resolutions, Style Transfer     |
+| **🎬 Video Node**   | **Sora 2**, **Veo 3.1 Pro/Fast**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | Image-to-Video, Text-to-Video, Reference-frame transitions, Composition, Animation |
+| **🖼️ Image Node** | **Nano Banana / Fast / Pro**, **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | Text-to-Image, Image-to-Image, Multi-resolution generation, Style Transfer |
 | **📝 Text Node**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                  | Text Generation, Prompt Optimization, Smart Suggestions, Content Creation |
 
 ### Configuration Steps
@@ -131,14 +150,14 @@ Different AI models support different node types. Please configure them correctl
 **Beginner Recommended Setup**:
 
 - 📝 **Text**: Gemini 2.5 Flash (Cost-effective)
-- 🖼️ **Image**: Qwen Image Plus or FLUX.1 Pro (High quality)
-- 🎬 **Video**: Sora 2 (Most powerful)
+- 🖼️ **Image**: Nano Banana Fast (via grsai) or Qwen Image Plus for balanced txt2img + img2img
+- 🎬 **Video**: Sora 2 (enable grsai proxy for more reliable routing)
 
 **Professional Setup**:
 
 - 📝 **Text**: Gemini 2.5 Pro or Claude 3.5 Sonnet
-- 🖼️ **Image**: DALL-E 3 or Midjourney V6
-- 🎬 **Video**: Runway Gen-3 or Pika Labs V2
+- 🖼️ **Image**: Nano Banana Pro, DALL·E 3, or Midjourney V6 for higher detail & consistency
+- 🎬 **Video**: Sora 2 + Veo 3.1 Pro (dual engines with reference frames), plus Runway Gen-3 for stylistic shots
 
 ## 🚀 Quick Start
 
@@ -346,6 +365,13 @@ In the application's "Model Configuration" panel, you can import the following c
 
 Due to unavoidable factors in the domestic network environment, some AI services may not be directly accessible. It is recommended to use Cloudflare Workers and Durable Objects to configure a proxy to solve this problem.
 
+### GRSAI Relay Integration
+
+- **One-time setup**: In the right sidebar → “Model Configuration” → “Proxy Service (grsai)”, fill `https://api.grsai.com` or `https://grsai.dakka.com.cn` and paste the grsai API Key. Any providers you toggle (Sora 2, Veo 3, Nano Banana, Runway, etc.) will route through this relay automatically.
+- **Live status widgets**: The header shows grsai credits and per-model health; both buttons can be refreshed manually before batch renders to ensure quota and connectivity.
+- **Veo/Sora extras**: The Veo panel ships with one-click host presets (overseas/domestic). Results flowing through grsai sync back to canvas nodes just like direct calls, so history and remix remain intact.
+- **Secure sharing**: Each grsai key can be marked shared or private, letting teams reuse the proxy stack without leaking tokens.
+
 ### Prerequisites
 
 - Register Cloudflare account: https://dash.cloudflare.com/
@@ -545,6 +571,7 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 ### 🎨 Visual Canvas Editor
 
 - **Node-Based Workflow**: Build complex AI generation processes through drag-and-drop nodes and connection lines
+- **Nocturne UI theme**: The refreshed Mantine + React Flow layout keeps the info bar and right panel in sync, while focus mode and group management keep large networks readable without context switches
 - **Intelligent Connections**: Automatic type matching ensures correct data flow between nodes
 - **Multiple Node Types**:
   - **Text Nodes**: Input prompts with AI optimization suggestions
@@ -557,30 +584,30 @@ With the above configuration, you can stably use TapCanvas's AI features in the 
 
 **Text Generation**:
 
-- **Gemini 2.5 Flash / Pro**: Advanced text generation models
-- **Intelligent Prompt Optimization**: Automatically optimize and improve input prompts
-- **Text Enhancement**: Support text continuation and style conversion
+- **Gemini 2.5 Flash / Pro**, **OpenAI GPT**, **Claude**, **DeepSeek**: power prompts, Storyboard breakdowns, and long-form dialog
+- **Intelligent Prompt Optimization**: Automatically polish prompts before pushing them to downstream nodes
+- **Text Enhancement**: Support continuation, style shifts, and bilingual drafts
 
 **Image Generation**:
 
-- **Qwen Image Plus**: High-performance image generation model
-- **Multi-Resolution Support**: 16:9, 1:1, 9:16 three common aspect ratios
-- **Batch Generation**: Support 1-5 images generated simultaneously
-- **Text-to-Image**: Generate high-quality images from text descriptions
+- **Nano Banana / Fast / Pro** via grsai for realistic characters and design mockups
+- **Qwen Image Plus, DALL·E, Stable Diffusion, FLUX** for anime, art, and commercial illustration styles
+- **Multi-Resolution Support**: 16:9, 1:1, 9:16 aspect ratios out of the box
+- **Batch + Img2Img**: Generate 1–5 images per run and feed reference art or extracted frames back for refinement
 
 **Video Generation**:
 
-- **Sora 2**: OpenAI's latest video generation model
-- **Character References**: Support @mention functionality for precise video character control
-- **Multiple Duration Options**: Support 10s, 15s video generation
-- **Image-to-Video**: Generate dynamic videos from static images
-- **Text-to-Video**: Directly generate video content from text
+- **Sora 2**: Latest OpenAI video model with Storyboard + character `@` mention support
+- **Veo 3.1 Pro/Fast**: Routed through grsai, supporting first/last/reference frames to lock continuity
+- **Runway / Pika / Luma / Kaiber**: Cover stylized as well as rapid prototyping scenarios
+- **Image-to-Video & Text-to-Video**: Seamlessly hand off images into video nodes or go straight from prompts
 
 **Model Management**:
 
-- **Flexible Configuration**: Support custom model endpoints and parameters
-- **Multiple Providers**: Integrate different AI model providers
-- **API Key Management**: Secure key storage and management
+- **Flexible Configuration**: Any provider can declare custom endpoints, headers, and defaults
+- **Multi-Provider Support**: Cover Sora, Veo, Gemini, Qwen, Nano Banana, Runway, and more
+- **API Key Management**: Secure key storage with optional team sharing and Guest Mode
+- **GRSAI Unified Proxy**: Configure Host + API Key once to route Sora/Veo/Nano Banana traffic while tracking credits & health from the header dashboard
 
 ### 🛠️ Advanced Editing Features
 
