@@ -40,4 +40,12 @@ export class TaskController {
   stream(@Req() req: any): ReturnType<TaskProgressService['stream']> {
     return this.progress.stream(String(req.user.sub))
   }
+
+  @Post('veo/result')
+  fetchVeoResult(@Body() body: { taskId: string }, @Req() req: any) {
+    if (!body || !body.taskId) {
+      throw new Error('taskId is required')
+    }
+    return this.service.fetchVeoResult(String(req.user.sub), body.taskId)
+  }
 }

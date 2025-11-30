@@ -85,6 +85,23 @@ const REMOTE_IMAGE_URL_REGEX = /^https?:\/\//i
 const HANDLE_HORIZONTAL_OFFSET = 36
 const HANDLE_VERTICAL_OFFSET = 36
 
+const MAX_VEO_REFERENCE_IMAGES = 3
+
+function normalizeVeoReferenceUrls(values: any): string[] {
+  if (!Array.isArray(values)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+    if (result.length >= MAX_VEO_REFERENCE_IMAGES) break
+  }
+  return result
+}
+
 type HandleLayout = { id: string; pos: Position }
 
 const computeHandleLayout = (handles: HandleLayout[]) => {
@@ -1229,6 +1246,16 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>(
     (data as any)?.orientation || 'landscape'
   )
+  const [veoReferenceImages, setVeoReferenceImages] = React.useState<string[]>(() =>
+    normalizeVeoReferenceUrls((data as any)?.veoReferenceImages),
+  )
+  const [veoFirstFrameUrl, setVeoFirstFrameUrl] = React.useState<string>(
+    ((data as any)?.veoFirstFrameUrl as string | undefined) || '',
+  )
+  const [veoLastFrameUrl, setVeoLastFrameUrl] = React.useState<string>(
+    ((data as any)?.veoLastFrameUrl as string | undefined) || '',
+  )
+  const [veoCustomImageInput, setVeoCustomImageInput] = React.useState('')
   const activeVideoDuration = React.useMemo(() => {
     const candidate = videoResults[videoPrimaryIndex]?.duration ?? videoDuration
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
@@ -1236,6 +1263,18 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
     return null
   }, [videoResults, videoPrimaryIndex, videoDuration])
+
+  React.useEffect(() => {
+    setVeoReferenceImages(normalizeVeoReferenceUrls((data as any)?.veoReferenceImages))
+  }, [(data as any)?.veoReferenceImages])
+
+  React.useEffect(() => {
+    setVeoFirstFrameUrl(((data as any)?.veoFirstFrameUrl as string | undefined) || '')
+  }, [(data as any)?.veoFirstFrameUrl])
+
+  React.useEffect(() => {
+    setVeoLastFrameUrl(((data as any)?.veoLastFrameUrl as string | undefined) || '')
+  }, [(data as any)?.veoLastFrameUrl])
 
   const handleGenerateCharacterCards = React.useCallback(async () => {
     if (!frameSamples.length) {
@@ -1508,6 +1547,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const existingModelVendor = (data as any)?.modelVendor
   const existingImageVendor = (data as any)?.imageModelVendor
   const existingVideoVendor = (data as any)?.videoModelVendor
+  const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
+  const trimmedFirstFrameUrl = veoFirstFrameUrl.trim()
+  const trimmedLastFrameUrl = veoLastFrameUrl.trim()
+  const firstFrameLocked = Boolean(trimmedFirstFrameUrl)
+  const veoReferenceLimitReached = veoReferenceImages.length >= MAX_VEO_REFERENCE_IMAGES
+  const [veoImageModalMode, setVeoImageModalMode] = React.useState<'first' | 'last' | 'reference' | null>(null)
 
   React.useEffect(() => {
     if (existingModelVendor || !modelKey) return
@@ -1573,6 +1618,60 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     updateNodeData(id, { prompt: sample.prompt })
     setPromptSamplesOpen(false)
   }, [id, updateNodeData])
+
+  const applyVeoReferenceImages = React.useCallback((next: string[]) => {
+    const normalized = normalizeVeoReferenceUrls(next)
+    setVeoReferenceImages(normalized)
+    updateNodeData(id, { veoReferenceImages: normalized })
+  }, [id, updateNodeData])
+
+  const handleReferenceToggle = React.useCallback((url: string) => {
+    if (firstFrameLocked) return
+    const exists = veoReferenceImages.includes(url)
+    if (!exists && veoReferenceLimitReached) return
+    const next = exists
+      ? veoReferenceImages.filter((item) => item !== url)
+      : [...veoReferenceImages, url]
+    applyVeoReferenceImages(next)
+  }, [applyVeoReferenceImages, firstFrameLocked, veoReferenceImages, veoReferenceLimitReached])
+
+  const handleAddCustomReferenceImage = React.useCallback(() => {
+    if (firstFrameLocked) return
+    const trimmed = veoCustomImageInput.trim()
+    if (!trimmed) return
+    applyVeoReferenceImages([...veoReferenceImages, trimmed])
+    setVeoCustomImageInput('')
+  }, [applyVeoReferenceImages, firstFrameLocked, veoCustomImageInput, veoReferenceImages])
+
+  const handleSetFirstFrameUrl = React.useCallback((value: string) => {
+    setVeoFirstFrameUrl(value)
+    const trimmed = value.trim()
+    updateNodeData(id, { veoFirstFrameUrl: trimmed || null })
+    if (!trimmed) {
+      setVeoLastFrameUrl('')
+      updateNodeData(id, { veoLastFrameUrl: null })
+      return
+    }
+    if (veoReferenceImages.length) {
+      applyVeoReferenceImages([])
+    }
+  }, [applyVeoReferenceImages, id, updateNodeData, veoReferenceImages.length])
+
+  const handleSetLastFrameUrl = React.useCallback((value: string) => {
+    if (!firstFrameLocked) return
+    setVeoLastFrameUrl(value)
+    const trimmed = value.trim()
+    updateNodeData(id, { veoLastFrameUrl: trimmed || null })
+  }, [firstFrameLocked, id, updateNodeData])
+
+  const handleRemoveReferenceImage = React.useCallback((url: string) => {
+    applyVeoReferenceImages(veoReferenceImages.filter((item) => item !== url))
+  }, [applyVeoReferenceImages, veoReferenceImages])
+
+  const openVeoModal = React.useCallback((mode: 'first' | 'last' | 'reference') => {
+    setVeoImageModalMode(mode)
+  }, [])
+  const closeVeoModal = React.useCallback(() => setVeoImageModalMode(null), [])
   const runNode = () => {
     let nextPrompt = (prompt || (data as any)?.prompt || '').trim()
     const patch: any = {}
@@ -2090,6 +2189,54 @@ const rewritePromptWithCharacters = React.useCallback(
     }
 
     return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
+  })
+
+  type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
+  const veoCandidateImages = useRFStore((s) => {
+    const seen = new Set<string>()
+    const results: VeoCandidateImage[] = []
+    s.nodes.forEach((node) => {
+      const sd: any = node.data || {}
+      const kind: string | undefined = sd.kind
+      const schema = getTaskNodeSchema(kind)
+      const features = new Set(schema.features)
+      const label = (sd.label as string | undefined) || node.id
+      const isImageProducer =
+        schema.category === 'image' ||
+        features.has('image') ||
+        features.has('imageResults')
+      const isVideoProducer =
+        schema.category === 'video' ||
+        schema.category === 'composer' ||
+        schema.category === 'storyboard' ||
+        features.has('videoResults')
+
+      const collect = (value?: string | null, sourceType: 'image' | 'video' = 'image') => {
+        if (typeof value !== 'string') return
+        const trimmed = value.trim()
+        if (!trimmed || seen.has(trimmed)) return
+        seen.add(trimmed)
+        results.push({ url: trimmed, label, sourceType })
+      }
+
+      if (isImageProducer) {
+        collect(sd.imageUrl, 'image')
+        const imgs = Array.isArray(sd.imageResults) ? sd.imageResults : []
+        imgs.forEach((img: any) => collect(img?.url, 'image'))
+      }
+
+      if (isVideoProducer) {
+        collect(sd.videoThumbnailUrl, 'video')
+        collect(sd.videoUrl, 'video')
+        const videos = Array.isArray(sd.videoResults) ? sd.videoResults : []
+        videos.forEach((video: any) => {
+          collect(video?.thumbnailUrl, 'video')
+          collect(video?.url, 'video')
+        })
+      }
+    })
+
+    return results.slice(0, 20)
   })
 
   React.useEffect(() => {
@@ -3340,6 +3487,142 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       )}
+      {isVideoNode && resolvedVideoVendor === 'veo' && (
+        <Paper radius="md" withBorder p="sm" style={{ marginTop: 8, width: 296 }}>
+          <Stack gap="xs">
+            <Group justify="space-between" gap={6}>
+              <Text size="sm" fw={500}>
+                Veo 图像控制
+              </Text>
+              <Badge size="xs" color="grape">
+                Veo3
+              </Badge>
+            </Group>
+            <TextInput
+              label="首帧图片 URL"
+              placeholder="https://example.com/first.png"
+              value={veoFirstFrameUrl}
+              onChange={(e) => handleSetFirstFrameUrl(e.currentTarget.value)}
+              description="设置后会优先使用该图像作为第一帧，且无法再选择参考图"
+              rightSection={
+                <Button size="compact-xs" variant="light" onClick={() => openVeoModal('first')}>
+                  选择
+                </Button>
+              }
+              rightSectionWidth={70}
+            />
+            {trimmedFirstFrameUrl && (
+              <Paper radius="md" withBorder p="xs">
+                <Group gap={8} align="flex-start">
+                  <div
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      border: `1px solid ${inlineDividerColor}`,
+                      background: mediaFallbackSurface,
+                    }}
+                  >
+                      <img src={trimmedFirstFrameUrl} alt="首帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                    <Group gap={4} style={{ flex: 1 }}>
+                      <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('first')}>
+                        更换
+                      </Button>
+                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleSetFirstFrameUrl('')}>
+                        清除
+                      </Button>
+                    </Group>
+                </Group>
+              </Paper>
+            )}
+            <TextInput
+              label="尾帧图片 URL"
+              placeholder="https://example.com/last.png"
+              value={veoLastFrameUrl}
+              onChange={(e) => handleSetLastFrameUrl(e.currentTarget.value)}
+              disabled={!firstFrameLocked}
+              rightSection={
+                <Button size="compact-xs" variant="light" onClick={() => openVeoModal('last')}>
+                  选择
+                </Button>
+              }
+              rightSectionWidth={70}
+            />
+            {trimmedLastFrameUrl && (
+              <Paper radius="md" withBorder p="xs">
+                <Group gap={8} align="flex-start">
+                  <div
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      border: `1px solid ${inlineDividerColor}`,
+                      background: mediaFallbackSurface,
+                    }}
+                  >
+                      <img src={trimmedLastFrameUrl} alt="尾帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                    <Group gap={4} style={{ flex: 1 }}>
+                      <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('last')}>
+                        更换
+                      </Button>
+                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleSetLastFrameUrl('')}>
+                        清除
+                      </Button>
+                    </Group>
+                </Group>
+              </Paper>
+            )}
+            <Group gap={6} align="center">
+              <Text size="xs" c="dimmed">
+                参考图片（最多 {MAX_VEO_REFERENCE_IMAGES} 张）
+              </Text>
+              <Badge size="xs" color="gray" variant="light">
+                {veoReferenceImages.length}/{MAX_VEO_REFERENCE_IMAGES}
+              </Badge>
+              <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('reference')}>
+                管理
+              </Button>
+            </Group>
+            {veoReferenceImages.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                未选择参考图。
+              </Text>
+            ) : (
+              <Group gap={6} wrap="wrap">
+                {veoReferenceImages.map((url) => (
+                  <Paper
+                    key={url}
+                    radius="md"
+                    p="xs"
+                    withBorder
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: 220 }}
+                  >
+                    <div
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        border: `1px solid ${inlineDividerColor}`,
+                        background: mediaFallbackSurface,
+                      }}
+                    >
+                      <img src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                    <ActionIcon size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
+                      <IconTrash size={12} />
+                    </ActionIcon>
+                  </Paper>
+                ))}
+              </Group>
+            )}
+          </Stack>
+        </Paper>
+      )}
             {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
       {status === 'running' && (
@@ -4402,6 +4685,166 @@ const rewritePromptWithCharacters = React.useCallback(
           </Group>
         </Stack>
       </Modal>
+      {veoImageModalMode && (
+        <Modal
+          opened={true}
+          onClose={closeVeoModal}
+          title={
+            veoImageModalMode === 'first'
+              ? '选择首帧图片'
+              : veoImageModalMode === 'last'
+                ? '选择尾帧图片'
+                : '管理参考图'
+          }
+          size="lg"
+          centered
+          withinPortal
+          zIndex={8200}
+        >
+          <Stack gap="sm">
+            {veoImageModalMode === 'reference' && (
+              <>
+                {firstFrameLocked && (
+                  <Text size="xs" c="red">
+                    已设置首帧时无法添加或选择参考图。请先清空首帧 URL。
+                  </Text>
+                )}
+                <Group gap="xs" align="flex-end">
+                  <TextInput
+                    label="添加参考图"
+                    placeholder="https://example.com/ref.png"
+                    value={veoCustomImageInput}
+                    onChange={(e) => setVeoCustomImageInput(e.currentTarget.value)}
+                    style={{ flex: 1 }}
+                    disabled={firstFrameLocked}
+                  />
+                  <Button
+                    size="xs"
+                    onClick={handleAddCustomReferenceImage}
+                    disabled={firstFrameLocked || !veoCustomImageInput.trim() || veoReferenceLimitReached}
+                  >
+                    添加
+                  </Button>
+                </Group>
+                {veoReferenceImages.length === 0 ? (
+                  <Text size="xs" c="dimmed">
+                    未选择参考图。
+                  </Text>
+                ) : (
+                  <Group gap={6} wrap="wrap">
+                    {veoReferenceImages.map((url) => (
+                      <Paper key={url} radius="md" p="xs" withBorder style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div
+                          style={{
+                            width: 48,
+                            height: 48,
+                            borderRadius: 6,
+                            overflow: 'hidden',
+                            border: `1px solid ${inlineDividerColor}`,
+                            background: mediaFallbackSurface,
+                          }}
+                        >
+                          <img src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        </div>
+                        <ActionIcon size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
+                          <IconTrash size={12} />
+                        </ActionIcon>
+                      </Paper>
+                    ))}
+                  </Group>
+                )}
+              </>
+            )}
+            {veoCandidateImages.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                暂无可用图片，试着连接图像节点。
+              </Text>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: 12,
+                }}
+              >
+                {veoCandidateImages.map((candidate) => {
+                  const isSelected = veoReferenceImages.includes(candidate.url)
+                  const isFirstFrame = firstFrameLocked && trimmedFirstFrameUrl === candidate.url
+                  const isLastFrame = firstFrameLocked && trimmedLastFrameUrl === candidate.url
+                  const isImageSource = candidate.sourceType === 'image'
+                  const borderColor = isFirstFrame || isLastFrame || isSelected ? color : inlineDividerColor
+                  return (
+                    <Paper key={`${candidate.url}-${candidate.label}`} radius="md" p="xs" withBorder style={{ borderColor }}>
+                      <div
+                        style={{
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                          marginBottom: 6,
+                          border: `1px solid ${inlineDividerColor}`,
+                          background: mediaFallbackSurface,
+                        }}
+                      >
+                        <img src={candidate.url} alt={candidate.label} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
+                      </div>
+                      <Text size="xs" c="dimmed" lineClamp={1}>
+                        {candidate.label}
+                      </Text>
+                      <Group gap={4} mt={6} wrap="wrap">
+                        {veoImageModalMode === 'first' && (
+                          <Button
+                            size="compact-xs"
+                            variant="subtle"
+                            disabled={!isImageSource}
+                            onClick={() => {
+                              handleSetFirstFrameUrl(candidate.url)
+                              closeVeoModal()
+                            }}
+                          >
+                            {isFirstFrame ? '已设首帧' : '设为首帧'}
+                          </Button>
+                        )}
+                        {veoImageModalMode === 'last' && (
+                          <Button
+                            size="compact-xs"
+                            variant="subtle"
+                            disabled={!firstFrameLocked || !isImageSource}
+                            onClick={() => {
+                              handleSetLastFrameUrl(candidate.url)
+                              closeVeoModal()
+                            }}
+                          >
+                            {isLastFrame ? '已设尾帧' : '设为尾帧'}
+                          </Button>
+                        )}
+                        {veoImageModalMode === 'reference' && (
+                          <Button
+                            size="compact-xs"
+                            variant={isSelected ? 'filled' : 'subtle'}
+                            disabled={firstFrameLocked || (!isSelected && veoReferenceLimitReached)}
+                            onClick={() => handleReferenceToggle(candidate.url)}
+                          >
+                            {isSelected ? '已选参考' : '添加参考'}
+                          </Button>
+                        )}
+                      </Group>
+                    </Paper>
+                  )
+                })}
+              </div>
+            )}
+            {veoImageModalMode === 'first' && trimmedFirstFrameUrl && (
+              <Button variant="subtle" size="xs" onClick={() => handleSetFirstFrameUrl('')}>
+                清除首帧
+              </Button>
+            )}
+            {veoImageModalMode === 'last' && trimmedLastFrameUrl && (
+              <Button variant="subtle" size="xs" onClick={() => handleSetLastFrameUrl('')} disabled={!firstFrameLocked}>
+                清除尾帧
+              </Button>
+            )}
+          </Stack>
+        </Modal>
+      )}
 
       {/* 图片结果弹窗：选择主图 + 全屏预览 */}
       {isImageNode && imageResults.length > 1 && (

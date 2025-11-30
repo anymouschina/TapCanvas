@@ -366,6 +366,19 @@ export async function upsertProxyConfig(
   }
 }
 
+export async function getProxyCredits(vendor: string): Promise<{ credits: number }> {
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/credits`, withAuth())
+  if (!r.ok) throw new Error(`get proxy credits failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getProxyModelStatus(vendor: string, model: string): Promise<{ status: boolean; error?: string }> {
+  const qs = new URLSearchParams({ model })
+  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/model-status?${qs.toString()}`, withAuth())
+  if (!r.ok) throw new Error(`get proxy model status failed: ${r.status}`)
+  return r.json()
+}
+
 export async function listSoraVideoHistory(params?: {
   limit?: number
   offset?: number
@@ -1110,6 +1123,25 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
     const error = new Error(errorMessage) as any
     error.status = r.status
     throw error
+  }
+  return r.json()
+}
+
+export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto> {
+  const r = await fetch(`${API_BASE}/tasks/veo/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId }),
+  }))
+  if (!r.ok) {
+    let msg = `fetch veo result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
   }
   return r.json()
 }

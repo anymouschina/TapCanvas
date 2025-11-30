@@ -1,5 +1,5 @@
 import type { Node } from 'reactflow'
-import type { TaskKind } from '../api/server'
+import type { TaskKind, TaskResultDto } from '../api/server'
 import {
   runTaskByVendor,
   createSoraVideo,
@@ -7,6 +7,7 @@ import {
   getSoraVideoDraftByTask,
   listModelProviders,
   listModelTokens,
+  fetchVeoTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -56,6 +57,11 @@ const MAX_VIDEO_DURATION_SECONDS = 10
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
+const VEO_RESULT_POLL_INTERVAL_MS = 4000
+const VEO_RESULT_POLL_TIMEOUT_MS = 480_000
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
@@ -231,6 +237,21 @@ function collectReferenceImages(state: any, targetId: string): string[] {
     }
   }
   return Array.from(new Set(collected))
+}
+
+function normalizeManualReferenceImages(value: any): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+    if (result.length >= 3) break
+  }
+  return result
 }
 
 function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
@@ -572,6 +593,14 @@ async function runVideoTask(ctx: RunnerContext) {
       : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
+    const aspectRatioSetting =
+      typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
+        ? (data as any).aspect.trim()
+        : '16:9'
+    const videoModelValue = (data as any)?.videoModel as string | undefined
+    const videoModelVendor = ((data as any)?.videoModelVendor as string | undefined) || null
+    const fallbackVideoVendor = videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora'
+    const videoVendor = videoModelVendor || fallbackVideoVendor
     let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
     if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
       if (isStoryboard) {
@@ -592,6 +621,26 @@ async function runVideoTask(ctx: RunnerContext) {
     const edges = (state.edges || []) as any[]
     const nodes = (state.nodes || []) as Node[]
     const inbound = edges.filter((e) => e.target === id)
+    const autoReferenceImages = collectReferenceImages(state, id)
+    const manualVeoReferenceImages = normalizeManualReferenceImages((data as any)?.veoReferenceImages)
+    const firstFrameUrlValue = typeof (data as any)?.veoFirstFrameUrl === 'string'
+      ? (data as any).veoFirstFrameUrl.trim()
+      : ''
+    const lastFrameUrlValue = typeof (data as any)?.veoLastFrameUrl === 'string'
+      ? (data as any).veoLastFrameUrl.trim()
+      : ''
+    const allowReferenceImages = !firstFrameUrlValue
+    let referenceImagesForVideo = autoReferenceImages
+    if (videoVendor === 'veo') {
+      referenceImagesForVideo = allowReferenceImages
+        ? manualVeoReferenceImages.length
+          ? manualVeoReferenceImages
+          : autoReferenceImages
+        : []
+      if (referenceImagesForVideo.length > 3) {
+        referenceImagesForVideo = referenceImagesForVideo.slice(0, 3)
+      }
+    }
     if (!remixTargetId && inbound.length) {
       for (const edge of inbound) {
         const src = nodes.find((n: Node) => n.id === edge.source)
@@ -602,13 +651,6 @@ async function runVideoTask(ctx: RunnerContext) {
         }
       }
     }
-
-    const initialPatch: any = { progress: 5 }
-    if (remixTargetId) {
-      initialPatch.remixTargetId = remixTargetId
-    }
-    setNodeStatus(id, 'running', initialPatch)
-    appendLog(id, `[${nowLabel()}] 调用 Sora-2 生成视频任务…`)
 
     let inpaintFileId: string | null = null
     let imageUrlForUpload: string | null = null
@@ -665,6 +707,26 @@ async function runVideoTask(ctx: RunnerContext) {
         finalPrompt = `${finalPrompt}\n${refNote}`
       }
     }
+
+    if (videoVendor === 'veo') {
+      await runVeoVideoTask(ctx, {
+        prompt: finalPrompt,
+        model: videoModelValue || 'veo3.1-fast',
+        aspectRatio: aspectRatioSetting,
+        referenceImages: referenceImagesForVideo,
+        durationSeconds: videoDurationSeconds,
+        firstFrameUrl: firstFrameUrlValue,
+        lastFrameUrl: firstFrameUrlValue ? lastFrameUrlValue : '',
+      })
+      return
+    }
+
+    const initialPatch: any = { progress: 5 }
+    if (remixTargetId) {
+      initialPatch.remixTargetId = remixTargetId
+    }
+    setNodeStatus(id, 'running', initialPatch)
+    appendLog(id, `[${nowLabel()}] 调用 Sora-2 生成视频任务…`)
 
     const preferredTokenId = (data as any)?.videoTokenId as string | undefined
     const res = await createSoraVideo({
@@ -1037,6 +1099,170 @@ async function runVideoTask(ctx: RunnerContext) {
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
     ctx.endRunToken(id)
   }
+}
+
+interface VeoVideoTaskOptions {
+  prompt: string
+  model: string
+  aspectRatio: string
+  referenceImages: string[]
+  durationSeconds: number
+  firstFrameUrl?: string | null
+  lastFrameUrl?: string | null
+}
+
+async function runVeoVideoTask(ctx: RunnerContext, options: VeoVideoTaskOptions) {
+  const { id, data, kind, setNodeStatus, appendLog } = ctx
+  const { prompt, model, aspectRatio, referenceImages, durationSeconds, firstFrameUrl, lastFrameUrl } = options
+  try {
+    setNodeStatus(id, 'running', { progress: 5 })
+    appendLog(id, `[${nowLabel()}] 调用 Veo3 视频模型 ${model}…`)
+
+    const extras: Record<string, any> = {
+      nodeKind: kind,
+      nodeId: id,
+      modelKey: model,
+      aspectRatio,
+      awaitResult: false,
+    }
+    if (firstFrameUrl) {
+      extras.firstFrameUrl = firstFrameUrl
+      if (lastFrameUrl) {
+        extras.lastFrameUrl = lastFrameUrl
+      }
+    }
+    if (referenceImages.length && !firstFrameUrl) {
+      extras.referenceImages = referenceImages
+    }
+
+    const res = await runTaskByVendor('veo', {
+      kind: 'text_to_video',
+      prompt,
+      extras,
+    })
+
+    const pendingTaskId = (res.raw && ((res.raw as any).taskId as string | undefined)) || res.id || null
+
+    if (res.status === 'running' && pendingTaskId) {
+      await pollVeoResultClient(ctx, {
+        taskId: pendingTaskId,
+        prompt,
+        model,
+        durationSeconds,
+      })
+      return
+    }
+
+    applyVeoTaskResult(ctx, res, { prompt, model, durationSeconds })
+  } catch (err: any) {
+    const msg = err?.message || 'Veo 视频任务执行失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    ctx.endRunToken(id)
+  }
+}
+
+interface VeoResultPollOptions {
+  taskId: string
+  prompt: string
+  model: string
+  durationSeconds: number
+}
+
+async function pollVeoResultClient(ctx: RunnerContext, options: VeoResultPollOptions) {
+  const { id, setNodeStatus, appendLog, isCanceled } = ctx
+  const { taskId, prompt, model, durationSeconds } = options
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < VEO_RESULT_POLL_TIMEOUT_MS) {
+    if (isCanceled(id)) {
+      setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+      appendLog(id, `[${nowLabel()}] Veo3 视频任务已取消`)
+      return
+    }
+    await sleep(VEO_RESULT_POLL_INTERVAL_MS)
+    try {
+      const snapshot = await fetchVeoTaskResult(taskId)
+      if (snapshot.status === 'running') {
+        const rawProgress =
+          (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+          (snapshot.raw?.response && (snapshot.raw.response.progress as number | undefined)) ||
+          null
+        if (typeof rawProgress === 'number') {
+          const normalized = Math.min(99, Math.max(5, Math.round(rawProgress)))
+          setNodeStatus(id, 'running', { progress: normalized })
+        }
+        continue
+      }
+      if (snapshot.status === 'failed') {
+        const msg =
+          (snapshot.raw?.response && (snapshot.raw.response.failure_reason || snapshot.raw.response.error)) ||
+          (snapshot.raw && (snapshot.raw.failure_reason || snapshot.raw.error)) ||
+          'Veo 视频任务失败'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+      applyVeoTaskResult(ctx, snapshot, { prompt, model, durationSeconds })
+      return
+    } catch (err: any) {
+      const msg = err?.message || '查询 Veo 结果失败'
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    }
+  }
+  const timeoutMsg = 'Veo 视频任务查询超时，请稍后在控制台确认结果'
+  setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
+  appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
+}
+
+function applyVeoTaskResult(
+  ctx: RunnerContext,
+  result: TaskResultDto,
+  options: { prompt: string; model: string; durationSeconds: number },
+) {
+  const { id, data, kind, setNodeStatus, appendLog } = ctx
+  const { prompt, model, durationSeconds } = options
+  const videoAssets = (result.assets || []).filter((asset) => asset.type === 'video')
+  if (!videoAssets.length) {
+    throw new Error('Veo 未返回视频结果')
+  }
+
+  const existing = (data.videoResults as any[] | undefined) || []
+  const appended = [
+    ...existing,
+    ...videoAssets.map((asset, idx) => ({
+      id: result.id ? `${result.id}-${idx}` : `${Date.now()}-${idx}`,
+      url: asset.url,
+      thumbnailUrl: asset.thumbnailUrl || null,
+      model,
+    })),
+  ]
+  const primary = videoAssets[0]
+  const nextPrimaryIndex = appended.length - 1
+
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    lastResult: {
+      id: result.id || '',
+      at: Date.now(),
+      kind,
+      preview: { type: 'video', src: primary.url },
+    },
+    prompt,
+    videoModel: model,
+    videoTaskId: result.id || null,
+    videoResults: appended,
+    videoPrimaryIndex: nextPrimaryIndex,
+    videoUrl: primary.url,
+    videoThumbnailUrl: primary.thumbnailUrl || null,
+    videoPrompt: prompt,
+    videoDurationSeconds: durationSeconds,
+    videoDuration: (data as any)?.videoDuration || durationSeconds,
+    videoPostId: (data as any)?.videoPostId || null,
+    videoTokenId: (data as any)?.videoTokenId || null,
+  })
+
+  appendLog(id, `[${nowLabel()}] Veo3 视频生成完成，已写入当前节点。`)
 }
 
 async function runGenericTask(ctx: RunnerContext) {

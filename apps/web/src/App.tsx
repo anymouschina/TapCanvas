@@ -1,7 +1,7 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun } from '@tabler/icons-react'
+import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { useRFStore } from './canvas/store'
@@ -10,7 +10,20 @@ import KeyboardShortcuts from './KeyboardShortcuts'
 import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNames, saveTemplate, renameTemplate } from './templates'
 import { ToastHost, toast } from './ui/toast'
 import { useUIStore } from './ui/uiStore'
-import { listModelProviders, listModelEndpoints, upsertModelProvider, saveProjectFlow, listProjects, upsertProject, listProjectFlows, type ProjectDto } from './api/server'
+import {
+  listModelProviders,
+  listModelEndpoints,
+  upsertModelProvider,
+  saveProjectFlow,
+  listProjects,
+  upsertProject,
+  listProjectFlows,
+  getProxyConfig,
+  getProxyCredits,
+  getProxyModelStatus,
+  type ProjectDto,
+  type ProxyConfigDto,
+} from './api/server'
 import { useAuth } from './auth/store'
 import { getCurrentLanguage, setLanguage, $, $t } from './canvas/i18n'
 import SubflowEditor from './subflow/Editor'
@@ -27,6 +40,7 @@ import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 import { Background } from 'reactflow'
+import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
 
 export default function App(): JSX.Element {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
@@ -47,6 +61,46 @@ export default function App(): JSX.Element {
   const auth = useAuth()
   const [saving, setSaving] = React.useState(false)
   const [currentLang, setCurrentLang] = React.useState(getCurrentLanguage())
+  const [grsaiProxy, setGrsaiProxy] = React.useState<ProxyConfigDto | null>(null)
+  const [grsaiCredits, setGrsaiCredits] = React.useState<number | null>(null)
+  const [grsaiCreditsLoading, setGrsaiCreditsLoading] = React.useState(false)
+  const [grsaiCreditsError, setGrsaiCreditsError] = React.useState<string | null>(null)
+  const [statusPopoverOpened, setStatusPopoverOpened] = React.useState(false)
+  const [grsaiStatuses, setGrsaiStatuses] = React.useState<Record<string, { status: boolean; error?: string }>>({})
+  const [grsaiStatusLoading, setGrsaiStatusLoading] = React.useState(false)
+  const [grsaiStatusError, setGrsaiStatusError] = React.useState<string | null>(null)
+  const isGrsaiProxyActive = React.useMemo(() => !!(grsaiProxy?.enabled && grsaiProxy?.hasApiKey && grsaiProxy?.baseUrl), [grsaiProxy])
+  const grsaiCreditsFormatted = React.useMemo(() => {
+    if (typeof grsaiCredits === 'number') {
+      try {
+        return grsaiCredits.toLocaleString()
+      } catch {
+        return String(grsaiCredits)
+      }
+    }
+    return null
+  }, [grsaiCredits])
+  const grsaiCreditsDisplay = React.useMemo(() => {
+    if (typeof grsaiCredits === 'number') {
+      const s = grsaiCreditsFormatted || String(grsaiCredits)
+      if (s.length > 6) {
+        return { text: `${s.slice(0, 6)}…`, full: s }
+      }
+      return { text: s, full: s }
+    }
+    if (grsaiCreditsLoading) return { text: '加载中…', full: '加载中…' }
+    return { text: '--', full: '--' }
+  }, [grsaiCredits, grsaiCreditsFormatted, grsaiCreditsLoading])
+  const grsaiStatusGroups = React.useMemo(() => {
+    const map = new Map<string, GrsaiStatusModel[]>()
+    GRSAI_STATUS_MODELS.forEach((model) => {
+      if (!map.has(model.group)) {
+        map.set(model.group, [])
+      }
+      map.get(model.group)!.push(model)
+    })
+    return Array.from(map.entries()).map(([group, models]) => ({ group, models }))
+  }, [])
 
   React.useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -57,6 +111,103 @@ export default function App(): JSX.Element {
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [])
+
+  const loadGrsaiProxyConfig = React.useCallback(async () => {
+    try {
+      const cfg = await getProxyConfig(GRSAI_PROXY_VENDOR)
+      setGrsaiProxy(cfg)
+      return cfg
+    } catch (error) {
+      console.error('加载 grsai 代理配置失败', error)
+      setGrsaiProxy(null)
+      return null
+    }
+  }, [])
+
+  const fetchGrsaiCredits = React.useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!isGrsaiProxyActive) return
+      setGrsaiCreditsLoading(true)
+      if (!opts?.silent) setGrsaiCreditsError(null)
+      try {
+        const resp = await getProxyCredits(GRSAI_PROXY_VENDOR)
+        setGrsaiCredits(typeof resp?.credits === 'number' ? resp.credits : 0)
+        setGrsaiCreditsError(null)
+      } catch (error: any) {
+        const msg = error?.message || '获取积分失败'
+        setGrsaiCreditsError(msg)
+        if (!opts?.silent) {
+          notifications.show({ color: 'red', title: '获取积分失败', message: msg })
+        }
+      } finally {
+        setGrsaiCreditsLoading(false)
+      }
+    },
+    [isGrsaiProxyActive],
+  )
+
+  const fetchGrsaiStatuses = React.useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!isGrsaiProxyActive) return
+      setGrsaiStatusLoading(true)
+      setGrsaiStatusError(null)
+      try {
+        const entries = await Promise.all(
+          GRSAI_STATUS_MODELS.map(async (model) => {
+            try {
+              const result = await getProxyModelStatus(GRSAI_PROXY_VENDOR, model.value)
+              return [model.value, { status: !!result.status, error: result.error || '' }] as const
+            } catch (error: any) {
+              const msg = error?.message || '查询失败'
+              return [model.value, { status: false, error: msg }] as const
+            }
+          }),
+        )
+        const next = Object.fromEntries(entries) as Record<string, { status: boolean; error?: string }>
+        setGrsaiStatuses(next)
+      } catch (error: any) {
+        const msg = error?.message || '获取模型状态失败'
+        setGrsaiStatusError(msg)
+        if (!opts?.silent) {
+          notifications.show({ color: 'red', title: '获取模型状态失败', message: msg })
+        }
+      } finally {
+        setGrsaiStatusLoading(false)
+      }
+    },
+    [isGrsaiProxyActive],
+  )
+
+  React.useEffect(() => {
+    loadGrsaiProxyConfig().catch(() => {})
+  }, [loadGrsaiProxyConfig])
+
+  React.useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ProxyConfigDto | null>).detail ?? null
+      setGrsaiProxy(detail)
+    }
+    window.addEventListener(GRSAI_PROXY_UPDATED_EVENT, handler)
+    return () => window.removeEventListener(GRSAI_PROXY_UPDATED_EVENT, handler)
+  }, [])
+
+  React.useEffect(() => {
+    if (!isGrsaiProxyActive) {
+      setGrsaiCredits(null)
+      setGrsaiCreditsError(null)
+      setGrsaiStatuses({})
+      setGrsaiStatusError(null)
+      setStatusPopoverOpened(false)
+      return
+    }
+    fetchGrsaiCredits({ silent: true })
+  }, [isGrsaiProxyActive, fetchGrsaiCredits])
+
+  React.useEffect(() => {
+    if (statusPopoverOpened && isGrsaiProxyActive) {
+      fetchGrsaiStatuses({ silent: true })
+    }
+  }, [statusPopoverOpened, isGrsaiProxyActive, fetchGrsaiStatuses])
 
   React.useEffect(() => {
     let canceled = false
@@ -242,6 +393,109 @@ export default function App(): JSX.Element {
           <Group gap="xs">
             <TextInput size="xs" placeholder={$('项目名')} value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
             <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving}>{$('保存')}</Button>
+            {isGrsaiProxyActive && (
+              <Group gap={4} align="center">
+                <Badge color="grape" variant="light" size="sm">
+                  grsai 积分
+                </Badge>
+                <Tooltip label={grsaiCreditsDisplay.full} disabled={grsaiCreditsDisplay.text === grsaiCreditsDisplay.full || !grsaiCreditsDisplay.full}>
+                  <Text size="sm" fw={600} style={{ maxWidth: 80 }}>
+                    {grsaiCreditsDisplay.text}
+                  </Text>
+                </Tooltip>
+                <Tooltip label="刷新积分">
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    aria-label="刷新 grsai 积分"
+                    onClick={() => {
+                      if (!grsaiCreditsLoading) fetchGrsaiCredits()
+                    }}
+                  >
+                    {grsaiCreditsLoading ? <Loader size="xs" /> : <IconRefresh size={16} />}
+                  </ActionIcon>
+                </Tooltip>
+                {grsaiCreditsError && (
+                  <Tooltip label={grsaiCreditsError}>
+                    <IconAlertCircle size={16} color="var(--mantine-color-red-5)" />
+                  </Tooltip>
+                )}
+                <Popover
+                  width={260}
+                  position="bottom-end"
+                  withArrow
+                  shadow="md"
+                  opened={statusPopoverOpened}
+                  onChange={setStatusPopoverOpened}
+                >
+                  <Popover.Target>
+                    <Tooltip label="查看模型状态">
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        aria-label="查看 grsai 模型状态"
+                        onClick={() => setStatusPopoverOpened((v) => !v)}
+                      >
+                        {grsaiStatusLoading ? <Loader size="xs" /> : <IconHeartbeat size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack gap={6} style={{ minWidth: 220 }}>
+                      <Group justify="space-between" align="center">
+                        <Text size="sm" fw={600}>
+                          Veo3 状态
+                        </Text>
+                        <Tooltip label="刷新模型状态">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            aria-label="刷新 grsai 模型状态"
+                            onClick={() => {
+                              if (!grsaiStatusLoading) fetchGrsaiStatuses()
+                            }}
+                          >
+                            {grsaiStatusLoading ? <Loader size="xs" /> : <IconRefresh size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                      {grsaiStatusError && (
+                        <Text size="xs" c="red">
+                          {grsaiStatusError}
+                        </Text>
+                      )}
+                      {grsaiStatusGroups.map(({ group, models }) => (
+                        <Stack key={group} gap={4}>
+                          <Text size="xs" c="dimmed" fw={600}>
+                            {group}
+                          </Text>
+                          {models.map((model) => {
+                            const info = grsaiStatuses[model.value]
+                            const color = !info ? 'gray' : info.status ? 'teal' : 'red'
+                            const label = !info ? '待查询' : info.status ? '正常' : '异常'
+                            return (
+                              <div key={model.value}>
+                                <Group justify="space-between" align="center">
+                                  <Text size="xs">{model.label}</Text>
+                                  <Badge size="xs" color={color} variant="light">
+                                    {label}
+                                  </Badge>
+                                </Group>
+                                {!info?.status && info?.error && (
+                                  <Text size="xs" c="dimmed">
+                                    {info.error}
+                                  </Text>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+              </Group>
+            )}
             <ActionIcon
               variant="subtle"
               aria-label={colorScheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
