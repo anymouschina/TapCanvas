@@ -23,12 +23,12 @@ export const TEXT_MODELS: ModelOption[] = [
 ]
 
 export const IMAGE_MODELS: ModelOption[] = [
-  { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
-  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'openai' },
   { value: 'nano-banana', label: 'Nano Banana', vendor: 'gemini' },
   { value: 'nano-banana-fast', label: 'Nano Banana Fast', vendor: 'gemini' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
+  { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
+  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'openai' },
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
@@ -97,6 +97,22 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'sora-2': 'openai', // 假设使用OpenAI
   'veo3.1-pro': 'google',
   'veo3.1-fast': 'google',
+}
+
+const IMAGE_EDIT_MODELS = new Set([
+  'nano-banana',
+  'nano-banana-fast',
+  'nano-banana-pro',
+])
+
+const normalizeModelId = (value: string | undefined | null): string => {
+  if (!value) return ''
+  return value.startsWith('models/') ? value.slice(7) : value
+}
+
+export function isImageEditModel(modelValue?: string | null): boolean {
+  const normalized = normalizeModelId(modelValue || '')
+  return normalized ? IMAGE_EDIT_MODELS.has(normalized) : false
 }
 
 export function getModelProvider(modelValue: string): AIProvider {

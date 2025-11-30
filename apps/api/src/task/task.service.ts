@@ -2,12 +2,21 @@ import { Injectable } from '@nestjs/common'
 import type { ModelProvider, ModelToken } from '@prisma/client'
 import { PrismaService } from 'nestjs-prisma'
 import { ProxyService } from '../proxy/proxy.service'
-import type { AnyTaskRequest, ProviderAdapter, ProviderContext, TaskResult } from './task.types'
+import type {
+  AnyTaskRequest,
+  ProviderAdapter,
+  ProviderContext,
+  ProviderProgressUpdate,
+  TaskProgressEvent,
+  TaskResult,
+  TaskStatus,
+} from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
 import { qwenAdapter } from './adapters/qwen.adapter'
 import { anthropicAdapter } from './adapters/anthropic.adapter'
 import { openaiAdapter } from './adapters/openai.adapter'
+import { TaskProgressService } from './task-progress.service'
 
 @Injectable()
 export class TaskService {
@@ -16,8 +25,79 @@ export class TaskService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly proxyService: ProxyService,
+    private readonly progress: TaskProgressService,
   ) {
     this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter]
+  }
+
+  private createProgressEmitter(userId: string, req: AnyTaskRequest, vendor: string) {
+    const extras = (req?.extras ?? {}) as Record<string, any>
+    const rawNodeId = typeof extras.nodeId === 'string' ? extras.nodeId.trim() : ''
+    const nodeId = rawNodeId.length ? rawNodeId : null
+    if (!nodeId) return null
+
+    const nodeKind = typeof extras.nodeKind === 'string' ? extras.nodeKind : undefined
+    const baseContext = {
+      nodeId,
+      nodeKind,
+      taskKind: req.kind,
+      vendor,
+    }
+
+    const clampProgress = (value?: number | null) => {
+      if (typeof value !== 'number' || Number.isNaN(value)) return undefined
+      const normalized = value <= 1 ? value * 100 : value
+      return Math.max(0, Math.min(100, normalized))
+    }
+
+    const emit = (event: Omit<TaskProgressEvent, 'nodeId' | 'nodeKind' | 'taskKind' | 'vendor'>) => {
+      if (!event || !event.status) return
+      this.progress.emit(userId, {
+        ...baseContext,
+        ...event,
+        progress: clampProgress(event.progress),
+        timestamp: event.timestamp ?? Date.now(),
+      })
+    }
+
+    const onProviderProgress = (update: ProviderProgressUpdate) => {
+      const status: TaskStatus = update.status ?? 'running'
+      emit({
+        status,
+        progress: clampProgress(update.progress),
+        message: update.message,
+        raw: update.data,
+      })
+    }
+
+    return { emit, onProviderProgress }
+  }
+
+  private async runAdapterWithProgress(
+    adapter: ProviderAdapter,
+    req: AnyTaskRequest,
+    ctx: ProviderContext,
+    emit?: (event: Omit<TaskProgressEvent, 'nodeId' | 'nodeKind' | 'taskKind' | 'vendor'>) => void,
+  ): Promise<TaskResult> {
+    if (emit) {
+      emit({ status: 'queued', progress: 0 })
+      emit({ status: 'running', progress: 5 })
+    }
+
+    try {
+      const result = await this.runAdapter(adapter, req, ctx)
+      emit?.({
+        status: result.status,
+        progress: result.status === 'succeeded' ? 100 : undefined,
+        taskId: result.id,
+        assets: result.assets,
+        raw: result.raw,
+      })
+      return result
+    } catch (error: any) {
+      emit?.({ status: 'failed', message: error?.message || '任务执行失败' })
+      throw error
+    }
   }
 
   private async resolveProxyContext(
@@ -132,7 +212,12 @@ export class TaskService {
 
     const adapter = this.adapters.find((a) => a.name === profile.provider.vendor)!
 
-    return this.runAdapter(adapter, req, ctx)
+    const progressEmitter = this.createProgressEmitter(userId, req, adapter.name)
+    const ctxWithProgress = progressEmitter
+      ? { ...ctx, onProgress: progressEmitter.onProviderProgress }
+      : ctx
+
+    return this.runAdapterWithProgress(adapter, req, ctxWithProgress, progressEmitter?.emit)
   }
 
   async executeWithVendor(userId: string, vendor: string, req: AnyTaskRequest): Promise<TaskResult> {
@@ -141,8 +226,16 @@ export class TaskService {
       throw new Error(`no adapter for provider: ${vendor}`)
     }
 
-    const proxyCtx = await this.resolveProxyContext(userId, vendor)
+    const requestModelKey =
+      (req?.extras && typeof (req.extras as any).modelKey === 'string'
+        ? ((req.extras as any).modelKey as string)
+        : null) || null
+
+    const proxyCtx = await this.resolveProxyContext(userId, vendor, requestModelKey)
     if (proxyCtx) {
+      if (requestModelKey) {
+        proxyCtx.modelKey = requestModelKey
+      }
       return this.runAdapter(adapter, req, proxyCtx)
     }
 
@@ -203,10 +296,15 @@ export class TaskService {
       baseUrl: resolvedBaseUrl,
       apiKey,
       userId,
-      modelKey: null,
+      modelKey: requestModelKey,
     }
 
-    return this.runAdapter(adapter, req, ctx)
+    const progressEmitter = this.createProgressEmitter(userId, req, adapter.name)
+    const ctxWithProgress = progressEmitter
+      ? { ...ctx, onProgress: progressEmitter.onProviderProgress }
+      : ctx
+
+    return this.runAdapterWithProgress(adapter, req, ctxWithProgress, progressEmitter?.emit)
   }
 
   private runAdapter(adapter: ProviderAdapter, req: AnyTaskRequest, ctx: ProviderContext): Promise<TaskResult> {
@@ -216,6 +314,11 @@ export class TaskService {
           throw new Error(`provider ${adapter.name} does not support text_to_video`)
         }
         return adapter.textToVideo(req as any, ctx)
+      case 'image_edit':
+        if (!adapter.imageEdit) {
+          throw new Error(`provider ${adapter.name} does not support image_edit`)
+        }
+        return adapter.imageEdit(req as any, ctx)
       case 'text_to_image':
         if (!adapter.textToImage) {
           throw new Error(`provider ${adapter.name} does not support text_to_image`)

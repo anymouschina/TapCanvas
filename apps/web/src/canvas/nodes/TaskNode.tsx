@@ -32,6 +32,7 @@ import {
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto, type TaskResultDto } from '../../api/server'
 import {
+  getDefaultModel,
   getModelLabel,
   getModelProvider,
   type NodeKind,
@@ -836,8 +837,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     const single = imageUrl || null
     return single ? [{ url: single }] : []
   }, [data, imageUrl])
+  const persistedImagePrimaryIndexRaw = (data as any)?.imagePrimaryIndex
+  const persistedImagePrimaryIndex =
+    typeof persistedImagePrimaryIndexRaw === 'number' ? persistedImagePrimaryIndexRaw : null
   const [imageExpanded, setImageExpanded] = React.useState(false)
-  const [imagePrimaryIndex, setImagePrimaryIndex] = React.useState(0)
+  const [imagePrimaryIndex, setImagePrimaryIndex] = React.useState<number>(() =>
+    persistedImagePrimaryIndex !== null ? persistedImagePrimaryIndex : 0,
+  )
   const [imageSelectedIndex, setImageSelectedIndex] = React.useState(0)
   const hasPrimaryImage = React.useMemo(
     () => imageResults.some((img) => typeof img?.url === 'string' && img.url.trim().length > 0),
@@ -852,6 +858,31 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     const fallback = imageResults.find((img) => typeof img?.url === 'string' && img.url.trim().length > 0)
     return fallback?.url ?? null
   }, [hasPrimaryImage, imagePrimaryIndex, imageResults])
+
+  const legacyImagePrimaryIndex = React.useMemo(() => {
+    if (!imageUrl) return null
+    const match = imageResults.findIndex((img) => img?.url === imageUrl)
+    return match >= 0 ? match : null
+  }, [imageUrl, imageResults])
+
+  React.useEffect(() => {
+    const total = imageResults.length
+    if (total === 0) {
+      setImagePrimaryIndex(0)
+      return
+    }
+    if (persistedImagePrimaryIndex !== null) {
+      const clamped = Math.max(0, Math.min(total - 1, persistedImagePrimaryIndex))
+      setImagePrimaryIndex((prev) => (prev === clamped ? prev : clamped))
+      return
+    }
+    if (legacyImagePrimaryIndex !== null) {
+      const clamped = Math.max(0, Math.min(total - 1, legacyImagePrimaryIndex))
+      setImagePrimaryIndex((prev) => (prev === clamped ? prev : clamped))
+      return
+    }
+    setImagePrimaryIndex((prev) => Math.max(0, Math.min(total - 1, prev)))
+  }, [persistedImagePrimaryIndex, legacyImagePrimaryIndex, imageResults.length])
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
@@ -1186,7 +1217,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         : []
   const [compareOpen, setCompareOpen] = React.useState(false)
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
-  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || 'qwen-image-plus')
+  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || getDefaultModel('image'))
   const [videoModel, setVideoModel] = React.useState<string>((data as any)?.videoModel || 'sora-2')
   const [videoDuration, setVideoDuration] = React.useState<number>(() => {
     const raw = Number((data as any)?.videoDurationSeconds)
@@ -4381,7 +4412,7 @@ const rewritePromptWithCharacters = React.useCallback(
           centered
           size="xl"
           withinPortal
-          zIndex={8000}
+          zIndex={300}
         >
           <Stack gap="sm">
             <Text size="xs" c="dimmed">
@@ -4460,7 +4491,7 @@ const rewritePromptWithCharacters = React.useCallback(
                               variant="subtle"
                               onClick={() => {
                                 setImagePrimaryIndex(idx)
-                                updateNodeData(id, { imageUrl: img.url })
+                                updateNodeData(id, { imageUrl: img.url, imagePrimaryIndex: idx })
                                 setImageExpanded(false)
                               }}
                             >
@@ -4487,7 +4518,7 @@ const rewritePromptWithCharacters = React.useCallback(
           centered
           size="xl"
           withinPortal
-          zIndex={8000}
+          zIndex={300}
         >
           <Stack gap="sm">
             {videoResults.length === 0 ? (

@@ -30,6 +30,9 @@ import { uuid } from 'zod/v4'
 import { UseChatAssistant } from './ai/UseChatAssistant'
 import { getQuickStartSampleFlow } from './quickStartSample'
 import { getHandleTypeLabel } from './utils/handleLabels'
+import { isImageEditModel } from '../config/models'
+import { subscribeTaskProgress, type TaskProgressEventMessage } from '../api/taskProgress'
+import { useAuth } from '../auth/store'
 
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
 const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | null) => {
@@ -49,6 +52,8 @@ const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | nul
   if (!targets) return true
   return targets.includes(targetKind)
 }
+
+const isImageKind = (kind?: string | null) => kind === 'image' || kind === 'textToImage'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -103,6 +108,51 @@ function CanvasInner(): JSX.Element {
   const [aiAssistantOpened, setAiAssistantOpened] = useState(false)
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
+  const authToken = useAuth(s => s.token)
+
+  const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
+    if (!event || !event.nodeId) return
+    const { setNodeStatus, appendLog } = useRFStore.getState()
+    const rawProgress = typeof event.progress === 'number' && Number.isFinite(event.progress)
+      ? Math.max(0, Math.min(100, Math.round(event.progress)))
+      : undefined
+    if (event.message) {
+      const label = new Date(event.timestamp ?? Date.now()).toLocaleTimeString()
+      appendLog(event.nodeId, `[${label}] ${event.message}`)
+    }
+    const progressPatch = rawProgress !== undefined ? { progress: rawProgress } : {}
+    switch (event.status) {
+      case 'queued':
+        setNodeStatus(event.nodeId, 'queued', progressPatch)
+        break
+      case 'running':
+        setNodeStatus(event.nodeId, 'running', progressPatch)
+        break
+      case 'succeeded':
+        setNodeStatus(event.nodeId, 'success', rawProgress !== undefined ? progressPatch : { progress: 100 })
+        break
+      case 'failed':
+        setNodeStatus(event.nodeId, 'error', {
+          ...progressPatch,
+          lastError: event.message || '任务执行失败',
+        })
+        break
+      default:
+        break
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authToken) return
+    const unsubscribe = subscribeTaskProgress({
+      token: authToken,
+      onEvent: handleTaskProgress,
+      onError: (err) => console.error('task progress stream error', err),
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [authToken, handleTaskProgress])
 
   useEffect(() => {
     // initial: no local restore, rely on explicit load from server via UI
@@ -241,6 +291,17 @@ function CanvasInner(): JSX.Element {
         const sKind = (sNode.data as any)?.kind
         const tKind = (tNode.data as any)?.kind
         if (!isValidEdgeByType(sKind, tKind)) return false
+        if (isImageKind(sKind) && isImageKind(tKind)) {
+          const targetModel = (tNode.data as any)?.imageModel as string | undefined
+          if (!isImageEditModel(targetModel)) {
+            const reason = targetModel
+              ? '该节点当前模型不支持图片编辑，请切换至支持图片编辑的模型（如 Nano Banana 系列）'
+              : '请先为目标节点选择支持图片编辑的模型'
+            lastReason.current = reason
+            toast(reason, 'warning')
+            return false
+          }
+        }
 
         handleConnect({
           source: sourceNodeId,

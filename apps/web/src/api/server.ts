@@ -619,10 +619,28 @@ export async function listSoraPendingVideos(
   return []
 }
 
+export type SoraVideoDraftResponse = {
+  id: string
+  title: string | null
+  prompt: string | null
+  thumbnailUrl: string | null
+  videoUrl: string | null
+  postId?: string | null
+  status?: string | null
+  progress?: number | null
+  raw?: any
+}
+
+function normalizeDraftProgress(value: any): number | null {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  const normalized = value <= 1 ? value * 100 : value
+  return Math.max(0, Math.min(100, normalized))
+}
+
 export async function getSoraVideoDraftByTask(
   taskId: string,
   tokenId?: string | null,
-): Promise<{ id: string; title: string | null; prompt: string | null; thumbnailUrl: string | null; videoUrl: string | null }> {
+): Promise<SoraVideoDraftResponse> {
   const qs = new URLSearchParams({ taskId })
   if (tokenId) qs.set('tokenId', tokenId)
   const url = `${API_BASE}/sora/video/draft-by-task?${qs.toString()}`
@@ -648,12 +666,30 @@ export async function getSoraVideoDraftByTask(
     throw err
   }
   console.debug('[getSoraVideoDraftByTask] success', { taskId, tokenId, body })
+  const raw = typeof body?.raw !== 'undefined' ? body.raw : body
+  const status = typeof body?.status === 'string'
+    ? body.status
+    : typeof raw?.status === 'string'
+      ? raw.status
+      : null
+  const progressValue = normalizeDraftProgress(
+    typeof body?.progress === 'number'
+      ? body.progress
+      : typeof raw?.progress === 'number'
+        ? raw.progress
+        : null,
+  )
+
   return {
     id: body.id,
     title: body.title ?? null,
     prompt: body.prompt ?? null,
     thumbnailUrl: body.thumbnailUrl ?? null,
     videoUrl: body.videoUrl ?? null,
+    postId: body.postId ?? null,
+    status,
+    progress: progressValue,
+    raw,
   }
 }
 
