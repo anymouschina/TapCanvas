@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import type { ModelProvider, ModelToken } from '@prisma/client'
 import { PrismaService } from 'nestjs-prisma'
+import { ProxyService } from '../proxy/proxy.service'
 import type { AnyTaskRequest, ProviderAdapter, ProviderContext, TaskResult } from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
@@ -12,8 +13,27 @@ import { openaiAdapter } from './adapters/openai.adapter'
 export class TaskService {
   private readonly adapters: ProviderAdapter[]
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly proxyService: ProxyService,
+  ) {
     this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter]
+  }
+
+  private async resolveProxyContext(
+    userId: string,
+    vendor: string,
+    modelKey?: string | null,
+  ): Promise<ProviderContext | null> {
+    if (!vendor || vendor === 'sora') return null
+    const proxy = await this.proxyService.findProxyConfig(userId, vendor)
+    if (!proxy || !proxy.baseUrl || !proxy.apiKey) return null
+    return {
+      baseUrl: proxy.baseUrl,
+      apiKey: proxy.apiKey,
+      userId,
+      modelKey: modelKey ?? undefined,
+    }
   }
 
   private async buildContextForProvider(
@@ -35,6 +55,11 @@ export class TaskService {
     const adapter = this.adapters.find((a) => a.name === vendor)
     if (!adapter) {
       throw new Error(`no adapter for provider: ${vendor}`)
+    }
+
+    const proxyContext = await this.resolveProxyContext(userId, vendor, modelKey)
+    if (proxyContext) {
+      return proxyContext
     }
 
     let apiKey = ''
@@ -107,37 +132,18 @@ export class TaskService {
 
     const adapter = this.adapters.find((a) => a.name === profile.provider.vendor)!
 
-    switch (req.kind) {
-      case 'text_to_video':
-        if (!adapter.textToVideo) {
-          throw new Error(`provider ${adapter.name} does not support text_to_video`)
-        }
-        return adapter.textToVideo(req as any, ctx)
-      case 'text_to_image':
-        if (!adapter.textToImage) {
-          throw new Error(`provider ${adapter.name} does not support text_to_image`)
-        }
-        return adapter.textToImage(req as any, ctx)
-      case 'image_to_prompt':
-        if (!adapter.imageToPrompt) {
-          throw new Error(`provider ${adapter.name} does not support image_to_prompt`)
-        }
-        return adapter.imageToPrompt(req as any, ctx)
-      case 'chat':
-      case 'prompt_refine':
-        if (!adapter.runChat) {
-          throw new Error(`provider ${adapter.name} does not support chat`)
-        }
-        return adapter.runChat(req, ctx)
-      default:
-        throw new Error(`unsupported task kind: ${req.kind}`)
-    }
+    return this.runAdapter(adapter, req, ctx)
   }
 
   async executeWithVendor(userId: string, vendor: string, req: AnyTaskRequest): Promise<TaskResult> {
     const adapter = this.adapters.find((a) => a.name === vendor)
     if (!adapter) {
       throw new Error(`no adapter for provider: ${vendor}`)
+    }
+
+    const proxyCtx = await this.resolveProxyContext(userId, vendor)
+    if (proxyCtx) {
+      return this.runAdapter(adapter, req, proxyCtx)
     }
 
     let provider = await this.prisma.modelProvider.findFirst({
@@ -200,6 +206,10 @@ export class TaskService {
       modelKey: null,
     }
 
+    return this.runAdapter(adapter, req, ctx)
+  }
+
+  private runAdapter(adapter: ProviderAdapter, req: AnyTaskRequest, ctx: ProviderContext): Promise<TaskResult> {
     switch (req.kind) {
       case 'text_to_video':
         if (!adapter.textToVideo) {

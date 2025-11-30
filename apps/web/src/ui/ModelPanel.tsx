@@ -46,7 +46,11 @@ const PROFILE_KIND_OPTIONS: Array<{ value: ProfileKind; label: string }> = [
 ]
 
 const PROXY_VENDOR_KEY = 'grsai'
-const PROXY_TARGET_OPTIONS = [{ value: 'sora', label: 'Sora 视频' }]
+const PROXY_TARGET_OPTIONS = [
+  { value: 'sora', label: 'Sora 视频' },
+  { value: 'openai', label: 'OpenAI / GPT' },
+  { value: 'gemini', label: 'Google Gemini' },
+]
 const PROXY_HOST_PRESETS = [
   { label: '海外节点', value: 'https://api.grsai.com' },
   { label: '国内直连', value: 'https://grsai.dakka.com.cn' },

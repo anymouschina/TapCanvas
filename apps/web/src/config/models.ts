@@ -15,16 +15,27 @@ export const TEXT_MODELS: ModelOption[] = [
   { value: 'glm-4.5', label: 'GLM-4.5', vendor: 'anthropic' },
   { value: 'glm-4.5-air', label: 'GLM-4.5-Air', vendor: 'anthropic' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vendor: 'gemini' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', vendor: 'gemini' },
+  { value: 'gemini-2.5-flash-think', label: 'Gemini 2.5 Flash Think', vendor: 'gemini' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', vendor: 'gemini' },
+  { value: 'gemini-3-pro', label: 'Gemini 3 Pro', vendor: 'gemini' },
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', vendor: 'gemini' },
 ]
 
 export const IMAGE_MODELS: ModelOption[] = [
   { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' }
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
+  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'openai' },
+  { value: 'nano-banana', label: 'Nano Banana', vendor: 'gemini' },
+  { value: 'nano-banana-fast', label: 'Nano Banana Fast', vendor: 'gemini' },
+  { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
 ]
 
-export const VIDEO_MODELS: ModelOption[] = [{ value: 'sora-2', label: 'Sora 2', vendor: 'sora' }]
+export const VIDEO_MODELS: ModelOption[] = [
+  { value: 'sora-2', label: 'Sora 2', vendor: 'sora' },
+  { value: 'veo3.1-pro', label: 'Veo 3.1 Pro', vendor: 'gemini' },
+  { value: 'veo3.1-fast', label: 'Veo 3.1 Fast', vendor: 'gemini' },
+]
 
 export type NodeKind =
   | 'text'
@@ -72,11 +83,20 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'glm-4.5': 'anthropic',
   'glm-4.5-air': 'anthropic',
   'gemini-2.5-flash': 'google',
+  'gemini-2.5-flash-lite': 'google',
+  'gemini-2.5-flash-think': 'google',
   'gemini-2.5-pro': 'google',
+  'gemini-3-pro': 'google',
   'models/gemini-3-pro-preview': 'google',
   'qwen-image-plus': 'openai', // 假设使用OpenAI
   'gemini-2.5-flash-image': 'google',
+  'sora-image': 'openai',
+  'nano-banana': 'google',
+  'nano-banana-fast': 'google',
+  'nano-banana-pro': 'google',
   'sora-2': 'openai', // 假设使用OpenAI
+  'veo3.1-pro': 'google',
+  'veo3.1-fast': 'google',
 }
 
 export function getModelProvider(modelValue: string): AIProvider {

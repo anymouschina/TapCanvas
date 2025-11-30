@@ -5,6 +5,7 @@ import FormData from 'form-data'
 import { createReadStream } from 'fs'
 import { TokenRouterService } from './token-router.service'
 import { VideoHistoryService } from '../video/video-history.service'
+import { ProxyService, ResolvedProxyConfig } from '../proxy/proxy.service'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 
@@ -28,6 +29,7 @@ export class SoraService {
     private readonly prisma: PrismaService,
     private readonly tokenRouter: TokenRouterService,
     private readonly videoHistory: VideoHistoryService,
+    private readonly proxyService: ProxyService,
   ) {}
 
   /**
@@ -849,7 +851,7 @@ export class SoraService {
       }
     })
 
-    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora')
+    const proxyConfig = await this.proxyService.findProxyConfig(userId, 'sora')
     if (proxyConfig) {
       return this.createVideoTaskViaProxy({
         userId,
@@ -1497,13 +1499,7 @@ export class SoraService {
       operation?: string | null
       title?: string | null
     }
-    proxy: {
-      id: string
-      vendor: string
-      name: string
-      baseUrl: string | null
-      apiKey: string | null
-    }
+    proxy: ResolvedProxyConfig
   }): Promise<any> {
     const { userId, payload, proxy } = params
     if (!proxy.baseUrl || !proxy.apiKey) {
@@ -2110,7 +2106,7 @@ export class SoraService {
       return timeB - timeA
     })
 
-    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora')
+    const proxyConfig = await this.proxyService.findProxyConfig(userId, 'sora')
     let proxySuccess = 0
     if (proxyConfig) {
       try {
@@ -2261,7 +2257,7 @@ export class SoraService {
     }
   }
 
-  private async getProxyPendingVideos(userId: string, proxy: { vendor: string; baseUrl: string | null; apiKey: string | null }): Promise<{ items: any[] }> {
+  private async getProxyPendingVideos(userId: string, proxy: ResolvedProxyConfig): Promise<{ items: any[] }> {
     if (!proxy.baseUrl || !proxy.apiKey) {
       return { items: [] }
     }
@@ -2336,7 +2332,7 @@ export class SoraService {
     return { items }
   }
 
-  private async fetchProxyTaskResult(proxy: { baseUrl: string | null; apiKey: string | null; vendor: string }, taskId: string): Promise<ProxyTaskResult> {
+  private async fetchProxyTaskResult(proxy: ResolvedProxyConfig, taskId: string): Promise<ProxyTaskResult> {
     if (!proxy.baseUrl || !proxy.apiKey) {
       throw new HttpException({ message: '代理服务未配置 Host 或 API Key' }, HttpStatus.BAD_REQUEST)
     }
@@ -2401,7 +2397,7 @@ export class SoraService {
 
   private async handleProxyTaskCompletion(params: {
     userId: string
-    proxy: { baseUrl: string | null; apiKey: string | null; vendor: string }
+    proxy: ResolvedProxyConfig
     taskId: string
     result: ProxyTaskResult
   }): Promise<void> {
@@ -3164,7 +3160,7 @@ export class SoraService {
     }
 
     const proxyVendor = meta?.proxyVendor || meta?.proxyProvider || undefined
-    const proxyConfig = await this.findProxyConfigForVendor(userId, 'sora', proxyVendor)
+    const proxyConfig = await this.proxyService.findProxyConfig(userId, 'sora', proxyVendor)
     if (!proxyConfig || !proxyConfig.baseUrl || !proxyConfig.apiKey) {
       throw new HttpException({ message: '代理服务未配置或已禁用' }, HttpStatus.BAD_REQUEST)
     }
@@ -3401,34 +3397,6 @@ export class SoraService {
         upstreamStatus,
       },
     }
-  }
-
-  private async findProxyConfigForVendor(userId: string, vendor: string, preferredProxyVendor?: string) {
-    const proxies = await this.prisma.proxyProvider.findMany({
-      where: {
-        ownerId: userId,
-        enabled: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    })
-
-    const list = [...proxies]
-    if (preferredProxyVendor) {
-      list.sort((a, b) => {
-        if (a.vendor === preferredProxyVendor && b.vendor !== preferredProxyVendor) return -1
-        if (b.vendor === preferredProxyVendor && a.vendor !== preferredProxyVendor) return 1
-        return 0
-      })
-    }
-
-    for (const proxy of list) {
-      if (!proxy.baseUrl || !proxy.apiKey) continue
-      if (!proxy.enabledVendors || proxy.enabledVendors.length === 0) continue
-      if (!proxy.enabledVendors.includes(vendor)) continue
-      return proxy
-    }
-
-    return null
   }
 
   private async resolveBaseUrl(
