@@ -1438,6 +1438,14 @@ async function runGenericTask(ctx: RunnerContext) {
       }
     }
 
+    // 将本次使用的提示词写回节点数据，方便前端在节点和对话中展示
+    if (typeof prompt === 'string' && prompt.trim().length > 0) {
+      patchExtra = {
+        ...patchExtra,
+        prompt: prompt.trim(),
+      }
+    }
+
     setNodeStatus(id, 'success', {
       progress: 100,
       lastResult: {

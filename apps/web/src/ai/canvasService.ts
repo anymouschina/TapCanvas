@@ -141,6 +141,9 @@ export class CanvasService {
       audio: 'tts',
       subtitle: 'subtitleAlign',
       character: 'character',
+      // 兼容 AI 直接传入内部 kind 名称的情况，例如 type: "textToImage"
+      textToImage: 'textToImage',
+      text_to_image: 'textToImage',
     }
 
     if (logicalKinds[rawType]) {
@@ -151,6 +154,16 @@ export class CanvasService {
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
     const { remixFromNodeId: configRemixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
     const mergedConfig: Record<string, any> = { ...baseData, ...restConfig }
+
+    // 如果是图像类节点且未显式提供 prompt，默认使用标签作为初始提示词，方便前端和 AI 回显
+    if (
+      !mergedConfig.prompt &&
+      typeof label === 'string' &&
+      label.trim().length > 0 &&
+      (mergedConfig.kind === 'image' || mergedConfig.kind === 'textToImage')
+    ) {
+      mergedConfig.prompt = label.trim()
+    }
     const data = CanvasService.ensurePromptFields(mergedConfig)
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
@@ -169,6 +182,8 @@ export class CanvasService {
       case 'text':
         return '文本'
       case 'image':
+      case 'textToImage':
+      case 'text_to_image':
         return '图像'
       case 'video':
       case 'composeVideo':
@@ -492,6 +507,7 @@ export class CanvasService {
       if (!node) {
         return { success: false, error: '节点不存在，无法执行' }
       }
+      const initialLabel = (node.data as any)?.label || nodeId
 
       const get = () => useRFStore.getState()
       const set = (fn: (s: any) => any) => useRFStore.setState(fn)
@@ -504,9 +520,68 @@ export class CanvasService {
         await runNodeMock(nodeId, get, set)
       }
 
+      // 执行完后，从最新节点状态中提取图片/视频结果，方便 AI 对话里回显
+      let mediaPatch: Record<string, any> = {}
+      try {
+        const latest = useRFStore.getState().nodes.find(n => n.id === nodeId)
+        if (latest) {
+          const data: any = latest.data || {}
+          const latestKind: string | undefined = data.kind
+          const promptValue =
+            typeof data.prompt === 'string' && data.prompt.trim().length
+              ? data.prompt.trim()
+              : undefined
+
+          const primaryImageUrl =
+            typeof data.imageUrl === 'string' && data.imageUrl.trim().length
+              ? data.imageUrl.trim()
+              : undefined
+          const imageResults = Array.isArray(data.imageResults)
+            ? (data.imageResults as { url?: string }[]).filter(
+                (img) => img && typeof img.url === 'string' && img.url.trim().length,
+              )
+            : []
+
+          const primaryVideoUrl =
+            typeof data.videoUrl === 'string' && data.videoUrl.trim().length
+              ? data.videoUrl.trim()
+              : undefined
+          const videoResults = Array.isArray(data.videoResults)
+            ? (data.videoResults as { url?: string }[]).filter(
+                (v) => v && typeof v.url === 'string' && v.url.trim().length,
+              )
+            : []
+
+          mediaPatch = {
+            nodeId,
+            kind: latestKind,
+          }
+
+          if (promptValue) {
+            mediaPatch.prompt = promptValue
+          }
+
+          if (primaryImageUrl || imageResults.length) {
+            mediaPatch.imageUrl = primaryImageUrl || imageResults[0]?.url
+            mediaPatch.imageResults = imageResults
+          }
+
+          if (primaryVideoUrl || videoResults.length) {
+            mediaPatch.videoUrl = primaryVideoUrl || videoResults[0]?.url
+            mediaPatch.videoResults = videoResults
+          }
+        }
+      } catch {
+        // 回显信息获取失败时不影响主流程
+        mediaPatch = { nodeId }
+      }
+
       return {
         success: true,
-        data: { message: `已执行节点 ${(node.data as any)?.label || nodeId}` }
+        data: {
+          message: `已执行节点 ${initialLabel}`,
+          ...mediaPatch,
+        }
       }
     } catch (error) {
       return {

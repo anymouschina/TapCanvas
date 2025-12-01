@@ -729,7 +729,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const updateNodeData = useRFStore(s => s.updateNodeData)
   const addNode = useRFStore(s => s.addNode)
   const addEdge = useRFStore(s => s.onConnect)
-  const [prompt, setPrompt] = React.useState<string>((data as any)?.prompt || '')
+  const rawPrompt = (data as any)?.prompt as string | undefined
+  const [prompt, setPrompt] = React.useState<string>(rawPrompt || '')
+
+  // 当节点数据中的 prompt 发生变化（例如由 AI 自动生成）时，同步到本地输入框状态
+  React.useEffect(() => {
+    if (typeof rawPrompt === 'string' && rawPrompt !== prompt) {
+      setPrompt(rawPrompt)
+    }
+  }, [rawPrompt])
   const applyVideoRealismSnippet = React.useCallback(
     (snippet: string) => {
       const block = (snippet || '').trim()

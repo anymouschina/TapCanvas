@@ -173,6 +173,7 @@ export class AiService {
               res.actions,
               { userInput: lastUserText, canvasContext: payload.context }
             )
+            await this.appendChatHistory(userId, provider, payload, lastUserText, finalized.reply)
             return finalized
           }
           throw new BadRequestException('AI助手不可用：Anthropic 代理返回无效响应')
@@ -210,6 +211,7 @@ export class AiService {
         lastResult = finalized
 
         if (actions && actions.length > 0) {
+          await this.appendChatHistory(userId, provider, payload, lastUserText, finalized.reply)
           return finalized
         }
 
@@ -229,6 +231,7 @@ export class AiService {
       if (!fallbackResult.actions.length) {
         fallbackResult.actions = fallbackActions
       }
+      await this.appendChatHistory(userId, provider, payload, lastUserText, fallbackResult.reply)
       return fallbackResult
     } catch (error) {
       this.logger.error('AI chat失败', error as any)
@@ -297,6 +300,7 @@ export class AiService {
     })
 
     try {
+      let finalText = ''
       const streamResult = await streamText({
         model: modelClient,
         messages: preparedMessages,
@@ -322,6 +326,7 @@ export class AiService {
             textPreview: info.text?.slice?.(0, 200),
             stepCount: info.steps?.length
           }, info)
+          finalText = info.text || ''
         },
         onError: (err) => {
           this.logger.error('[chatStream] onError', err as any)
@@ -330,6 +335,7 @@ export class AiService {
 
       streamResult.pipeUIMessageStreamToResponse(res as any)
       await streamResult.consumeStream().catch(() => {})
+      await this.appendChatHistory(userId, provider, payload, lastUserText, finalText)
     } catch (error) {
       const errObj = error as any
       const status = errObj?.statusCode || errObj?.cause?.statusCode || errObj?.cause?.response?.status
@@ -515,6 +521,76 @@ export class AiService {
     }
     await this.prisma.promptSample.delete({ where: { id } })
     return { success: true }
+  }
+
+  /**
+   * 将当前对话轮次落库到 ChatSession / ChatMessage
+   */
+  private async appendChatHistory(
+    userId: string,
+    provider: string,
+    payload: ChatRequestDto,
+    lastUserText: string,
+    assistantText?: string | null,
+  ) {
+    try {
+      const sessionId = payload.sessionId?.trim()
+      if (!sessionId) return
+
+      const title = this.buildSessionTitle(lastUserText)
+
+      const session = await this.prisma.chatSession.upsert({
+        where: {
+          userId_sessionId: {
+            userId,
+            sessionId,
+          },
+        },
+        create: {
+          userId,
+          sessionId,
+          title,
+          model: payload.model,
+          provider,
+        },
+        update: {
+          title,
+          model: payload.model,
+          provider,
+        },
+      })
+
+      const messages: { sessionId: string; role: string; content?: string | null; raw?: any }[] = []
+      const trimmedUser = (lastUserText || '').trim()
+      if (trimmedUser) {
+        messages.push({
+          sessionId: session.id,
+          role: 'user',
+          content: trimmedUser,
+        })
+      }
+      const trimmedAssistant = (assistantText || '').trim()
+      if (trimmedAssistant) {
+        messages.push({
+          sessionId: session.id,
+          role: 'assistant',
+          content: trimmedAssistant,
+        })
+      }
+      if (messages.length) {
+        await this.prisma.chatMessage.createMany({
+          data: messages,
+        })
+      }
+    } catch (error) {
+      this.logger.error('[appendChatHistory] failed', error as any)
+    }
+  }
+
+  private buildSessionTitle(userText: string): string {
+    const trimmed = (userText || '').trim()
+    if (!trimmed) return '未命名会话'
+    return trimmed.length > 24 ? `${trimmed.slice(0, 24)}…` : trimmed
   }
 
   /**
