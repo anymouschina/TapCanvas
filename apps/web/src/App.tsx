@@ -373,7 +373,12 @@ export default function App(): JSX.Element {
   React.useEffect(() => {
     // 将 silentSave 函数挂载到全局，供其他组件调用
     (window as any).silentSaveProject = silentSave
-  }, [saving, currentFlow, currentProject])
+    // 将 grsai 积分刷新函数挂到全局，供任务执行后调用
+    ;(window as any).refreshGrsaiCredits = (opts?: { silent?: boolean }) => {
+      if (!isGrsaiProxyActive) return
+      fetchGrsaiCredits(opts)
+    }
+  }, [saving, currentFlow, currentProject, isGrsaiProxyActive, fetchGrsaiCredits])
 
   return (
     <AppShell

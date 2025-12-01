@@ -1150,6 +1150,10 @@ async function runVeoVideoTask(ctx: RunnerContext, options: VeoVideoTaskOptions)
         model,
         durationSeconds,
       })
+      // Veo 任务经由 grsai 代理扣费，轮询结束后静默刷新积分
+      if (typeof window !== 'undefined' && typeof (window as any).refreshGrsaiCredits === 'function') {
+        ;(window as any).refreshGrsaiCredits({ silent: true })
+      }
       return
     }
 
@@ -1160,6 +1164,10 @@ async function runVeoVideoTask(ctx: RunnerContext, options: VeoVideoTaskOptions)
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
   } finally {
     ctx.endRunToken(id)
+    // 非轮询模式下，直接在任务结束后尝试刷新积分
+    if (typeof window !== 'undefined' && typeof (window as any).refreshGrsaiCredits === 'function') {
+      ;(window as any).refreshGrsaiCredits({ silent: true })
+    }
   }
 }
 
