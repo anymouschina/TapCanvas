@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, RingProgress, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconBrain } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
@@ -202,6 +202,8 @@ const extractTextFromResponsePayload = (payload: any): string => {
   return ''
 }
 
+const toSingleLine = (text?: string) => (typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '')
+
 const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
   if (!task) return ''
   const raw = task.raw as any
@@ -268,25 +270,43 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const panelBackground = isDarkUi
     ? 'linear-gradient(145deg, rgba(5,7,16,0.95), rgba(12,17,32,0.9), rgba(8,14,28,0.95))'
     : 'linear-gradient(145deg, rgba(248,250,252,0.98), rgba(237,242,255,0.95))'
-  const panelBorder = isDarkUi ? '1px solid rgba(82, 152, 255, 0.25)' : '1px solid rgba(148, 163, 184, 0.4)'
+  const panelBorder = 'none'
   const panelShadow = isDarkUi ? '0 0 45px rgba(46,133,255,0.25)' : '0 18px 32px rgba(15,23,42,0.12)'
   const headerBackground = isDarkUi
     ? 'linear-gradient(120deg, rgba(15,23,42,0.9), rgba(10,12,24,0.6))'
     : 'linear-gradient(120deg, rgba(226,232,240,0.92), rgba(248,250,252,0.85))'
-  const headerBorder = isDarkUi ? '1px solid rgba(82,152,255,0.25)' : '1px solid rgba(148,163,184,0.4)'
+  const headerBorder = 'none'
   const headerTextColor = isDarkUi ? '#eff6ff' : '#0f172a'
   const sparklesColor = isDarkUi ? '#a5b4fc' : '#6366f1'
   const logBackground = isDarkUi ? 'rgba(15,23,42,0.8)' : 'rgba(248,250,252,0.9)'
-  const logBorder = isDarkUi ? '1px solid rgba(59,130,246,0.25)' : '1px solid rgba(148,163,184,0.35)'
+  const logBorder = 'none'
   const messageBackground = isDarkUi ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.04)'
-  const messageBorder = isDarkUi ? '1px solid rgba(59,130,246,0.12)' : '1px solid rgba(148,163,184,0.25)'
+  const messageBorder = 'none'
   const messageTextColor = isDarkUi ? '#f8fafc' : '#0f172a'
-  const footerBackground = isDarkUi ? 'rgba(8,10,20,0.85)' : 'rgba(248,250,252,0.96)'
-  const footerBorder = isDarkUi ? '1px solid rgba(15,118,110,0.2)' : '1px solid rgba(148,163,184,0.35)'
   const inputBackground = isDarkUi ? 'rgba(15,23,42,0.7)' : '#ffffff'
   const inputBorder = isDarkUi ? 'rgba(99,102,241,0.4)' : 'rgba(148,163,184,0.5)'
   const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
   const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
+  const auroraAccent = '#8F7BFF'
+  const auroraCyan = '#4DD6FF'
+  const statusGradients: Record<'idle' | 'thinking' | 'success', string> = {
+    idle: isDarkUi
+      ? 'linear-gradient(135deg, rgba(15,23,42,0.85), rgba(8,12,24,0.8))'
+      : 'linear-gradient(135deg, rgba(241,245,255,0.95), rgba(226,232,240,0.9))',
+    thinking: 'linear-gradient(135deg, rgba(143,123,255,0.22), rgba(77,214,255,0.18))',
+    success: 'linear-gradient(135deg, rgba(92,242,194,0.25), rgba(58,176,158,0.2))'
+  }
+  const statusBadgeText: Record<'idle' | 'thinking' | 'success', string> = {
+    idle: '待命',
+    thinking: '推演中',
+    success: '已完成'
+  }
+  const statusBadgeColor: Record<'idle' | 'thinking' | 'success', string> = {
+    idle: 'gray',
+    thinking: 'violet',
+    success: 'teal'
+  }
+  const conversationOverlayOffset = 240
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
   const imagePromptLoading = imagePromptLoadingCount > 0
@@ -299,6 +319,32 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
   const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
   const [isThinking, setIsThinking] = useState(false)
+  const [statusPhase, setStatusPhase] = useState<'idle' | 'thinking' | 'success'>('idle')
+  const [statusNote, setStatusNote] = useState('等待你的灵感描述，我会点亮 Aurora 画布。')
+  const planCompletion = useMemo(() => {
+    if (!planUpdate || !planUpdate.steps || planUpdate.steps.length === 0) return 0
+    const completed = planUpdate.steps.filter(step => step.status === 'completed').length
+    return Math.round((completed / planUpdate.steps.length) * 100)
+  }, [planUpdate])
+  const setStatusLine = useCallback((text: string) => {
+    const normalized = toSingleLine(text)
+    setStatusNote(normalized || '')
+  }, [setStatusNote])
+  const updateActionStatus = useCallback((actionLabel: string, phase: 'running' | 'success' | 'error', extra?: string) => {
+    if (!actionLabel) return
+    const label = toSingleLine(actionLabel)
+    if (!label) return
+    if (phase === 'running') {
+      setStatusLine(`${label}中…`)
+      return
+    }
+    if (phase === 'success') {
+      setStatusLine(`${label}完成`)
+      return
+    }
+    const extraText = toSingleLine(extra)
+    setStatusLine(extraText ? `${label}失败：${extraText}` : `${label}失败`)
+  }, [setStatusLine])
 
   useEffect(() => {
     if (!opened) return
@@ -313,6 +359,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       canceled = true
     }
   }, [opened])
+
+  useEffect(() => {
+    if (opened) {
+      setStatusPhase('idle')
+      setStatusLine('等待你的灵感描述，我会点亮 Aurora 画布。')
+    }
+  }, [opened, setStatusLine])
 
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
@@ -396,7 +449,10 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     transport: chatTransport,
     sendAutomaticallyWhen: ({ messages }) => lastAssistantMessageIsCompleteWithToolCalls({ messages })
   })
+  const streamingBadgeColor = status === 'streaming' ? 'teal' : status === 'submitted' ? 'yellow' : 'gray'
+  const streamingBadgeLabel = status === 'streaming' ? '流式同步' : status === 'submitted' ? '派单中' : '静候'
   const handledToolCalls = useRef(new Set<string>())
+  const actionStatusByCallId = useRef(new Map<string, string>())
   const resolveToolName = (part: any) => {
     if (part?.toolName) return part.toolName
     if (typeof part?.type === 'string' && part.type.startsWith('tool-')) {
@@ -420,6 +476,240 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     return Boolean(part.toolName && part.toolCallId)
   }
 
+  const PROMPT_FIELD_KEYS = new Set(['prompt', 'videoPrompt', 'description', 'story', 'script', 'text'])
+  const MAX_SUMMARY_DEPTH = 4
+  const truncateText = (value: string, limit = 160) => {
+    const normalized = value.replace(/\s+/g, ' ').trim()
+    if (!normalized) return ''
+    if (normalized.length <= limit) return normalized
+    return `${normalized.slice(0, limit - 1)}…`
+  }
+  const summarizePromptText = (value: string) => {
+    const normalized = value.replace(/\s+/g, ' ').trim()
+    if (!normalized) return ''
+    const limit = 80
+    if (normalized.length <= limit) return normalized
+    return `${normalized.slice(0, limit)}…（${normalized.length}字）`
+  }
+  const summarizeArrayPreview = (arr: any[], depth: number) => {
+    if (!arr.length) return ''
+    if (depth > 1) return `[${arr.length} 项]`
+    const preview = arr
+      .slice(0, 3)
+      .map(item => summarizePayload(item, depth + 1))
+      .filter(Boolean)
+    const suffix = arr.length > 3 ? `…+${arr.length - 3}` : ''
+    return `[${preview.join(', ')}${suffix}]`
+  }
+  const summarizeField = (key: string, value: any, depth: number): string => {
+    if (value == null) return ''
+    if (PROMPT_FIELD_KEYS.has(key) && typeof value === 'string') {
+      const snippet = summarizePromptText(value)
+      return snippet ? `${key}=${snippet}` : ''
+    }
+    if (key === 'nodeIds' && Array.isArray(value)) {
+      if (!value.length) return ''
+      const preview = value.slice(0, 3).join(', ')
+      const suffix = value.length > 3 ? `…+${value.length - 3}` : ''
+      return `${key}=${preview}${suffix}`
+    }
+    if (key === 'position' && typeof value === 'object') {
+      const coords: string[] = []
+      if (typeof value.x === 'number') coords.push(`x:${Math.round(value.x)}`)
+      if (typeof value.y === 'number') coords.push(`y:${Math.round(value.y)}`)
+      return coords.length ? `${key}=${coords.join(', ')}` : ''
+    }
+    const summarized = summarizePayload(value, depth)
+    return summarized ? `${key}=${summarized}` : ''
+  }
+  const summarizeRecord = (record: Record<string, any>, depth: number): string => {
+    if (!record || depth > MAX_SUMMARY_DEPTH) return ''
+    if (typeof record.success === 'boolean') {
+      const state = record.success ? '成功' : '失败'
+      const details: string[] = []
+      if (record.success && record.data) {
+        const dataText = summarizePayload(record.data, depth + 1)
+        if (dataText) details.push(dataText)
+      }
+      if (!record.success) {
+        if (record.error) {
+          const errorText = summarizePayload(record.error, depth + 1)
+          if (errorText) details.push(errorText)
+        }
+        if (record.data) {
+          const fallback = summarizePayload(record.data, depth + 1)
+          if (fallback) details.push(fallback)
+        }
+      }
+      return [state, ...details].filter(Boolean).join(' · ')
+    }
+    const message = typeof record.message === 'string' ? truncateText(record.message, 140) : ''
+    const prioritizedKeys = ['action', 'type', 'label', 'nodeId', 'nodeIds', 'sourceNodeId', 'targetNodeId', 'sourceHandle', 'targetHandle', 'layoutType', 'status', 'count', 'remixFromNodeId', 'position']
+    const used = new Set<string>()
+    const fields: string[] = []
+    prioritizedKeys.forEach(key => {
+      if (!(key in record)) return
+      const text = summarizeField(key, record[key], depth + 1)
+      if (text) {
+        used.add(key)
+        fields.push(text)
+      }
+    })
+    const extraEntries = Object.entries(record)
+      .filter(([key]) => key !== 'message' && key !== 'success' && key !== 'data' && key !== 'error' && !used.has(key))
+      .slice(0, 3)
+      .map(([key, value]) => summarizeField(key, value, depth + 1))
+      .filter(Boolean)
+    const combined = [message, ...fields, ...extraEntries].filter(Boolean)
+    return combined.join(' · ')
+  }
+  function summarizePayload(payload: any, depth = 0): string {
+    if (payload == null || depth > MAX_SUMMARY_DEPTH) return ''
+    if (typeof payload === 'string') return truncateText(payload)
+    if (typeof payload === 'number' || typeof payload === 'boolean') return String(payload)
+    if (Array.isArray(payload)) return summarizeArrayPreview(payload, depth)
+    if (typeof payload === 'object') {
+      return summarizeRecord(payload as Record<string, any>, depth + 1)
+    }
+    return ''
+  }
+
+  const NODE_KIND_LABELS: Record<string, string> = {
+    text: '文本',
+    image: '图像',
+    video: '视频',
+    composevideo: '视频',
+    composeVideo: '视频',
+    storyboard: '分镜',
+    audio: '音频',
+    subtitle: '字幕',
+    character: '角色',
+    texttoimage: '图像',
+    imagetext: '图像',
+  }
+  const TOOL_LABELS: Record<string, string> = {
+    createNode: '创建节点',
+    updateNode: '更新节点',
+    deleteNode: '删除节点',
+    connectNodes: '连接节点',
+    disconnectNodes: '断开连接',
+    autoLayout: '应用布局',
+    runNode: '运行节点',
+    runDag: '运行工作流',
+    formatAll: '整理画布',
+    getNodes: '查看节点',
+    findNodes: '查找节点',
+    'canvas.node.operation': '节点操作',
+    'canvas.connection.operation': '连接操作',
+    'canvas.layout.apply': '布局调整',
+    'canvas.optimization.analyze': '画布优化',
+    'canvas.view.navigate': '视图定位',
+    'project.operation': '项目操作',
+    'ai.plan.update': '计划同步',
+    'ai.thinking.process': '推理分析',
+  }
+  const NODE_OPERATION_ACTION_LABELS: Record<string, string> = {
+    create: '创建节点',
+    update: '更新节点',
+    delete: '删除节点',
+    duplicate: '复制节点',
+  }
+  const CONNECTION_ACTION_LABELS: Record<string, string> = {
+    connect: '连接节点',
+    disconnect: '断开连接',
+    reconnect: '调整连接',
+  }
+  const LAYOUT_LABELS: Record<string, string> = {
+    grid: '宫格布局',
+    horizontal: '水平布局',
+    hierarchical: '层级布局',
+  }
+  const describeNodeSelection = (payload: Record<string, any> = {}) => {
+    if (Array.isArray(payload.nodeIds) && payload.nodeIds.length) {
+      const preview = payload.nodeIds.slice(0, 2).join('、')
+      const suffix = payload.nodeIds.length > 2 ? `…等${payload.nodeIds.length}个` : ''
+      return `节点 ${preview}${suffix}`
+    }
+    const label =
+      typeof payload.label === 'string' ? payload.label :
+      typeof payload.config?.label === 'string' ? payload.config.label :
+      typeof payload.config?.title === 'string' ? payload.config.title :
+      ''
+    const nodeId = typeof payload.nodeId === 'string' ? payload.nodeId : ''
+    const kindValue = payload.config?.kind || payload.kind || payload.type
+    const kindLabel = typeof kindValue === 'string' ? NODE_KIND_LABELS[kindValue.toLowerCase()] : ''
+    const parts: string[] = []
+    if (label) parts.push(`「${label}」`)
+    if (!label && nodeId) parts.push(`节点 ${nodeId}`)
+    if (kindLabel) parts.push(kindLabel)
+    return parts.join(' · ')
+  }
+  const describeConnection = (payload: Record<string, any> = {}) => {
+    if (Array.isArray(payload.connections) && payload.connections.length) {
+      return `${payload.connections.length} 条连接`
+    }
+    const source =
+      typeof payload.sourceNodeId === 'string' ? payload.sourceNodeId :
+      typeof payload.source === 'string' ? payload.source :
+      ''
+    const target =
+      typeof payload.targetNodeId === 'string' ? payload.targetNodeId :
+      typeof payload.target === 'string' ? payload.target :
+      ''
+    if (source && target) return `${source} → ${target}`
+    return source || target || ''
+  }
+  const describeLayout = (payload: Record<string, any> = {}) => {
+    const layout = typeof payload.layoutType === 'string'
+      ? payload.layoutType
+      : typeof payload.layout === 'string'
+        ? payload.layout
+        : ''
+    if (!layout) return ''
+    const normalized = layout.toLowerCase()
+    return LAYOUT_LABELS[normalized] || layout
+  }
+  const getBaseToolLabel = (toolName: string, payload: Record<string, any>) => {
+    if (toolName === 'canvas.node.operation') {
+      const action = typeof payload.action === 'string' ? payload.action : ''
+      return NODE_OPERATION_ACTION_LABELS[action] || TOOL_LABELS[toolName] || '画布操作'
+    }
+    if (toolName === 'canvas.connection.operation') {
+      const action = typeof payload.action === 'string' ? payload.action : ''
+      return CONNECTION_ACTION_LABELS[action] || TOOL_LABELS[toolName] || '连接操作'
+    }
+    return TOOL_LABELS[toolName] || '画布操作'
+  }
+  const buildActionLabel = useCallback((toolName?: string, input?: any) => {
+    const normalizedTool = typeof toolName === 'string' ? toolName : ''
+    const payload = input && typeof input === 'object' ? input : {}
+    const baseLabel = getBaseToolLabel(normalizedTool, payload)
+    let detail = ''
+    if (normalizedTool === 'createNode' || normalizedTool === 'updateNode' || normalizedTool === 'deleteNode' || normalizedTool === 'runNode' || normalizedTool === 'canvas.node.operation') {
+      detail = describeNodeSelection(payload)
+    } else if (normalizedTool === 'connectNodes' || normalizedTool === 'disconnectNodes' || normalizedTool === 'canvas.connection.operation') {
+      detail = describeConnection(payload)
+    } else if (normalizedTool === 'autoLayout' || normalizedTool === 'canvas.layout.apply') {
+      detail = describeLayout(payload)
+      if (detail) {
+        detail = `应用${detail}`
+      }
+    } else if (normalizedTool === 'runDag') {
+      const concurrency = typeof payload.concurrency === 'number' ? payload.concurrency : null
+      detail = concurrency ? `并发 ${concurrency}` : '全局执行'
+    } else if (normalizedTool === 'formatAll') {
+      detail = '整理当前画布'
+    } else if (normalizedTool === 'project.operation') {
+      detail = typeof payload.action === 'string' ? payload.action : ''
+    } else if (!normalizedTool && payload) {
+      detail = describeNodeSelection(payload)
+    }
+    const text = detail
+      ? `${baseLabel}：${detail}`
+      : baseLabel
+    return toSingleLine(text) || '画布操作'
+  }, [])
+  const ACTION_STATUS_IGNORED_TOOLS = new Set(['ai.plan.update', 'ai.thinking.process'])
   const [input, setInput] = useState('')
   const isLoading = status === 'submitted' || status === 'streaming'
 
@@ -433,6 +723,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       }
     }
   }, [isLoading, planUpdate])
+
+  useEffect(() => {
+    if (!isThinking && !isLoading && statusPhase !== 'success') {
+      setStatusPhase('idle')
+      setStatusLine('随时描述新的场景，我会继续协助。')
+    }
+  }, [isThinking, isLoading, statusPhase, setStatusLine])
 
   const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
     try {
@@ -478,7 +775,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
   const stringifyMessage = (msg: UIMessage) => {
     const describeToolState = (part: any) => {
-      const toolName = resolveToolName(part) || '未知工具'
+      const rawToolName = resolveToolName(part)
+      const friendlyLabel = buildActionLabel(rawToolName, part.input ?? part.arguments ?? part.params ?? part.data)
+      const toolName = friendlyLabel || '画布操作'
       if (part.state === 'output-error') {
         const errorText = typeof part.errorText === 'string' && part.errorText.trim()
           ? `：${part.errorText.trim()}`
@@ -547,11 +846,33 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       if (isToolPart) {
         const summary = describeToolState(part)
         const key = part.toolCallId || part.id || (resolveToolName(part) ? `tool-${resolveToolName(part)}` : undefined)
-        pushOrUpdateLine(key, summary)
+        const detailLines: string[] = []
+        if (isToolCallPart(part)) {
+          const args = part.input ?? part.arguments ?? part.params ?? part.data
+          const argText = summarizePayload(args)
+          if (argText) {
+            detailLines.push(`参数：${argText}`)
+          }
+        }
+        if ((part.type === 'tool-result' || part.state === 'output-available') && part.output) {
+          const outputText = summarizePayload(part.output)
+          if (outputText) {
+            detailLines.push(`结果：${outputText}`)
+          }
+        }
+        const text = detailLines.length ? `${summary}\n${detailLines.join('\n')}` : summary
+        pushOrUpdateLine(key, text)
       }
     })
 
     return lines.filter(Boolean).join('\n')
+  }
+
+  const renderRoleLabel = (role?: string) => {
+    if (role === 'user') return '你'
+    if (role === 'assistant') return 'Nano Banana Pro'
+    if (role === 'system') return '系统'
+    return role || '消息'
   }
   const removeImagePromptAttachment = useCallback((attachmentId: string) => {
     setImagePromptAttachments(prev => prev.filter(att => att.id !== attachmentId))
@@ -657,6 +978,8 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     setThinkingEvents([])
     setPlanUpdate(null)
     setIsThinking(true)
+    setStatusPhase('thinking')
+    setStatusLine('🧠 正在拆解你的请求并规划 Aurora 计划。')
   }
 
   useEffect(() => {
@@ -684,15 +1007,29 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     toolCalls.forEach(async (call) => {
       if (!call.toolCallId || handledToolCalls.current.has(call.toolCallId)) return
       handledToolCalls.current.add(call.toolCallId)
+      if (!ACTION_STATUS_IGNORED_TOOLS.has(call.toolName)) {
+        const actionLabel = buildActionLabel(call.toolName, call.input)
+        if (actionLabel) {
+          actionStatusByCallId.current.set(call.toolCallId, actionLabel)
+          updateActionStatus(actionLabel, 'running')
+        }
+      }
       const { output, errorText } = await runToolHandler(call)
       if (errorText) {
         await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText })
       } else {
         await addToolResult({ state: 'output-available', tool: call.toolName as any, toolCallId: call.toolCallId, output: output as any })
       }
+      if (!ACTION_STATUS_IGNORED_TOOLS.has(call.toolName)) {
+        const actionLabel = actionStatusByCallId.current.get(call.toolCallId) || buildActionLabel(call.toolName, call.input)
+        if (actionLabel) {
+          updateActionStatus(actionLabel, errorText ? 'error' : 'success', errorText)
+          actionStatusByCallId.current.delete(call.toolCallId)
+        }
+      }
       await reportToolResult({ toolCallId: call.toolCallId, toolName: call.toolName, output, errorText })
     })
-  }, [messages, addToolResult, runToolHandler, reportToolResult])
+  }, [messages, addToolResult, runToolHandler, reportToolResult, buildActionLabel, updateActionStatus])
 
   useEffect(() => {
     const token = getAuthToken()
@@ -711,16 +1048,39 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             return
           }
           const normalizedInput = parseJsonIfNeeded(event.input)
+          if (!ACTION_STATUS_IGNORED_TOOLS.has(toolName)) {
+            const actionLabel = buildActionLabel(toolName, normalizedInput)
+            if (actionLabel) {
+              actionStatusByCallId.current.set(event.toolCallId, actionLabel)
+              updateActionStatus(actionLabel, 'running')
+            }
+          }
           const { output, errorText } = await runToolHandler({ ...event, toolName, input: normalizedInput })
+          if (!ACTION_STATUS_IGNORED_TOOLS.has(toolName)) {
+            const actionLabel = actionStatusByCallId.current.get(event.toolCallId)
+            if (actionLabel) {
+              updateActionStatus(actionLabel, errorText ? 'error' : 'success', errorText)
+              actionStatusByCallId.current.delete(event.toolCallId)
+            }
+          }
           await reportToolResult({ toolCallId: event.toolCallId, toolName, output, errorText })
           return
         }
 
         if (event.type === 'tool-result') {
+          if (!ACTION_STATUS_IGNORED_TOOLS.has(event.toolName) && event.toolCallId) {
+            const storedAction = actionStatusByCallId.current.get(event.toolCallId)
+            if (storedAction) {
+              updateActionStatus(storedAction, event.errorText ? 'error' : 'success', event.errorText)
+              actionStatusByCallId.current.delete(event.toolCallId)
+            }
+          }
           const thinking = extractThinkingEvent(event)
           if (thinking) {
             setThinkingEvents(prev => [...prev, thinking])
             setIsThinking(true)
+            setStatusPhase('thinking')
+            setStatusLine(thinking.content || 'AI 正在推演下一步动作。')
             return
           }
 
@@ -730,6 +1090,11 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             const done = planPayload.steps.every(step => step.status === 'completed')
             if (done) {
               setIsThinking(false)
+              setStatusPhase('success')
+              setStatusLine('✅ Aurora 计划执行完成，画布已更新。')
+            } else {
+              setStatusPhase('thinking')
+              setStatusLine(planPayload.explanation || '正在展开 Aurora 计划...')
             }
           }
         }
@@ -738,7 +1103,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     return () => {
       unsubscribe()
     }
-  }, [apiRoot, runToolHandler, reportToolResult])
+  }, [apiRoot, runToolHandler, reportToolResult, buildActionLabel, updateActionStatus])
 
   const injectSystemPrompt = () => {
     setMessages(prev => [
@@ -794,9 +1159,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         >
           <Group justify="space-between" align="center">
             <Group gap="sm">
-              <Badge color={colorScheme === 'dark' ? 'teal' : 'blue'} variant="light" size="xs" radius="sm">流式</Badge>
               <IconSparkles size={14} color={sparklesColor} />
-              <Text fw={600} fz="sm" c={headerTextColor}>暗夜AI助手</Text>
             </Group>
             <Group gap="xs">
               <Select
@@ -827,174 +1190,238 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
         <Box
           px="lg"
-          py="md"
-          style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
+          py="sm"
+          style={{ flexShrink: 0 }}
         >
-          <Box
+          <Paper
+            p="md"
+            radius="xl"
             style={{
-              height: '100%',
-              overflow: 'auto',
-              padding: 12,
-              background: logBackground,
-              borderRadius: 8,
-              border: logBorder
+              background: statusGradients[statusPhase],
+              border: headerBorder,
+              color: headerTextColor
             }}
           >
-            <Stack gap="sm">
-              {(thinkingEvents.length > 0 || isThinking) && (
-                <ThinkingProcess events={thinkingEvents} isProcessing={isThinking} maxHeight={180} />
-              )}
-
-              {planUpdate && planUpdate.steps.length > 0 && (
-                <ExecutionPlanDisplay plan={planUpdate} />
-              )}
-
-              {messages.map(msg => (
-                <Box key={msg.id} style={{ background: messageBackground, borderRadius: 8, padding: 10, border: messageBorder }}>
-                  <Text c="dimmed" size="xs">{msg.role}</Text>
-                  <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>{stringifyMessage(msg)}</Text>
-                </Box>
-              ))}
-              {messages.length === 0 && (
-                <Text size="sm" c="dimmed">输入你的需求，助手将流式回复并生成动作。</Text>
-              )}
-            </Stack>
-          </Box>
+            <Group align="flex-start" justify="space-between" gap="lg">
+              <Stack gap={4} style={{ flex: 1 }}>
+                <Group gap="xs">
+                  <IconBrain size={18} color={auroraAccent} />
+                  <Text fw={600} fz="sm" c={headerTextColor}>场景状态</Text>
+                  <Badge size="xs" variant="light" color={statusBadgeColor[statusPhase]}>
+                    {statusBadgeText[statusPhase]}
+                  </Badge>
+                  {intelligentMode && (
+                    <Badge size="xs" variant="outline" color="violet">
+                      智能工具
+                    </Badge>
+                  )}
+                </Group>
+                <Text size="sm" c={headerTextColor} style={{ opacity: 0.85 }}>
+                  {statusNote}
+                </Text>
+                <Group gap="xs">
+                  <Badge size="xs" variant="light" color={streamingBadgeColor}>
+                    {streamingBadgeLabel}
+                  </Badge>
+                  {planUpdate?.summary?.strategy && (
+                    <Badge size="xs" variant="light" color="blue">
+                      {planUpdate.summary.strategy}
+                    </Badge>
+                  )}
+                </Group>
+              </Stack>
+              <RingProgress
+                size={96}
+                thickness={10}
+                sections={[{ value: planCompletion, color: auroraCyan }]}
+                label={
+                  <Stack gap={0} align="center">
+                    <Text size="xs" c={headerTextColor}>进度</Text>
+                    <Text size="lg" fw={600} c={headerTextColor}>{planCompletion}%</Text>
+                  </Stack>
+                }
+              />
+            </Group>
+          </Paper>
         </Box>
 
         <Box
           px="lg"
           py="md"
-          style={{ background: footerBackground, borderTop: footerBorder, flexShrink: 0 }}
+          style={{ flex: 1, minHeight: 0 }}
         >
-          <input
-            ref={imagePromptInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            style={{ display: 'none' }}
-            onChange={handleImagePromptChange}
-          />
-          <form
-            onSubmit={onSubmit}
+          <Box
+            style={{
+              height: '100%',
+              background: logBackground,
+              borderRadius: 18,
+              border: logBorder,
+              position: 'relative',
+              overflow: 'hidden'
+            }}
           >
-            <Stack gap="xs">
-              <Textarea
-                minRows={3}
-                placeholder="用自然语言描述需求，支持流式输出与工具调用…"
-                value={input}
-                onChange={(e) => setInput(e.currentTarget.value)}
-                disabled={isLoading}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    e.preventDefault()
-                    onSubmit()
-                  }
-                }}
-                styles={{ input: { background: inputBackground, borderColor: inputBorder, color: inputColor } }}
-              />
-              {imagePromptAttachments.length > 0 && (
-                <Stack gap="sm">
-                  {imagePromptAttachments.map((attachment, index) => (
-                    <Group key={attachment.id} gap="sm" align="center" wrap="nowrap">
-                      <Box
-                        style={{
-                          position: 'relative',
-                          width: 90,
-                          height: 90,
-                          borderRadius: 8,
-                          overflow: 'hidden',
-                          border: messageBorder,
-                          flex: '0 0 auto',
-                        }}
+            <ScrollArea style={{ height: '100%' }} type="auto">
+              <Stack gap="sm" style={{ padding: 24, paddingBottom: 24 + conversationOverlayOffset }}>
+                {(thinkingEvents.length > 0 || isThinking) && (
+                  <ThinkingProcess events={thinkingEvents} isProcessing={isThinking} maxHeight={180} />
+                )}
+
+                {planUpdate && planUpdate.steps.length > 0 && (
+                  <ExecutionPlanDisplay plan={planUpdate} />
+                )}
+
+                {messages.map(msg => (
+                  <Box key={msg.id} style={{ background: messageBackground, borderRadius: 8, padding: 10, border: messageBorder }}>
+                    <Text c="dimmed" size="xs">{renderRoleLabel(msg.role)}</Text>
+                    <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>{stringifyMessage(msg)}</Text>
+                  </Box>
+                ))}
+                {messages.length === 0 && (
+                  <Text size="sm" c="dimmed">描述你想要的氛围或分镜，我将流式规划 Aurora 计划并同步动作。</Text>
+                )}
+              </Stack>
+            </ScrollArea>
+
+            <input
+              ref={imagePromptInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={handleImagePromptChange}
+            />
+            <form
+              onSubmit={onSubmit}
+              style={{ position: 'absolute', left: 24, right: 24, bottom: 24 }}
+            >
+              <Stack gap="xs">
+                <Box style={{ position: 'relative' }}>
+                  <Textarea
+                    minRows={3}
+                    placeholder="用自然语言描述需求，支持流式输出与工具调用…"
+                    value={input}
+                    onChange={(e) => setInput(e.currentTarget.value)}
+                    disabled={isLoading}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                        e.preventDefault()
+                        onSubmit()
+                      }
+                    }}
+                    styles={{
+                      input: {
+                        background: inputBackground,
+                        borderColor: inputBorder,
+                        color: inputColor,
+                        paddingRight: 180,
+                        paddingBottom: 48
+                      }
+                    }}
+                  />
+                  <Group gap="xs" style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                    <Tooltip label={uploadTooltipLabel}>
+                      <ActionIcon
+                        variant="light"
+                        color="teal"
+                        onClick={handleImagePromptButtonClick}
+                        disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
                       >
+                        {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                    <Button
+                      type="submit"
+                      loading={isLoading}
+                      leftSection={<IconSend size={16} />}
+                      style={{ minWidth: 120 }}
+                    >
+                      发送
+                    </Button>
+                  </Group>
+                </Box>
+                {imagePromptAttachments.length > 0 && (
+                  <Stack gap="sm">
+                    {imagePromptAttachments.map((attachment, index) => (
+                      <Group key={attachment.id} gap="sm" align="center" wrap="nowrap">
                         <Box
-                          component="img"
-                          src={attachment.preview}
-                          alt={`prompt preview ${index + 1}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                        <ActionIcon
-                          size="xs"
-                          variant="filled"
-                          color="dark"
-                          radius="xl"
-                          onClick={() => removeImagePromptAttachment(attachment.id)}
-                          style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)' }}
+                          style={{
+                            position: 'relative',
+                            width: 90,
+                            height: 90,
+                            borderRadius: 8,
+                            overflow: 'hidden',
+                            border: messageBorder,
+                            flex: '0 0 auto',
+                          }}
                         >
-                          <IconX size={12} />
-                        </ActionIcon>
-                      </Box>
-                      <Stack gap={4} style={{ flex: 1 }}>
-                        <Group gap={6}>
-                          <Text size="xs" c="dimmed">
-                            图片提示词{imagePromptAttachments.length > 1 ? ` #${index + 1}` : ''}
-                          </Text>
-                          <Badge size="xs" variant="light" color={attachment.ready ? 'green' : 'gray'}>
-                            {attachment.ready ? '已生成' : '生成中'}
-                          </Badge>
-                        </Group>
-                        <ScrollArea.Autosize mah={90} type="hover">
-                          <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>
-                            {attachment.prompt || '正在生成提示词…'}
-                          </Text>
-                        </ScrollArea.Autosize>
-                        <Group gap="xs">
-                          <Tooltip label={attachment.ready ? '查看图片与提示词详情' : '提示词生成中'}>
-                            <ActionIcon
-                              variant="light"
-                              color="violet"
-                              size="sm"
-                              disabled={!attachment.ready}
-                              onClick={() => attachment.ready && setActivePromptAttachmentId(attachment.id)}
-                            >
-                              <IconEye size={14} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Tooltip label="复制提示词">
-                            <CopyButton value={attachment.prompt || ''}>
-                              {({ copy }) => (
-                                <ActionIcon
-                                  variant="light"
-                                  color="gray"
-                                  size="sm"
-                                  disabled={!attachment.prompt}
-                                  onClick={copy}
-                                >
-                                  <IconBulb size={14} />
-                                </ActionIcon>
-                              )}
-                            </CopyButton>
-                          </Tooltip>
-                          <Text size="xs" c="dimmed">发送时将附带</Text>
-                        </Group>
-                      </Stack>
-                    </Group>
-                  ))}
-                </Stack>
-              )}
-              <Group justify="flex-end" align="flex-end" gap="xs">
-                <Tooltip label={uploadTooltipLabel}>
-                  <ActionIcon
-                    variant="light"
-                    color="teal"
-                    onClick={handleImagePromptButtonClick}
-                    disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
-                  >
-                    {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
-                  </ActionIcon>
-                </Tooltip>
-                <Button
-                  type="submit"
-                  loading={isLoading}
-                  leftSection={<IconSend size={16} />}
-                  style={{ minWidth: 120 }}
-                >
-                  发送
-                </Button>
-              </Group>
-            </Stack>
-          </form>
+                          <Box
+                            component="img"
+                            src={attachment.preview}
+                            alt={`prompt preview ${index + 1}`}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                          <ActionIcon
+                            size="xs"
+                            variant="filled"
+                            color="dark"
+                            radius="xl"
+                            onClick={() => removeImagePromptAttachment(attachment.id)}
+                            style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)' }}
+                          >
+                            <IconX size={12} />
+                          </ActionIcon>
+                        </Box>
+                        <Stack gap={4} style={{ flex: 1 }}>
+                          <Group gap={6}>
+                            <Text size="xs" c="dimmed">
+                              图片提示词{imagePromptAttachments.length > 1 ? ` #${index + 1}` : ''}
+                            </Text>
+                            <Badge size="xs" variant="light" color={attachment.ready ? 'green' : 'gray'}>
+                              {attachment.ready ? '已生成' : '生成中'}
+                            </Badge>
+                          </Group>
+                          <ScrollArea.Autosize mah={90} type="hover">
+                            <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>
+                              {attachment.prompt || '正在生成提示词…'}
+                            </Text>
+                          </ScrollArea.Autosize>
+                          <Group gap="xs">
+                            <Tooltip label={attachment.ready ? '查看图片与提示词详情' : '提示词生成中'}>
+                              <ActionIcon
+                                variant="light"
+                                color="violet"
+                                size="sm"
+                                disabled={!attachment.ready}
+                                onClick={() => attachment.ready && setActivePromptAttachmentId(attachment.id)}
+                              >
+                                <IconEye size={14} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="复制提示词">
+                              <CopyButton value={attachment.prompt || ''}>
+                                {({ copy }) => (
+                                  <ActionIcon
+                                    variant="light"
+                                    color="gray"
+                                    size="sm"
+                                    disabled={!attachment.prompt}
+                                    onClick={copy}
+                                  >
+                                    <IconBulb size={14} />
+                                  </ActionIcon>
+                                )}
+                              </CopyButton>
+                            </Tooltip>
+                            <Text size="xs" c="dimmed">发送时将附带</Text>
+                          </Group>
+                        </Stack>
+                      </Group>
+                    ))}
+                  </Stack>
+                )}
+              </Stack>
+            </form>
+          </Box>
         </Box>
         <Modal
           opened={!!activePromptAttachment}

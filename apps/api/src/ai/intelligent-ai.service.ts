@@ -216,11 +216,15 @@ export class IntelligentAiService {
     try {
       // 实时思考过程推送（经由工具事件复用前端订阅链路）
       const onThinkingEvent = (event: ThinkingEvent) => {
-        this.emitThinkingEvent(userId, event)
+        const enrichedEvent: ThinkingEvent = {
+          ...event,
+          sessionId: executionContext.sessionId
+        }
+        this.emitThinkingEvent(userId, enrichedEvent)
         if (res) {
           res.write(`data: ${JSON.stringify({
             type: 'thinking',
-            payload: event
+            payload: enrichedEvent
           })}\n\n`)
         }
       }

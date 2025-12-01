@@ -17,6 +17,7 @@ export enum CanvasActionDomain {
 
 export interface ThinkingEvent {
   id: string
+  sessionId?: string
   type: 'intent_analysis' | 'planning' | 'reasoning' | 'decision' | 'execution' | 'result'
   timestamp: Date
   content: string

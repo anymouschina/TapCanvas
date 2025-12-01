@@ -1,5 +1,5 @@
 import React from 'react'
-import { Modal, Group, Button, Title, Text, Stack } from '@mantine/core'
+import { Modal, Group, Button, Title, Text, Stack, Paper, Badge } from '@mantine/core'
 import { IconBrain } from '@tabler/icons-react'
 import { IntelligentChatInterface } from './IntelligentChatInterface'
 import { useIntelligentChat } from '../../hooks/useIntelligentChat'
@@ -26,10 +26,42 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
   const canvasContext = React.useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
+  const [statusNote, setStatusNote] = React.useState('等待你的灵感提示，我会先记录现场。')
 
   // 处理画布操作执行
+  const describeOperation = (operation: any): string => {
+    switch (operation?.type) {
+      case 'canvas_node.operation': {
+        const actionMap: Record<string, string> = {
+          create: '种下一枚新的节点胶囊',
+          update: '微调节点参数',
+          delete: '清理多余节点',
+          duplicate: '复制节点以保持节奏'
+        }
+        return actionMap[operation.payload?.action] || '处理节点结构'
+      }
+      case 'canvas_layout.apply':
+        return `整理布局 · ${operation.payload?.algorithm || '智能排列'}`
+      case 'canvas_connection.operation':
+        return '梳理连线，保持数据流畅'
+      case 'canvas_optimization.analyze':
+        return '进行画布性能诊断'
+      case 'canvas_operation': {
+        const domainMap: Record<string, string> = {
+          node_manipulation: '整理节点簇',
+          layout_arrangement: '对齐整体布局',
+          execution_debug: '排查执行状态'
+        }
+        return domainMap[operation.params?.domain] || '执行语义操作'
+      }
+      default:
+        return '处理中...'
+    }
+  }
+
   const handleOperationExecuted = (operation: any) => {
     console.log('Executing canvas operation:', operation)
+    setStatusNote(describeOperation(operation))
 
     // 根据操作类型执行不同的画布操作
     switch (operation.type) {
@@ -213,6 +245,30 @@ export const IntelligentCanvasAssistant: React.FC<IntelligentCanvasAssistantProp
           基于 CODEX 级别的智能理解能力，帮您操作画布的任意功能。
           您可以用自然语言描述需求，AI 会自动识别意图并执行操作。
         </Text>
+
+        <Paper
+          p="md"
+          radius="xl"
+          sx={{
+            background: 'linear-gradient(125deg, rgba(143,123,255,0.15), rgba(77,214,255,0.12))',
+            border: '1px solid rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(20px)'
+          }}
+        >
+          <Group position="apart" align="flex-start">
+            <div>
+              <Text size="sm" color="#cbd5ff">
+                场景状态
+              </Text>
+              <Text size="lg" weight={600}>
+                {statusNote}
+              </Text>
+            </div>
+            <Badge color="violet" variant="light">
+              语义执行
+            </Badge>
+          </Group>
+        </Paper>
 
         <IntelligentChatInterface
           userId={userId}

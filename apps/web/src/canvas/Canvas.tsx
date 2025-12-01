@@ -919,7 +919,7 @@ function CanvasInner(): JSX.Element {
           position: 'absolute',
           right: 20,
           top: 20,
-          zIndex: 1000
+          zIndex: 200
         }}
         onClick={() => setAiAssistantOpened(true)}
       >
