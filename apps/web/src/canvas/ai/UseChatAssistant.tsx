@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, RingProgress, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconBrain } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
@@ -276,7 +276,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     ? 'linear-gradient(120deg, rgba(15,23,42,0.9), rgba(10,12,24,0.6))'
     : 'linear-gradient(120deg, rgba(226,232,240,0.92), rgba(248,250,252,0.85))'
   const headerBorder = 'none'
-  const headerTextColor = isDarkUi ? '#eff6ff' : '#0f172a'
   const sparklesColor = isDarkUi ? '#a5b4fc' : '#6366f1'
   const logBackground = isDarkUi ? 'rgba(15,23,42,0.8)' : 'rgba(248,250,252,0.9)'
   const logBorder = 'none'
@@ -287,25 +286,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const inputBorder = isDarkUi ? 'rgba(99,102,241,0.4)' : 'rgba(148,163,184,0.5)'
   const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
   const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
-  const auroraAccent = '#8F7BFF'
-  const auroraCyan = '#4DD6FF'
-  const statusGradients: Record<'idle' | 'thinking' | 'success', string> = {
-    idle: isDarkUi
-      ? 'linear-gradient(135deg, rgba(15,23,42,0.85), rgba(8,12,24,0.8))'
-      : 'linear-gradient(135deg, rgba(241,245,255,0.95), rgba(226,232,240,0.9))',
-    thinking: 'linear-gradient(135deg, rgba(143,123,255,0.22), rgba(77,214,255,0.18))',
-    success: 'linear-gradient(135deg, rgba(92,242,194,0.25), rgba(58,176,158,0.2))'
-  }
-  const statusBadgeText: Record<'idle' | 'thinking' | 'success', string> = {
-    idle: '待命',
-    thinking: '推演中',
-    success: '已完成'
-  }
-  const statusBadgeColor: Record<'idle' | 'thinking' | 'success', string> = {
-    idle: 'gray',
-    thinking: 'violet',
-    success: 'teal'
-  }
   const conversationOverlayOffset = 240
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
@@ -319,32 +299,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
   const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
   const [isThinking, setIsThinking] = useState(false)
-  const [statusPhase, setStatusPhase] = useState<'idle' | 'thinking' | 'success'>('idle')
-  const [statusNote, setStatusNote] = useState('等待你的灵感描述，我会点亮 Aurora 画布。')
-  const planCompletion = useMemo(() => {
-    if (!planUpdate || !planUpdate.steps || planUpdate.steps.length === 0) return 0
-    const completed = planUpdate.steps.filter(step => step.status === 'completed').length
-    return Math.round((completed / planUpdate.steps.length) * 100)
-  }, [planUpdate])
-  const setStatusLine = useCallback((text: string) => {
-    const normalized = toSingleLine(text)
-    setStatusNote(normalized || '')
-  }, [setStatusNote])
-  const updateActionStatus = useCallback((actionLabel: string, phase: 'running' | 'success' | 'error', extra?: string) => {
-    if (!actionLabel) return
-    const label = toSingleLine(actionLabel)
-    if (!label) return
-    if (phase === 'running') {
-      setStatusLine(`${label}中…`)
-      return
-    }
-    if (phase === 'success') {
-      setStatusLine(`${label}完成`)
-      return
-    }
-    const extraText = toSingleLine(extra)
-    setStatusLine(extraText ? `${label}失败：${extraText}` : `${label}失败`)
-  }, [setStatusLine])
 
   useEffect(() => {
     if (!opened) return
@@ -359,13 +313,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       canceled = true
     }
   }, [opened])
-
-  useEffect(() => {
-    if (opened) {
-      setStatusPhase('idle')
-      setStatusLine('等待你的灵感描述，我会点亮 Aurora 画布。')
-    }
-  }, [opened, setStatusLine])
 
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
@@ -449,10 +396,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     transport: chatTransport,
     sendAutomaticallyWhen: ({ messages }) => lastAssistantMessageIsCompleteWithToolCalls({ messages })
   })
-  const streamingBadgeColor = status === 'streaming' ? 'teal' : status === 'submitted' ? 'yellow' : 'gray'
-  const streamingBadgeLabel = status === 'streaming' ? '流式同步' : status === 'submitted' ? '派单中' : '静候'
   const handledToolCalls = useRef(new Set<string>())
-  const actionStatusByCallId = useRef(new Map<string, string>())
   const resolveToolName = (part: any) => {
     if (part?.toolName) return part.toolName
     if (typeof part?.type === 'string' && part.type.startsWith('tool-')) {
@@ -709,7 +653,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       : baseLabel
     return toSingleLine(text) || '画布操作'
   }, [])
-  const ACTION_STATUS_IGNORED_TOOLS = new Set(['ai.plan.update', 'ai.thinking.process'])
   const [input, setInput] = useState('')
   const isLoading = status === 'submitted' || status === 'streaming'
 
@@ -723,13 +666,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       }
     }
   }, [isLoading, planUpdate])
-
-  useEffect(() => {
-    if (!isThinking && !isLoading && statusPhase !== 'success') {
-      setStatusPhase('idle')
-      setStatusLine('随时描述新的场景，我会继续协助。')
-    }
-  }, [isThinking, isLoading, statusPhase, setStatusLine])
 
   const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
     try {
@@ -956,6 +892,38 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     imagePromptInputRef.current?.click()
   }, [imagePromptAttachments.length, isGptModel])
 
+  const handleTextareaPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardData = event.clipboardData
+    if (!clipboardData) return
+    const files: File[] = []
+    const items = clipboardData.items
+    if (items && items.length) {
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i]
+        if (item.kind === 'file' && item.type?.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) files.push(file)
+        }
+      }
+    }
+    if (!files.length && clipboardData.files && clipboardData.files.length) {
+      files.push(
+        ...Array.from(clipboardData.files).filter(file => file.type?.startsWith('image/'))
+      )
+    }
+    if (!files.length) return
+    if (!isGptModel) {
+      toast('仅 GPT 模型支持图片提示词', 'error')
+      return
+    }
+    if (imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS) {
+      toast(`一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`, 'error')
+      return
+    }
+    event.preventDefault()
+    void handleImagePromptUpload(files)
+  }, [handleImagePromptUpload, imagePromptAttachments.length, isGptModel])
+
   const onSubmit = (e?: any) => {
     if (e?.preventDefault) e.preventDefault()
     const trimmed = input.trim()
@@ -978,8 +946,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     setThinkingEvents([])
     setPlanUpdate(null)
     setIsThinking(true)
-    setStatusPhase('thinking')
-    setStatusLine('🧠 正在拆解你的请求并规划 Aurora 计划。')
   }
 
   useEffect(() => {
@@ -1007,29 +973,15 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     toolCalls.forEach(async (call) => {
       if (!call.toolCallId || handledToolCalls.current.has(call.toolCallId)) return
       handledToolCalls.current.add(call.toolCallId)
-      if (!ACTION_STATUS_IGNORED_TOOLS.has(call.toolName)) {
-        const actionLabel = buildActionLabel(call.toolName, call.input)
-        if (actionLabel) {
-          actionStatusByCallId.current.set(call.toolCallId, actionLabel)
-          updateActionStatus(actionLabel, 'running')
-        }
-      }
       const { output, errorText } = await runToolHandler(call)
       if (errorText) {
         await addToolResult({ state: 'output-error', tool: call.toolName as any, toolCallId: call.toolCallId, errorText })
       } else {
         await addToolResult({ state: 'output-available', tool: call.toolName as any, toolCallId: call.toolCallId, output: output as any })
       }
-      if (!ACTION_STATUS_IGNORED_TOOLS.has(call.toolName)) {
-        const actionLabel = actionStatusByCallId.current.get(call.toolCallId) || buildActionLabel(call.toolName, call.input)
-        if (actionLabel) {
-          updateActionStatus(actionLabel, errorText ? 'error' : 'success', errorText)
-          actionStatusByCallId.current.delete(call.toolCallId)
-        }
-      }
       await reportToolResult({ toolCallId: call.toolCallId, toolName: call.toolName, output, errorText })
     })
-  }, [messages, addToolResult, runToolHandler, reportToolResult, buildActionLabel, updateActionStatus])
+  }, [messages, addToolResult, runToolHandler, reportToolResult])
 
   useEffect(() => {
     const token = getAuthToken()
@@ -1048,39 +1000,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             return
           }
           const normalizedInput = parseJsonIfNeeded(event.input)
-          if (!ACTION_STATUS_IGNORED_TOOLS.has(toolName)) {
-            const actionLabel = buildActionLabel(toolName, normalizedInput)
-            if (actionLabel) {
-              actionStatusByCallId.current.set(event.toolCallId, actionLabel)
-              updateActionStatus(actionLabel, 'running')
-            }
-          }
           const { output, errorText } = await runToolHandler({ ...event, toolName, input: normalizedInput })
-          if (!ACTION_STATUS_IGNORED_TOOLS.has(toolName)) {
-            const actionLabel = actionStatusByCallId.current.get(event.toolCallId)
-            if (actionLabel) {
-              updateActionStatus(actionLabel, errorText ? 'error' : 'success', errorText)
-              actionStatusByCallId.current.delete(event.toolCallId)
-            }
-          }
           await reportToolResult({ toolCallId: event.toolCallId, toolName, output, errorText })
           return
         }
 
         if (event.type === 'tool-result') {
-          if (!ACTION_STATUS_IGNORED_TOOLS.has(event.toolName) && event.toolCallId) {
-            const storedAction = actionStatusByCallId.current.get(event.toolCallId)
-            if (storedAction) {
-              updateActionStatus(storedAction, event.errorText ? 'error' : 'success', event.errorText)
-              actionStatusByCallId.current.delete(event.toolCallId)
-            }
-          }
           const thinking = extractThinkingEvent(event)
           if (thinking) {
             setThinkingEvents(prev => [...prev, thinking])
             setIsThinking(true)
-            setStatusPhase('thinking')
-            setStatusLine(thinking.content || 'AI 正在推演下一步动作。')
             return
           }
 
@@ -1090,11 +1019,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             const done = planPayload.steps.every(step => step.status === 'completed')
             if (done) {
               setIsThinking(false)
-              setStatusPhase('success')
-              setStatusLine('✅ Aurora 计划执行完成，画布已更新。')
-            } else {
-              setStatusPhase('thinking')
-              setStatusLine(planPayload.explanation || '正在展开 Aurora 计划...')
             }
           }
         }
@@ -1103,7 +1027,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     return () => {
       unsubscribe()
     }
-  }, [apiRoot, runToolHandler, reportToolResult, buildActionLabel, updateActionStatus])
+  }, [apiRoot, runToolHandler, reportToolResult])
 
   const injectSystemPrompt = () => {
     setMessages(prev => [
@@ -1190,63 +1114,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
         <Box
           px="lg"
-          py="sm"
-          style={{ flexShrink: 0 }}
-        >
-          <Paper
-            p="md"
-            radius="xl"
-            style={{
-              background: statusGradients[statusPhase],
-              border: headerBorder,
-              color: headerTextColor
-            }}
-          >
-            <Group align="flex-start" justify="space-between" gap="lg">
-              <Stack gap={4} style={{ flex: 1 }}>
-                <Group gap="xs">
-                  <IconBrain size={18} color={auroraAccent} />
-                  <Text fw={600} fz="sm" c={headerTextColor}>场景状态</Text>
-                  <Badge size="xs" variant="light" color={statusBadgeColor[statusPhase]}>
-                    {statusBadgeText[statusPhase]}
-                  </Badge>
-                  {intelligentMode && (
-                    <Badge size="xs" variant="outline" color="violet">
-                      智能工具
-                    </Badge>
-                  )}
-                </Group>
-                <Text size="sm" c={headerTextColor} style={{ opacity: 0.85 }}>
-                  {statusNote}
-                </Text>
-                <Group gap="xs">
-                  <Badge size="xs" variant="light" color={streamingBadgeColor}>
-                    {streamingBadgeLabel}
-                  </Badge>
-                  {planUpdate?.summary?.strategy && (
-                    <Badge size="xs" variant="light" color="blue">
-                      {planUpdate.summary.strategy}
-                    </Badge>
-                  )}
-                </Group>
-              </Stack>
-              <RingProgress
-                size={96}
-                thickness={10}
-                sections={[{ value: planCompletion, color: auroraCyan }]}
-                label={
-                  <Stack gap={0} align="center">
-                    <Text size="xs" c={headerTextColor}>进度</Text>
-                    <Text size="lg" fw={600} c={headerTextColor}>{planCompletion}%</Text>
-                  </Stack>
-                }
-              />
-            </Group>
-          </Paper>
-        </Box>
-
-        <Box
-          px="lg"
           py="md"
           style={{ flex: 1, minHeight: 0 }}
         >
@@ -1301,6 +1168,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                     placeholder="用自然语言描述需求，支持流式输出与工具调用…"
                     value={input}
                     onChange={(e) => setInput(e.currentTarget.value)}
+                    onPaste={handleTextareaPaste}
                     disabled={isLoading}
                     onKeyDown={(e) => {
                       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
