@@ -10,7 +10,7 @@ import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
 import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
-import { runTaskByVendor, type TaskResultDto } from '../../api/server'
+import { runTaskByVendor, type TaskResultDto, listModelProviders, listModelTokens } from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
@@ -35,6 +35,91 @@ const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
 const ASSISTANT_MODEL_SET = new Set(ASSISTANT_MODEL_PRESETS.map(option => option.value))
 const MAX_IMAGE_PROMPT_ATTACHMENTS = 2
 const AI_DEBUG_LOGS_ENABLED = (import.meta as any).env?.VITE_DEBUG_AI_LOGS === 'true'
+
+const buildAssistantBaseOptions = (textOptions: ModelOption[]): ModelOption[] => {
+  const overrides = new Map<string, ModelOption>()
+  textOptions.forEach((option) => {
+    if (ASSISTANT_MODEL_SET.has(option.value)) {
+      overrides.set(option.value, option)
+    }
+  })
+  return ASSISTANT_MODEL_PRESETS.map((option) => overrides.get(option.value) || option)
+}
+
+const filterGptOptions = (options: ModelOption[]): ModelOption[] =>
+  options.filter((option) => option.value.toLowerCase().includes('gpt'))
+
+const mergeModelOptionLists = (primary: ModelOption[], extra: ModelOption[]): ModelOption[] => {
+  const seen = new Set<string>()
+  const merged: ModelOption[] = []
+  primary.forEach((opt) => {
+    if (seen.has(opt.value)) return
+    seen.add(opt.value)
+    merged.push(opt)
+  })
+  extra.forEach((opt) => {
+    if (seen.has(opt.value)) return
+    seen.add(opt.value)
+    merged.push(opt)
+  })
+  return merged
+}
+
+async function fetchAssistantCodexModels(): Promise<ModelOption[]> {
+  try {
+    const providers = await listModelProviders().catch(() => [])
+    const openaiProvider = providers.find((provider) => provider.vendor === 'openai')
+    if (!openaiProvider) return []
+    const baseUrl = (openaiProvider.baseUrl || '').trim()
+    if (!baseUrl) return []
+    const tokens = await listModelTokens(openaiProvider.id).catch(() => [])
+    const token = tokens.find((t) => t.enabled && typeof t.secretToken === 'string' && t.secretToken.trim())
+    if (!token?.secretToken) return []
+    const normalizedBase = baseUrl.replace(/\/$/, '')
+    const endpoint = `${normalizedBase}/v1/models`
+    console.debug('[UseChatAssistant] 请求 GPT 模型列表', {
+      baseUrl: normalizedBase,
+      endpoint,
+      tokenLabel: token.label || '未命名密钥',
+    })
+    const resp = await fetch(endpoint, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token.secretToken}`,
+      },
+    })
+    if (!resp.ok) {
+      console.warn('[UseChatAssistant] Codex model fetch failed', resp.status)
+      return []
+    }
+    let payload: any = null
+    try {
+      payload = await resp.json()
+    } catch {
+      payload = null
+    }
+    console.debug('[UseChatAssistant] GPT 模型响应', payload)
+    const list = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.models)
+        ? payload.models
+        : Array.isArray(payload)
+          ? payload
+          : []
+    return list
+      .map((item) => {
+        const value = typeof item?.id === 'string' ? item.id : typeof item?.name === 'string' ? item.name : null
+        if (!value) return null
+        if (!value.toLowerCase().includes('gpt')) return null
+        const label = typeof item?.displayName === 'string' && item.displayName.trim() ? item.displayName.trim() : value
+        return { value, label, vendor: 'openai' as const }
+      })
+      .filter(Boolean) as ModelOption[]
+  } catch (error) {
+    console.warn('[UseChatAssistant] failed to load Codex models', error)
+    return []
+  }
+}
 
 const collectTextFromParts = (parts?: any): string => {
   if (!Array.isArray(parts)) return ''
@@ -168,15 +253,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
   const textModelOptions = useModelOptions('text')
+  const [codexModels, setCodexModels] = useState<ModelOption[]>([])
+  const fallbackAssistantOptions = useMemo(() => buildAssistantBaseOptions(textModelOptions), [textModelOptions])
+  const gptTextOptions = useMemo(() => filterGptOptions(textModelOptions), [textModelOptions])
   const assistantModelOptions = useMemo(() => {
-    const overrides = new Map<string, ModelOption>()
-    textModelOptions.forEach(option => {
-      if (ASSISTANT_MODEL_SET.has(option.value)) {
-        overrides.set(option.value, option)
-      }
-    })
-    return ASSISTANT_MODEL_PRESETS.map(option => overrides.get(option.value) || option)
-  }, [textModelOptions])
+    const primary = gptTextOptions.length ? gptTextOptions : fallbackAssistantOptions
+    return mergeModelOptionLists(primary, codexModels)
+  }, [gptTextOptions, fallbackAssistantOptions, codexModels])
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
   const { colorScheme } = useMantineColorScheme()
@@ -218,6 +301,20 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [isThinking, setIsThinking] = useState(false)
 
   useEffect(() => {
+    if (!opened) return
+    let canceled = false
+    fetchAssistantCodexModels()
+      .then((models) => {
+        if (canceled) return
+        setCodexModels(models)
+      })
+      .catch(() => {})
+    return () => {
+      canceled = true
+    }
+  }, [opened])
+
+  useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
       const preferred = assistantModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
       setModel(preferred ? preferred.value : assistantModelOptions[0].value)
@@ -227,7 +324,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const canvasContext = useMemo(() => buildCanvasContext(nodes, edges), [nodes, edges])
 
   const provider = useMemo(() => {
-    const match = textModelOptions.find((opt) => opt.value === model)
+    const match = assistantModelOptions.find((opt) => opt.value === model)
     if (match?.vendor) {
       if (match.vendor === 'gemini') return 'google'
       if (['openai', 'anthropic', 'google'].includes(match.vendor)) {
@@ -235,7 +332,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       }
     }
     return getModelProvider(model)
-  }, [model, textModelOptions])
+  }, [model, assistantModelOptions])
   const isGptModel = provider === 'openai'
 
   const body = useMemo(() => ({

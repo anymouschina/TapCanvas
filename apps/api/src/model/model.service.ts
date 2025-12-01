@@ -774,6 +774,7 @@ export class ModelService {
         },
       })
       const data = Array.isArray(resp.data?.data) ? resp.data.data : Array.isArray(resp.data) ? resp.data : []
+      console.log('[Model data] openai ',data)
       return data
         .map((item: any) => {
           if (!item || typeof item.id !== 'string') return null
