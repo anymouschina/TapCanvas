@@ -266,7 +266,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const panelBackground = 'radial-gradient(135% 160% at 50% 0%, rgba(36,52,104,0.45), rgba(5,7,15,0.98))'
   const panelBorder = 'none'
   const panelShadow = '0 45px 120px rgba(3,5,15,0.85)'
-  const headerBackground = 'rgba(5,8,20,0.55)'
+  const headerBackground = 'none'
   const headerBorder = 'none'
   const sparklesColor = '#a5b4fc'
   const logBackground = 'radial-gradient(80% 60% at 50% 0%, rgba(79,126,255,0.22), transparent), rgba(4,7,16,0.9)'
@@ -1252,7 +1252,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             />
             <form
               onSubmit={onSubmit}
-              style={{ padding: 24, paddingTop: 16, position: 'relative', zIndex: 1, flexShrink: 0 }}
+              style={{  position: 'relative', zIndex: 1, flexShrink: 0 }}
             >
               <Box
                 style={{
