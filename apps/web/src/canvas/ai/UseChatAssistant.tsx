@@ -435,6 +435,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   }
   const summarizeField = (key: string, value: any, depth: number): string => {
     if (value == null) return ''
+    if (key === 'imageUrl' || key === 'imageUrls' || key === 'imageResults' || key === 'videoUrl' || key === 'videoUrls' || key === 'videoResults') {
+      return ''
+    }
     if (PROMPT_FIELD_KEYS.has(key) && typeof value === 'string') {
       const snippet = summarizePromptText(value)
       return snippet ? `${key}=${snippet}` : ''
@@ -728,41 +731,45 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       return `🛠 ${toolName} · 执行中…`
     }
 
-    const lines: string[] = []
+    const textLines: string[] = []
+    const toolLines: string[] = []
     const toolLineIndex = new Map<string, number>()
-    const pushOrUpdateLine = (key: string | undefined, text: string) => {
+    const pushOrUpdateToolLine = (key: string | undefined, text: string) => {
       if (!text) return
       if (key && toolLineIndex.has(key)) {
         const index = toolLineIndex.get(key)
         if (typeof index === 'number') {
-          lines[index] = text
+          toolLines[index] = text
           return
         }
       }
-      const index = lines.length
-      lines.push(text)
+      const index = toolLines.length
+      toolLines.push(text)
       if (key) {
         toolLineIndex.set(key, index)
       }
     }
 
+    let hasUserText = false
+
     msg.parts.forEach((part: any) => {
       if (part.type === 'text') {
         if (part.text) {
-          lines.push(part.text)
+          textLines.push(part.text)
+          hasUserText = true
         }
         return
       }
       if (part.type === 'reasoning') {
         if (part.text) {
-          lines.push(part.text)
+          textLines.push(part.text)
         }
         return
       }
       if (part.type === 'data') {
         if (part.data != null) {
           const text = typeof part.data === 'string' ? part.data : JSON.stringify(part.data)
-          lines.push(text)
+          textLines.push(text)
         }
         return
       }
@@ -785,11 +792,15 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           }
         }
         const text = detailLines.length ? `${summary}\n${detailLines.join('\n')}` : summary
-        pushOrUpdateLine(key, text)
+        pushOrUpdateToolLine(key, text)
       }
     })
 
-    return lines.filter(Boolean).join('\n')
+    if (hasUserText) {
+      return textLines.filter(Boolean).join('\n')
+    }
+
+    return [...textLines, ...toolLines].filter(Boolean).join('\n')
   }
 
   const renderRoleLabel = (role?: string) => {
@@ -1148,9 +1159,8 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           if (planPayload) {
             setPlanUpdate(planPayload)
             const done = planPayload.steps.every(step => step.status === 'completed')
-            if (done) {
-              setIsThinking(false)
-            }
+            // 计划只要未全部 completed，就保持思考/执行中的 loading 态
+            setIsThinking(!done)
           }
         }
       }

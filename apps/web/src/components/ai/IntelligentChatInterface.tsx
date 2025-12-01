@@ -314,7 +314,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
   const lastIntentLabel = activeSession?.lastIntentLabel ?? null
   const isThinking = Boolean(activeSession?.isThinking)
   const isLoading = Boolean(activeSession?.isLoading)
-  const sessionBusy = !activeSession || isLoading
+  // 任务只要还在执行（有计划未完成或会话标记为思考中），都视为「忙碌」
+  const sessionBusy = !activeSession || isLoading || isThinking
 
   const patchSessionById = useCallback((sessionId: string, updater: (session: ChatSession) => ChatSession) => {
     setSessions(prev => prev.map(session => {
@@ -368,8 +369,11 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
             return {
               ...session,
               planUpdate: planPayload,
-              isThinking: done ? false : session.isThinking,
-              statusMessage: done ? pickStatusMessage('success', session.lastIntentLabel || undefined) : session.statusMessage
+              // 计划只要未全部 completed，就保持思考 / 执行中的态
+              isThinking: !done,
+              statusMessage: done
+                ? pickStatusMessage('success', session.lastIntentLabel || undefined)
+                : pickStatusMessage('thinking', session.lastIntentLabel || undefined)
             }
           })
           return
@@ -902,7 +906,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
               </Box>
             ))}
 
-            {isLoading && (
+            {(isLoading || isThinking) && (
               <Group spacing="xs">
                 <IconLoader size={16} className="loading-spin" />
                 <Text size="sm" color={auroraTokens.textDim}>
