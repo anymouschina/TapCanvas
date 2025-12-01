@@ -21,6 +21,7 @@
 
 - Language: TypeScript (strict), React function components.
 - UI: Mantine (dark theme), React Flow for canvas; Zustand for local stores.
+- UI aesthetic: keep components borderless for a clean, frameless look.
 - Filenames: React components PascalCase (`TaskNode.tsx`), utilities kebab/camel case (`mock-runner.ts`, `useCanvasStore.ts`).
 - Types/interfaces PascalCase; variables/functions camelCase.
 - Keep modules focused; colocate component styles in `apps/web/src`.
