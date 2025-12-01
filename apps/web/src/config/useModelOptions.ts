@@ -3,7 +3,7 @@ import { listAvailableModels, listModelProfiles, type AvailableModelDto, type Mo
 import type { ModelOption, NodeKind } from './models'
 import { getAllowedModelsByKind } from './models'
 
-const MODEL_REFRESH_EVENT = 'tapcanvas-models-refresh'
+export const MODEL_REFRESH_EVENT = 'tapcanvas-models-refresh'
 
 type RefreshDetail = 'openai' | 'anthropic' | 'all' | undefined
 

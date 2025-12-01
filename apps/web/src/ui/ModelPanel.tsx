@@ -23,8 +23,10 @@ import {
   getProxyConfig,
   upsertProxyConfig,
   type ProxyConfigDto,
+  listAvailableModels,
+  type AvailableModelDto,
 } from '../api/server'
-import { notifyModelOptionsRefresh } from '../config/useModelOptions'
+import { notifyModelOptionsRefresh, MODEL_REFRESH_EVENT } from '../config/useModelOptions'
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
 import { GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR } from '../constants/grsai'
 const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
@@ -65,6 +67,49 @@ function getPredefinedModelsForVendor(vendor: string | undefined): PredefinedMod
   const image = IMAGE_MODELS.filter((m) => m.vendor === vendor).map((m) => ({ value: m.value, label: m.label, kind: 'text_to_image' as ProfileKind }))
   const video = VIDEO_MODELS.filter((m) => m.vendor === vendor).map((m) => ({ value: m.value, label: m.label, kind: 'text_to_video' as ProfileKind }))
   return [...text, ...image, ...video]
+}
+
+const dedupePresets = (models: PredefinedModel[]): PredefinedModel[] => {
+  const seen = new Set<string>()
+  const result: PredefinedModel[] = []
+  for (const model of models) {
+    const key = model.value.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(model)
+  }
+  return result
+}
+
+const sortPresets = (models: PredefinedModel[]): PredefinedModel[] =>
+  [...models].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+
+const mergePresetLists = (base: PredefinedModel[], extra: PredefinedModel[]): PredefinedModel[] => {
+  if (!extra.length) return base
+  return dedupePresets([...base, ...extra])
+}
+
+const buildVendorPresetMap = (items: AvailableModelDto[]): Record<string, PredefinedModel[]> => {
+  const grouped: Record<string, PredefinedModel[]> = {}
+  for (const item of items) {
+    if (!item) continue
+    const vendor = typeof item.vendor === 'string' && item.vendor.trim() ? item.vendor.trim().toLowerCase() : ''
+    if (!vendor) continue
+    const rawValue =
+      (typeof item.value === 'string' && item.value.trim()) ||
+      (typeof (item as any).id === 'string' && (item as any).id.trim()) ||
+      null
+    if (!rawValue) continue
+    const value = rawValue.trim()
+    if (!value.toLowerCase().includes('gpt')) continue
+    const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : value
+    if (!grouped[vendor]) grouped[vendor] = []
+    grouped[vendor].push({ value, label, kind: 'chat' })
+  }
+  Object.keys(grouped).forEach((key) => {
+    grouped[key] = sortPresets(dedupePresets(grouped[key]))
+  })
+  return grouped
 }
 
 export default function ModelPanel(): JSX.Element | null {
@@ -439,6 +484,7 @@ export default function ModelPanel(): JSX.Element | null {
   const [sessionModalOpen, setSessionModalOpen] = React.useState(false)
   const [sessionJson, setSessionJson] = React.useState('')
   const [sessionError, setSessionError] = React.useState('')
+  const [vendorModelPresets, setVendorModelPresets] = React.useState<Record<string, PredefinedModel[]>>({})
 const [geminiProvider, setGeminiProvider] = React.useState<ModelProviderDto | null>(null)
 const [geminiBaseUrl, setGeminiBaseUrl] = React.useState('')
 const [geminiTokens, setGeminiTokens] = React.useState<ModelTokenDto[]>([])
@@ -879,10 +925,21 @@ const handleApplyVeoHost = React.useCallback((host: string) => {
     }
   }
 
+  const getVendorPresetList = React.useCallback(
+    (vendor?: string) => {
+      const base = getPredefinedModelsForVendor(vendor)
+      if (!vendor) return base
+      const vendorKey = vendor.toLowerCase()
+      const extraPresets = vendorModelPresets[vendor] || vendorModelPresets[vendorKey] || []
+      return mergePresetLists(base, extraPresets)
+    },
+    [vendorModelPresets],
+  )
+
   const renderProviderProfiles = (provider: ModelProviderDto | null) => {
     if (!provider) return null
     const list = providerProfiles[provider.id] || []
-    const presets = getPredefinedModelsForVendor(provider.vendor)
+    const presets = getVendorPresetList(provider.vendor)
     const selectOptions = [
       ...presets.map((opt) => ({
         value: `preset:${opt.value}`,
@@ -1036,6 +1093,28 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     if (!mounted) return
     refreshProxyConfig().catch(() => {})
   }, [mounted, refreshProxyConfig])
+
+  React.useEffect(() => {
+    if (!mounted || typeof window === 'undefined') return
+    let disposed = false
+    const loadAvailablePresets = () => {
+      listAvailableModels()
+        .then((models) => {
+          if (disposed) return
+          setVendorModelPresets(buildVendorPresetMap(models || []))
+        })
+        .catch((error) => {
+          console.warn('Failed to load available model presets', error)
+        })
+    }
+    loadAvailablePresets()
+    const handler = () => loadAvailablePresets()
+    window.addEventListener(MODEL_REFRESH_EVENT, handler)
+    return () => {
+      disposed = true
+      window.removeEventListener(MODEL_REFRESH_EVENT, handler)
+    }
+  }, [mounted])
 
   const isSoraProxyActive = !!(proxyConfig?.enabled && proxyConfig.enabledVendors?.includes('sora'))
   const proxyVendorLabels = (proxyConfig?.enabledVendors || []).map((v) => {
