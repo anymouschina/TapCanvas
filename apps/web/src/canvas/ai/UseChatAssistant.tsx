@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconWifi, IconBattery2, IconDots, IconMicrophone, IconMoodSmile } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
@@ -14,7 +14,6 @@ import { runTaskByVendor, type TaskResultDto, listModelProviders, listModelToken
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
-import { ThinkingProcess, ExecutionPlanDisplay } from '../../components/ai/IntelligentAssistant'
 import { buildCanvasContext } from '../utils/buildCanvasContext'
 
 type AssistantPosition = 'right' | 'left'
@@ -264,30 +263,29 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   }, [gptTextOptions, fallbackAssistantOptions, codexModels])
   const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
-  const { colorScheme } = useMantineColorScheme()
-  const theme = useMantineTheme()
-  const isDarkUi = colorScheme === 'dark'
-  const panelBackground = isDarkUi
-    ? 'linear-gradient(145deg, rgba(5,7,16,0.95), rgba(12,17,32,0.9), rgba(8,14,28,0.95))'
-    : 'linear-gradient(145deg, rgba(248,250,252,0.98), rgba(237,242,255,0.95))'
+  const panelBackground = 'radial-gradient(135% 160% at 50% 0%, rgba(36,52,104,0.45), rgba(5,7,15,0.98))'
   const panelBorder = 'none'
-  const panelShadow = isDarkUi ? '0 0 45px rgba(46,133,255,0.25)' : '0 18px 32px rgba(15,23,42,0.12)'
-  const headerBackground = isDarkUi
-    ? 'linear-gradient(120deg, rgba(15,23,42,0.9), rgba(10,12,24,0.6))'
-    : 'linear-gradient(120deg, rgba(226,232,240,0.92), rgba(248,250,252,0.85))'
+  const panelShadow = '0 45px 120px rgba(3,5,15,0.85)'
+  const headerBackground = 'rgba(5,8,20,0.55)'
   const headerBorder = 'none'
-  const sparklesColor = isDarkUi ? '#a5b4fc' : '#6366f1'
-  const logBackground = isDarkUi ? 'rgba(15,23,42,0.8)' : 'rgba(248,250,252,0.9)'
+  const sparklesColor = '#a5b4fc'
+  const logBackground = 'radial-gradient(80% 60% at 50% 0%, rgba(79,126,255,0.22), transparent), rgba(4,7,16,0.9)'
   const logBorder = 'none'
-  const messageBackground = isDarkUi ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.04)'
-  const messageBorder = 'none'
-  const messageTextColor = isDarkUi ? '#f8fafc' : '#0f172a'
-  const inputBackground = isDarkUi ? 'rgba(15,23,42,0.7)' : '#ffffff'
-  const inputBorder = isDarkUi ? 'rgba(99,102,241,0.4)' : 'rgba(148,163,184,0.5)'
-  const inputColor = isDarkUi ? '#f8fafc' : '#0f172a'
-  const closeIconColor = isDarkUi ? '#d1d5db' : '#0f172a'
-  const conversationOverlayOffset = 240
+  const messageTextColor = '#f4f7ff'
+  const inputBackground = 'rgba(8,12,24,0.9)'
+  const inputBorder = 'none'
+  const inputColor = '#f8fbff'
+  const closeIconColor = '#d1d9ff'
+  const userBubbleBackground = 'linear-gradient(135deg, rgba(61,123,255,0.95), rgba(101,232,255,0.95))'
+  const userBubbleBorder = '1px solid rgba(255,255,255,0.18)'
+  const assistantBubbleBackground = 'rgba(255,255,255,0.05)'
+  const assistantBubbleBorder = '1px solid rgba(255,255,255,0.05)'
+  const bubbleShadow = '0 24px 60px rgba(3,5,15,0.65)'
+  const toolbarIconBackground = 'rgba(255,255,255,0.05)'
+  const toolbarIconBorder = '1px solid rgba(255,255,255,0.08)'
+  const glowingSendBackground = 'linear-gradient(135deg, #3d7eff, #6ae0ff)'
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
+  const scrollAreaViewportRef = useRef<HTMLDivElement | null>(null)
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
   const imagePromptLoading = imagePromptLoadingCount > 0
   const [imagePromptAttachments, setImagePromptAttachments] = useState<ImagePromptAttachment[]>([])
@@ -709,6 +707,13 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [])
 
+  // 自动将对话滚动到最新消息
+  useEffect(() => {
+    const viewport = scrollAreaViewportRef.current
+    if (!viewport) return
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
+  }, [messages, isThinking])
+
   const stringifyMessage = (msg: UIMessage) => {
     const describeToolState = (part: any) => {
       const rawToolName = resolveToolName(part)
@@ -806,9 +811,40 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
 
   const renderRoleLabel = (role?: string) => {
     if (role === 'user') return '你'
-    if (role === 'assistant') return 'Nano Banana Pro'
+    if (role === 'assistant') return 'Aurora'
     if (role === 'system') return '系统'
     return role || '消息'
+  }
+
+  const renderMessageBubble = (msg: UIMessage) => {
+    const isUser = msg.role === 'user'
+    const bubbleBackground = isUser ? userBubbleBackground : assistantBubbleBackground
+    const bubbleBorder = isUser ? userBubbleBorder : assistantBubbleBorder
+    return (
+      <Stack key={msg.id} align={isUser ? 'flex-end' : 'flex-start'} gap={4} style={{ width: '100%' }}>
+        <Text size="xs" c="rgba(255,255,255,0.5)">
+          {renderRoleLabel(msg.role)}
+        </Text>
+        <Box
+          style={{
+            background: bubbleBackground,
+            border: bubbleBorder,
+            color: messageTextColor,
+            borderRadius: 12,
+            padding: '12px 16px',
+            maxWidth: '88%',
+            alignSelf: isUser ? 'flex-end' : 'flex-start',
+            boxShadow: bubbleShadow,
+            backdropFilter: 'blur(18px)',
+            position: 'relative'
+          }}
+        >
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', color: 'inherit' }}>
+            {stringifyMessage(msg)}
+          </Text>
+        </Box>
+      </Stack>
+    )
   }
   const removeImagePromptAttachment = useCallback((attachmentId: string) => {
     setImagePromptAttachments(prev => prev.filter(att => att.id !== attachmentId))
@@ -891,6 +927,10 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
     imagePromptInputRef.current?.click()
   }, [imagePromptAttachments.length, isGptModel])
+
+  const handleToolbarAction = useCallback((feature: string) => {
+    toast(`${feature} 即将上线`, 'info')
+  }, [])
 
   const handleTextareaPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const clipboardData = event.clipboardData
@@ -1044,7 +1084,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     ? '仅 GPT 模型支持图片提示词'
     : imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS
       ? `一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`
-      : '上传图片生成提示词'
+      : '上传或粘贴图片生成提示词'
+
+  const horizontalJustify = position === 'left' ? 'flex-start' : 'flex-end'
 
   if (!opened) return null
 
@@ -1052,19 +1094,18 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     <Box
       style={{
         position: 'fixed',
-        top: 56,
-        [position]: 16,
-        width,
-        maxWidth: 'calc(100vw - 32px)',
-        height: 'calc(100vh - 72px)',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: horizontalJustify,
+        padding: '72px 32px 32px',
         zIndex: 200,
-        pointerEvents: 'auto',
-        overflow: 'hidden'
+        pointerEvents: 'auto'
       }}
     >
+      <Box style={{ width, maxWidth: 'min(460px, calc(100vw - 64px))', pointerEvents: 'auto' }}>
       <Paper
-        radius="lg"
-        h="100%"
+        radius={12}
         shadow="xl"
         style={{
           background: panelBackground,
@@ -1073,19 +1114,26 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           overflow: 'hidden',
           backdropFilter: 'blur(18px)',
           display: 'flex',
-          flexDirection: 'column'
+          flexDirection: 'column',
+          minHeight: 560,
+          height: 'min(840px, calc(100vh - 140px))'
         }}
       >
         <Box
-          px="lg"
-          py="md"
-          style={{ borderBottom: headerBorder, background: headerBackground, flexShrink: 0 }}
+          px="xl"
+          pt="lg"
+          pb="sm"
+          style={{ borderBottom: headerBorder, background: headerBackground, flexShrink: 0, backdropFilter: 'blur(12px)' }}
         >
           <Group justify="space-between" align="center">
-            <Group gap="sm">
-              <IconSparkles size={14} color={sparklesColor} />
-            </Group>
-            <Group gap="xs">
+            <Group gap={8} align="center" style={{ color: '#eef2ff' }}>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                styles={{ root: { background: toolbarIconBackground, border: 'none', color: sparklesColor, boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+              >
+                <IconSparkles size={14} />
+              </ActionIcon>
               <Select
                 size="xs"
                 value={model}
@@ -1093,17 +1141,55 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                 data={assistantModelOptions.map(option => ({ value: option.value, label: option.label }))}
                 aria-label="选择模型"
                 withinPortal
+                styles={{
+                  input: {
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#f3f5ff',
+                    paddingLeft: 8,
+                    paddingRight: 32,
+                    height: 32,
+                    boxShadow: 'none'
+                  },
+                  dropdown: {
+                    background: 'rgba(5,8,16,0.95)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    backdropFilter: 'blur(14px)'
+                  },
+                  item: {
+                    borderRadius: 16,
+                    color: '#eaf0ff'
+                  }
+                }}
               />
+            </Group>
+            <Group gap={4} align="center">
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+              >
+                <IconWifi size={14} />
+              </ActionIcon>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+              >
+                <IconBattery2 size={14} />
+              </ActionIcon>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+              >
+                <IconDots size={14} />
+              </ActionIcon>
               <Tooltip label="关闭">
                 <ActionIcon
                   variant="subtle"
-                  color={isDarkUi ? 'gray' : 'dark'}
                   onClick={onClose}
-                  styles={{
-                    root: {
-                      color: closeIconColor
-                    }
-                  }}
+                  styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: closeIconColor, boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
                 >
                   <IconX size={14} color={closeIconColor} />
                 </ActionIcon>
@@ -1113,41 +1199,48 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         </Box>
 
         <Box
-          px="lg"
-          py="md"
-          style={{ flex: 1, minHeight: 0 }}
-        >
+          style={{ flex: 1, minHeight: 0, display: 'flex' }}
+        > 
           <Box
-            style={{
-              height: '100%',
+            sx={{
+              flex: 1,
+              minHeight: 0,
               background: logBackground,
-              borderRadius: 18,
+              borderRadius: 12,
               border: logBorder,
+            
+            }}
+            style={{ 
+              flex: 1, 
+              minHeight: 0, 
+              display: 'flex',  
               position: 'relative',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              boxShadow: '0 28px 60px rgba(3,5,15,0.65)',
+              backdropFilter: 'blur(22px)',
+              flexDirection: 'column' 
             }}
           >
-            <ScrollArea style={{ height: '100%' }} type="auto">
-              <Stack gap="sm" style={{ padding: 24, paddingBottom: 24 + conversationOverlayOffset }}>
-                {(thinkingEvents.length > 0 || isThinking) && (
-                  <ThinkingProcess events={thinkingEvents} isProcessing={isThinking} maxHeight={180} />
-                )}
+            <Box style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
+              <ScrollArea style={{ height: '100%' }} type="auto" viewportRef={scrollAreaViewportRef}>
+                <Stack gap="md" style={{ padding: 24, paddingBottom: 16 }}>
+                  {messages.length === 0 && (
+                    <Text size="sm" c="rgba(255,255,255,0.55)" ta="center">
+                      向 Aurora 打个「晚上好」的招呼，或描述你想生成的分镜与氛围。
+                    </Text>
+                  )}
 
-                {planUpdate && planUpdate.steps.length > 0 && (
-                  <ExecutionPlanDisplay plan={planUpdate} />
-                )}
+                  {messages.map(renderMessageBubble)}
 
-                {messages.map(msg => (
-                  <Box key={msg.id} style={{ background: messageBackground, borderRadius: 8, padding: 10, border: messageBorder }}>
-                    <Text c="dimmed" size="xs">{renderRoleLabel(msg.role)}</Text>
-                    <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>{stringifyMessage(msg)}</Text>
-                  </Box>
-                ))}
-                {messages.length === 0 && (
-                  <Text size="sm" c="dimmed">描述你想要的氛围或分镜，我将流式规划 Aurora 计划并同步动作。</Text>
-                )}
-              </Stack>
-            </ScrollArea>
+                  {isThinking && (
+                    <Group gap={6} align="center">
+                      <Loader size="xs" color="gray" />
+                      <Text size="xs" c="rgba(255,255,255,0.6)">Aurora 正在思考…</Text>
+                    </Group>
+                  )}
+                </Stack>
+              </ScrollArea>
+            </Box>
 
             <input
               ref={imagePromptInputRef}
@@ -1159,135 +1252,176 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             />
             <form
               onSubmit={onSubmit}
-              style={{ position: 'absolute', left: 24, right: 24, bottom: 24 }}
+              style={{ padding: 24, paddingTop: 16, position: 'relative', zIndex: 1, flexShrink: 0 }}
             >
-              <Stack gap="xs">
-                <Box style={{ position: 'relative' }}>
-                  <Textarea
-                    minRows={3}
-                    placeholder="用自然语言描述需求，支持流式输出与工具调用…"
-                    value={input}
-                    onChange={(e) => setInput(e.currentTarget.value)}
-                    onPaste={handleTextareaPaste}
-                    disabled={isLoading}
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                        e.preventDefault()
-                        onSubmit()
-                      }
-                    }}
-                    styles={{
-                      input: {
-                        background: inputBackground,
-                        borderColor: inputBorder,
-                        color: inputColor,
-                        paddingRight: 180,
-                        paddingBottom: 48
-                      }
-                    }}
-                  />
-                  <Group gap="xs" style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                    <Tooltip label={uploadTooltipLabel}>
-                      <ActionIcon
-                        variant="light"
-                        color="teal"
-                        onClick={handleImagePromptButtonClick}
-                        disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
-                      >
-                        {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
-                      </ActionIcon>
-                    </Tooltip>
+              <Box
+                style={{
+                  background: inputBackground,
+                  borderRadius: 12,
+                  boxShadow: '0 25px 60px rgba(2,6,20,0.65)',
+                  padding: 12,
+                  border: inputBorder
+                }}
+              >
+                <Stack gap="xs">
+                  <Box>
+                    <Textarea
+                      minRows={3}
+                      placeholder="发出灵感或问候，支持粘贴/上传图片…"
+                      value={input}
+                      onChange={(e) => setInput(e.currentTarget.value)}
+                      onPaste={handleTextareaPaste}
+                      disabled={isLoading}
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                          e.preventDefault()
+                          onSubmit()
+                        }
+                      }}
+                      styles={{
+                        input: {
+                          background: 'transparent',
+                          borderColor: 'transparent',
+                          color: inputColor,
+                          paddingRight: 24,
+                          paddingBottom: 16,
+                          borderRadius: 8,
+                          boxShadow: 'none'
+                        }
+                      }}
+                    />
+                  </Box>
+                  <Group justify="space-between" align="center" mt="sm">
+                    <Group gap="xs">
+                      <Tooltip label={uploadTooltipLabel}>
+                        <ActionIcon
+                          variant="subtle"
+                          onClick={handleImagePromptButtonClick}
+                          disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
+                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                        >
+                          {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="语音输入 · 即将开放">
+                        <ActionIcon
+                          variant="subtle"
+                          onClick={() => handleToolbarAction('语音输入')}
+                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                        >
+                          <IconMicrophone size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="灵感表情 · 即将上线">
+                        <ActionIcon
+                          variant="subtle"
+                          onClick={() => handleToolbarAction('灵感表情')}
+                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                        >
+                          <IconMoodSmile size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
                     <Button
                       type="submit"
                       loading={isLoading}
                       leftSection={<IconSend size={16} />}
-                      style={{ minWidth: 120 }}
+                      radius="xl"
+                      styles={{
+                        root: {
+                          background: glowingSendBackground,
+                          boxShadow: '0 18px 40px rgba(63,129,255,0.55)',
+                          border: 'none',
+                          minWidth: 132
+                        }
+                      }}
                     >
                       发送
                     </Button>
                   </Group>
-                </Box>
-                {imagePromptAttachments.length > 0 && (
-                  <Stack gap="sm">
-                    {imagePromptAttachments.map((attachment, index) => (
-                      <Group key={attachment.id} gap="sm" align="center" wrap="nowrap">
-                        <Box
-                          style={{
-                            position: 'relative',
-                            width: 90,
-                            height: 90,
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            border: messageBorder,
-                            flex: '0 0 auto',
-                          }}
-                        >
+                  {imagePromptAttachments.length > 0 && (
+                    <Stack gap="sm">
+                      {imagePromptAttachments.map((attachment, index) => (
+                        <Group key={attachment.id} gap="sm" align="center" wrap="nowrap">
                           <Box
-                            component="img"
-                            src={attachment.preview}
-                            alt={`prompt preview ${index + 1}`}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                          />
-                          <ActionIcon
-                            size="xs"
-                            variant="filled"
-                            color="dark"
-                            radius="xl"
-                            onClick={() => removeImagePromptAttachment(attachment.id)}
-                            style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)' }}
+                            style={{
+                              position: 'relative',
+                              width: 90,
+                              height: 90,
+                              borderRadius: 8,
+                              overflow: 'hidden',
+                              border: assistantBubbleBorder,
+                              background: 'rgba(255,255,255,0.03)',
+                              flex: '0 0 auto',
+                            }}
                           >
-                            <IconX size={12} />
-                          </ActionIcon>
-                        </Box>
-                        <Stack gap={4} style={{ flex: 1 }}>
-                          <Group gap={6}>
-                            <Text size="xs" c="dimmed">
-                              图片提示词{imagePromptAttachments.length > 1 ? ` #${index + 1}` : ''}
-                            </Text>
-                            <Badge size="xs" variant="light" color={attachment.ready ? 'green' : 'gray'}>
-                              {attachment.ready ? '已生成' : '生成中'}
-                            </Badge>
-                          </Group>
-                          <ScrollArea.Autosize mah={90} type="hover">
-                            <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>
-                              {attachment.prompt || '正在生成提示词…'}
-                            </Text>
-                          </ScrollArea.Autosize>
-                          <Group gap="xs">
-                            <Tooltip label={attachment.ready ? '查看图片与提示词详情' : '提示词生成中'}>
-                              <ActionIcon
-                                variant="light"
-                                color="violet"
-                                size="sm"
-                                disabled={!attachment.ready}
-                                onClick={() => attachment.ready && setActivePromptAttachmentId(attachment.id)}
-                              >
-                                <IconEye size={14} />
-                              </ActionIcon>
-                            </Tooltip>
-                            <Tooltip label="复制提示词">
-                              <CopyButton value={attachment.prompt || ''}>
-                                {({ copy }) => (
-                                  <ActionIcon
-                                    variant="light"
-                                    color="gray"
-                                    size="sm"
-                                    disabled={!attachment.prompt}
-                                    onClick={copy}
-                                  >
-                                    <IconBulb size={14} />
-                                  </ActionIcon>
-                                )}
-                              </CopyButton>
-                            </Tooltip>
-                            <Text size="xs" c="dimmed">发送时将附带</Text>
-                          </Group>
-                        </Stack>
-                      </Group>
-                    ))}
-                  </Stack>
-                )}
-              </Stack>
+                            <Box
+                              component="img"
+                              src={attachment.preview}
+                              alt={`prompt preview ${index + 1}`}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                            <ActionIcon
+                              size="xs"
+                              variant="filled"
+                              color="dark"
+                              radius="xl"
+                              onClick={() => removeImagePromptAttachment(attachment.id)}
+                              style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)' }}
+                            >
+                              <IconX size={12} />
+                            </ActionIcon>
+                          </Box>
+                          <Stack gap={4} style={{ flex: 1 }}>
+                            <Group gap={6}>
+                              <Text size="xs" c="rgba(255,255,255,0.6)">
+                                图片提示词{imagePromptAttachments.length > 1 ? ` #${index + 1}` : ''}
+                              </Text>
+                              <Badge size="xs" variant="light" color={attachment.ready ? 'green' : 'gray'}>
+                                {attachment.ready ? '已生成' : '生成中'}
+                              </Badge>
+                            </Group>
+                            <ScrollArea.Autosize mah={90} type="hover">
+                              <Text size="sm" c={messageTextColor} style={{ whiteSpace: 'pre-wrap' }}>
+                                {attachment.prompt || '正在生成提示词…'}
+                              </Text>
+                            </ScrollArea.Autosize>
+                            <Group gap="xs">
+                              <Tooltip label={attachment.ready ? '查看图片与提示词详情' : '提示词生成中'}>
+                                <ActionIcon
+                                  variant="light"
+                                  color="violet"
+                                  size="sm"
+                                  disabled={!attachment.ready}
+                                  onClick={() => attachment.ready && setActivePromptAttachmentId(attachment.id)}
+                                >
+                                  <IconEye size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="复制提示词">
+                                <CopyButton value={attachment.prompt || ''}>
+                                  {({ copy }) => (
+                                    <ActionIcon
+                                      variant="light"
+                                      color="gray"
+                                      size="sm"
+                                      disabled={!attachment.prompt}
+                                      onClick={copy}
+                                    >
+                                      <IconBulb size={14} />
+                                    </ActionIcon>
+                                  )}
+                                </CopyButton>
+                              </Tooltip>
+                              <Text size="xs" c="rgba(255,255,255,0.6)">发送时将附带</Text>
+                            </Group>
+                          </Stack>
+                        </Group>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </Box>
             </form>
           </Box>
         </Box>
@@ -1323,6 +1457,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         </Modal>
       </Paper>
     </Box>
+  </Box>
   )
 }
 
