@@ -2,15 +2,15 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
-import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconWifi, IconBattery2, IconDots, IconMicrophone, IconMoodSmile } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, Popover, ScrollArea, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconMicrophone, IconMoodSmile, IconPlus, IconHistory } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
 import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
-import { runTaskByVendor, type TaskResultDto, listModelProviders, listModelTokens } from '../../api/server'
+import { runTaskByVendor, type TaskResultDto, listAvailableModels } from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
@@ -34,6 +34,18 @@ const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
 const ASSISTANT_MODEL_SET = new Set(ASSISTANT_MODEL_PRESETS.map(option => option.value))
 const MAX_IMAGE_PROMPT_ATTACHMENTS = 2
 const AI_DEBUG_LOGS_ENABLED = (import.meta as any).env?.VITE_DEBUG_AI_LOGS === 'true'
+
+interface AssistantSession {
+  id: string
+  title: string
+  messages: UIMessage[]
+}
+
+const createEmptyAssistantSession = (label: string): AssistantSession => ({
+  id: nanoid(),
+  title: label,
+  messages: [],
+})
 
 const buildAssistantBaseOptions = (textOptions: ModelOption[]): ModelOption[] => {
   const overrides = new Map<string, ModelOption>()
@@ -66,56 +78,20 @@ const mergeModelOptionLists = (primary: ModelOption[], extra: ModelOption[]): Mo
 
 async function fetchAssistantCodexModels(): Promise<ModelOption[]> {
   try {
-    const providers = await listModelProviders().catch(() => [])
-    const openaiProvider = providers.find((provider) => provider.vendor === 'openai')
-    if (!openaiProvider) return []
-    const baseUrl = (openaiProvider.baseUrl || '').trim()
-    if (!baseUrl) return []
-    const tokens = await listModelTokens(openaiProvider.id).catch(() => [])
-    const token = tokens.find((t) => t.enabled && typeof t.secretToken === 'string' && t.secretToken.trim())
-    if (!token?.secretToken) return []
-    const normalizedBase = baseUrl.replace(/\/$/, '')
-    const endpoint = `${normalizedBase}/v1/models`
-    console.debug('[UseChatAssistant] 请求 GPT 模型列表', {
-      baseUrl: normalizedBase,
-      endpoint,
-      tokenLabel: token.label || '未命名密钥',
-    })
-    const resp = await fetch(endpoint, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token.secretToken}`,
-      },
-    })
-    if (!resp.ok) {
-      console.warn('[UseChatAssistant] Codex model fetch failed', resp.status)
-      return []
-    }
-    let payload: any = null
-    try {
-      payload = await resp.json()
-    } catch {
-      payload = null
-    }
-    console.debug('[UseChatAssistant] GPT 模型响应', payload)
-    const list = Array.isArray(payload?.data)
-      ? payload.data
-      : Array.isArray(payload?.models)
-        ? payload.models
-        : Array.isArray(payload)
-          ? payload
-          : []
-    return list
-      .map((item) => {
-        const value = typeof item?.id === 'string' ? item.id : typeof item?.name === 'string' ? item.name : null
+    const remote = await listAvailableModels('openai').catch(() => [])
+    if (!Array.isArray(remote) || !remote.length) return []
+    return remote
+      .map((item: any) => {
+        const value = typeof item?.value === 'string' ? item.value : typeof item?.id === 'string' ? item.id : null
         if (!value) return null
         if (!value.toLowerCase().includes('gpt')) return null
-        const label = typeof item?.displayName === 'string' && item.displayName.trim() ? item.displayName.trim() : value
-        return { value, label, vendor: 'openai' as const }
+        const label = typeof item?.label === 'string' && item.label.trim() ? item.label.trim() : value
+        const vendor = typeof item?.vendor === 'string' ? item.vendor : 'openai'
+        return { value, label, vendor }
       })
       .filter(Boolean) as ModelOption[]
   } catch (error) {
-    console.warn('[UseChatAssistant] failed to load Codex models', error)
+    console.warn('[UseChatAssistant] failed to load available GPT models', error)
     return []
   }
 }
@@ -285,7 +261,8 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const toolbarIconBorder = '1px solid rgba(255,255,255,0.08)'
   const glowingSendBackground = 'linear-gradient(135deg, #3d7eff, #6ae0ff)'
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
-  const scrollAreaViewportRef = useRef<HTMLDivElement | null>(null)
+  const [sessions, setSessions] = useState<AssistantSession[]>(() => [createEmptyAssistantSession('会话 1')])
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => (sessions[0]?.id ?? ''))
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
   const imagePromptLoading = imagePromptLoadingCount > 0
   const [imagePromptAttachments, setImagePromptAttachments] = useState<ImagePromptAttachment[]>([])
@@ -341,9 +318,10 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     maxToolRoundtrips: 4,
     intelligentMode,
     enableThinking: true,
-  }), [model, canvasContext, provider, intelligentMode])
+    sessionId: activeSessionId || undefined,
+  }), [model, canvasContext, provider, intelligentMode, activeSessionId])
 
-  const chatId = useMemo(() => `${model}-${nanoid()}`, [model])
+  const chatId = useMemo(() => 'canvas-assistant', [])
 
   const chatTransport = useMemo(() => new DefaultChatTransport({
     api: `${apiRoot}/ai/chat/stream`,
@@ -417,6 +395,18 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
     return Boolean(part.toolName && part.toolCallId)
   }
+
+  // 每当当前会话的消息变化时，写回 sessions 中当前会话的快照
+  useEffect(() => {
+    if (!activeSessionId) return
+    setSessions(prev =>
+      prev.map(session =>
+        session.id === activeSessionId
+          ? { ...session, messages }
+          : session
+      )
+    )
+  }, [messages, activeSessionId])
 
   const PROMPT_FIELD_KEYS = new Set(['prompt', 'videoPrompt', 'description', 'story', 'script', 'text'])
   const MAX_SUMMARY_DEPTH = 4
@@ -707,13 +697,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     }
   }, [])
 
-  // 自动将对话滚动到最新消息
-  useEffect(() => {
-    const viewport = scrollAreaViewportRef.current
-    if (!viewport) return
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
-  }, [messages, isThinking])
-
   const stringifyMessage = (msg: UIMessage) => {
     const describeToolState = (part: any) => {
       const rawToolName = resolveToolName(part)
@@ -816,10 +799,64 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     return role || '消息'
   }
 
+  const extractMediaPreview = (msg: UIMessage): Array<{ type: 'image' | 'video'; url: string }> => {
+    const previews: Array<{ type: 'image' | 'video'; url: string }> = []
+    const seen = new Set<string>()
+    const push = (type: 'image' | 'video', url: unknown) => {
+      if (typeof url !== 'string') return
+      const trimmed = url.trim()
+      if (!trimmed) return
+      const key = `${type}:${trimmed}`
+      if (seen.has(key)) return
+      seen.add(key)
+      previews.push({ type, url: trimmed })
+    }
+
+    ;(msg.parts || []).forEach((part: any) => {
+      if (!part || part.type !== 'tool-result') return
+      const toolName = resolveToolName(part) || part.tool
+      if (toolName !== 'runNode' && toolName !== 'canvas.node.operation') return
+      const output = part.output
+      if (!output || typeof output !== 'object') return
+
+      const base =
+        typeof output.success === 'boolean' && output.data && typeof output.data === 'object'
+          ? output.data
+          : output
+
+      if (!base || typeof base !== 'object') return
+
+      // 图片结果：imageUrl + imageResults
+      push('image', (base as any).imageUrl)
+      const imageResults = Array.isArray((base as any).imageResults)
+        ? (base as any).imageResults
+        : []
+      imageResults.forEach((img: any) => {
+        if (!img) return
+        push('image', img.url)
+      })
+
+      // 视频结果：videoUrl + videoResults（先仅用于占位，暂不内嵌播放）
+      push('video', (base as any).videoUrl)
+      const videoResults = Array.isArray((base as any).videoResults)
+        ? (base as any).videoResults
+        : []
+      videoResults.forEach((v: any) => {
+        if (!v) return
+        push('video', v.url)
+      })
+    })
+
+    return previews
+  }
+
   const renderMessageBubble = (msg: UIMessage) => {
     const isUser = msg.role === 'user'
     const bubbleBackground = isUser ? userBubbleBackground : assistantBubbleBackground
     const bubbleBorder = isUser ? userBubbleBorder : assistantBubbleBorder
+    const text = stringifyMessage(msg)
+    const mediaPreviews = isUser ? [] : extractMediaPreview(msg)
+
     return (
       <Stack key={msg.id} align={isUser ? 'flex-end' : 'flex-start'} gap={4} style={{ width: '100%' }}>
         <Text size="xs" c="rgba(255,255,255,0.5)">
@@ -839,9 +876,33 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             position: 'relative'
           }}
         >
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap', color: 'inherit' }}>
-            {stringifyMessage(msg)}
-          </Text>
+          {text && (
+            <Text size="sm" style={{ whiteSpace: 'pre-wrap', color: 'inherit' }}>
+              {text}
+            </Text>
+          )}
+
+          {mediaPreviews.length > 0 && (
+            <Stack gap={6} mt={text ? 8 : 0}>
+              {mediaPreviews
+                .filter((item) => item.type === 'image')
+                .map((item, index) => (
+                  <Box
+                    key={`${item.url}-${index}`}
+                    component="img"
+                    src={item.url}
+                    alt={`生成图片 ${index + 1}`}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      maxHeight: 260,
+                      objectFit: 'contain',
+                      borderRadius: 10,
+                    }}
+                  />
+                ))}
+            </Stack>
+          )}
         </Box>
       </Stack>
     )
@@ -931,6 +992,36 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const handleToolbarAction = useCallback((feature: string) => {
     toast(`${feature} 即将上线`, 'info')
   }, [])
+  const handleCreateSession = useCallback(() => {
+    const index = sessions.length + 1
+    const next = createEmptyAssistantSession(`会话 ${index}`)
+    setSessions(prev => [...prev, next])
+    setActiveSessionId(next.id)
+    setMessages([])
+    setInput('')
+    setImagePromptAttachments([])
+    setActivePromptAttachmentId(null)
+    setThinkingEvents([])
+    setPlanUpdate(null)
+    setIsThinking(false)
+  }, [sessions.length, setMessages])
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    setActiveSessionId(sessionId)
+    const target = sessions.find(session => session.id === sessionId)
+    if (target) {
+      setMessages(target.messages)
+    } else {
+      setMessages([])
+    }
+    setInput('')
+    setImagePromptAttachments([])
+    setActivePromptAttachmentId(null)
+    setThinkingEvents([])
+    setPlanUpdate(null)
+    setIsThinking(false)
+  }, [sessions, setMessages])
+
 
   const handleTextareaPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const clipboardData = event.clipboardData
@@ -1100,7 +1191,8 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
         justifyContent: horizontalJustify,
         padding: '72px 32px 32px',
         zIndex: 200,
-        pointerEvents: 'auto'
+        // 允许画布和其他 UI 在助手面板之外继续可点击
+        pointerEvents: 'none'
       }}
     >
       <Box style={{ width, maxWidth: 'min(460px, calc(100vw - 64px))', pointerEvents: 'auto' }}>
@@ -1125,8 +1217,12 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
           pb="sm"
           style={{ borderBottom: headerBorder, background: headerBackground, flexShrink: 0, backdropFilter: 'blur(12px)' }}
         >
-          <Group justify="space-between" align="center">
-            <Group gap={8} align="center" style={{ color: '#eef2ff' }}>
+          <Group justify="space-between" align="center" wrap="nowrap">
+            <Group
+              gap={8}
+              align="center"
+              style={{ color: '#eef2ff', flex: 1, minWidth: 0 }}
+            >
               <ActionIcon
                 size="sm"
                 variant="subtle"
@@ -1140,7 +1236,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                 onChange={(value) => value && setModel(value)}
                 data={assistantModelOptions.map(option => ({ value: option.value, label: option.label }))}
                 aria-label="选择模型"
-                withinPortal
+                w={170}
                 styles={{
                   input: {
                     background: 'transparent',
@@ -1149,42 +1245,96 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                     paddingLeft: 8,
                     paddingRight: 32,
                     height: 32,
-                    boxShadow: 'none'
+                    boxShadow: 'none',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    overflow: 'hidden'
                   },
                   dropdown: {
                     background: 'rgba(5,8,16,0.95)',
                     border: '1px solid rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(14px)'
                   },
-                  item: {
-                    borderRadius: 16,
-                    color: '#eaf0ff'
+                  option: {
+                    borderRadius: 12,
+                    color: '#eaf0ff',
+                    '&[data-hovered]': {
+                      backgroundColor: 'rgba(79,126,255,0.25)',
+                      color: '#f9fbff'
+                    },
+                    '&[data-selected]': {
+                      backgroundColor: 'rgba(79,126,255,0.4)',
+                      color: '#f9fbff'
+                    }
                   }
                 }}
               />
             </Group>
-            <Group gap={4} align="center">
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+            <Group gap={8} align="center" wrap="nowrap">
+              <Popover
+                width={220}
+                position="bottom-end"
+                shadow="xl"
+                withinPortal
+                offset={4}
+                trapFocus={false}
               >
-                <IconWifi size={14} />
-              </ActionIcon>
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
-              >
-                <IconBattery2 size={14} />
-              </ActionIcon>
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
-              >
-                <IconDots size={14} />
-              </ActionIcon>
+                <Popover.Target>
+                  <Tooltip label="会话历史">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+                    >
+                      <IconHistory size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Popover.Target>
+                <Popover.Dropdown
+                  style={{
+                    background: 'rgba(5,8,16,0.96)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    padding: 8
+                  }}
+                >
+                  <Stack gap={6}>
+                    {sessions.map((session, index) => (
+                      <Box
+                        key={session.id}
+                        onClick={() => handleSelectSession(session.id)}
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                          background: session.id === activeSessionId ? 'rgba(88,112,255,0.22)' : 'transparent',
+                          border: session.id === activeSessionId ? '1px solid rgba(129,140,248,0.7)' : '1px solid transparent',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <Text
+                          size="xs"
+                          c="rgba(239,242,255,0.9)"
+                          style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}
+                        >
+                          {session.title || `会话 ${index + 1}`}
+                        </Text>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
+              <Tooltip label="新建会话">
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  onClick={handleCreateSession}
+                  styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e3e7ff', boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
+                >
+                  <IconPlus size={14} />
+                </ActionIcon>
+              </Tooltip>
               <Tooltip label="关闭">
                 <ActionIcon
                   variant="subtle"
@@ -1222,7 +1372,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
             }}
           >
             <Box style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
-              <ScrollArea style={{ height: '100%' }} type="auto" viewportRef={scrollAreaViewportRef}>
+              <ScrollArea style={{ height: '100%' }} type="auto">
                 <Stack gap="md" style={{ padding: 24, paddingBottom: 16 }}>
                   {messages.length === 0 && (
                     <Text size="sm" c="rgba(255,255,255,0.55)" ta="center">
