@@ -39,6 +39,7 @@ model User {
   proxyProviders ProxyProvider[]
   externalDrafts ExternalDraft[]
   modelProfiles  ModelProfile[]
+  chatSessions   ChatSession[]
   taskTokenMappings TaskTokenMapping[]
   taskStatuses   TaskStatus[]
   videoGenerationHistories VideoGenerationHistory[]
@@ -195,6 +196,36 @@ model FlowExecutionLog {
   level       String
   message     String
   createdAt   DateTime      @default(now())
+}
+
+// AI 助手会话
+model ChatSession {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  /// 前端传入的会话标识（ChatRequestDto.sessionId）
+  sessionId String
+  title     String?
+  model     String?
+  provider  String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  messages  ChatMessage[]
+
+  @@unique([userId, sessionId])
+  @@index([userId, createdAt])
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String      // 'user' | 'assistant' | 'system'
+  content   String?
+  raw       Json?
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
 }
 
 model ModelProfile {
