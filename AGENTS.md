@@ -48,6 +48,14 @@
 - Prefer `nano-banana-pro` when building flows that need consistent visual style across scenes; other image models are optional fallbacks.
 - When wiring tools, treat image nodes as the primary source of “base frames” for Sora/Veo video nodes, especially for novel-to-animation workflows.
 
+## AI Tool Schemas (backend)
+
+- Shared tool contracts live in `apps/api/src/ai/tool-schemas.ts`. This file describes what the canvas can actually do (tool names, parameters, and descriptions) from a **frontend capability** perspective, but is only imported on the backend to build LLM tools.
+- Whenever you change or add frontend AI canvas functionality (e.g. new `CanvasService` handlers, new tool names, new node kinds that tools can operate on), you **must** update `apps/api/src/ai/tool-schemas.ts` in the same change so that backend LLM tool schemas stay in sync.
+- Do not declare tools or node types in `canvasToolSchemas` that are not implemented on the frontend. The schemas are not aspirational docs; they must reflect real, callable capabilities.
+- Node type + model feature descriptions live in `canvasNodeSpecs` inside the same file. This object documents what each logical node kind (image/composeVideo/audio/subtitle/character etc.) is for, and which models are recommended / supported for it（例如 Nano Banana / Nano Banana Pro / Sora2 / Veo 3.1 的适用场景与提示词策略）。Model-level prompt tips（如 Banana 的融合/角色锁、Sora2 的镜头/物理/时序指令）也应集中维护在这里或 `apps/api/src/ai/constants.ts` 的 SYSTEM_PROMPT 中，避免分散。
+- When you add or change node kinds, or enable new models for an existing kind, update `canvasNodeSpecs` 与相关系统提示（SYSTEM_PROMPT）以匹配真实接入的模型能力（不要列出实际上未接入的模型或特性）。
+
 ## Multi-user Data Isolation
 
 - All server-side entities (projects, flows, executions, model providers/tokens, assets) must be scoped by the authenticated user.

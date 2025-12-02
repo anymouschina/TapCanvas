@@ -15,6 +15,7 @@ import { ToolEventsService } from './tool-events.service'
 import type { ModelProvider, ModelToken, PromptSample as PrismaPromptSample } from '@prisma/client'
 import { ProxyService } from '../proxy/proxy.service'
 import { WebSearchService } from '../search/web-search.service'
+import { canvasToolSchemas } from './tool-schemas'
 
 const actionEnum = z.enum(ACTION_TYPES)
 
@@ -48,75 +49,6 @@ const webSearchTool = {
     },
   }),
 }
-
-// 基础画布工具定义（服务端仅回传占位结果，具体操作由前端执行）
-// 基础画布工具定义（默认不在服务端执行，由前端通过 UI stream 接管）
-const canvasToolSchemas = {
-  getNodes: {
-    description: '获取当前画布节点列表（由前端执行真正的读取逻辑）',
-    inputSchema: z.object({})
-  },
-  createNode: {
-    description: '创建节点（type/label/config 由模型决定；分镜节点必须使用 type=storyboard；实际创建在前端完成），跟图片有关的节点就是image,视频就是video节点，提示词直接传入 prompt 就行，支持文生图，文生视频；当传入 remixFromNodeId 时，必须指向一个已成功的 composeVideo/video/storyboard 节点',
-    inputSchema: z.object({
-      type: z.string(),
-      label: z.string().optional(),
-      config: z.record(z.any()).optional(),
-      remixFromNodeId: z.string().optional(),
-      position: z.object({ x: z.number(), y: z.number() }).optional()
-    })
-  },
-  connectNodes: {
-    description: '连接两个节点（source/target），实际连接在前端完成',
-    inputSchema: z.object({
-      sourceNodeId: z.string(),
-      targetNodeId: z.string()
-    })
-  },
-  runDag: {
-    description: '执行当前画布工作流，真实执行在前端/客户端完成',
-    inputSchema: z.object({
-      concurrency: z.number().optional()
-    })
-  },
-  runNode: {
-    description: '执行指定的单个节点，仅触发用户需要的动作，避免整图跑满',
-    inputSchema: z.object({
-      nodeId: z.string()
-    })
-  },
-  formatAll: {
-    description: '全选并自动布局',
-    inputSchema: z.object({})
-  },
-  findNodes: {
-    description: '根据标签或类型查找节点（前端执行）',
-    inputSchema: z.object({
-      label: z.string().optional(),
-      type: z.string().optional()
-    })
-  },
-  deleteNode: {
-    description: '删除指定节点（前端执行）',
-    inputSchema: z.object({
-      nodeId: z.string()
-    })
-  },
-  updateNode: {
-    description: '更新节点配置（前端执行）',
-    inputSchema: z.object({
-      nodeId: z.string(),
-      label: z.string().optional(),
-      config: z.record(z.any()).optional()
-    })
-  },
-  disconnectNodes: {
-    description: '断开节点连接（前端执行）',
-    inputSchema: z.object({
-      edgeId: z.string()
-    })
-  },
-} as const
 
 // 客户端执行模式：仅提供工具 schema，实际执行交由前端 useChat 工具调用
 const canvasToolsForClient = canvasToolSchemas
