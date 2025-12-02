@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
-    "wrangler": "^3.90.0"
+    "wrangler": "^3.90.0",
+    "zod": "^3.25.76"
   }
 }

@@ -129,11 +129,15 @@ export class CanvasService {
     const rawType = (params.type || 'taskNode').trim()
     const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
 
+    // text 节点入口已移除，不再支持通过 AI 创建新的 text 节点
+    if (rawType === 'text') {
+      throw new Error('text 节点已下线，请使用 image/textToImage/composeVideo/character 等节点替代')
+    }
+
     let nodeType = rawType
     const baseData: Record<string, any> = {}
 
     const logicalKinds: Record<string, string> = {
-      text: 'textToImage',
       image: 'image',
       video: 'composeVideo',
       composeVideo: 'composeVideo',
