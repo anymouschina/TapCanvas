@@ -28,10 +28,12 @@ import {
   IconChartDonut,
   IconBolt,
   IconMessages,
-  IconPlus
+  IconPlus,
+  IconWorld,
+  IconWorldOff
 } from '@tabler/icons-react'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../../types/canvas-intelligence'
-import { subscribeToolEvents, extractThinkingEvent, mapToolEventToCanvasOperation, extractPlanUpdate } from '../../api/toolEvents'
+import { subscribeToolEvents, extractThinkingEvent, mapToolEventToCanvasOperation, extractPlanUpdate, isWebSearchEvent } from '../../api/toolEvents'
 import { getAuthToken } from '../../auth/store'
 import { ThinkingProcess, ExecutionPlanDisplay } from './IntelligentAssistant'
 import { API_BASE } from '../../api/server'
@@ -267,6 +269,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
   const [isIntelligentMode, setIsIntelligentMode] = useState(true)
   const [showThinking, setShowThinking] = useState(true)
   const [isEventStreamConnected, setIsEventStreamConnected] = useState(false)
+  const [lastWebSearchHint, setLastWebSearchHint] = useState<string | null>(null)
+  const [enableWebSearch, setEnableWebSearch] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
   const sessionCounterRef = useRef(Math.max(1, sessions.length))
   const theme = useMantineTheme()
@@ -344,6 +348,14 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
       onOpen: () => setIsEventStreamConnected(true),
       onError: () => setIsEventStreamConnected(false),
       onEvent: (event) => {
+        if (event.type === 'tool-call' && isWebSearchEvent(event)) {
+          const q = typeof event.input?.query === 'string' ? event.input.query : ''
+          setLastWebSearchHint(q ? `AI 正在联网搜索：「${q}」` : 'AI 正在联网搜索最新信息…')
+        }
+        if (event.type === 'tool-result' && isWebSearchEvent(event)) {
+          setLastWebSearchHint(null)
+        }
+
         const thinking = extractThinkingEvent(event)
         if (thinking) {
           const targetSessionId = thinking.sessionId || activeSession?.sessionId
@@ -434,6 +446,7 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
           context: context || {},
           intelligentMode: isIntelligentMode,
           enableThinking: showThinking,
+          enableWebSearch,
           sessionId: activeSession.sessionId
         })
       })
@@ -562,8 +575,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
       h={height}
       spacing="md"
       sx={{
-        background: `radial-gradient(circle at top, rgba(143,123,255,0.22), transparent 45%),
-          radial-gradient(circle at bottom right, rgba(77,214,255,0.12), transparent 45%),
+        background: `radial-gradient(circle at top, rgba(143,123,255,0.16), transparent 46%),
+          radial-gradient(circle at bottom right, rgba(77,214,255,0.08), transparent 46%),
           ${auroraTokens.base}`,
         borderRadius: '32px',
         border: `1px solid ${auroraTokens.border}`,
@@ -576,8 +589,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
           sx={{
             position: 'absolute',
             inset: 0,
-            background: 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.08), transparent 45%)',
-            opacity: 0.7,
+            background: 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.05), transparent 44%)',
+            opacity: 0.6,
             pointerEvents: 'none'
           }}
         />
@@ -856,8 +869,8 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
                   padding: '16px',
                   border: `1px solid rgba(255,255,255,0.08)`,
                   background: message.role === 'user'
-                    ? 'linear-gradient(135deg, rgba(143,123,255,0.28), rgba(77,214,255,0.15))'
-                    : 'rgba(255,255,255,0.04)',
+                    ? 'linear-gradient(135deg, rgba(143,123,255,0.20), rgba(77,214,255,0.11))'
+                    : 'rgba(255,255,255,0.025)',
                   boxShadow: '0 15px 40px rgba(0,0,0,0.45)',
                   backdropFilter: 'blur(18px)',
                   ...motionStyles,
@@ -923,31 +936,55 @@ export const IntelligentChatInterface: React.FC<IntelligentChatInterfaceProps> =
 
       <Paper p="md" radius="xl" sx={auroraCardStyles(theme)}>
         <form onSubmit={handleSubmit}>
-          <Group>
-            <TextInput
-              ref={inputRef}
-              style={{ flex: 1 }}
-              placeholder={
-                isIntelligentMode
-                  ? '描述你想营造的氛围，例如"生成沉浸式封面"'
-                  : '输入你的想法...'
-              }
-              value={input}
-              onChange={(e) => setInput(e.currentTarget.value)}
-              onKeyDown={handleKeyDown}
-              disabled={sessionBusy}
-            />
-            <Tooltip label="发送消息 (Enter)">
-              <ActionIcon
-                type="submit"
-                size="lg"
-                color={isIntelligentMode ? 'violet' : 'blue'}
-                disabled={sessionBusy || !input.trim()}
-              >
-                <IconSend size={18} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
+          <Stack spacing={6}>
+            <Group>
+              <TextInput
+                ref={inputRef}
+                style={{ flex: 1 }}
+                placeholder={
+                  isIntelligentMode
+                    ? '描述你想营造的氛围，例如\"生成沉浸式封面\"'
+                    : '输入你的想法...'
+                }
+                value={input}
+                onChange={(e) => setInput(e.currentTarget.value)}
+                onKeyDown={handleKeyDown}
+                disabled={sessionBusy}
+              />
+              <Tooltip label="发送消息 (Enter)">
+                <ActionIcon
+                  type="submit"
+                  size="lg"
+                  color={isIntelligentMode ? 'violet' : 'blue'}
+                  disabled={sessionBusy || !input.trim()}
+                >
+                  <IconSend size={18} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+            <Group spacing="xs">
+              <Tooltip label={enableWebSearch ? '已开启联网搜索' : '已关闭联网搜索'}>
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => setEnableWebSearch(prev => !prev)}
+                  aria-pressed={enableWebSearch}
+                  sx={{
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                    borderRadius: 999,
+                    border: '1px solid rgba(255,255,255,0.16)'
+                  }}
+                >
+                  {enableWebSearch ? <IconWorld size={14} /> : <IconWorldOff size={14} />}
+                </ActionIcon>
+              </Tooltip>
+              {lastWebSearchHint && enableWebSearch && (
+                <Text size="xs" color={auroraTokens.textDim}>
+                  {lastWebSearchHint}
+                </Text>
+              )}
+            </Group>
+          </Stack>
         </form>
       </Paper>
     </Stack>

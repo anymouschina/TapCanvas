@@ -32,6 +32,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
   const [error, setError] = useState<Error | undefined>()
   const [intelligentMode, setIntelligentMode] = useState(initialIntelligentMode)
   const [enableThinking, setEnableThinking] = useState(initialEnableThinking)
+  const [enableWebSearch] = useState(options.enableWebSearch ?? true)
 
   // 处理思考事件
   const handleThinkingEvent = useCallback((event: ThinkingEvent) => {
@@ -140,6 +141,7 @@ export const useIntelligentChat = (options: UseIntelligentChatOptions): UseIntel
           context: context || {},
           intelligentMode: options?.intelligentMode ?? intelligentMode,
           enableThinking: options?.enableThinking ?? enableThinking,
+          enableWebSearch,
           sessionId: sessionIdRef.current
         })
       }

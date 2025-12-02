@@ -350,9 +350,17 @@ function buildPromptFromState(
       })
     }
     // 优先保留节点自身已写入的 prompt/videoPrompt
-    const ownPrompt = typeof data.prompt === 'string' ? data.prompt : ''
-    const ownVideoPrompt = typeof data.videoPrompt === 'string' ? data.videoPrompt : ''
-    const own = ownVideoPrompt || ownPrompt
+    // 如果节点显式存在 prompt 字段（即使是空字符串），视为用户手动控制，不再从 videoPrompt 回填
+    const hasOwnPromptField = Object.prototype.hasOwnProperty.call(data, 'prompt')
+    const ownPrompt =
+      hasOwnPromptField && typeof data.prompt === 'string'
+        ? data.prompt
+        : ''
+    const ownVideoPrompt =
+      !hasOwnPromptField && typeof data.videoPrompt === 'string'
+        ? data.videoPrompt
+        : ''
+    const own = ownPrompt || ownVideoPrompt
     const combinedBase = inboundHasImage
       ? [own] // 参考图场景下，避免把上游图的提示词混入视频 prompt
       : [...upstreamPrompts, own]
@@ -1248,6 +1256,13 @@ function applyVeoTaskResult(
   const primary = videoAssets[0]
   const nextPrimaryIndex = appended.length - 1
 
+  const existingPrompt =
+    typeof (data as any)?.prompt === 'string'
+      ? (data as any).prompt.trim()
+      : ''
+  const usedPrompt = prompt.trim()
+  const shouldWritePromptBack = !existingPrompt || existingPrompt === usedPrompt
+
   setNodeStatus(id, 'success', {
     progress: 100,
     lastResult: {
@@ -1256,7 +1271,7 @@ function applyVeoTaskResult(
       kind,
       preview: { type: 'video', src: primary.url },
     },
-    prompt,
+    ...(shouldWritePromptBack ? { prompt: usedPrompt } : {}),
     videoModel: model,
     videoTaskId: result.id || null,
     videoResults: appended,
@@ -1422,6 +1437,10 @@ async function runGenericTask(ctx: RunnerContext) {
           : { type: 'text', value: 'AI 调用成功' }
 
     let patchExtra: any = {}
+    const existingPrompt =
+      typeof (data as any)?.prompt === 'string'
+        ? (data as any).prompt.trim()
+        : ''
     if (isImageTask && allImageAssets.length) {
       const existing = (data.imageResults as { url: string }[] | undefined) || []
       const merged = [...existing, ...allImageAssets]
@@ -1446,11 +1465,15 @@ async function runGenericTask(ctx: RunnerContext) {
       }
     }
 
-    // 将本次使用的提示词写回节点数据，方便前端在节点和对话中展示
+    // 将本次使用的提示词写回节点数据（仅在节点原本没有提示词，或本次使用的提示词与原值一致时）
     if (typeof prompt === 'string' && prompt.trim().length > 0) {
-      patchExtra = {
-        ...patchExtra,
-        prompt: prompt.trim(),
+      const usedPrompt = prompt.trim()
+      const shouldWritePromptBack = !existingPrompt || existingPrompt === usedPrompt
+      if (shouldWritePromptBack) {
+        patchExtra = {
+          ...patchExtra,
+          prompt: usedPrompt,
+        }
       }
     }
 

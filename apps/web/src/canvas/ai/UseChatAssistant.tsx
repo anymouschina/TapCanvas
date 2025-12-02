@@ -3,7 +3,7 @@ import { UIMessage, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { nanoid } from 'nanoid'
 import { ActionIcon, Badge, Box, Button, CopyButton, Divider, Group, Loader, Modal, Paper, Popover, ScrollArea, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
-import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconMicrophone, IconMoodSmile, IconPlus, IconHistory } from '@tabler/icons-react'
+import { IconX, IconSparkles, IconSend, IconPhoto, IconBulb, IconEye, IconMicrophone, IconMoodSmile, IconPlus, IconHistory, IconWorld, IconWorldOff } from '@tabler/icons-react'
 import { getDefaultModel, getModelProvider, type ModelOption } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
@@ -274,6 +274,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
   const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
   const [isThinking, setIsThinking] = useState(false)
+  const [enableWebSearch, setEnableWebSearch] = useState(true)
 
   useEffect(() => {
     if (!opened) return
@@ -318,8 +319,9 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     maxToolRoundtrips: 4,
     intelligentMode,
     enableThinking: true,
+    enableWebSearch,
     sessionId: activeSessionId || undefined,
-  }), [model, canvasContext, provider, intelligentMode, activeSessionId])
+  }), [model, canvasContext, provider, intelligentMode, enableWebSearch, activeSessionId])
 
   const chatId = useMemo(() => 'canvas-assistant', [])
 
@@ -1479,6 +1481,16 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                           styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
                         >
                           <IconMoodSmile size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label={enableWebSearch ? '已开启联网搜索' : '已关闭联网搜索'}>
+                        <ActionIcon
+                          variant="subtle"
+                          onClick={() => setEnableWebSearch(prev => !prev)}
+                          aria-pressed={enableWebSearch}
+                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                        >
+                          {enableWebSearch ? <IconWorld size={16} /> : <IconWorldOff size={16} />}
                         </ActionIcon>
                       </Tooltip>
                     </Group>

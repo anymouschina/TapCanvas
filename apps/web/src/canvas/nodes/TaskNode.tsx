@@ -843,7 +843,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (typeof rawSystemPrompt === 'string' && rawSystemPrompt.trim().length > 0) {
       return rawSystemPrompt
     }
-    return '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成。'
+    return '你是一个提示词优化助手。请在保持核心意图不变的前提下润色、缩短并结构化下面的提示词，用于后续多模态生成；同时避免引入血腥、残酷暴力或肢解等直观血腥描写，可用暗示和留白代替。'
   })
 
   const rawShowSystemPrompt = (data as any)?.showSystemPrompt as boolean | undefined

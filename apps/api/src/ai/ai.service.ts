@@ -14,6 +14,7 @@ import type { PromptSamplePayloadDto, PromptSampleParseRequestDto, PromptSampleR
 import { ToolEventsService } from './tool-events.service'
 import type { ModelProvider, ModelToken, PromptSample as PrismaPromptSample } from '@prisma/client'
 import { ProxyService } from '../proxy/proxy.service'
+import { WebSearchService } from '../search/web-search.service'
 
 const actionEnum = z.enum(ACTION_TYPES)
 
@@ -29,6 +30,24 @@ const assistantSchema = z.object({
     storeResultAs: z.string().optional().describe('为该action输出注册引用名称')
   })).default([]),
 })
+
+const webSearchTool = {
+  webSearch: tool({
+    description:
+      '联网搜索当前问题相关的最新信息，用于新闻、技术更新、具体数据等需要实时信息的场景；不要用于纯小说创作、分镜脑补等不依赖事实的任务。',
+    inputSchema: z.object({
+      query: z.string().min(4, 'query 太短'),
+      maxResults: z.number().min(1).max(8).default(4),
+      locale: z.string().default('zh-CN'),
+    }),
+    execute: async ({ query, maxResults, locale }) => {
+      if (typeof (globalThis as any).__tapcanvasWebSearch !== 'function') {
+        throw new Error('WebSearch 未初始化')
+      }
+      return (globalThis as any).__tapcanvasWebSearch(query, maxResults, locale)
+    },
+  }),
+}
 
 // 基础画布工具定义（服务端仅回传占位结果，具体操作由前端执行）
 // 基础画布工具定义（默认不在服务端执行，由前端通过 UI stream 接管）
@@ -126,7 +145,14 @@ export class AiService {
     private readonly prisma: PrismaService,
     private readonly toolEvents: ToolEventsService,
     private readonly proxyService: ProxyService,
-  ) {}
+    private readonly webSearch: WebSearchService,
+  ) {
+    ;(globalThis as any).__tapcanvasWebSearch = (
+      query: string,
+      maxResults: number,
+      locale: string,
+    ) => this.webSearch.search(query, maxResults, locale)
+  }
 
   async chat(userId: string, payload: ChatRequestDto): Promise<ChatResponseDto> {
     if (!payload.messages?.length) {
@@ -602,7 +628,12 @@ export class AiService {
   private resolveTools(payload: ChatRequestDto) {
     const provided = this.normalizeTools(payload.tools)
     if (provided) return provided
-    return payload.clientToolExecution ? canvasToolsForClient : canvasToolsWithServerFallback
+    const baseCanvasTools = payload.clientToolExecution ? canvasToolsForClient : canvasToolsWithServerFallback
+    // 默认启用联网搜索；当 enableWebSearch === false 时显式关闭 webSearch 工具
+    if (payload.enableWebSearch === false) {
+      return baseCanvasTools
+    }
+    return { ...baseCanvasTools, ...webSearchTool }
   }
 
   private normalizeToolChoice<TTools extends Record<string, any>>(choice: ChatRequestDto['toolChoice'], tools: TTools): ToolChoice<TTools> {
@@ -1561,10 +1592,12 @@ export class AiService {
       .map(rule => `${rule.id}: ${rule.promptLine}`)
       .join('\n')
     return [
-      'You are TapCanvas\'s cinematic scene prompt architect.',
+      "You are TapCanvas's cinematic scene prompt architect.",
       'Convert the provided narrative into a concise 10-second video prompt with explicit camera moves, subjects, lighting logic, and emotional arc.',
       'Blend realism naturally—never dump checklists. Mention lighting temperature, camera stability, and micro actions as part of the prose.',
       'Respect continuity cues (characters, wardrobe, weather, props).',
+      'Strictly avoid explicit gore, dismemberment, exposed organs, or fetishized violence. If the source text contains such details, soften them into implied threat, silhouette, off-screen impact, or cutaway reactions.',
+      'For fights, accidents, or horror beats, focus on tension, pacing, sound design, and lighting instead of graphic injury description.',
       'Choose 3-6 relevant realism rules from the list below and weave them organically into the prompt text.',
       'Return structured JSON that matches the schema.',
       'Realism rulebook:',

@@ -54,6 +54,12 @@ export interface ChatRequestDto {
   headers?: Record<string, string>
   intelligentMode?: boolean
   enableThinking?: boolean
+  /**
+   * 是否允许 AI 使用联网搜索（webSearch 工具）
+   * - true / 未提供：允许使用
+   * - false：完全禁用 webSearch 工具
+   */
+  enableWebSearch?: boolean
   sessionId?: string
 }
 

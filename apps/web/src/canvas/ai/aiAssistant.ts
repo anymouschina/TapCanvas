@@ -49,6 +49,11 @@ export class AIAssistant {
 节点类型：taskNode / groupNode / ioNode
 节点种类（仅限）：text / image / composeVideo / audio / subtitle / subflow / character（storyboard 已禁用）
 
+安全与内容边界：
+- 严格避免生成或强化血腥、酷刑、肢解、内脏外露等直观暴力画面。
+- 若用户描述中包含极端暴力或血腥细节，应主动弱化为暗示性、留白式或剪影式表现，突出情绪与氛围，而非伤口/血液细节。
+- 涉及冲突、战斗、事故等场景时，只能以克制的镜头与光影语言呈现，禁止详述残忍过程。
+
 分镜与提示词规则（务必执行）：
 - 所有节点的 prompt、negativePrompt、keywords 字段必须写成自然、流畅的英文提示词，禁止夹杂中文或其他语言。如需中文说明，请在回复里单独描述。
 - 所有 composeVideo 执行必须先在对话中给出英文 prompt 方案，并通过 edit_node/update_node 改写目标节点的 prompt，再执行该节点；除非用户要求，禁止额外创建 text/image 节点充当 prompt 占位。

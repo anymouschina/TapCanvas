@@ -177,6 +177,7 @@ export interface UseIntelligentChatOptions {
   userId: string
   intelligentMode?: boolean
   enableThinking?: boolean
+  enableWebSearch?: boolean
   context?: any
   onThinkingEvent?: (event: ThinkingEvent) => void
   onOperationExecuted?: (operation: CanvasOperation) => void

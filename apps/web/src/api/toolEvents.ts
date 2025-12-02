@@ -145,3 +145,7 @@ export function extractPlanUpdate(event: ToolEventMessage): PlanUpdatePayload | 
   }
   return null
 }
+
+export function isWebSearchEvent(event: ToolEventMessage): boolean {
+  return event.toolName === 'webSearch'
+}

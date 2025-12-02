@@ -10,6 +10,7 @@ import { ToolEventsService } from './tool-events.service'
 import { CapabilityRegistryService } from './capabilities'
 import { CanvasCapabilityRegistry, canvasCapabilityRegistry } from './core/canvas-registry'
 import { ProxyService } from '../proxy/proxy.service'
+import { WebSearchService } from '../search/web-search.service'
 
 @Module({
   controllers: [AiController],
@@ -18,6 +19,7 @@ import { ProxyService } from '../proxy/proxy.service'
     AiService,
     ToolEventsService,
     ProxyService,
+    WebSearchService,
 
     // 智能系统服务
     IntelligentAiService,

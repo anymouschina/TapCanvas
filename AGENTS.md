@@ -42,6 +42,12 @@
 - Use `ReactFlowProvider` at the app level; hooks like `useReactFlow` require the provider.
 - Canvas fills the viewport; header is transparent with only TapCanvas (left) and GitHub icon (right).
 
+## AI Tools & Models
+
+- Image nodes default to `nano-banana-pro` and are designed for text-to-image, storyboard stills from long-form plots, and image-to-image refinement.
+- Prefer `nano-banana-pro` when building flows that need consistent visual style across scenes; other image models are optional fallbacks.
+- When wiring tools, treat image nodes as the primary source of “base frames” for Sora/Veo video nodes, especially for novel-to-animation workflows.
+
 ## Multi-user Data Isolation
 
 - All server-side entities (projects, flows, executions, model providers/tokens, assets) must be scoped by the authenticated user.
