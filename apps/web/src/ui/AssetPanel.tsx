@@ -346,7 +346,8 @@ React.useEffect(() => {
   const addDraftToCanvas = (d: any, remix = false) => {
     if (!d) return
     const videoUrl = getDraftVideoUrl(d)
-    const remixTarget = d.videoDraftId || d.videoPostId || d.id || (d.raw as any)?.generation_id || (d.raw as any)?.id || null
+    // Sora remix 目标优先使用 postId（通常为 s_ 前缀），避免误用内部 draft GUID
+    const remixTarget = d.postId || d.videoPostId || d.videoDraftId || (d.raw as any)?.generation_id || (d.raw as any)?.id || d.id || null
     const baseData: any = {
       kind: remix ? 'composeVideo' : 'video',
       autoLabel: false,
@@ -1297,8 +1298,8 @@ React.useEffect(() => {
                                       prompt: video.prompt || '',
                                       thumbnailUrl: video.thumbnailUrl,
                                       videoUrl: video.videoUrl,
-                                      videoPostId: (video as any)?.id || (video as any)?.postId || null,
-                                      remixTargetId: (video as any)?.id || (video as any)?.postId || null,
+                                      videoPostId: (video as any)?.postId || (video as any)?.id || null,
+                                      remixTargetId: (video as any)?.postId || (video as any)?.id || null,
                                     })
                                     setActivePanel(null)
                                   }}

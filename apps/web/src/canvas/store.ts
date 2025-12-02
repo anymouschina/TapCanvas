@@ -97,14 +97,24 @@ function getRemixTargetIdFromNode(node?: Node) {
   const normalized = model.replace('_', '-')
   if (normalized && !['sora-2', 'sy-8', 'sy_8'].includes(model) && !['sora-2', 'sy-8', 'sy_8'].includes(normalized)) return null
   const candidates = [
-    data.videoPostId,
-    data.videoDraftId,
-    data.videoTaskId,
-    data.soraVideoTask?.generation_id,
+    data.videoPostId,                   // s_ 开头的 postId（首选）
+    data.videoDraftId,                  // 草稿 ID
+    data.videoTaskId,                   // task_ 开头的任务 ID
+    data.soraVideoTask?.generation_id,  // gen_ 开头的生成 ID
     data.soraVideoTask?.id,
   ]
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+    if (typeof candidate !== 'string') continue
+    const trimmed = candidate.trim()
+    if (!trimmed) continue
+    const lower = trimmed.toLowerCase()
+    const looksLikeSoraId =
+      trimmed.startsWith('s_') ||
+      trimmed.startsWith('gen_') ||
+      trimmed.startsWith('task_') ||
+      trimmed.startsWith('p/')
+    if (!looksLikeSoraId) continue
+    return trimmed
   }
   return null
 }

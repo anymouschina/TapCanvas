@@ -136,7 +136,17 @@ function getRemixTargetIdFromNodeData(data?: any): string | null {
     data.videoTaskId,      // task_ 开头的 taskId
   ]
   for (const candidate of knownCandidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+    if (typeof candidate !== 'string') continue
+    const trimmed = candidate.trim()
+    if (!trimmed) continue
+    const lower = trimmed.toLowerCase()
+    const looksLikeSoraId =
+      trimmed.startsWith('s_') ||
+      trimmed.startsWith('gen_') ||
+      trimmed.startsWith('task_') ||
+      trimmed.startsWith('p/')
+    if (!looksLikeSoraId) continue
+    return trimmed
   }
 
   // 检查生成任务的 generation_id
@@ -600,7 +610,25 @@ async function runVideoTask(ctx: RunnerContext) {
       ? serializeStoryboardScenes(storyboardScenesData || [], { title: storyboardTitle, notes: storyboardNotes })
       : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
+    // Remix 目标：
+    // - 优先使用节点数据中合法的 remixTargetId（仅接受 Sora 认可的 ID 形态：s_/gen_/task_）
+    // - 否则从上游节点数据推导（videoPostId/videoDraftId/soraVideoTask.generation_id 等）
     let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
+    if (typeof remixTargetId === 'string') {
+      const trimmed = remixTargetId.trim()
+      const lower = trimmed.toLowerCase()
+      const looksLikeSoraId =
+        trimmed.startsWith('s_') ||
+        trimmed.startsWith('gen_') ||
+        trimmed.startsWith('task_') ||
+        trimmed.startsWith('p/')
+      if (!looksLikeSoraId) {
+        // 忽略形如随机 GUID 的值（例如 draft.id），避免把错误的 ID 传给 Sora
+        remixTargetId = null
+      } else {
+        remixTargetId = trimmed
+      }
+    }
     const aspectRatioSetting =
       typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
         ? (data as any).aspect.trim()
