@@ -1,5 +1,14 @@
--- AlterTable
-ALTER TABLE "PromptSample" ALTER COLUMN "updatedAt" DROP DEFAULT;
+-- Make PromptSample alteration safe on fresh databases
+DO $$
+BEGIN
+  IF to_regclass('public."PromptSample"') IS NOT NULL THEN
+    BEGIN
+      ALTER TABLE "PromptSample" ALTER COLUMN "updatedAt" DROP DEFAULT;
+    EXCEPTION
+      WHEN undefined_column THEN NULL;
+    END;
+  END IF;
+END $$;
 
 -- CreateTable
 CREATE TABLE "ChatSession" (
