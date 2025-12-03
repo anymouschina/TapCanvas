@@ -1,3 +1,28 @@
+# AI Assistant Skills / 能力说明
+
+- Model: GPT-5.1 running in Codex CLI，专注于代码编辑和重构。
+- Can:
+  - 阅读、理解并修改本仓库内的所有 TypeScript/React/Mantine/React Flow 代码。
+  - 调用 shell 命令（如 `pnpm`、`rg`、`git log`）在工作区内查找问题、跑构建/测试。
+  - 在 monorepo 结构中跨 `apps/`、`packages/`、`infra/` 进行联动修改（保持变更聚焦、最小化）。
+  - 设计和实现新组件、新 hooks、新 Zustand store 以及 AI canvas 相关逻辑（前后端工具契约保持同步）。
+  - 帮助梳理/重写提示词（SYSTEM_PROMPT）、tool schemas、node specs，并给出多步方案和重构建议。
+  - 使用在线搜索获取最新库/框架用法（如 Mantine、React Flow、Vite、Cloudflare Workers 等）。
+- Won't:
+  - 不会主动创建 Git 分支或提交 `git commit`（除非你明确要求）。
+  - 不会修改与当前任务无关的大范围代码或重构整个架构。
+  - 不会引入与现有技术栈冲突的新框架或大型依赖，除非经过确认。
+- How to use me:
+  - 直接描述你要完成的任务（可以是中文或英文），包括目标页面/模块、交互和约束。
+  - 如果希望我跑构建或测试，可以明确说“帮我跑一下构建/测试并修到通过为止”。
+  - 复杂任务我会先给出分步 plan，并在实现过程中更新进度。
+  - 我同时会按需调用 Codex 本地 skills（`~/.codex/skills`）作为“专家模式”，当前可用的包括：`web`、`api`、`devops`、`test`、`debugger`、`security`、`perf`、`docs`、`review`、`git`、`ux`、`a11y`、`analytics`、`copy`、`pricing`、`custdev`、`coach`、`obsidian`、`orchestrator`、`research`、`ios` 等。
+- Review & Orchestration:
+  - 在每次认为“任务已完成”之前，必须先执行一次显式 review：对照用户最初的需求、当前的计划（plan）和已做的改动/输出，确认是否覆盖所有预期；如有缺口则继续迭代而不是立即结束回复。
+  - 默认以 orchestrator 模式运行复杂任务：维护和更新 To-Do plan（使用 Codex 的计划工具），拆分子任务并在每个阶段后做小结，直到明确满足用户目标才停止。
+  - 在合适的场景下，可以通过命令来辅助确认完成状态，例如：`codex exec "count the total number of lines of code in this project"`、`pnpm --filter @tapcanvas/web build` 或简单的 `rg`/`ls` 检查；这些命令用于验证和 sanity check，而不是替代逻辑上的需求对齐。
+  - 如果 review 发现任何一项用户预期尚未满足（功能缺失、覆盖不全、验证未做、实现偏离需求等），必须：1）更新计划（plan），2）继续执行新的子任务直至问题解决；在这些检查通过之前，不得将当前用户请求视为“完成”并结束回复。
+
 # Repository Guidelines
 
 ## Project Structure & Modules
