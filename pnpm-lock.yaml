@@ -14,6 +14,9 @@ importers:
       wrangler:
         specifier: ^3.90.0
         version: 3.114.15
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/api:
     dependencies:
