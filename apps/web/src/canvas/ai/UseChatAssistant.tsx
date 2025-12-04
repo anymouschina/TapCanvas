@@ -237,7 +237,10 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     const primary = gptTextOptions.length ? gptTextOptions : fallbackAssistantOptions
     return mergeModelOptionLists(primary, codexModels)
   }, [gptTextOptions, fallbackAssistantOptions, codexModels])
-  const apiBase = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+  const apiBase =
+    (import.meta as any).env?.VITE_API_STREAM_BASE ||
+    (import.meta as any).env?.VITE_API_BASE ||
+    'http://localhost:3000'
   const apiRoot = useMemo(() => apiBase.replace(/\/$/, ''), [apiBase])
   const panelBackground = 'radial-gradient(135% 160% at 50% 0%, rgba(36,52,104,0.45), rgba(5,7,15,0.98))'
   const panelBorder = 'none'
