@@ -1,4 +1,18 @@
-# TapCanvas
+<p align="center">
+  <img src="assets/logo.jpg" alt="TapCanvas Logo" width="160" />
+</p>
+
+<h1 align="center">TapCanvas</h1>
+<p align="center">
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license" />
+  </a>
+  <a href="https://github.com/anymouschina/TapCanvas">
+    <img src="https://img.shields.io/github/stars/anymouschina/TapCanvas.svg?style=flat-square" alt="GitHub stars" />
+  </a>
+</p>
+
+<p align="center">A zero-GPU visual AI canvas optimized for Sora 2, supporting end-to-end text→image→video creative workflows.</p>
 
 **Language:** [中文](README.md) | English
 **Visual AI Creation Canvas (Zero GPU Required)**

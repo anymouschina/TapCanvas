@@ -1,4 +1,18 @@
-# TapCanvas
+<p align="center">
+  <img src="assets/logo.jpg" alt="TapCanvas Logo" width="160" />
+</p>
+
+<h1 align="center">TapCanvas</h1>
+<p align="center">
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license" />
+  </a>
+  <a href="https://github.com/anymouschina/TapCanvas">
+    <img src="https://img.shields.io/github/stars/anymouschina/TapCanvas.svg?style=flat-square" alt="GitHub stars" />
+  </a>
+</p>
+
+<p align="center">一款零 GPU、面向 Sora 2 的可视化 AI 创作画布，支持文本→图像→视频的完整创作工作流。</p>
 
 **Language:** 中文 | [English](README_EN.md)
 
