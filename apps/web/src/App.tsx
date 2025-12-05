@@ -1,5 +1,5 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
@@ -392,6 +392,7 @@ export default function App(): JSX.Element {
       <AppShell.Header>
         <Group justify="space-between" p="sm">
           <Group>
+            <Image src="/weblogo.png" alt="TapCanvas logo" h={28} fit="contain" />
             <Title order={4}>TapCanvas</Title>
             {isDirty && (<Badge color="red" variant="light">{$('未保存')}</Badge>)}
           </Group>
