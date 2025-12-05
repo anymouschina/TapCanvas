@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="TapCanvas Logo" width="160" />
+  <img src="assets/logo.png" alt="TapCanvas Logo" width="1000" />
 </p>
 
 <h1 align="center">TapCanvas</h1>
@@ -147,11 +147,11 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 
 不同 AI 模型支持不同的节点类型，请正确配置：
 
-| 节点类型                  | 支持的模型                                                                                                                                                                        | 功能说明                                 |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **🎬 Video 节点**   | **Sora 2**, **Veo 3.1 Pro/Fast**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion | 图生视频、文生视频、参考帧过渡、视频合成、动画制作   |
-| **🖼️ Image 节点** | **Nano Banana / Fast / Pro**, **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图生图、图像生成、多种分辨率、风格转换，可将长篇小说/剧情拆解为分镜垫图，作为后续视频节点的参考帧   |
-| **📝 Text 节点**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                  | 文本生成、提示词优化、智能建议、内容创作 |
+| 节点类型                  | 支持的模型                                                                                                                                                                                                            | 功能说明                                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **🎬 Video 节点**   | **Sora 2**, **Veo 3.1 Pro/Fast**, Runway Gen-3, Runway Gen-2, Pika Labs V2, Pika Labs V1.5, HeyGen Video, Synthesia Video, LumaLabs Dream Machine, Kaiber Video, Stable Video Diffusion                   | 图生视频、文生视频、参考帧过渡、视频合成、动画制作                                                        |
+| **🖼️ Image 节点** | **Nano Banana / Fast / Pro**, **Qwen Image Plus**, Gemini 2.5 Flash Image, DALL-E 3, DALL-E 2, Stable Diffusion XL, Stable Diffusion V3, Midjourney V6, FLUX.1 Pro, FLUX.1 Dev, Kolors IMG, Hunyuan Image | 文生图、图生图、图像生成、多种分辨率、风格转换，可将长篇小说/剧情拆解为分镜垫图，作为后续视频节点的参考帧 |
+| **📝 Text 节点**    | **Gemini 2.5 Flash**, Gemini 2.5 Pro, Gemini 3 Pro Preview, Claude 3.5 Sonnet, Claude 3 Haiku, GPT-4o, GPT-4o Mini, DeepSeek V3, Moonshot V1 8K, Kimi Chat                                                      | 文本生成、提示词优化、智能建议、内容创作                                                                  |
 
 ### 配置步骤
 
@@ -664,8 +664,8 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 ### 🤖 AI 模型集成
 
 - **文本生成**：
-
 - **Gemini 2.5 Flash / Pro**：先进的文本生成模型
+
   - **OpenAI GPT、Claude、DeepSeek**：用于多轮对话、剧本创作与 Storyboard 拆解
   - **智能提示词优化**：自动优化和改进输入提示词
   - **文本增强**：支持文本续写和风格转换
