@@ -166,8 +166,8 @@ export const canvasNodeSpecs = {
     kind: 'composeVideo',
     role: 'video_shot',
     description:
-      '统一的视频镜头节点，封装 Sora 2 / Veo 3.1 等模型，负责短片分镜（单节点默认 ≤10 秒）与续写、Remix。',
-    recommendedModels: ['Sora 2', 'Veo 3.1 Pro', 'Veo 3.1 Fast', 'Runway Gen-3'],
+      '统一的视频镜头节点，封装 Sora 2 / 自建 Sora2API / Veo 3.1 等模型，负责短片分镜（单节点默认 ≤10 秒）与续写、Remix。',
+    recommendedModels: ['Sora 2', 'Sora2API (self-hosted)', 'Veo 3.1 Pro', 'Veo 3.1 Fast', 'Runway Gen-3'],
     capabilities: [
       '文本 → 视频（单镜头）',
       '图像/帧 → 视频续写（img2vid）',
@@ -175,7 +175,8 @@ export const canvasNodeSpecs = {
       '基于 image 节点提供的参考帧锁定角色/构图'
     ],
     notes:
-      '新视频内容一律使用 composeVideo；storyboard 仅保留兼容，不得作为新建类型。单节点默认最长 10 秒，长剧情必须拆成多个 composeVideo 节点按镜头执行。'
+      '新视频内容一律使用 composeVideo；storyboard 仅保留兼容，不得作为新建类型。单节点默认最长 10 秒，长剧情必须拆成多个 composeVideo 节点按镜头执行。' +
+      '当画布绑定了自建的 Sora2API 厂商（vendor=sora2api）时，composeVideo 节点可通过统一任务通道直接调用本地 Sora2API 的 /v1/chat/completions 接口完成文生视频。'
   },
   audio: {
     kind: 'audio',
@@ -220,4 +221,3 @@ export const canvasNodeSpecs = {
 } as const
 
 export type CanvasNodeKind = keyof typeof canvasNodeSpecs
-

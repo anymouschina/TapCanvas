@@ -8,6 +8,7 @@ import {
   listModelProviders,
   listModelTokens,
   fetchVeoTaskResult,
+  fetchSora2ApiTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -584,6 +585,166 @@ async function runTextTask(ctx: RunnerContext) {
   }
 }
 
+async function runSora2ApiVideoTask(
+  ctx: RunnerContext,
+  options: { prompt: string; durationSeconds: number; orientation: 'portrait' | 'landscape' },
+) {
+  const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
+  const { prompt, durationSeconds, orientation } = options
+  try {
+    setNodeStatus(id, 'running', { progress: 5 })
+    appendLog(id, `[${nowLabel()}] 调用 Sora2API 视频模型…`)
+
+    const videoModelValue = (data as any)?.videoModel as string | undefined
+    const modelKey =
+      videoModelValue ||
+      (orientation === 'portrait'
+        ? durationSeconds <= 10
+          ? 'sora-video-portrait-10s'
+          : 'sora-video-portrait-15s'
+        : durationSeconds <= 10
+          ? 'sora-video-landscape-10s'
+          : 'sora-video-landscape-15s')
+
+    const res = await runTaskByVendor('sora2api', {
+      kind: 'text_to_video',
+      prompt,
+      extras: {
+        nodeKind: kind,
+        nodeId: id,
+        modelKey,
+        durationSeconds,
+      },
+    })
+
+    const taskId = res.id
+    if (!taskId) {
+      const msg = 'Sora2API 视频任务创建失败：未返回任务 ID'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      return
+    }
+
+    setNodeStatus(id, 'running', {
+      progress: 10,
+      lastResult: {
+        id: taskId,
+        at: Date.now(),
+        kind,
+        preview: {
+          type: 'text',
+          value: `已创建 Sora2API 视频任务（ID: ${taskId}）`,
+        },
+      },
+      videoTaskId: taskId,
+      videoModel: modelKey,
+      videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
+    })
+
+    const pollIntervalMs = 3000
+    // 超过 10 分钟仍未完成视为 bad case，前端直接标记为错误
+    const pollTimeoutMs = 600_000
+    const startedAt = Date.now()
+    let lastProgress = 10
+
+    while (Date.now() - startedAt < pollTimeoutMs) {
+      if (isCanceled(id)) {
+        setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+        appendLog(id, `[${nowLabel()}] 已取消 Sora2API 视频任务`)
+        return
+      }
+
+      await sleep(pollIntervalMs)
+      let snapshot: TaskResultDto
+      try {
+        snapshot = await fetchSora2ApiTaskResult(taskId)
+      } catch (err: any) {
+        const msg = err?.message || '查询 Sora2API 任务进度失败'
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        continue
+      }
+
+      if (snapshot.status === 'running') {
+        const rawProgress =
+          (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+          (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
+          null
+        if (typeof rawProgress === 'number') {
+          const normalized = Math.min(95, Math.max(lastProgress, Math.max(5, Math.round(rawProgress))))
+          lastProgress = normalized
+          setNodeStatus(id, 'running', { progress: normalized })
+        }
+        continue
+      }
+
+      if (snapshot.status === 'failed') {
+        const msg =
+          (snapshot.raw && (snapshot.raw.response?.error || snapshot.raw.error || snapshot.raw.message)) ||
+          'Sora2API 视频任务失败'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      // succeeded
+      const asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+      if (!asset || !asset.url) {
+        const msg = 'Sora2API 视频任务执行失败：未返回有效视频地址'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      const videoUrl = asset.url
+      const thumbnailUrl = asset.thumbnailUrl || null
+      const preview = { type: 'video' as const, src: videoUrl }
+
+      const existingResults = ((data as any)?.videoResults as any[] | undefined) || []
+      const newResult = {
+        id: snapshot.id || taskId,
+        url: videoUrl,
+        thumbnailUrl,
+        title: (data as any)?.videoTitle || null,
+        duration: durationSeconds,
+        model: modelKey,
+      }
+      const updatedVideoResults = [...existingResults, newResult]
+      const nextPrimaryIndex = updatedVideoResults.length - 1
+
+      setNodeStatus(id, 'success', {
+        progress: 100,
+        lastResult: {
+          id: snapshot.id || taskId,
+          at: Date.now(),
+          kind,
+          preview,
+        },
+        prompt,
+        videoUrl,
+        videoThumbnailUrl: thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
+        videoResults: updatedVideoResults,
+        videoPrimaryIndex: nextPrimaryIndex,
+        videoDurationSeconds: durationSeconds,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
+        videoTaskId: taskId,
+      })
+      appendLog(id, `[${nowLabel()}] Sora2API 视频生成完成。`)
+      return
+    }
+
+    const timeoutMsg = 'Sora2API 视频任务查询超时，请稍后在 Sora2API 控制台确认结果'
+    setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
+    appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
+  } catch (err: any) {
+    const msg = err?.message || 'Sora2API 视频任务执行失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    endRunToken(id)
+  }
+}
+
 async function runVideoTask(ctx: RunnerContext) {
   const { id, data, state, prompt, kind, setNodeStatus, appendLog, isCanceled } = ctx
   try {
@@ -753,6 +914,15 @@ async function runVideoTask(ctx: RunnerContext) {
         durationSeconds: videoDurationSeconds,
         firstFrameUrl: firstFrameUrlValue,
         lastFrameUrl: firstFrameUrlValue ? lastFrameUrlValue : '',
+      })
+      return
+    }
+
+    if (videoVendor === 'sora2api') {
+      await runSora2ApiVideoTask(ctx, {
+        prompt: finalPrompt,
+        durationSeconds: videoDurationSeconds,
+        orientation,
       })
       return
     }
