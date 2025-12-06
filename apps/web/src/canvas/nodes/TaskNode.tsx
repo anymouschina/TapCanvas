@@ -5105,7 +5105,7 @@ const rewritePromptWithCharacters = React.useCallback(
                               })
                             }}
                           >
-                            全屏预览
+                            预览
                           </Button>
                           {!isPrimary && (
                             <Button
@@ -5261,7 +5261,7 @@ const rewritePromptWithCharacters = React.useCallback(
                               })
                             }}
                           >
-                            全屏预览
+                            预览
                           </Button>
                           {!isPrimary && (
                             <Button

@@ -118,8 +118,9 @@ export default function AssetPanel(): JSX.Element | null {
   const [soraHistory, setSoraHistory] = React.useState<VideoHistoryRecord[]>([])
   const [soraHistoryLoading, setSoraHistoryLoading] = React.useState(false)
   const [soraHistoryTotal, setSoraHistoryTotal] = React.useState(0)
-const [soraHistoryOffset, setSoraHistoryOffset] = React.useState(0)
-const [soraHistoryError, setSoraHistoryError] = React.useState<string | null>(null)
+  const [soraHistoryOffset, setSoraHistoryOffset] = React.useState(0)
+  const [soraHistoryError, setSoraHistoryError] = React.useState<string | null>(null)
+
 const fetchSoraHistory = React.useCallback(
   async (reset: boolean) => {
       setSoraHistoryLoading(true)
