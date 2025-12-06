@@ -16,13 +16,9 @@ import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
 import { buildCanvasContext } from '../utils/buildCanvasContext'
 
-type AssistantPosition = 'right' | 'left'
-
 interface UseChatAssistantProps {
-  opened: boolean
-  onClose: () => void
-  position?: AssistantPosition
-  width?: number
+  opened?: boolean
+  onClose?: () => void
   intelligentMode?: boolean
 }
 
@@ -225,7 +221,7 @@ const normalizeFileList = (files: FileList | File[]): File[] => {
  * 暗夜AI助手（流式版），基于 @ai-sdk/react 的 useChat。
  * 匹配原 SimpleAIAssistant 的弹窗行为，使用后端 /ai/chat SSE。
  */
-export function UseChatAssistant({ opened, onClose, position = 'right', width = 420, intelligentMode = true }: UseChatAssistantProps) {
+export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantProps) {
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
@@ -245,8 +241,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const panelBackground = 'radial-gradient(135% 160% at 50% 0%, rgba(36,52,104,0.45), rgba(5,7,15,0.98))'
   const panelBorder = 'none'
   const panelShadow = '0 45px 120px rgba(3,5,15,0.85)'
-  const headerBackground = 'none'
-  const headerBorder = 'none'
   const sparklesColor = '#a5b4fc'
   const logBackground = 'radial-gradient(80% 60% at 50% 0%, rgba(79,126,255,0.22), transparent), rgba(4,7,16,0.9)'
   const logBorder = 'none'
@@ -264,6 +258,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const toolbarIconBorder = '1px solid rgba(255,255,255,0.08)'
   const glowingSendBackground = 'linear-gradient(135deg, #3d7eff, #6ae0ff)'
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const [sessions, setSessions] = useState<AssistantSession[]>(() => [createEmptyAssistantSession('会话 1')])
   const [activeSessionId, setActiveSessionId] = useState<string>(() => (sessions[0]?.id ?? ''))
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
@@ -278,9 +273,25 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
   const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [enableWebSearch, setEnableWebSearch] = useState(true)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
 
   useEffect(() => {
-    if (!opened) return
+    if (typeof window === 'undefined') return
+    const handlePointerDown = (event: MouseEvent) => {
+      const container = rootRef.current
+      if (!container) return
+      const target = event.target as Node | null
+      if (target && container.contains(target)) return
+      setIsExpanded(false)
+    }
+    window.addEventListener('mousedown', handlePointerDown, true)
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown, true)
+    }
+  }, [])
+
+  useEffect(() => {
     let canceled = false
     fetchAssistantCodexModels()
       .then((models) => {
@@ -291,7 +302,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
     return () => {
       canceled = true
     }
-  }, [opened])
+  }, [])
 
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
@@ -1192,45 +1203,57 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
       ? `一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`
       : '上传或粘贴图片生成提示词'
 
-  const horizontalJustify = position === 'left' ? 'flex-start' : 'flex-end'
-
-  if (!opened) return null
-
   return (
     <Box
       style={{
         position: 'fixed',
-        inset: 0,
+        left: 0,
+        right: 0,
+        bottom: 40,
         display: 'flex',
-        alignItems: 'flex-end',
-        justifyContent: horizontalJustify,
-        padding: '72px 32px 32px',
+        justifyContent: 'center',
         zIndex: 200,
         // 允许画布和其他 UI 在助手面板之外继续可点击
         pointerEvents: 'none'
       }}
     >
-      <Box style={{ width, maxWidth: 'min(460px, calc(100vw - 64px))', pointerEvents: 'auto' }}>
-      <Paper
-        radius={12}
-        shadow="xl"
+      <Box
         style={{
-          background: panelBackground,
-          border: panelBorder,
-          boxShadow: panelShadow,
-          overflow: 'hidden',
-          backdropFilter: 'blur(18px)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 560,
-          height: 'min(840px, calc(100vh - 140px))'
+          width: 'min(60vw, 960px)',
+          pointerEvents: 'auto'
         }}
       >
+        <Paper
+          ref={rootRef}
+          radius={12}
+          shadow="xl"
+          style={{
+            background: panelBackground,
+            border: panelBorder,
+            boxShadow: panelShadow,
+            overflow: 'hidden',
+            backdropFilter: 'blur(18px)',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: isExpanded ? 420 : 'auto',
+            maxHeight: isExpanded ? 'min(720px, calc(100vh - 200px))' : 260,
+            height: isExpanded ? 'min(720px, calc(100vh - 200px))' : 'auto',
+            opacity: isExpanded ? 1 : (isHovered ? 0.4 : 0.1),
+            transition: 'opacity 150ms ease-out'
+          }}
+          onMouseDown={() => setIsExpanded(true)}
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+        >
         <Box
           px="xl"
           pt="lg"
           pb="sm"
-          style={{ borderBottom: headerBorder, background: headerBackground, flexShrink: 0, backdropFilter: 'blur(12px)' }}
+          style={{
+            borderBottom: 'none',
+            background: 'transparent',
+            flexShrink: 0
+          }}
         >
           <Group justify="space-between" align="center" wrap="nowrap">
             <Group
@@ -1350,15 +1373,6 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                   <IconPlus size={14} />
                 </ActionIcon>
               </Tooltip>
-              <Tooltip label="关闭">
-                <ActionIcon
-                  variant="subtle"
-                  onClick={onClose}
-                  styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: closeIconColor, boxShadow: '0 8px 18px rgba(3,5,12,0.4)' } }}
-                >
-                  <IconX size={14} color={closeIconColor} />
-                </ActionIcon>
-              </Tooltip>
             </Group>
           </Group>
         </Box>
@@ -1386,26 +1400,28 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
               flexDirection: 'column' 
             }}
           >
-            <Box style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
-              <ScrollArea style={{ height: '100%' }} type="auto">
-                <Stack gap="md" style={{ padding: 24, paddingBottom: 16 }}>
-                  {messages.length === 0 && (
-                    <Text size="sm" c="rgba(255,255,255,0.55)" ta="center">
-                      向 Aurora 打个「晚上好」的招呼，或描述你想生成的分镜与氛围。
-                    </Text>
-                  )}
+            {isExpanded && (
+              <Box style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
+                <ScrollArea style={{ height: '100%' }} type="auto">
+                  <Stack gap="md" style={{ padding: 24, paddingBottom: 16 }}>
+                    {messages.length === 0 && (
+                      <Text size="sm" c="rgba(255,255,255,0.55)" ta="center">
+                        向 Aurora 打个「晚上好」的招呼，或描述你想生成的分镜与氛围。
+                      </Text>
+                    )}
 
-                  {messages.map(renderMessageBubble)}
+                    {messages.map(renderMessageBubble)}
 
-                  {isThinking && (
-                    <Group gap={6} align="center">
-                      <Loader size="xs" color="gray" />
-                      <Text size="xs" c="rgba(255,255,255,0.6)">Aurora 正在思考…</Text>
-                    </Group>
-                  )}
-                </Stack>
-              </ScrollArea>
-            </Box>
+                    {isThinking && (
+                      <Group gap={6} align="center">
+                        <Loader size="xs" color="gray" />
+                        <Text size="xs" c="rgba(255,255,255,0.6)">Aurora 正在思考…</Text>
+                      </Group>
+                    )}
+                  </Stack>
+                </ScrollArea>
+              </Box>
+            )}
 
             <input
               ref={imagePromptInputRef}
@@ -1436,6 +1452,7 @@ export function UseChatAssistant({ opened, onClose, position = 'right', width = 
                       value={input}
                       onChange={(e) => setInput(e.currentTarget.value)}
                       onPaste={handleTextareaPaste}
+                      onFocus={() => setIsExpanded(true)}
                       disabled={isLoading}
                       onKeyDown={(e) => {
                         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {

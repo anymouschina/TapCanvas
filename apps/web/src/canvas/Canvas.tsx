@@ -18,8 +18,7 @@ import IONode from './nodes/IONode'
 import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
-import { Paper, Stack, Button, Divider, Group, Text, ActionIcon, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
-import { IconBrandGithub, IconRobot } from '@tabler/icons-react'
+import { Paper, Stack, Button, Divider, Group, Text, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import { getCurrentLanguage, setLanguage, $, $t } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
@@ -105,7 +104,6 @@ function CanvasInner(): JSX.Element {
   const timerRef = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
   const [currentLang, setCurrentLangState] = useState(getCurrentLanguage())
-  const [aiAssistantOpened, setAiAssistantOpened] = useState(false)
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
   const authToken = useAuth(s => s.token)
@@ -908,33 +906,8 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color={backgroundGridColor} />
       </ReactFlow>
-
-      {/* AI助手按钮 */}
-      <ActionIcon
-        size="lg"
-        radius="xl"
-        color="green"
-        variant="filled"
-        style={{
-          position: 'absolute',
-          right: 20,
-          top: 20,
-          zIndex: 200
-        }}
-        onClick={() => setAiAssistantOpened(true)}
-      >
-        <Tooltip label="AI助手">
-          <IconRobot size={20} />
-        </Tooltip>
-      </ActionIcon>
-
-      {/* AI助手面板 */}
-      <UseChatAssistant
-        opened={aiAssistantOpened}
-        onClose={() => setAiAssistantOpened(false)}
-        position="right"
-        width={400}
-      />
+      {/* AI助手面板 - 固定底部居中 */}
+      <UseChatAssistant />
       {/* Focus mode breadcrumb with hierarchy */}
       {focusGroupId && (
         <Paper withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>
