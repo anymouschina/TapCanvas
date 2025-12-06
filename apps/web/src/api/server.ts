@@ -1134,6 +1134,20 @@ export type TaskRequestDto = {
   extras?: Record<string, any>
 }
 
+export type TaskProgressSnapshotDto = {
+  taskId?: string
+  nodeId?: string
+  nodeKind?: string
+  taskKind?: TaskKind
+  vendor?: string
+  status: TaskStatus
+  progress?: number
+  message?: string
+  assets?: TaskAssetDto[]
+  raw?: any
+  timestamp?: number
+}
+
 export async function runTask(profileId: string, request: TaskRequestDto): Promise<TaskResultDto> {
   const r = await fetch(`${API_BASE}/tasks`, withAuth({
     method: 'POST',
@@ -1166,6 +1180,28 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
   return r.json()
 }
 
+export async function listPendingTasks(vendor?: string): Promise<TaskProgressSnapshotDto[]> {
+  const qs = new URLSearchParams()
+  if (vendor) qs.set('vendor', vendor)
+  const url = qs.toString()
+    ? `${API_BASE}/tasks/pending?${qs.toString()}`
+    : `${API_BASE}/tasks/pending`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) {
+    throw new Error(`list pending tasks failed: ${r.status}`)
+  }
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!body) return []
+  if (Array.isArray(body)) return body as TaskProgressSnapshotDto[]
+  if (Array.isArray(body?.items)) return body.items as TaskProgressSnapshotDto[]
+  return []
+}
+
 export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto> {
   const r = await fetch(`${API_BASE}/tasks/veo/result`, withAuth({
     method: 'POST',
@@ -1174,6 +1210,25 @@ export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto>
   }))
   if (!r.ok) {
     let msg = `fetch veo result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
+export async function fetchSora2ApiTaskResult(taskId: string): Promise<TaskResultDto> {
+  const r = await fetch(`${API_BASE}/tasks/sora2api/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId }),
+  }))
+  if (!r.ok) {
+    let msg = `fetch sora2api result failed: ${r.status}`
     try {
       const body = await r.json()
       msg = body?.message || body?.error || msg

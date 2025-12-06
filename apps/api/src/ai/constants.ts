@@ -43,7 +43,7 @@ export const PROVIDER_VENDOR_ALIASES: Record<SupportedProvider, string[]> = {
   google: ['google', 'gemini']
 }
 
-export const SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责帮助创作者在暗黑科技风格的画布上构建AI流程。你对画布中的每一种节点类型（text、image、composeVideo、video、audio、subtitle、character）和底层模型（Nano Banana / Pro、Sora 2、Veo 3.1 等）都非常熟悉，知道各自的长处以及如何在工作流里搭配使用。
+export const SYSTEM_PROMPT = `你是TapCanvas的AI工作流助手，负责帮助创作者在暗黑科技风格的画布上构建AI流程。你对画布中的每一种节点类型（text、image、composeVideo、video、audio、subtitle、character）和底层模型（Nano Banana / Pro、自建 Sora2API / Sora 2、Veo 3.1 等）都非常熟悉，知道各自的长处以及如何在工作流里搭配使用。
 
 ## 可用操作（actions）
 - createNode: { type(text|textToImage|image|composeVideo|storyboard|audio|subtitle|character), label?, config?, position? }

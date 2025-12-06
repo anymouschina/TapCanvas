@@ -456,6 +456,7 @@ export default function ModelPanel(): JSX.Element | null {
   const [providers, setProviders] = React.useState<ModelProviderDto[]>([])
   const [clearingAll, setClearingAll] = React.useState(false)
   const [soraProvider, setSoraProvider] = React.useState<ModelProviderDto | null>(null)
+  const [sora2apiProvider, setSora2apiProvider] = React.useState<ModelProviderDto | null>(null)
   const [tokens, setTokens] = React.useState<ModelTokenDto[]>([])
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editingToken, setEditingToken] = React.useState<ModelTokenDto | null>(null)
@@ -526,6 +527,13 @@ const [veoShared, setVeoShared] = React.useState(false)
   const [openaiLabel, setOpenaiLabel] = React.useState('')
   const [openaiSecret, setOpenaiSecret] = React.useState('')
   const [openaiShared, setOpenaiShared] = React.useState(false)
+  const [sora2apiBaseUrl, setSora2apiBaseUrl] = React.useState('')
+  const [sora2apiTokens, setSora2apiTokens] = React.useState<ModelTokenDto[]>([])
+  const [sora2apiModalOpen, setSora2apiModalOpen] = React.useState(false)
+  const [sora2apiEditingToken, setSora2apiEditingToken] = React.useState<ModelTokenDto | null>(null)
+  const [sora2apiLabel, setSora2apiLabel] = React.useState('')
+  const [sora2apiSecret, setSora2apiSecret] = React.useState('')
+  const [sora2apiShared, setSora2apiShared] = React.useState(false)
   const [providerProfiles, setProviderProfiles] = React.useState<Record<string, ModelProfileDto[]>>({})
   const [presetSelections, setPresetSelections] = React.useState<Record<string, string | null>>({})
   const [profileModal, setProfileModal] = React.useState<{ provider: ModelProviderDto; profile: ModelProfileDto | null } | null>(null)
@@ -572,6 +580,18 @@ const [veoShared, setVeoShared] = React.useState(false)
         useUIStore.getState().setSoraVideoBaseUrl(byKey.videos?.baseUrl || null)
         const ts = await listModelTokens(sora.id)
         setTokens(ts)
+
+        // 初始化 Sora2API 提供方（如不存在则创建）
+        let sora2 = ps.find((p) => p.vendor === 'sora2api')
+        if (!sora2) {
+          sora2 = await upsertModelProvider({ name: 'Sora2API', vendor: 'sora2api' })
+          setProviders((prev) => [...prev, sora2!])
+        }
+        setSora2apiProvider(sora2)
+        setSora2apiBaseUrl(sora2.baseUrl || '')
+        const sora2Tokens = await listModelTokens(sora2.id)
+        setSora2apiTokens(sora2Tokens)
+        await refreshProviderProfiles(sora2.id)
 
         // 初始化 Gemini 提供方（如不存在则创建）
         let gemini = ps.find((p) => p.vendor === 'gemini')
@@ -677,6 +697,40 @@ const [veoShared, setVeoShared] = React.useState(false)
     if (!confirm('确定删除该密钥吗？')) return
     await deleteModelToken(id)
     setTokens((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  const openSora2ApiModalForNew = () => {
+    setSora2apiEditingToken(null)
+    setSora2apiLabel('')
+    setSora2apiSecret('')
+    setSora2apiShared(false)
+    setSora2apiModalOpen(true)
+  }
+
+  const handleSaveSora2ApiToken = async () => {
+    if (!sora2apiProvider) return
+    const existingSecret = sora2apiEditingToken?.secretToken ?? ''
+    const finalSecret = sora2apiSecret || existingSecret
+    if (!ensureSecretPresent(finalSecret)) return
+    const saved = await upsertModelToken({
+      id: sora2apiEditingToken?.id,
+      providerId: sora2apiProvider.id,
+      label: sora2apiLabel || '未命名密钥',
+      secretToken: finalSecret,
+      userAgent: null,
+      shared: sora2apiShared,
+    })
+    const next = sora2apiEditingToken
+      ? sora2apiTokens.map((t) => (t.id === saved.id ? saved : t))
+      : [...sora2apiTokens, saved]
+    setSora2apiTokens(next)
+    setSora2apiModalOpen(false)
+  }
+
+  const handleDeleteSora2ApiToken = async (id: string) => {
+    if (!confirm('确定删除该密钥吗？')) return
+    await deleteModelToken(id)
+    setSora2apiTokens((prev) => prev.filter((t) => t.id !== id))
   }
 
 const openGeminiModalForNew = () => {
@@ -1327,6 +1381,25 @@ const handleCloseProxyModal = () => {
                     </Text>
                     <Text size="xs" c="dimmed">
                       已配置密钥：{tokens.length}
+                    </Text>
+                  </Paper>
+                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group justify="space-between" align="flex-start" mb={4}>
+                      <Group gap={6}>
+                        <Title order={6}>Sora2API（自建）</Title>
+                        <Badge color="teal" size="xs">
+                          Local
+                        </Badge>
+                      </Group>
+                      <Button size="xs" onClick={openSora2ApiModalForNew}>
+                        管理密钥
+                      </Button>
+                    </Group>
+                    <Text size="xs" c="dimmed" mb={6}>
+                      通过自建 Sora2API 服务（OpenAI 兼容接口）生成视频/图片，适合本地或私有部署。
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      已配置密钥：{sora2apiTokens.length}
                     </Text>
                   </Paper>
                   <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
@@ -2239,6 +2312,214 @@ const handleCloseProxyModal = () => {
                         取消
                       </Button>
                       <Button onClick={handleSaveVeoToken}>保存</Button>
+                    </Group>
+                  </Stack>
+                </Paper>
+              </div>
+            </Modal>
+            <Modal
+              opened={sora2apiModalOpen}
+              onClose={() => setSora2apiModalOpen(false)}
+              fullScreen
+              withinPortal
+              zIndex={300}
+              title="Sora2API 身份配置"
+              styles={{
+                content: {
+                  height: '100vh',
+                  paddingTop: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  paddingBottom: 16,
+                },
+                body: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                  overflow: 'hidden',
+                },
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group spacing="xs">
+                    <Text size="sm" c="dimmed">
+                      连接自建的 Sora2API 服务（OpenAI 兼容接口），通过模型面板统一管理 API Host 与密钥。
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        window.open('https://github.com/TheSmallHanCat/sora2api', '_blank', 'noopener')
+                      }
+                    >
+                      查看项目
+                    </Button>
+                  </Group>
+                  <Stack gap="xs">
+                    <div>
+                      <TextInput
+                        label="Sora2API Base URL"
+                        placeholder="例如：http://127.0.0.1:8000"
+                        value={sora2apiBaseUrl}
+                        onChange={(e) => setSora2apiBaseUrl(e.currentTarget.value)}
+                        onBlur={async () => {
+                          if (!sora2apiProvider) return
+                          try {
+                            const saved = await upsertModelProvider({
+                              id: sora2apiProvider.id,
+                              name: sora2apiProvider.name,
+                              vendor: sora2apiProvider.vendor,
+                              baseUrl: sora2apiBaseUrl.trim() || null,
+                              sharedBaseUrl: false,
+                            })
+                            setSora2apiProvider(saved)
+                            setSora2apiBaseUrl(saved.baseUrl || '')
+                            notifyModelOptionsRefresh('openai')
+                          } catch (err) {
+                            console.error('Failed to update Sora2API base URL', err)
+                          }
+                        }}
+                      />
+                    </div>
+                  </Stack>
+                  <Group justify="space-between">
+                    <Title order={5}>已保存的 Sora2API Key</Title>
+                    <Group gap="xs">
+                      {sora2apiTokens.length > 0 && (
+                        <>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              if (!sora2apiProvider) return
+                              const sharedFlag = true
+                              const updateAll = async () => {
+                                const updated = await Promise.all(
+                                  sora2apiTokens.map((t) =>
+                                    upsertModelToken({
+                                      id: t.id,
+                                      providerId: sora2apiProvider.id,
+                                      label: t.label,
+                                      secretToken: t.secretToken,
+                                      userAgent: null,
+                                      shared: sharedFlag,
+                                    }),
+                                  ),
+                                )
+                                setSora2apiTokens(updated)
+                              }
+                              updateAll().catch((err) => {
+                                console.error('Failed to share all Sora2API tokens', err)
+                              })
+                            }}
+                          >
+                            全部共享
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              if (!sora2apiProvider) return
+                              const sharedFlag = false
+                              const updateAll = async () => {
+                                const updated = await Promise.all(
+                                  sora2apiTokens.map((t) =>
+                                    upsertModelToken({
+                                      id: t.id,
+                                      providerId: sora2apiProvider.id,
+                                      label: t.label,
+                                      secretToken: t.secretToken,
+                                      userAgent: null,
+                                      shared: sharedFlag,
+                                    }),
+                                  ),
+                                )
+                                setSora2apiTokens(updated)
+                              }
+                              updateAll().catch((err) => {
+                                console.error('Failed to unshare all Sora2API tokens', err)
+                              })
+                            }}
+                          >
+                            取消全部共享
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" onClick={openSora2ApiModalForNew}>
+                        新增 Key
+                      </Button>
+                    </Group>
+                  </Group>
+                  {sora2apiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack gap="xs">
+                    {sora2apiTokens.map((t) => (
+                      <Group key={t.id} justify="space-between">
+                        <div>
+                          <Group gap={6}>
+                            <Text size="sm">{t.label}</Text>
+                            {t.shared && (
+                              <Badge size="xs" color="grape">
+                                共享
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
+                          </Text>
+                        </div>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setSora2apiEditingToken(t)
+                              setSora2apiLabel(t.label)
+                              setSora2apiSecret('')
+                              setSora2apiShared(!!t.shared)
+                              setSora2apiModalOpen(true)
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="red"
+                            onClick={() => handleDeleteSora2ApiToken(t.id)}
+                          >
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Stack>
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={6}>{sora2apiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput
+                      label="名称"
+                      placeholder="例如：Sora2API 主账号 Key"
+                      value={sora2apiLabel}
+                      onChange={(e) => setSora2apiLabel(e.currentTarget.value)}
+                    />
+                    <TextInput
+                      label="API Key"
+                      placeholder={sora2apiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 Sora2API API Key'}
+                      value={sora2apiSecret}
+                      onChange={(e) => setSora2apiSecret(e.currentTarget.value)}
+                    />
+                    <Switch
+                      label="将此 Key 作为共享配置（其他成员可复用）"
+                      checked={sora2apiShared}
+                      onChange={(e) => setSora2apiShared(e.currentTarget.checked)}
+                    />
+                    <Group justify="flex-end" mt="sm">
+                      <Button variant="default" onClick={() => setSora2apiModalOpen(false)}>
+                        取消
+                      </Button>
+                      <Button onClick={handleSaveSora2ApiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>

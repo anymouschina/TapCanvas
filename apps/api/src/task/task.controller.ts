@@ -1,4 +1,4 @@
-import { Body, Controller, MessageEvent, Post, Req, Sse, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, MessageEvent, Post, Query, Req, Sse, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '../auth/jwt.guard'
 import { TaskService } from './task.service'
 import type { AnyTaskRequest } from './task.types'
@@ -41,11 +41,28 @@ export class TaskController {
     return this.progress.stream(String(req.user.sub))
   }
 
+  @Get('pending')
+  getPending(
+    @Req() req: any,
+    @Query('vendor') vendor?: string,
+  ) {
+    const userId = String(req.user.sub)
+    return this.progress.getPending(userId, vendor)
+  }
+
   @Post('veo/result')
   fetchVeoResult(@Body() body: { taskId: string }, @Req() req: any) {
     if (!body || !body.taskId) {
       throw new Error('taskId is required')
     }
     return this.service.fetchVeoResult(String(req.user.sub), body.taskId)
+  }
+
+  @Post('sora2api/result')
+  fetchSora2ApiResult(@Body() body: { taskId: string }, @Req() req: any) {
+    if (!body || !body.taskId) {
+      throw new Error('taskId is required')
+    }
+    return this.service.fetchSora2ApiResult(String(req.user.sub), body.taskId)
   }
 }
