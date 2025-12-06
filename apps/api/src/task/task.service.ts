@@ -12,11 +12,13 @@ import type {
   TaskStatus,
 } from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
+import { sora2apiAdapter } from './adapters/sora2api.adapter'
 import { geminiAdapter } from './adapters/gemini.adapter'
 import { qwenAdapter } from './adapters/qwen.adapter'
 import { anthropicAdapter } from './adapters/anthropic.adapter'
 import { openaiAdapter } from './adapters/openai.adapter'
 import { fetchVeoResultSnapshot, pollVeoResult } from './adapters/veo.adapter'
+import { fetchSora2ApiResultSnapshot } from './adapters/sora2api.adapter'
 import { veoAdapter } from './adapters/veo.adapter'
 import { TaskProgressService } from './task-progress.service'
 
@@ -29,7 +31,7 @@ export class TaskService {
     private readonly proxyService: ProxyService,
     private readonly progress: TaskProgressService,
   ) {
-    this.adapters = [soraAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter, veoAdapter]
+    this.adapters = [soraAdapter, sora2apiAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter, veoAdapter]
   }
 
   private getAdapterByVendor(vendor: string): ProviderAdapter {
@@ -137,14 +139,21 @@ export class TaskService {
       return Math.max(0, Math.min(100, normalized))
     }
 
+    const useStoreOnly = vendor === 'sora2api'
+
     const emit = (event: Omit<TaskProgressEvent, 'nodeId' | 'nodeKind' | 'taskKind' | 'vendor'>) => {
       if (!event || !event.status) return
-      this.progress.emit(userId, {
+      const payload: TaskProgressEvent = {
         ...baseContext,
         ...event,
         progress: clampProgress(event.progress),
         timestamp: event.timestamp ?? Date.now(),
-      })
+      }
+      if (useStoreOnly) {
+        this.progress.emitStoreOnly(userId, payload)
+      } else {
+        this.progress.emit(userId, payload)
+      }
     }
 
     const onProviderProgress = (update: ProviderProgressUpdate) => {
@@ -354,6 +363,37 @@ export class TaskService {
     }
   }
 
+  async fetchSora2ApiResult(userId: string, taskId: string): Promise<TaskResult> {
+    if (!taskId || !taskId.trim()) {
+      throw new Error('taskId is required')
+    }
+    const { ctx } = await this.resolveVendorContext(userId, 'sora2api', null)
+    const snapshot = await fetchSora2ApiResultSnapshot({ ctx, taskId: taskId.trim() })
+    if (snapshot.asset) {
+      return {
+        id: taskId,
+        kind: 'text_to_video',
+        status: 'succeeded',
+        assets: [snapshot.asset],
+        raw: {
+          provider: 'sora2api',
+          response: snapshot.raw,
+        },
+      }
+    }
+    return {
+      id: taskId,
+      kind: 'text_to_video',
+      status: snapshot.status,
+      assets: [],
+      raw: {
+        provider: 'sora2api',
+        response: snapshot.raw,
+        progress: snapshot.progress,
+      },
+    }
+  }
+
   private runAdapter(adapter: ProviderAdapter, req: AnyTaskRequest, ctx: ProviderContext): Promise<TaskResult> {
     switch (req.kind) {
       case 'text_to_video':
@@ -417,6 +457,13 @@ export class TaskService {
   }
 
   private requiresApiKey(vendor: string) {
-    return vendor === 'gemini' || vendor === 'qwen' || vendor === 'anthropic' || vendor === 'openai' || vendor === 'veo'
+    return (
+      vendor === 'gemini' ||
+      vendor === 'qwen' ||
+      vendor === 'anthropic' ||
+      vendor === 'openai' ||
+      vendor === 'veo' ||
+      vendor === 'sora2api'
+    )
   }
 }
