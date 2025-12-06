@@ -512,6 +512,86 @@ export class SoraService {
     }
   }
 
+  /**
+   * 代理调用外部 /get-sora-link 接口，获取无水印视频链接。
+   * 当前默认使用 sorai.me 提供的解析服务，仅透传 Sora 分享链接，不携带任何用户敏感信息。
+   */
+  async unwatermarkVideo(
+    userId: string,
+    soraUrl: string,
+  ): Promise<{ downloadUrl: string; raw: any }> {
+    const endpoint =
+      process.env.SORA_UNWATERMARK_ENDPOINT?.trim() ||
+      'https://sorai.me/get-sora-link'
+
+    try {
+      const res = await axios.post(
+        endpoint,
+        { url: soraUrl },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+          validateStatus: () => true,
+        },
+      )
+
+      const data = res.data || {}
+      if (res.status < 200 || res.status >= 300 || data.error) {
+        const msg =
+          typeof data.error === 'string'
+            ? data.error
+            : `Sora 去水印解析失败: ${res.status}`
+        this.logger.warn('unwatermarkVideo upstream error', {
+          userId,
+          soraUrl,
+          status: res.status,
+          error: data.error || null,
+        })
+        throw new HttpException(
+          { message: msg, upstreamStatus: res.status },
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+
+      const downloadUrl: unknown = data.download_link ?? data.downloadLink
+      if (typeof downloadUrl !== 'string' || !downloadUrl.trim()) {
+        this.logger.warn('unwatermarkVideo: no download_link in response', {
+          userId,
+          soraUrl,
+          status: res.status,
+        })
+        throw new HttpException(
+          { message: '解析成功但未返回下载链接', upstreamStatus: res.status },
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+
+      const url = downloadUrl.trim()
+      this.logger.log('unwatermarkVideo success', {
+        userId,
+        soraUrl,
+        endpoint,
+      })
+      return { downloadUrl: url, raw: data }
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err
+      }
+      const msg = err?.message || 'Sora 去水印解析失败'
+      this.logger.error('unwatermarkVideo failed', {
+        userId,
+        soraUrl,
+        error: msg,
+      })
+      throw new HttpException(
+        { message: msg },
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+  }
+
   async getCharacters(userId: string, tokenId?: string, cursor?: string, limit?: number) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
     if (!token || token.provider.vendor !== 'sora') {
