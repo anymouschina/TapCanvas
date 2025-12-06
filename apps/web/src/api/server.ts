@@ -1239,3 +1239,22 @@ export async function fetchSora2ApiTaskResult(taskId: string): Promise<TaskResul
   }
   return r.json()
 }
+
+export async function unwatermarkSoraVideo(url: string): Promise<{ downloadUrl: string; raw: any }> {
+  const r = await fetch(`${API_BASE}/sora/video/unwatermark`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }))
+  if (!r.ok) {
+    let msg = `unwatermark sora video failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}

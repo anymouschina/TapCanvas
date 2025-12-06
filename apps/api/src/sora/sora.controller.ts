@@ -259,6 +259,18 @@ export class SoraController {
     return this.service.getPostDetailsById(String(req.user.sub), tokenId, postId)
   }
 
+  @Post('video/unwatermark')
+  unwatermarkVideo(
+    @Body() body: { url: string },
+    @Req() req: any,
+  ) {
+    const soraUrl = (body?.url || '').trim()
+    if (!soraUrl) {
+      throw new Error('url is required')
+    }
+    return this.service.unwatermarkVideo(String(req.user.sub), soraUrl)
+  }
+
   @Post('upload/image')
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(

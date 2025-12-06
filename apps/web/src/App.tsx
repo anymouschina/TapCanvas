@@ -21,6 +21,7 @@ import {
   getProxyConfig,
   getProxyCredits,
   getProxyModelStatus,
+  unwatermarkSoraVideo,
   type ProjectDto,
   type ProxyConfigDto,
 } from './api/server'
@@ -262,32 +263,7 @@ export default function App(): JSX.Element {
     setUnwatermarkLoading(true)
     setUnwatermarkResult(null)
     try {
-      const providers = await listModelProviders()
-      const sora2 = providers.find((p) => p.vendor === 'sora2api')
-      const baseUrlRaw = (sora2?.baseUrl || '').trim()
-      const baseUrl = (baseUrlRaw || 'http://localhost:8000').replace(/\/+$/, '')
-      if (!baseUrl) {
-        throw new Error('未找到可用的 Sora2API 地址，请先在模型面板中配置。')
-      }
-      const res = await fetch(`${baseUrl}/get-sora-link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: rawUrl }),
-      })
-      let body: any = null
-      try {
-        body = await res.json()
-      } catch {
-        body = null
-      }
-      if (!res.ok || (body && body.error)) {
-        const msg = (body && body.error) || `解析失败：${res.status}`
-        throw new Error(msg)
-      }
-      const downloadUrl: unknown = body?.download_link ?? body?.downloadLink
-      if (typeof downloadUrl !== 'string' || !downloadUrl.trim()) {
-        throw new Error('解析成功但未返回下载链接')
-      }
+      const { downloadUrl } = await unwatermarkSoraVideo(rawUrl)
       setUnwatermarkResult(downloadUrl.trim())
     } catch (err: any) {
       setUnwatermarkError(err?.message || '解析失败，请稍后重试')
