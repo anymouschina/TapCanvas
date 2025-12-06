@@ -592,9 +592,6 @@ async function runSora2ApiVideoTask(
   const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
   const { prompt, durationSeconds, orientation } = options
   try {
-    setNodeStatus(id, 'running', { progress: 5 })
-    appendLog(id, `[${nowLabel()}] 调用 Sora2API 视频模型…`)
-
     const videoModelValue = (data as any)?.videoModel as string | undefined
     const modelKey =
       videoModelValue ||
@@ -605,41 +602,86 @@ async function runSora2ApiVideoTask(
         : durationSeconds <= 10
           ? 'sora-video-landscape-10s'
           : 'sora-video-landscape-15s')
+    const existingTaskId = (data as any)?.videoTaskId as string | undefined
+    const existingStatus = (data as any)?.status as NodeStatusValue | undefined
+    const canResumeExisting =
+      typeof existingTaskId === 'string' &&
+      existingTaskId.trim().startsWith('task_') &&
+      (existingStatus === 'running' || existingStatus === 'queued')
 
-    const res = await runTaskByVendor('sora2api', {
-      kind: 'text_to_video',
-      prompt,
-      extras: {
-        nodeKind: kind,
-        nodeId: id,
-        modelKey,
-        durationSeconds,
-      },
-    })
+    let taskId = existingTaskId || ''
 
-    const taskId = res.id
+    if (canResumeExisting) {
+      // 已有未完成的 Sora2API 任务，优先续上，避免重复创建
+      const initialProgress =
+        typeof (data as any)?.progress === 'number' && Number.isFinite((data as any).progress)
+          ? Math.max(5, Math.min(95, Math.round((data as any).progress)))
+          : 10
+      setNodeStatus(id, 'running', {
+        progress: initialProgress,
+        videoTaskId: existingTaskId,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
+      })
+      appendLog(
+        id,
+        `[${nowLabel()}] 发现已有 Sora2API 视频任务（ID: ${existingTaskId}），继续查询进度…`,
+      )
+    } else {
+      setNodeStatus(id, 'running', { progress: 5 })
+      appendLog(id, `[${nowLabel()}] 调用 Sora2API 视频模型…`)
+
+      const res = await runTaskByVendor('sora2api', {
+        kind: 'text_to_video',
+        prompt,
+        extras: {
+          nodeKind: kind,
+          nodeId: id,
+          modelKey,
+          durationSeconds,
+        },
+      })
+
+      taskId = res.id
+      if (!taskId) {
+        const msg = 'Sora2API 视频任务创建失败：未返回任务 ID'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      setNodeStatus(id, 'running', {
+        progress: 10,
+        lastResult: {
+          id: taskId,
+          at: Date.now(),
+          kind,
+          preview: {
+            type: 'text',
+            value: `已创建 Sora2API 视频任务（ID: ${taskId}）`,
+          },
+        },
+        videoTaskId: taskId,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
+      })
+
+      // 任务创建成功后，立即静默保存一次项目，使 taskId 持久化，刷新后可以续上
+      if (typeof window !== 'undefined' && typeof (window as any).silentSaveProject === 'function') {
+        try {
+          ;(window as any).silentSaveProject()
+        } catch {
+          // ignore save errors here
+        }
+      }
+    }
+
     if (!taskId) {
-      const msg = 'Sora2API 视频任务创建失败：未返回任务 ID'
+      const msg = 'Sora2API 视频任务创建失败：未获取到有效任务 ID'
       setNodeStatus(id, 'error', { progress: 0, lastError: msg })
       appendLog(id, `[${nowLabel()}] error: ${msg}`)
       return
     }
-
-    setNodeStatus(id, 'running', {
-      progress: 10,
-      lastResult: {
-        id: taskId,
-        at: Date.now(),
-        kind,
-        preview: {
-          type: 'text',
-          value: `已创建 Sora2API 视频任务（ID: ${taskId}）`,
-        },
-      },
-      videoTaskId: taskId,
-      videoModel: modelKey,
-      videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
-    })
 
     const pollIntervalMs = 3000
     // 超过 10 分钟仍未完成视为 bad case，前端直接标记为错误

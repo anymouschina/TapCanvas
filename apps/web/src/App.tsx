@@ -1,5 +1,5 @@
 import React from 'react'
-import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image } from '@mantine/core'
+import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image, Modal } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
@@ -39,6 +39,7 @@ import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
+import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
 
@@ -236,6 +237,65 @@ export default function App(): JSX.Element {
     }
   }, [])
 
+  // Sora 视频去水印工具（基于 sora2api /get-sora-link）
+  const [unwatermarkOpen, setUnwatermarkOpen] = React.useState(false)
+  const [unwatermarkUrl, setUnwatermarkUrl] = React.useState('')
+  const [unwatermarkLoading, setUnwatermarkLoading] = React.useState(false)
+  const [unwatermarkError, setUnwatermarkError] = React.useState<string | null>(null)
+  const [unwatermarkResult, setUnwatermarkResult] = React.useState<string | null>(null)
+  const openPreview = useUIStore(s => s.openPreview)
+
+  const handleOpenUnwatermark = React.useCallback(() => {
+    setUnwatermarkError(null)
+    setUnwatermarkResult(null)
+    setUnwatermarkUrl('')
+    setUnwatermarkOpen(true)
+  }, [])
+
+  const handleRunUnwatermark = React.useCallback(async () => {
+    const rawUrl = unwatermarkUrl.trim()
+    if (!rawUrl) {
+      setUnwatermarkError('请输入 Sora 分享链接（https://sora.chatgpt.com/p/s_xxx）')
+      return
+    }
+    setUnwatermarkError(null)
+    setUnwatermarkLoading(true)
+    setUnwatermarkResult(null)
+    try {
+      const providers = await listModelProviders()
+      const sora2 = providers.find((p) => p.vendor === 'sora2api')
+      const baseUrlRaw = (sora2?.baseUrl || '').trim()
+      const baseUrl = (baseUrlRaw || 'http://localhost:8000').replace(/\/+$/, '')
+      if (!baseUrl) {
+        throw new Error('未找到可用的 Sora2API 地址，请先在模型面板中配置。')
+      }
+      const res = await fetch(`${baseUrl}/get-sora-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: rawUrl }),
+      })
+      let body: any = null
+      try {
+        body = await res.json()
+      } catch {
+        body = null
+      }
+      if (!res.ok || (body && body.error)) {
+        const msg = (body && body.error) || `解析失败：${res.status}`
+        throw new Error(msg)
+      }
+      const downloadUrl: unknown = body?.download_link ?? body?.downloadLink
+      if (typeof downloadUrl !== 'string' || !downloadUrl.trim()) {
+        throw new Error('解析成功但未返回下载链接')
+      }
+      setUnwatermarkResult(downloadUrl.trim())
+    } catch (err: any) {
+      setUnwatermarkError(err?.message || '解析失败，请稍后重试')
+    } finally {
+      setUnwatermarkLoading(false)
+    }
+  }, [unwatermarkUrl])
+
   // 初始化时：根据 URL 中的 projectId 选择项目；否则默认第一个项目
   React.useEffect(() => {
     listProjects()
@@ -274,6 +334,36 @@ export default function App(): JSX.Element {
     }
   }, [currentProject?.id])
 
+  const autoResumeSora2ApiTasks = React.useCallback(() => {
+    try {
+      const state = useRFStore.getState()
+      const nodes = (state.nodes || []) as any[]
+      if (!nodes.length) return
+      const globalAny = window as any
+      if (!globalAny.__sora2apiAutoResumed) {
+        globalAny.__sora2apiAutoResumed = new Set<string>()
+      }
+      const resumed: Set<string> = globalAny.__sora2apiAutoResumed
+
+      nodes.forEach((n) => {
+        const data: any = n.data || {}
+        const vendor = (data.videoModelVendor || '').toLowerCase()
+        const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
+        const status = (data.status as string | undefined) || ''
+        const isPendingStatus = status === 'running' || status === 'queued'
+        if (vendor !== 'sora2api') return
+        if (!taskId || !taskId.startsWith('task_')) return
+        if (!isPendingStatus) return
+        if (resumed.has(n.id)) return
+        resumed.add(n.id)
+        // 自动重启该节点的远程任务（runNodeRemote 会内部复用既有 taskId）
+        void runNodeRemote(n.id, useRFStore.getState, useRFStore.setState)
+      })
+    } catch {
+      // ignore auto-resume errors
+    }
+  }, [])
+
   // When switching project, sync flow name to project name and clear current flow id (project即工作流)
   React.useEffect(() => {
     if (currentProject?.name) setCurrentFlow({ id: null, name: currentProject.name })
@@ -283,21 +373,28 @@ export default function App(): JSX.Element {
   React.useEffect(() => {
     const pid = currentProject?.id
     if (!pid) return
-    listProjectFlows(pid).then((list) => {
-      if (list.length > 0) {
-        const f = list[0]
-        const data: any = f.data || {}
-        useRFStore.setState({ nodes: Array.isArray(data.nodes)?data.nodes:[], edges: Array.isArray(data.edges)?data.edges:[] })
-        setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
-        setDirty(false)
-      } else {
-        // empty project -> clear canvas
-        useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
-        setCurrentFlow({ id: null, name: currentProject?.name || '未命名', source: 'server' })
-        setDirty(false)
-      }
-    }).catch(()=>{})
-  }, [currentProject?.id])
+    listProjectFlows(pid)
+      .then((list) => {
+        if (list.length > 0) {
+          const f = list[0]
+          const data: any = f.data || {}
+          useRFStore.setState({
+            nodes: Array.isArray(data.nodes) ? data.nodes : [],
+            edges: Array.isArray(data.edges) ? data.edges : [],
+          })
+          setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
+          setDirty(false)
+        } else {
+          // empty project -> clear canvas
+          useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
+          setCurrentFlow({ id: null, name: currentProject?.name || '未命名', source: 'server' })
+          setDirty(false)
+        }
+        // 项目流加载完成后，检查是否有未完成的 Sora2API 视频任务并自动恢复轮询
+        autoResumeSora2ApiTasks()
+      })
+      .catch(() => {})
+  }, [currentProject?.id, autoResumeSora2ApiTasks])
 
   // mark dirty on any node/edge change via polling change (simple and safe)
   React.useEffect(() => { setDirty(true) }, [rfState.nodes, rfState.edges, setDirty])
@@ -502,6 +599,13 @@ export default function App(): JSX.Element {
                 </Popover>
               </Group>
             )}
+            <Button
+              size="xs"
+              variant="subtle"
+              onClick={handleOpenUnwatermark}
+            >
+              Sora 视频去水印
+            </Button>
             <ActionIcon
               variant="subtle"
               aria-label={colorScheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
@@ -546,6 +650,94 @@ export default function App(): JSX.Element {
       {/* 右侧属性栏已移除：节点采取顶部操作条 + 参数弹窗 */}
 
       <KeyboardShortcuts />
+      <Modal
+        opened={unwatermarkOpen}
+        onClose={() => {
+          setUnwatermarkOpen(false)
+          setUnwatermarkError(null)
+          setUnwatermarkResult(null)
+        }}
+        title="Sora 视频去水印"
+        centered
+        size="lg"
+      >
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            输入 Sora 分享链接（例如：https://sora.chatgpt.com/p/s_xxxxx），解析出无水印的视频地址并预览/下载。
+          </Text>
+          <TextInput
+            placeholder="粘贴 Sora 分享链接"
+            value={unwatermarkUrl}
+            onChange={(e) => setUnwatermarkUrl(e.currentTarget.value)}
+          />
+          {unwatermarkError && (
+            <Text size="xs" c="red">
+              {unwatermarkError}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button
+              size="xs"
+              variant="default"
+              loading={unwatermarkLoading}
+              onClick={handleRunUnwatermark}
+            >
+              解析无水印地址
+            </Button>
+          </Group>
+          {unwatermarkResult && (
+            <Stack gap="xs">
+              <Text size="xs" c="dimmed">
+                已解析的无水印播放地址：
+              </Text>
+              <Text size="xs" style={{ wordBreak: 'break-all' }}>
+                {unwatermarkResult}
+              </Text>
+              <video
+                src={unwatermarkResult}
+                controls
+                style={{
+                  width: '100%',
+                  maxHeight: '60vh',
+                  borderRadius: 8,
+                  background: '#000',
+                }}
+              />
+              <Group justify="flex-end" gap="xs">
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => {
+                    if (!unwatermarkResult) return
+                    openPreview({
+                      url: unwatermarkResult,
+                      kind: 'video',
+                      name: 'Sora 无水印视频',
+                    })
+                  }}
+                >
+                  全屏预览
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => {
+                    if (!unwatermarkResult) return
+                    const a = document.createElement('a')
+                    a.href = unwatermarkResult
+                    a.download = `sora-video-${Date.now()}.mp4`
+                    document.body.appendChild(a)
+                    a.click()
+                    a.remove()
+                  }}
+                >
+                  下载视频
+                </Button>
+              </Group>
+            </Stack>
+          )}
+        </Stack>
+      </Modal>
       <ToastHost />
       <FloatingNav />
       <AddNodePanel />
