@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common'
 import axios from 'axios'
 import type {
   ProviderAdapter,
@@ -8,7 +9,9 @@ import type {
   TextToVideoRequest,
 } from '../task.types'
 
-const DEFAULT_SORA2API_BASE_URL = 'http://localhost:8000'
+const DEFAULT_SORA2API_BASE_URL =
+  (process.env.SORA2API_BASE_URL && process.env.SORA2API_BASE_URL.trim()) || 'http://localhost:8000'
+const logger = new Logger('Sora2ApiAdapter')
 
 function normalizeBaseUrl(baseUrl?: string): string {
   const raw = (baseUrl || DEFAULT_SORA2API_BASE_URL).trim()
@@ -103,6 +106,14 @@ async function createSora2ApiVideoTask(options: {
   }
 
   try {
+    logger.log('sora2api create video task', {
+      userId: ctx.userId,
+      model,
+      durationSeconds,
+      orientation,
+      baseUrl,
+    })
+
     const res = await axios.post(url, body, {
       headers: {
         'Content-Type': 'application/json',
@@ -113,11 +124,16 @@ async function createSora2ApiVideoTask(options: {
     })
 
     if (res.status < 200 || res.status >= 300) {
+      logger.warn('sora2api create video task upstream error', {
+        userId: ctx.userId,
+        status: res.status,
+      })
       const msg =
         (res.data && (res.data.error?.message || res.data.message)) ||
         `sora2api 调用失败: ${res.status}`
       const err: any = new Error(msg)
       err.status = res.status
+      err.response = res.data
       throw err
     }
 
@@ -143,6 +159,14 @@ async function createSora2ApiVideoTask(options: {
     } else if (typeof error?.response?.status === 'number') {
       wrapped.status = error.response.status
     }
+    if (error?.response) {
+      wrapped.response = error.response
+    }
+    logger.error('sora2api create video task failed', {
+      userId: ctx.userId,
+      message: msg,
+      status: wrapped.status,
+    })
     throw wrapped
   }
 }
@@ -159,6 +183,11 @@ export async function fetchSora2ApiResultSnapshot(options: {
 
   const baseUrl = normalizeBaseUrl(ctx.baseUrl)
   const url = `${baseUrl}/v1/video/tasks/${encodeURIComponent(taskId)}`
+  logger.log('sora2api fetch task result', {
+    userId: ctx.userId,
+    taskId,
+    baseUrl,
+  })
   const res = await axios.get(url, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -168,10 +197,18 @@ export async function fetchSora2ApiResultSnapshot(options: {
   })
 
   if (res.status < 200 || res.status >= 300) {
+    logger.warn('sora2api fetch task result upstream error', {
+      userId: ctx.userId,
+      taskId,
+      status: res.status,
+    })
     const msg =
       (res.data && (res.data.error?.message || res.data.message || res.data.error)) ||
       `sora2api 任务查询失败: ${res.status}`
-    throw new Error(msg)
+    const err: any = new Error(msg)
+    err.status = res.status
+    err.response = res.data
+    throw err
   }
 
   const data = res.data || {}

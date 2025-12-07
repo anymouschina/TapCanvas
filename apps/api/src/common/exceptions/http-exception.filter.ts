@@ -59,17 +59,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
     } else if (exception instanceof Error) {
       message = exception.message;
 
-      // 处理 Gemini API 的配额超限错误
-      if (exception.message.includes('quota') || exception.message.includes('exceeded')) {
-        status = HttpStatus.TOO_MANY_REQUESTS; // 429
-        message = 'API配额已用尽，请稍后重试或升级计划';
-      }
-
       // 记录错误状态码（如果存在）
       const errorWithStatus = exception as any;
       if (errorWithStatus.status) {
         status = errorWithStatus.status;
       }
+
+      // 处理 Gemini 等 API 的配额超限错误：仅当上游已经返回 429 且错误信息包含 quota 关键词时，统一成友好提示
+      const lowerMessage = message.toLowerCase();
+      if (status === HttpStatus.TOO_MANY_REQUESTS && lowerMessage.includes('quota')) {
+        message = 'API配额已用尽，请稍后重试或升级计划';
+      }
+
       providerResponse = errorWithStatus.response ?? null;
     }
 
