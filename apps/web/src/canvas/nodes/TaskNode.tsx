@@ -71,6 +71,7 @@ import {
   isDynamicHandlesConfig,
   isStaticHandlesConfig,
   MAX_VEO_REFERENCE_IMAGES,
+  MAX_FRAME_ANALYSIS_SAMPLES,
   normalizeVeoReferenceUrls,
   parseCharacterCardResult,
   parseFrameCompareSummary,
