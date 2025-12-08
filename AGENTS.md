@@ -51,6 +51,13 @@
 - Types/interfaces PascalCase; variables/functions camelCase.
 - Keep modules focused; colocate component styles in `apps/web/src`.
 
+## Modularity & Performance
+
+- 一个文件不应过大；当组件/服务超过单一职责时拆分为更小的子组件、hooks、utils，保持渲染与副作用/数据逻辑解耦。
+- 函数化与抽象优先：重复逻辑提炼为纯函数或共享工具；跨页面/画布的通用行为放入 packages 层以复用。
+- 遵循“雅虎军规”式前端性能准则：减少请求次数（合并资源/雪碧图/内联关键 CSS）、使用 CDN 与长缓存、开启 gzip/br（或 vite 静态压缩）、压缩/去重/按需加载 JS/CSS、避免阻塞渲染的同步脚本、减少 DNS 解析与重定向。
+- 交付优化：懒加载重型路由/模型、尽量使用异步加载与 prefetch/prerender、避免重复拉取同一资源，保持资源路径和依赖有清晰的 owner。
+
 ## Testing Guidelines
 
 - Preferred: Vitest for new tests (TBD in repo).

@@ -163,7 +163,7 @@ function filterRemoteOptionsByKind(options: ModelOption[], kind?: NodeKind): Mod
   if (!kind || kind === 'text' || kind === 'character' || kind === 'audio' || kind === 'subtitle') {
     return options.filter((opt) => isTextModelValue(opt.value))
   }
-  if (kind === 'image') {
+  if (kind === 'image' || kind === 'mosaic') {
     return options.filter((opt) => isImageModelValue(opt.value))
   }
   if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {

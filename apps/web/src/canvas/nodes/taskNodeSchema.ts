@@ -9,6 +9,7 @@ import {
   IconVocabulary,
   IconUsers,
   IconBox,
+  IconLayoutGrid,
 } from '@tabler/icons-react'
 import { Position } from 'reactflow'
 
@@ -178,6 +179,18 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
     icon: IconPhoto,
     label: '图像',
     features: ['prompt', 'systemPrompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'sampleCount', 'modelSelect'],
+    handles: {
+      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
+      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
+    },
+  },
+  mosaic: {
+    kind: 'mosaic',
+    category: 'image',
+    icon: IconLayoutGrid,
+    label: '拼图',
+    // 仅展示拼图结果，不暴露上传/提示词等通用图像功能
+    features: ['imageResults'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],

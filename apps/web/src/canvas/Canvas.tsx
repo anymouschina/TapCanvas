@@ -52,7 +52,8 @@ const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | nul
   return targets.includes(targetKind)
 }
 
-const isImageKind = (kind?: string | null) => kind === 'image' || kind === 'textToImage'
+const isImageKind = (kind?: string | null) =>
+  kind === 'image' || kind === 'textToImage' || kind === 'mosaic'
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -158,7 +159,15 @@ function CanvasInner(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const onInit = useCallback(() => rf.fitView?.({ padding: 0.2 }), [rf])
+  const onInit = useCallback(() => {
+    rf.fitView?.({ padding: 0.2 })
+    // 默认缩小 4 倍（更大全局视野），受 min/maxZoom 限制
+    requestAnimationFrame(() => {
+      const afterFit = rf.getViewport?.().zoom ?? 1
+      const targetZoom = Math.max(Math.min(afterFit * DEFAULT_ZOOM_MULTIPLIER, MAX_ZOOM), MIN_ZOOM)
+      rf.zoomTo?.(targetZoom, { duration: 0 })
+    })
+  }, [rf])
 
   const onDragOver = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
@@ -206,16 +215,18 @@ function CanvasInner(): JSX.Element {
     const sId = proposed.source
     const tId = proposed.target
     if (!sId || !tId) return false
+    // Align with runner: ignore dangling edges that reference non-existent nodes
+    const nodeIds = new Set(nodes.map(n => n.id))
+    if (!nodeIds.has(sId) || !nodeIds.has(tId)) return false
+
     // Build adjacency including proposed edge
     const adj = new Map<string, string[]>()
     nodes.forEach(n => adj.set(n.id, []))
     edges.forEach(e => {
-      if (e.source && e.target) {
-        if (!adj.has(e.source)) adj.set(e.source, [])
-        adj.get(e.source)!.push(e.target)
-      }
+      if (!e.source || !e.target) return
+      if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) return
+      adj.get(e.source)!.push(e.target)
     })
-    if (!adj.has(sId)) adj.set(sId, [])
     adj.get(sId)!.push(tId)
     // DFS from target to see if we can reach source
     const seen = new Set<string>()
@@ -244,28 +255,24 @@ function CanvasInner(): JSX.Element {
 
     // 记录从哪个节点的哪个端口开始连接，用于松手后弹出插入菜单
     if (params.handleType === 'source' && params.nodeId) {
-      const n = nodes.find((nn) => nn.id === params.nodeId)
-      const k = (n?.data as any)?.kind
-      // 支持从文本节点和图片节点右侧拖出时唤起辅助连接浮层
-      if (k === 'textToImage' || k === 'image') {
-        connectFromRef.current = { nodeId: params.nodeId, handleId: params.handleId || null }
-      } else {
-        connectFromRef.current = null
-      }
+      connectFromRef.current = { nodeId: params.nodeId, handleId: params.handleId || null }
     } else {
       connectFromRef.current = null
     }
   }, [nodes])
 
-  const SNAP_DISTANCE = 64
-  const NODE_SNAP_DISTANCE = 140
+  const SNAP_DISTANCE = 96
+  const NODE_SNAP_DISTANCE = 200
+  const MIN_ZOOM = 0.02 // 允许比默认多缩小约 6 倍（默认 0.1）
+  const MAX_ZOOM = 2 // 恢复更保守的放大上限
+  const DEFAULT_ZOOM_MULTIPLIER = 0.8 // 默认视图相对 fitView 再缩小 4 倍
 
   const onConnectEnd = useCallback((_evt: any) => {
     const from = connectFromRef.current
 
     // Auto-snap to nearest compatible target handle / node
     const autoSnap = () => {
-      if (!connectingType || !from) return false
+      if (!from) return false
 
       const tryConnectWithHandle = (handleEl: HTMLElement | null) => {
         if (!handleEl) return false
@@ -391,7 +398,7 @@ function CanvasInner(): JSX.Element {
       return tryConnectWithHandle(best.el)
     }
 
-    if (connectingType && !didConnectRef.current && from) {
+    if (!didConnectRef.current && from) {
       const snapped = autoSnap()
       if (!snapped) {
         // 从 text 节点拖出并松手在空白处：打开插入菜单
@@ -414,6 +421,10 @@ function CanvasInner(): JSX.Element {
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
     evt.preventDefault()
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'canvas' })
+  }, [])
+
+  const onPaneClick = useCallback(() => {
+    tapConnectSourceRef.current = null
   }, [])
 
   const onNodeContextMenu = useCallback((evt: React.MouseEvent, node: any) => {
@@ -491,12 +502,115 @@ function CanvasInner(): JSX.Element {
   const lastReason = React.useRef<string | null>(null)
   const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
   const didConnectRef = useRef(false)
+  const tapConnectSourceRef = useRef<{ nodeId: string } | null>(null)
+
+  useEffect(() => {
+    const hasNode = (id?: string | null) => !!id && nodes.some(n => n.id === id)
+    if (tapConnectSourceRef.current && !hasNode(tapConnectSourceRef.current.nodeId)) {
+      tapConnectSourceRef.current = null
+    }
+    if (connectFromRef.current && !hasNode(connectFromRef.current.nodeId)) {
+      connectFromRef.current = null
+      setConnectingType(null)
+    }
+  }, [nodes])
 
   const handleConnect = useCallback((c: any) => {
     lastReason.current = null
     didConnectRef.current = true
     onConnect(c)
   }, [onConnect])
+
+  const pickDefaultSourceHandle = useCallback((kind?: string | null) => {
+    if (!kind) return 'out-any'
+    const k = kind.toLowerCase()
+    if (k === 'image' || k === 'texttoimage') return 'out-image'
+    if (k === 'composevideo' || k === 'video' || k === 'storyboard') return 'out-video'
+    if (k === 'tts' || k === 'audio') return 'out-audio'
+    if (k === 'subtitlealign' || k === 'subtitle') return 'out-subtitle'
+    if (k === 'character') return 'out-character'
+    return 'out-any'
+  }, [])
+
+  const pickDefaultTargetHandle = useCallback((targetKind?: string | null, sourceKind?: string | null) => {
+    const tk = (targetKind || '').toLowerCase()
+    const sk = (sourceKind || '').toLowerCase()
+    if (tk === 'composevideo' || tk === 'video' || tk === 'storyboard') {
+      if (sk === 'image' || sk === 'texttoimage') return 'in-image'
+      if (sk === 'character') return 'in-character'
+      if (sk === 'tts' || sk === 'audio') return 'in-audio'
+      if (sk === 'subtitlealign' || sk === 'subtitle') return 'in-subtitle'
+      return 'in-video'
+    }
+    if (tk === 'image' || tk === 'texttoimage') return 'in-image'
+    if (tk === 'tts' || tk === 'audio') return 'in-audio'
+    if (tk === 'subtitlealign' || tk === 'subtitle') return 'in-subtitle'
+    if (tk === 'character') return 'in-character'
+    return 'in-any'
+  }, [])
+
+  const quickConnectNodes = useCallback((sourceId: string, targetId: string) => {
+    if (sourceId === targetId) {
+      toast('不能连接到自身', 'warning')
+      return false
+    }
+    const sourceNode = nodes.find(n => n.id === sourceId)
+    const targetNode = nodes.find(n => n.id === targetId)
+    if (!sourceNode || !targetNode) {
+      tapConnectSourceRef.current = null
+      setConnectingType(null)
+      return false
+    }
+    if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+      toast('节点之间已存在连接', 'info')
+      return false
+    }
+    if (createsCycle({ source: sourceId, target: targetId })) {
+      return false
+    }
+    const sKind = (sourceNode.data as any)?.kind
+    const tKind = (targetNode.data as any)?.kind
+    if (!isValidEdgeByType(sKind, tKind)) {
+      toast('当前两种节点类型不支持直连', 'warning')
+      return false
+    }
+    if (isImageKind(sKind) && isImageKind(tKind)) {
+      const targetModel = (targetNode.data as any)?.imageModel as string | undefined
+      if (!isImageEditModel(targetModel)) {
+        const reason = targetModel
+          ? '目标节点的模型不支持图片编辑，请切换至支持的模型后再连线'
+          : '请先为目标节点选择支持图片编辑的模型'
+        toast(reason, 'warning')
+        return false
+      }
+    }
+
+    handleConnect({
+      source: sourceId,
+      sourceHandle: pickDefaultSourceHandle(sKind),
+      target: targetId,
+      targetHandle: pickDefaultTargetHandle(tKind, sKind),
+    })
+    return true
+  }, [createsCycle, edges, handleConnect, nodes, pickDefaultSourceHandle, pickDefaultTargetHandle])
+
+  const onNodeClick = useCallback((_evt: React.MouseEvent, node: any) => {
+    if (!node?.id) return
+    const pending = tapConnectSourceRef.current
+    if (pending?.nodeId === node.id) {
+      tapConnectSourceRef.current = null
+      return
+    }
+    if (pending && pending.nodeId !== node.id) {
+      const ok = quickConnectNodes(pending.nodeId, node.id)
+      if (ok) {
+        tapConnectSourceRef.current = null
+        setConnectingType(null)
+      }
+      return
+    }
+    tapConnectSourceRef.current = { nodeId: node.id }
+  }, [quickConnectNodes])
   // MiniMap drag-to-pan and smart click
   const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect; startPos: { x: number; y: number } }|null>(null)
   const minimapClickRef = useRef<{ downTime: number; startPos: { x: number; y: number } }|null>(null)
@@ -864,10 +978,12 @@ function CanvasInner(): JSX.Element {
         onConnectEnd={onConnectEnd}
         onNodeDragStart={onNodeDragStart}
         onPaneContextMenu={onPaneContextMenu}
+        onPaneClick={onPaneClick}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
+        onNodeClick={onNodeClick}
         onNodeDoubleClick={(_evt, node) => {
           if (node?.type === 'groupNode') {
             useUIStore.getState().enterGroupFocus(node.id)
@@ -885,6 +1001,8 @@ function CanvasInner(): JSX.Element {
         panOnScroll
         zoomOnPinch
         zoomOnScroll
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
         proOptions={{ hideAttribution: true }}
         isValidConnection={(c) => {
           if (!c.source || !c.target) return false

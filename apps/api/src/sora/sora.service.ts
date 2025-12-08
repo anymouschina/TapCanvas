@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common'
+import { Prisma } from '@prisma/client'
 import { PrismaService } from 'nestjs-prisma'
 import axios from 'axios'
 import FormData from 'form-data'
@@ -8,6 +9,11 @@ import { VideoHistoryService } from '../video/video-history.service'
 import { ProxyService, ResolvedProxyConfig } from '../proxy/proxy.service'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
+const SORA_VENDOR_ALIASES = ['sora', 'sora2api'] as const
+const SORA_VENDOR_LIST = [...SORA_VENDOR_ALIASES]
+const DEFAULT_SORA_BASE = 'https://sora.chatgpt.com'
+const DEFAULT_SORA2API_BASE =
+  (process.env.SORA2API_BASE_URL && process.env.SORA2API_BASE_URL.trim()) || 'http://localhost:8000'
 
 // Sora 发布相关的常量
 const SORA_POST_MAX_LENGTH = 2000
@@ -22,6 +28,10 @@ type ProxyTaskResult = {
   raw: any
 }
 
+type SoraTokenWithProvider = Prisma.ModelTokenGetPayload<{
+  include: { provider: { include: { endpoints: true } } }
+}>
+
 @Injectable()
 export class SoraService {
   private readonly logger = new Logger(SoraService.name)
@@ -31,6 +41,16 @@ export class SoraService {
     private readonly videoHistory: VideoHistoryService,
     private readonly proxyService: ProxyService,
   ) {}
+
+  private isSoraVendor(vendor?: string | null): boolean {
+    if (!vendor) return false
+    return SORA_VENDOR_ALIASES.includes(vendor.toLowerCase() as (typeof SORA_VENDOR_ALIASES)[number])
+  }
+
+  private getDefaultSoraBase(vendor?: string | null): string {
+    const v = (vendor || '').toLowerCase()
+    return v === 'sora2api' ? DEFAULT_SORA2API_BASE : DEFAULT_SORA_BASE
+  }
 
   /**
    * 智能截断文本到指定长度，尽量在句子或段落结尾截断
@@ -54,7 +74,7 @@ export class SoraService {
 
   async getDrafts(userId: string, tokenId?: string, cursor?: string, limit?: number) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -370,7 +390,7 @@ export class SoraService {
     try {
       // 获取Token
       const token: any = await this.resolveSoraToken(userId, tokenId)
-      if (!token || token.provider.vendor !== 'sora') {
+      if (!token || !this.isSoraVendor(token.provider.vendor)) {
         throw new Error('token not found or not a Sora token')
       }
 
@@ -594,7 +614,7 @@ export class SoraService {
 
   async getCharacters(userId: string, tokenId?: string, cursor?: string, limit?: number) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -772,7 +792,7 @@ export class SoraService {
 
   async deleteDraft(userId: string, tokenId: string, draftId: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -812,7 +832,7 @@ export class SoraService {
 
   async deleteCharacter(userId: string, tokenId: string, characterId: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -852,7 +872,7 @@ export class SoraService {
     range: [number, number],
   ) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -1257,7 +1277,7 @@ export class SoraService {
       token = await this.tokenRouter.selectOptimalToken(userId, 'sora', tokenId)
     }
 
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -1760,7 +1780,7 @@ export class SoraService {
     file: any,
   ) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -1786,14 +1806,11 @@ export class SoraService {
     }
   }
 
-  async uploadImage(
-    userId: string,
-    tokenId: string | undefined,
-    file: any,
-  ) {
-    const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
-      throw new Error('token not found or not a Sora token')
+  async uploadImage(userId: string, tokenId: string | undefined, file: any) {
+    // This endpoint is restricted to sora2api uploads.
+    const token = await this.resolveSoraToken(userId, tokenId, ['sora2api'])
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
+      throw new Error('token not found or not a sora2api token')
     }
 
     try {
@@ -1833,7 +1850,7 @@ export class SoraService {
 
   async getCameoStatus(userId: string, tokenId: string | undefined, cameoId: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -1885,7 +1902,7 @@ export class SoraService {
     },
   ) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -1963,7 +1980,7 @@ export class SoraService {
 
   async setCameoPublic(userId: string, tokenId: string, cameoId: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2014,7 +2031,7 @@ export class SoraService {
 
   async checkCharacterUsername(userId: string, tokenId: string | undefined, username: string) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2068,7 +2085,7 @@ export class SoraService {
     limit: number = 10,
   ) {
     const token = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2127,7 +2144,7 @@ export class SoraService {
     // 如果指定了tokenId，使用原有的逻辑
     if (tokenId) {
       const token = await this.resolveSoraToken(userId, tokenId)
-      if (!token || token.provider.vendor !== 'sora') {
+      if (!token || !this.isSoraVendor(token.provider.vendor)) {
         throw new Error('token not found or not a Sora token')
       }
       return this.getPendingVideosForToken(userId, token.id, token)
@@ -2226,7 +2243,7 @@ export class SoraService {
   /**
    * 获取用户的所有可用Sora Token（包括自有和共享的）
    */
-  private async getAllUserSoraTokens(userId: string): Promise<any[]> {
+  private async getAllUserSoraTokens(userId: string): Promise<SoraTokenWithProvider[]> {
     const includeConfig = {
       provider: {
         include: { endpoints: true },
@@ -2238,7 +2255,7 @@ export class SoraService {
       where: {
         userId,
         enabled: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: SORA_VENDOR_LIST } },
       },
       include: includeConfig,
       orderBy: { createdAt: 'asc' },
@@ -2250,7 +2267,7 @@ export class SoraService {
       where: {
         shared: true,
         enabled: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: SORA_VENDOR_LIST } },
         OR: [
           { sharedDisabledUntil: null },
           { sharedDisabledUntil: { lt: now } },
@@ -2274,9 +2291,13 @@ export class SoraService {
   /**
    * 查询单个Token的pending任务
    */
-  private async getPendingVideosForToken(userId: string, tokenId: string, preloadedToken?: any): Promise<any> {
+  private async getPendingVideosForToken(
+    userId: string,
+    tokenId: string,
+    preloadedToken?: SoraTokenWithProvider,
+  ): Promise<any> {
     const token = preloadedToken || (await this.resolveSoraToken(userId, tokenId))
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2509,7 +2530,7 @@ export class SoraService {
    */
   async getDraftDetailsById(userId: string, tokenId: string | undefined, generationId: string) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2554,7 +2575,7 @@ export class SoraService {
    */
   async getPostDetailsById(userId: string, tokenId: string | undefined, postId: string) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2599,7 +2620,7 @@ export class SoraService {
    */
   async getMyPublishedVideos(userId: string, tokenId: string | undefined, limit: number = 8) {
     const token: any = await this.resolveSoraToken(userId, tokenId)
-    if (!token || token.provider.vendor !== 'sora') {
+    if (!token || !this.isSoraVendor(token.provider.vendor)) {
       throw new Error('token not found or not a Sora token')
     }
 
@@ -2781,7 +2802,7 @@ export class SoraService {
     } else {
       // 回退到传入的tokenId或默认Token
       token = await this.resolveSoraToken(userId, tokenId)
-      if (!token || token.provider.vendor !== 'sora') {
+      if (!token || !this.isSoraVendor(token.provider.vendor)) {
         throw new Error('token not found or not a Sora token')
       }
       usedMethod = 'fallback'
@@ -3173,7 +3194,7 @@ export class SoraService {
   ) {
     try {
       const token = await this.resolveSoraToken(userId, tokenId)
-      if (!token || token.provider.vendor !== 'sora') {
+      if (!token || !this.isSoraVendor(token.provider.vendor)) {
         throw new Error('token not found or not a Sora token')
       }
 
@@ -3275,7 +3296,12 @@ export class SoraService {
     }
   }
 
-  private async resolveSoraToken(userId: string, tokenId?: string) {
+  private async resolveSoraToken(
+    userId: string,
+    tokenId?: string,
+    vendors?: string[],
+  ): Promise<SoraTokenWithProvider | null> {
+    const allowedVendors = vendors && vendors.length ? vendors : SORA_VENDOR_LIST
     const includeConfig = {
       provider: {
         include: { endpoints: true },
@@ -3285,12 +3311,12 @@ export class SoraService {
     // If tokenId is provided, prefer the caller's own token, but allow falling back to a shared token with the same id.
     if (tokenId) {
       let token = await this.prisma.modelToken.findFirst({
-        where: { id: tokenId, userId },
+        where: { id: tokenId, userId, provider: { vendor: { in: allowedVendors } } },
         include: includeConfig,
       })
       if (!token) {
         token = await this.prisma.modelToken.findFirst({
-          where: { id: tokenId, shared: true },
+          where: { id: tokenId, shared: true, provider: { vendor: { in: allowedVendors } } },
           include: includeConfig,
         })
       }
@@ -3299,7 +3325,7 @@ export class SoraService {
 
     // No tokenId: try a user-owned Sora token first.
     const owned = await this.prisma.modelToken.findFirst({
-      where: { userId, enabled: true, provider: { vendor: 'sora' } },
+      where: { userId, enabled: true, provider: { vendor: { in: allowedVendors } } },
       include: includeConfig,
       orderBy: { createdAt: 'asc' },
     })
@@ -3311,7 +3337,7 @@ export class SoraService {
       where: {
         shared: true,
         enabled: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: allowedVendors } },
         OR: [
           { sharedDisabledUntil: null },
           { sharedDisabledUntil: { lt: now } },
@@ -3333,7 +3359,10 @@ export class SoraService {
     return shared
   }
 
-  private async findAlternateSoraToken(userId: string, excludeIds: string[]): Promise<any | null> {
+  private async findAlternateSoraToken(
+    userId: string,
+    excludeIds: string[],
+  ): Promise<SoraTokenWithProvider | null> {
     const includeConfig = {
       provider: {
         include: { endpoints: true },
@@ -3345,7 +3374,7 @@ export class SoraService {
       where: {
         userId,
         enabled: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: SORA_VENDOR_LIST } },
         NOT: filtered.length ? { id: { in: filtered } } : undefined,
       },
       include: includeConfig,
@@ -3358,7 +3387,7 @@ export class SoraService {
       where: {
         shared: true,
         enabled: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: SORA_VENDOR_LIST } },
         OR: [
           { sharedDisabledUntil: null },
           { sharedDisabledUntil: { lt: now } },
@@ -3379,7 +3408,7 @@ export class SoraService {
     useCase: string
     logContext: string
   }): Promise<{ data: any; baseUrl: string }> {
-    const fallbackBase = 'https://sora.chatgpt.com'
+    const fallbackBase = this.getDefaultSoraBase(params.token?.provider?.vendor)
     const baseUrl = await this.resolveBaseUrl(params.token, 'sora', fallbackBase)
     const userAgent = params.token.userAgent || 'TapCanvas/1.0'
 
@@ -3507,7 +3536,7 @@ export class SoraService {
       where: {
         key: { in: keys },
         shared: true,
-        provider: { vendor: 'sora' },
+        provider: { vendor: { in: SORA_VENDOR_LIST } },
       },
       orderBy: { createdAt: 'asc' },
     })

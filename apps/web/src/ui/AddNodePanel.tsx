@@ -42,6 +42,7 @@ export default function AddNodePanel(): JSX.Element | null {
                 <Stack gap={8}>
                   {/* <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'text' }); setActivePanel(null) }}>{$('文本')}</Button> */}
                   <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
+                  <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'mosaic' }); setActivePanel(null) }}>{$('拼图')}</Button>
                   <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
                   <Button variant="light" leftSection={<IconMovie size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'storyboard' }); setActivePanel(null) }}>{$('分镜beta')}</Button>
                   <Button variant="light" leftSection={<IconUser size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'character' }); setActivePanel(null) }}>{$('角色')}</Button>

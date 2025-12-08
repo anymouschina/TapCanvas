@@ -243,6 +243,26 @@ body,
     opacity 160ms ease,
     filter 160ms ease;
 }
+.tc-handle-layer .tc-handle.tc-handle--wide {
+  width: 18px;
+  height: calc(100% - 12px);
+  opacity: 0;
+  border-style: dashed;
+  box-shadow: none;
+  background: transparent;
+}
+.tc-handle-layer .tc-handle.tc-handle--wide::before {
+  display: none;
+}
+.tc-handle-layer .tc-handle.tc-handle--wide.react-flow__handle-left {
+  transform: translate(-50%, -50%) !important;
+}
+.tc-handle-layer .tc-handle.tc-handle--wide.react-flow__handle-right {
+  transform: translate(50%, -50%) !important;
+}
+.tc-handle-layer .tc-handle.tc-handle--wide:hover {
+  opacity: 0.35;
+}
 .tc-handle-layer .tc-handle::before {
   content: '';
   position: absolute;

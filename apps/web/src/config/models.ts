@@ -43,6 +43,7 @@ export const VIDEO_MODELS: ModelOption[] = [
 export type NodeKind =
   | 'text'
   | 'image'
+  | 'mosaic'
   | 'video'
   | 'composeVideo'
   | 'storyboard'
@@ -53,6 +54,7 @@ export type NodeKind =
 export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
   switch (kind) {
     case 'image':
+    case 'mosaic':
       return IMAGE_MODELS
     case 'composeVideo':
     case 'storyboard':

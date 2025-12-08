@@ -109,6 +109,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
             ...getHandleStyle(inputType),
             ...calculateHandlePosition(index, inputTypes.length),
           }}
+          data-handle-type={inputType}
           isValidConnection={handleValidation}
           title={`Input: ${inputType}`}
         />
@@ -121,6 +122,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
           type="target"
           position={Position.Left}
           style={getHandleStyle('any')}
+          data-handle-type="any"
           isValidConnection={handleValidation}
           title="Input"
         />
@@ -137,6 +139,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
             ...getHandleStyle(outputType),
             ...calculateHandlePosition(index, outputTypes.length),
           }}
+          data-handle-type={outputType}
           isValidConnection={handleValidation}
           title={`Output: ${outputType}`}
         />
@@ -149,6 +152,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
           type="source"
           position={Position.Right}
           style={getHandleStyle('any')}
+          data-handle-type="any"
           isValidConnection={handleValidation}
           title="Output"
         />
@@ -161,6 +165,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
           type="target"
           position={Position.Top}
           style={getHandleStyle('top')}
+          data-handle-type="top"
           isValidConnection={handleValidation}
           title="Top Input"
         />
@@ -173,6 +178,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
           type="source"
           position={Position.Bottom}
           style={getHandleStyle('bottom')}
+          data-handle-type="bottom"
           isValidConnection={handleValidation}
           title="Bottom Output"
         />

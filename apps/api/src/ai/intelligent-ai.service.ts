@@ -860,7 +860,7 @@ export class IntelligentAiService {
 
   private computeScenePosition(index: number) {
     const columnSize = 3
-    const spacingX = 420
+    const spacingX = 20
     const spacingY = 340
     const col = (index - 1) % columnSize
     const row = Math.floor((index - 1) / columnSize)

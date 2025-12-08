@@ -55,7 +55,7 @@ function nowLabel() {
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
 const SORA_POLL_TIMEOUT_MS = 300_000
 const MAX_VIDEO_DURATION_SECONDS = 10
-const IMAGE_NODE_KINDS = new Set(['image', 'textToImage'])
+const IMAGE_NODE_KINDS = new Set(['image', 'textToImage', 'mosaic'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
 const VEO_RESULT_POLL_INTERVAL_MS = 4000
@@ -245,6 +245,18 @@ function collectReferenceImages(state: any, targetId: string): string[] {
       if (!item) continue
       const url = typeof item.url === 'string' ? item.url.trim() : ''
       if (url) collected.push(url)
+    }
+  }
+  const targetNode = nodes.find((n: Node) => n.id === targetId)
+  if (targetNode) {
+    const tdata: any = targetNode.data || {}
+    const poseRefs = Array.isArray(tdata.poseReferenceImages) ? tdata.poseReferenceImages : []
+    if (poseRefs.length) {
+      poseRefs.forEach((url: any) => {
+        if (typeof url === 'string' && url.trim()) collected.push(url.trim())
+      })
+    } else if (typeof tdata.poseStickmanUrl === 'string' && tdata.poseStickmanUrl.trim()) {
+      collected.push(tdata.poseStickmanUrl.trim())
     }
   }
   return Array.from(new Set(collected))
@@ -1571,7 +1583,22 @@ async function runGenericTask(ctx: RunnerContext) {
           modelLower.includes('codex')
           ? 'openai'
           : 'gemini')
-    const referenceImages = isImageTask ? collectReferenceImages(state, id) : []
+    const maskUrl =
+      typeof (data as any)?.poseMaskUrl === 'string' && (data as any)?.poseMaskUrl.trim()
+        ? (data as any).poseMaskUrl.trim()
+        : null
+    const referenceImagesRaw = isImageTask
+      ? collectReferenceImages(state, id)
+      : []
+    const deduped = Array.from(new Set(referenceImagesRaw.filter((u) => typeof u === 'string' && u.trim())))
+    const prioritized: string[] = []
+    if (maskUrl) prioritized.push(maskUrl)
+    deduped.forEach((url) => {
+      if (prioritized.length >= 3) return
+      if (url === maskUrl) return
+      prioritized.push(url)
+    })
+    const referenceImages = prioritized.slice(0, 3)
     const wantsImageEdit = isImageTask && referenceImages.length > 0
     if (wantsImageEdit && !isImageEditModel(selectedModel)) {
       const msg = '当前模型不支持图片编辑，请切换到支持图片编辑的模型（如 Nano Banana 系列）'
@@ -1628,7 +1655,7 @@ async function runGenericTask(ctx: RunnerContext) {
           nodeId: id,
           modelKey: selectedModel,
           ...(isImageTask ? { aspectRatio } : {}),
-          ...(wantsImageEdit ? { referenceImages } : {}),
+          ...(wantsImageEdit ? { referenceImages, ...(maskUrl ? { maskUrl } : {}) } : {}),
         },
       })
 

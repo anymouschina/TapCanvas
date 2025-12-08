@@ -3,7 +3,7 @@ import type { NodeProps } from 'reactflow'
 import { Handle, Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, Tooltip, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, Tooltip, ScrollArea, Checkbox, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import {
   IconMaximize,
   IconDownload,
@@ -27,14 +27,17 @@ import {
   IconUsers,
   IconPlus,
   IconTrash,
-  IconMovie,
   IconUserPlus,
+  IconArrowUp,
+  IconArrowDown,
+  IconLayoutGrid,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto, type TaskResultDto } from '../../api/server'
 import {
   getDefaultModel,
   getModelLabel,
   getModelProvider,
+  isImageEditModel,
   type NodeKind,
 } from '../../config/models'
 import { useModelOptions } from '../../config/useModelOptions'
@@ -55,12 +58,37 @@ import {
   enforceStoryboardTotalLimit,
 } from './storyboardUtils'
 import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } from './taskNodeSchema'
+import {
+  applyMentionFallback,
+  blobToDataUrl,
+  clampCharacterClipWindow,
+  computeHandleLayout,
+  extractTextFromTaskResult,
+  genTaskNodeId,
+  getHandlePositionName,
+  HANDLE_HORIZONTAL_OFFSET,
+  HANDLE_VERTICAL_OFFSET,
+  isDynamicHandlesConfig,
+  isStaticHandlesConfig,
+  MAX_VEO_REFERENCE_IMAGES,
+  normalizeVeoReferenceUrls,
+  parseCharacterCardResult,
+  parseFrameCompareSummary,
+  resolveImageForReversePrompt,
+  buildHandleStyle,
+} from './taskNodeHelpers'
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { SystemPromptPanel } from '../components/SystemPromptPanel'
 import { getHandleTypeLabel } from '../utils/handleLabels'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
+import { usePoseEditor } from './taskNode/PoseEditor'
+import { ImageResultModal } from './taskNode/ImageResultModal'
+import { VideoResultModal } from './taskNode/VideoResultModal'
+import { StoryboardEditor } from './taskNode/StoryboardEditor'
+import { isRemoteUrl, REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
+import { runNodeRemote } from '../../runner/remoteRunner'
 
 const RESOLUTION_OPTIONS = [
   { value: '16:9', label: '16:9' },
@@ -81,272 +109,6 @@ const ORIENTATION_OPTIONS = [
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
 
-const REMOTE_IMAGE_URL_REGEX = /^https?:\/\//i
-const HANDLE_HORIZONTAL_OFFSET = 36
-const HANDLE_VERTICAL_OFFSET = 36
-
-const MAX_VEO_REFERENCE_IMAGES = 3
-
-function normalizeVeoReferenceUrls(values: any): string[] {
-  if (!Array.isArray(values)) return []
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    if (typeof value !== 'string') continue
-    const trimmed = value.trim()
-    if (!trimmed || seen.has(trimmed)) continue
-    seen.add(trimmed)
-    result.push(trimmed)
-    if (result.length >= MAX_VEO_REFERENCE_IMAGES) break
-  }
-  return result
-}
-
-type HandleLayout = { id: string; pos: Position }
-
-const computeHandleLayout = (handles: HandleLayout[]) => {
-  const layout = new Map<string, { top?: string; left?: string }>()
-  const grouped = new Map<Position, HandleLayout[]>()
-
-  handles.forEach((handle) => {
-    const key = handle.pos ?? Position.Left
-    const group = grouped.get(key) || []
-    group.push(handle)
-    grouped.set(key, group)
-  })
-
-  grouped.forEach((group, pos) => {
-    const total = group.length
-    group.forEach((handle, index) => {
-      if (pos === Position.Left || pos === Position.Right) {
-        const topPercent = total === 1 ? 50 : ((index + 1) / (total + 1)) * 100
-        layout.set(handle.id, { top: `${topPercent}%` })
-      } else if (pos === Position.Top || pos === Position.Bottom) {
-        const leftPercent = total === 1 ? 50 : ((index + 1) / (total + 1)) * 100
-        layout.set(handle.id, { left: `${leftPercent}%` })
-      }
-    })
-  })
-
-  return layout
-}
-
-const getHandlePositionName = (pos?: Position) => {
-  if (pos === Position.Right) return 'right'
-  if (pos === Position.Top) return 'top'
-  if (pos === Position.Bottom) return 'bottom'
-  return 'left'
-}
-
-const buildHandleStyle = (handle: HandleLayout, layout: Map<string, { top?: string; left?: string }>) => {
-  const pos = handle.pos ?? Position.Left
-  const coords = layout.get(handle.id) || {}
-  const style: React.CSSProperties = {
-    position: 'absolute',
-    pointerEvents: 'auto',
-  }
-
-  if (pos === Position.Left) {
-    style.left = -HANDLE_HORIZONTAL_OFFSET
-    style.top = coords.top ?? '50%'
-  } else if (pos === Position.Right) {
-    style.right = -HANDLE_HORIZONTAL_OFFSET
-    style.top = coords.top ?? '50%'
-  } else if (pos === Position.Top) {
-    style.top = -HANDLE_VERTICAL_OFFSET
-    style.left = coords.left ?? '50%'
-  } else if (pos === Position.Bottom) {
-    style.bottom = -HANDLE_VERTICAL_OFFSET
-    style.left = coords.left ?? '50%'
-  } else {
-    style.top = coords.top ?? '50%'
-    style.left = coords.left ?? '50%'
-  }
-
-  return style
-}
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const result = reader.result
-      resolve(typeof result === 'string' ? result : '')
-    }
-    reader.onerror = () => reject(new Error('Failed to convert blob to data URL'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-async function resolveImageForReversePrompt(url: string): Promise<{ imageUrl?: string; imageData?: string }> {
-  const normalized = (url || '').trim()
-  if (!normalized) return {}
-  if (REMOTE_IMAGE_URL_REGEX.test(normalized) || normalized.startsWith('data:')) {
-    return { imageUrl: normalized }
-  }
-  if (normalized.startsWith('blob:')) {
-    try {
-      const res = await fetch(normalized)
-      if (!res.ok) {
-        throw new Error('Failed to fetch blob URL')
-      }
-      const blob = await res.blob()
-      const dataUrl = await blobToDataUrl(blob)
-      if (dataUrl) {
-        return { imageData: dataUrl }
-      }
-    } catch (error) {
-      console.error('resolveImageForReversePrompt: failed to read blob URL', error)
-      return {}
-    }
-  }
-  return {}
-}
-
-const genTaskNodeId = () => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return (crypto as any).randomUUID()
-  }
-  return `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const formatMentionInsertion = (full: string, offset: number, matchLength: number, mention: string) => {
-  const prevChar = offset > 0 ? full[offset - 1] : ''
-  const nextChar = offset + matchLength < full.length ? full[offset + matchLength] : ''
-  const needsLeadingSpace = prevChar ? !/\s/.test(prevChar) : false
-  const needsTrailingSpace = nextChar ? !/\s/.test(nextChar) : false
-  const leading = needsLeadingSpace ? ' ' : ''
-  const trailing = needsTrailingSpace ? ' ' : ''
-  return `${leading}${mention}${trailing}`
-}
-
-const applyMentionFallback = (text: string, mention: string, aliases: string[]) => {
-  let result = text
-  let replaced = false
-  const uniqueAliases = Array.from(new Set(aliases.filter((alias) => alias && alias.trim().length > 0)))
-  uniqueAliases.forEach((alias) => {
-    const regex = new RegExp(escapeRegExp(alias), 'gi')
-    if (regex.test(result)) {
-      result = result.replace(regex, (match, offset, full) => {
-        const source = typeof full === 'string' ? full : result
-        const off = typeof offset === 'number' ? offset : 0
-        return formatMentionInsertion(source, off, match.length, mention)
-      })
-      replaced = true
-    }
-  })
-  if (!replaced && mention) {
-    if (!result.includes(mention)) {
-      const trimmedEnd = result.replace(/\s+$/, '')
-      const needsSpaceBefore = trimmedEnd.length > 0 && !/\s$/.test(trimmedEnd)
-      result = `${trimmedEnd}${needsSpaceBefore ? ' ' : ''}${mention} `
-      replaced = true
-    }
-  }
-  return { text: result, replaced }
-}
-
-const collectTextFromParts = (parts?: any): string => {
-  if (!Array.isArray(parts)) return ''
-  const buffer: string[] = []
-  const pushPart = (part: any) => {
-    if (!part) return
-    if (typeof part === 'string' && part.trim()) {
-      buffer.push(part.trim())
-      return
-    }
-    const candidates: (string | undefined)[] = [
-      typeof part.text === 'string' ? part.text : undefined,
-      typeof part.content === 'string' ? part.content : undefined,
-      typeof part.output_text === 'string' ? part.output_text : undefined,
-      typeof part.value === 'string' ? part.value : undefined,
-    ]
-    candidates.forEach((text) => {
-      if (text && text.trim()) {
-        buffer.push(text.trim())
-      }
-    })
-    if (Array.isArray(part.content)) {
-      part.content.forEach(pushPart)
-    }
-  }
-  parts.forEach(pushPart)
-  return buffer.join('').trim()
-}
-
-const extractTextFromResponsePayload = (payload: any): string => {
-  if (!payload || typeof payload !== 'object') return ''
-
-  if (typeof payload.text === 'string' && payload.text.trim()) {
-    return payload.text.trim()
-  }
-
-  if (Array.isArray(payload.output_text)) {
-    const merged = payload.output_text
-      .map((entry: any) => (typeof entry === 'string' ? entry : ''))
-      .join('')
-      .trim()
-    if (merged) return merged
-  }
-
-  if (Array.isArray(payload.output)) {
-    const merged = payload.output
-      .map((entry: any) => collectTextFromParts(entry?.content))
-      .filter(Boolean)
-      .join('\n')
-      .trim()
-    if (merged) return merged
-  }
-
-  if (Array.isArray(payload.content)) {
-    const merged = collectTextFromParts(payload.content)
-    if (merged) return merged
-  }
-
-  const choices = payload.choices
-  if (Array.isArray(choices) && choices.length > 0) {
-    const message = choices[0]?.message
-    const choiceText =
-      (typeof message?.content === 'string' && message.content.trim()) ||
-      collectTextFromParts(message?.content) ||
-      (typeof choices[0]?.text === 'string' ? choices[0].text.trim() : '')
-    if (choiceText) return choiceText
-  }
-
-  const candidates = payload.candidates
-  if (Array.isArray(candidates) && candidates.length > 0) {
-    const merged = collectTextFromParts(candidates[0]?.content?.parts || candidates[0]?.content)
-    if (merged) return merged
-  }
-
-  if (payload.result) {
-    const nested = extractTextFromResponsePayload(payload.result)
-    if (nested) return nested
-  }
-
-  return ''
-}
-
-const extractTextFromTaskResult = (task?: TaskResultDto | null): string => {
-  if (!task) return ''
-  const raw = task.raw as any
-  if (raw && typeof raw.text === 'string' && raw.text.trim()) {
-    return raw.text.trim()
-  }
-  const fromResponse = extractTextFromResponsePayload(raw?.response || raw)
-  if (fromResponse) return fromResponse
-  return ''
-}
-
-type FrameCompareSummary = {
-  same: boolean | 'unknown'
-  reason?: string
-  tags?: string[]
-  frames?: Array<{ time?: number; desc?: string }>
-}
-
 type FrameSample = {
   url: string
   time: number
@@ -366,151 +128,6 @@ type CharacterCard = {
   endFrame?: { time: number; url: string }
   clipRange?: { start: number; end: number }
 }
-
-const MAX_FRAME_ANALYSIS_SAMPLES = 60
-const CHARACTER_CLIP_MIN = 1.2
-const CHARACTER_CLIP_MAX = 3
-
-const tryParseJsonLike = (value: string): any | null => {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const candidates: string[] = []
-  const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)
-  if (codeBlock && codeBlock[1].trim()) {
-    candidates.push(codeBlock[1].trim())
-  }
-  const braceStart = trimmed.indexOf('{')
-  const braceEnd = trimmed.lastIndexOf('}')
-  if (braceStart !== -1 && braceEnd > braceStart) {
-    candidates.push(trimmed.slice(braceStart, braceEnd + 1))
-  }
-  candidates.push(trimmed)
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate)
-    } catch {
-      // ignore parse error and try next candidate
-    }
-  }
-  return null
-}
-
-const parseFrameCompareSummary = (value?: string | null): FrameCompareSummary | null => {
-  if (!value) return null
-  const parsed = tryParseJsonLike(value)
-  if (!parsed || typeof parsed !== 'object') return null
-
-  const normalizedSame = (() => {
-    const rawSame = (parsed as any).same
-    if (typeof rawSame === 'boolean') return rawSame
-    if (typeof rawSame === 'string') {
-      const lowered = rawSame.toLowerCase()
-      if (lowered === 'true' || lowered === 'yes') return true
-      if (lowered === 'false' || lowered === 'no') return false
-      if (lowered === 'unknown' || lowered === 'uncertain') return 'unknown'
-    }
-    return 'unknown'
-  })()
-
-  const tags = Array.isArray((parsed as any).tags)
-    ? (parsed as any).tags
-        .map((tag: any) => (typeof tag === 'string' ? tag.trim() : ''))
-        .filter((tag: string) => Boolean(tag))
-    : undefined
-
-  const frames = Array.isArray((parsed as any).frames)
-    ? (parsed as any).frames
-        .map((frame: any) => {
-          const timeValue = typeof frame?.time === 'number' ? frame.time : Number(frame?.time)
-          return {
-            time: Number.isFinite(timeValue) ? timeValue : undefined,
-            desc: typeof frame?.desc === 'string' ? frame.desc : undefined,
-          }
-        })
-        .filter((frame: { time?: number; desc?: string }) => typeof frame.time === 'number' || Boolean(frame.desc))
-    : undefined
-
-  const summary: FrameCompareSummary = {
-    same: normalizedSame,
-    reason: typeof (parsed as any).reason === 'string' ? (parsed as any).reason.trim() : undefined,
-    tags: tags && tags.length > 0 ? tags : undefined,
-    frames: frames && frames.length > 0 ? frames : undefined,
-  }
-
-  if (summary.same === 'unknown' && !summary.reason && !summary.tags && !summary.frames) {
-    return null
-  }
-  return summary
-}
-
-type CharacterCardJson = {
-  characters: Array<{
-    name?: string
-    summary?: string
-    tags?: string[]
-    frames?: Array<{ time?: number; desc?: string }>
-    keyframes?: { start?: number; end?: number }
-  }>
-}
-
-const parseCharacterCardResult = (value?: string | null): CharacterCardJson | null => {
-  if (!value) return null
-  const parsed = tryParseJsonLike(value)
-  if (!parsed) return null
-  const characters = Array.isArray((parsed as any).characters)
-    ? (parsed as any).characters
-    : Array.isArray(parsed)
-      ? parsed
-      : null
-  if (!characters || characters.length === 0) return null
-  return { characters }
-}
-
-const clampCharacterClipWindow = (frames: Array<{ time: number }>, totalDuration?: number | null) => {
-  if (!frames.length) {
-    return { start: 0, end: CHARACTER_CLIP_MIN }
-  }
-  const safeDuration = typeof totalDuration === 'number' && Number.isFinite(totalDuration) && totalDuration > 0
-    ? totalDuration
-    : null
-  let start = Number.isFinite(frames[0].time) ? frames[0].time : 0
-  let end = Number.isFinite(frames[frames.length - 1].time) ? frames[frames.length - 1].time : start
-  if (end < start) {
-    const tmp = start
-    start = end
-    end = tmp
-  }
-  if (end - start < CHARACTER_CLIP_MIN) {
-    end = start + CHARACTER_CLIP_MIN
-  }
-  if (end - start > CHARACTER_CLIP_MAX) {
-    end = start + CHARACTER_CLIP_MAX
-  }
-  if (safeDuration !== null && end > safeDuration) {
-    const delta = end - safeDuration
-    end = safeDuration
-    start = Math.max(0, start - delta)
-  }
-  if (start < 0) {
-    const delta = -start
-    start = 0
-    end = safeDuration !== null ? Math.min(safeDuration, end + delta) : end + delta
-  }
-  if (end - start < CHARACTER_CLIP_MIN) {
-    end = Math.min(start + CHARACTER_CLIP_MIN, safeDuration ?? start + CHARACTER_CLIP_MIN)
-  }
-  return { start, end }
-}
-
-const isDynamicHandlesConfig = (
-  handles?: TaskNodeHandlesConfig | null,
-): handles is { dynamic: true } => Boolean(handles && 'dynamic' in handles && handles.dynamic)
-
-const isStaticHandlesConfig = (
-  handles?: TaskNodeHandlesConfig | null,
-): handles is Exclude<TaskNodeHandlesConfig, { dynamic: true }> =>
-  Boolean(handles && (!('dynamic' in handles) || !handles.dynamic))
-
 type Data = {
   label: string
   kind?: string
@@ -671,8 +288,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const hasVideoOutputs = schemaFeatures.has('video') || schemaFeatures.has('videoResults')
   const isVideoNode = hasVideoOutputs || isComposerNode
   const isStandaloneVideoNode = hasVideoOutputs && !isComposerNode
+  const isMosaicNode = kind === 'mosaic'
   const isImageNode =
-    schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults')
+    !isMosaicNode &&
+    (schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults'))
   const isCharacterNode = schema.category === 'character' || schemaFeatures.has('character')
   const isAudioNode = schema.category === 'audio' || schemaFeatures.has('audio')
   const isSubtitleNode = schema.category === 'subtitle' || schemaFeatures.has('subtitle')
@@ -715,6 +334,20 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     sources.push({ id: 'out-any', type: 'any', pos: Position.Right })
   }
   const handleLayoutMap = computeHandleLayout([...targets, ...sources])
+  const wideHandleBase: React.CSSProperties = {
+    position: 'absolute',
+    pointerEvents: 'auto',
+    width: 16,
+    height: 'calc(100% - 12px)',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    border: '1px dashed rgba(255,255,255,0.12)',
+    background: 'transparent',
+    opacity: 0,
+    boxShadow: 'none',
+  }
+  const defaultInputType = targets[0]?.type || 'any'
+  const defaultOutputType = sources[0]?.type || 'any'
 
   const [editing, setEditing] = React.useState(false)
   const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
@@ -728,7 +361,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const setNodeStatus = useRFStore(s => s.setNodeStatus)
   const updateNodeData = useRFStore(s => s.updateNodeData)
   const addNode = useRFStore(s => s.addNode)
-  const addEdge = useRFStore(s => s.onConnect)
+  const allNodes = useRFStore(s => s.nodes)
   const rawPrompt = (data as any)?.prompt as string | undefined
   const [prompt, setPrompt] = React.useState<string>(rawPrompt || '')
 
@@ -909,6 +542,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const soraFileId = (data as any)?.soraFileId as string | undefined
   const [uploading, setUploading] = React.useState(false)
   const [reversePromptLoading, setReversePromptLoading] = React.useState(false)
+  const poseStickmanUrl = (data as any)?.poseStickmanUrl as string | undefined
+  const poseReferenceImages = (data as any)?.poseReferenceImages as string[] | undefined
   const imageResults = React.useMemo(() => {
     const raw = (data as any)?.imageResults as { url: string }[] | undefined
     if (raw && Array.isArray(raw) && raw.length > 0) return raw
@@ -961,6 +596,58 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
     setImagePrimaryIndex((prev) => Math.max(0, Math.min(total - 1, prev)))
   }, [persistedImagePrimaryIndex, legacyImagePrimaryIndex, imageResults.length])
+
+  const onReversePrompt = React.useCallback(async () => {
+    if (!supportsReversePrompt) return
+
+    const targetUrl = imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''
+    if (!targetUrl) {
+      toast('请先上传或生成图片', 'error')
+      return
+    }
+
+    if (!REMOTE_IMAGE_URL_REGEX.test(targetUrl)) {
+      toast('请先上传图片到 Sora 或提供可访问的线上链接，再使用反推提示词', 'error')
+      return
+    }
+
+    try {
+      setReversePromptLoading(true)
+      const imagePayload = await resolveImageForReversePrompt(targetUrl)
+      if (!imagePayload.imageUrl) {
+        toast('当前图片不可用，请稍后重试', 'error')
+        setReversePromptLoading(false)
+        return
+      }
+      const task = await runTaskByVendor('openai', {
+        kind: 'image_to_prompt',
+        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
+        extras: {
+          ...imagePayload,
+          nodeId: id,
+        },
+      })
+      const nextPrompt = extractTextFromTaskResult(task)
+      if (nextPrompt) {
+        setPrompt(nextPrompt)
+        updateNodeData(id, { prompt: nextPrompt })
+        toast('已根据图片生成提示词', 'success')
+      } else {
+        toast('模型未返回提示词，请稍后重试', 'error')
+      }
+    } catch (error: any) {
+      const message = typeof error?.message === 'string' ? error.message : '反推提示词失败'
+      toast(message, 'error')
+    } finally {
+      setReversePromptLoading(false)
+    }
+  }, [supportsReversePrompt, imageResults, imagePrimaryIndex, id, updateNodeData, setPrompt])
+
+  const basePoseImage = React.useMemo(
+    () => primaryImageUrl || imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || '',
+    [imagePrimaryIndex, imageResults, primaryImageUrl],
+  )
+
   const videoUrl = (data as any)?.videoUrl as string | undefined
   const videoThumbnailUrl = (data as any)?.videoThumbnailUrl as string | undefined
   const videoTitle = (data as any)?.videoTitle as string | undefined
@@ -1554,6 +1241,260 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const existingVideoVendor = (data as any)?.videoModelVendor
   const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
   const isSoraVideoNode = isVideoNode && resolvedVideoVendor === 'sora'
+  const handlePoseSaved = React.useCallback(
+    ({ poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, maskUrl, prompt: posePrompt }: { poseStickmanUrl: string; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string }) => {
+    const stateBefore = useRFStore.getState()
+    const beforeIds = new Set(stateBefore.nodes.map((n) => n.id))
+    const targetKind = kind === 'textToImage' ? 'textToImage' : 'image'
+    const fallbackModel = getDefaultModel('image')
+    const editableModel = isImageEditModel(imageModel) ? imageModel : fallbackModel
+    const editableVendor = findVendorForModel(editableModel)
+    const normalizedRefs = Array.from(new Set((refs || []).filter(Boolean)))
+    const effectivePrompt = (posePrompt || prompt || (data as any)?.prompt || '').trim()
+
+    addNode('taskNode', undefined, {
+      kind: targetKind,
+      prompt: effectivePrompt,
+      aspect,
+      sampleCount,
+      imageModel: editableModel,
+      imageModelVendor: editableVendor,
+      poseStickmanUrl: stickmanUrl,
+      poseReferenceImages: normalizedRefs,
+      ...(maskUrl ? { poseMaskUrl: maskUrl } : {}),
+    })
+
+      const afterAdd = useRFStore.getState()
+      const newNode = afterAdd.nodes.find((n) => !beforeIds.has(n.id))
+      if (!newNode) {
+        toast('姿势已保存，但未能创建新图像节点', 'error')
+        return
+      }
+
+      const sourceNode = afterAdd.nodes.find((n) => n.id === id)
+      const targetPos = {
+        x: (sourceNode?.position?.x || 0) + 380,
+        y: sourceNode?.position?.y || 0,
+      }
+      afterAdd.onNodesChange([
+        { id: newNode.id, type: 'position', position: targetPos, dragging: false },
+        { id: newNode.id, type: 'select', selected: true },
+      ])
+      afterAdd.onConnect({
+        source: id,
+        sourceHandle: 'out-image',
+        target: newNode.id,
+        targetHandle: 'in-image',
+      })
+
+      if (!effectivePrompt) {
+        toast('已创建新姿势图节点，请填写提示词后再运行', 'info')
+        return
+      }
+
+      runNodeRemote(newNode.id, useRFStore.getState, useRFStore.setState).catch((err) => {
+        console.error('auto run pose image failed', err)
+        toast(err?.message || '新姿势图生成启动失败', 'error')
+      })
+    },
+    [addNode, aspect, data, findVendorForModel, id, imageModel, kind, prompt, sampleCount],
+  )
+
+  const { open: openPoseEditor, modal: poseEditorModal } = usePoseEditor({
+    nodeId: id,
+    baseImageUrl: basePoseImage,
+    poseReferenceImages,
+    poseStickmanUrl,
+    promptValue: prompt,
+    onPromptSave: (next) => {
+      setPrompt(next)
+      updateNodeData(id, { prompt: next })
+    },
+    hasImages: imageResults.length > 0,
+    isDarkUi,
+    inlineDividerColor,
+    updateNodeData,
+    onPoseSaved: handlePoseSaved,
+  })
+
+  // Mosaic config
+  const MOSAIC_GRID_OPTIONS = [
+    { value: '1', label: '1 x 1' },
+    { value: '2', label: '2 x 2' },
+    { value: '3', label: '3 x 3（最多9张）' },
+  ]
+  const [mosaicModalOpen, setMosaicModalOpen] = React.useState(false)
+  const [mosaicInvalidUrls, setMosaicInvalidUrls] = React.useState<string[]>([])
+  const [mosaicGrid, setMosaicGrid] = React.useState<number>(() => {
+    const stored = (data as any)?.mosaicGrid
+    return typeof stored === 'number' && stored >= 1 && stored <= 3 ? stored : 2
+  })
+  const [mosaicSelected, setMosaicSelected] = React.useState<string[]>(() => {
+    const imgs = Array.isArray((data as any)?.mosaicImages)
+      ? ((data as any)?.mosaicImages as any[]).map((i) => (typeof i?.url === 'string' ? i.url : null)).filter(Boolean)
+      : []
+    return imgs.length ? imgs.slice(0, 9) : []
+  })
+  const mosaicLimit = mosaicGrid * mosaicGrid
+  const allImages = React.useMemo(() => {
+    const urls: string[] = []
+    const push = (url: any) => {
+      if (typeof url !== 'string') return
+      const t = url.trim()
+      if (t) urls.push(t)
+    }
+    allNodes.forEach((n) => {
+      const kd = (n.data as any)?.kind
+      if (!kd) return
+      const d: any = n.data || {}
+      push(d.imageUrl)
+      if (Array.isArray(d.imageResults)) {
+        d.imageResults.forEach((it: any) => push(it?.url))
+      }
+    })
+    return Array.from(new Set(urls))
+  }, [allNodes])
+  const availableImages = React.useMemo(() => {
+    const filtered = allImages.filter((u) => !mosaicInvalidUrls.includes(u))
+    if (mosaicSelected.length) {
+      const selSet = new Set(mosaicSelected)
+      const rest = filtered.filter((u) => !selSet.has(u))
+      return [...mosaicSelected, ...rest]
+    }
+    return filtered
+  }, [allImages, mosaicInvalidUrls, mosaicSelected])
+  const [mosaicPreviewUrl, setMosaicPreviewUrl] = React.useState<string | null>(null)
+  const [mosaicPreviewError, setMosaicPreviewError] = React.useState<string | null>(null)
+  const [mosaicPreviewLoading, setMosaicPreviewLoading] = React.useState(false)
+  const buildMosaicPreview = React.useCallback(async (urls: string[], grid: number) => {
+    const { buildMosaicCanvas } = await import('../../runner/mosaicRunner')
+    setMosaicPreviewLoading(true)
+    setMosaicPreviewError(null)
+    try {
+      const { canvas, failedUrls } = await buildMosaicCanvas(urls, grid || 2)
+      setMosaicPreviewUrl(canvas.toDataURL('image/png'))
+      if (failedUrls.length) {
+        setMosaicPreviewError(`已移除 ${failedUrls.length} 张过期或不可访问的图片`)
+        setMosaicSelected((prev) => prev.filter((u) => !failedUrls.includes(u)))
+        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...failedUrls])))
+      }
+    } catch (err: any) {
+      console.warn('mosaic preview failed', err)
+      setMosaicPreviewUrl(null)
+      const failedUrls: string[] = Array.isArray((err as any)?.failedUrls) ? (err as any).failedUrls : []
+      if (failedUrls.length) {
+        setMosaicSelected((prev) => prev.filter((u) => !failedUrls.includes(u)))
+        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...failedUrls])))
+      }
+      setMosaicPreviewError(err?.message || '预览生成失败，请检查图片是否可跨域访问')
+    } finally {
+      setMosaicPreviewLoading(false)
+    }
+  }, [])
+  const handleMosaicToggle = React.useCallback(
+    (url: string, checked: boolean) => {
+      if (!url) return
+      if (mosaicInvalidUrls.includes(url)) {
+        toast('该图片已失效，请选择其他图片', 'error')
+        return
+      }
+      setMosaicSelected((prev) => {
+        if (checked) {
+          if (prev.includes(url)) return prev
+          const next = [...prev, url]
+          if (next.length > mosaicLimit) {
+            return prev
+          }
+          return next
+        }
+        return prev.filter((u) => u !== url)
+      })
+    },
+    [mosaicInvalidUrls, mosaicLimit],
+  )
+  const moveMosaicItem = React.useCallback((url: string, dir: number) => {
+    setMosaicSelected((prev) => {
+      const idx = prev.findIndex((u) => u === url)
+      if (idx < 0) return prev
+      const nextIdx = idx + dir
+      if (nextIdx < 0 || nextIdx >= prev.length) return prev
+      const next = [...prev]
+      const tmp = next[idx]
+      next[idx] = next[nextIdx]
+      next[nextIdx] = tmp
+      return next
+    })
+  }, [])
+  const handleMosaicSave = React.useCallback(async () => {
+    const picked = mosaicSelected.slice(0, mosaicLimit)
+    if (!picked.length) {
+      toast('请至少选择 1 张图片', 'error')
+      return
+    }
+    try {
+      const { buildMosaicCanvas } = await import('../../runner/mosaicRunner')
+      const result = mosaicPreviewUrl
+        ? { canvas: null, failedUrls: [] as string[] }
+        : await buildMosaicCanvas(picked, mosaicGrid)
+      if (result.failedUrls.length) {
+        setMosaicSelected((prev) => prev.filter((u) => !result.failedUrls.includes(u)))
+        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...result.failedUrls])))
+        toast(`已移除 ${result.failedUrls.length} 张过期图片，已用剩余图片拼图`, 'info')
+      }
+      const finalUrl = mosaicPreviewUrl || result.canvas?.toDataURL('image/png') || null
+      if (!finalUrl) throw new Error('未生成拼图结果')
+      const existing = Array.isArray((data as any)?.imageResults) ? (data as any)?.imageResults : []
+      const merged = [...existing, { url: finalUrl, title: '拼图' }]
+      const primaryIndex = merged.length - 1
+      setNodeStatus(id, 'success', {
+        progress: 100,
+        imageUrl: finalUrl,
+        imageResults: merged,
+        imagePrimaryIndex: primaryIndex,
+        mosaicImages: picked.map((url) => ({ url })),
+        mosaicGrid,
+        mosaicLimit,
+        lastResult: {
+          id,
+          at: Date.now(),
+          kind: 'mosaic',
+          preview: { type: 'image', src: finalUrl },
+        },
+      })
+      setMosaicModalOpen(false)
+      toast('拼图已更新', 'success')
+    } catch (err: any) {
+      toast(err?.message || '拼图生成失败', 'error')
+    }
+  }, [data, id, mosaicGrid, mosaicLimit, mosaicPreviewUrl, mosaicSelected, setNodeStatus])
+
+  React.useEffect(() => {
+    const limit = mosaicGrid * mosaicGrid
+    const picked = mosaicSelected.slice(0, limit)
+    if (!picked.length) {
+      setMosaicPreviewUrl(null)
+      setMosaicPreviewError(null)
+      return
+    }
+    buildMosaicPreview(picked, mosaicGrid)
+  }, [buildMosaicPreview, mosaicGrid, mosaicSelected])
+  React.useEffect(() => {
+    const limit = mosaicGrid * mosaicGrid
+    setMosaicSelected((prev) => prev.slice(0, limit))
+  }, [mosaicGrid])
+
+  React.useEffect(() => {
+    if (!mosaicModalOpen) return
+    const storedGrid = (data as any)?.mosaicGrid
+    const grid = typeof storedGrid === 'number' && storedGrid >= 1 && storedGrid <= 3 ? storedGrid : mosaicGrid
+    setMosaicGrid(grid)
+    const imgs = Array.isArray((data as any)?.mosaicImages)
+      ? ((data as any)?.mosaicImages as any[]).map((i) => (typeof i?.url === 'string' ? i.url : null)).filter(Boolean)
+      : []
+    if (imgs.length) {
+      setMosaicSelected(imgs.slice(0, grid * grid))
+    }
+  }, [data, mosaicGrid, mosaicModalOpen])
 
   const handleOpenCharacterCreatorModal = React.useCallback(
     (card: CharacterCard) => {
@@ -2291,6 +2232,48 @@ const rewritePromptWithCharacters = React.useCallback(
     if (!selectedCharacterTokenId || !characterCursor) return
     fetchCharacters({ cursor: characterCursor, append: true })
   }, [characterCursor, fetchCharacters, selectedCharacterTokenId])
+
+  // Define node-specific tools and overflow calculation
+  const uniqueDefs = React.useMemo(() => {
+    if (isCharacterNode) {
+      return [
+        { key: 'assets', label: '角色库', icon: <IconUsers size={16} />, onClick: () => setActivePanel('assets') },
+        { key: 'refresh', label: '刷新', icon: <IconRefresh size={16} />, onClick: () => refreshCharacters() },
+      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+    }
+    if (isMosaicNode) {
+      return [
+        {
+          key: 'mosaic',
+          label: '拼图设置',
+          icon: <IconAdjustments size={16} />,
+          onClick: () => setMosaicModalOpen(true),
+        },
+      ]
+    }
+    if (isImageNode) {
+      return [
+        {
+          key: 'pose',
+          label: '调整姿势',
+          icon: <IconAdjustments size={16} />,
+          onClick: () => openPoseEditor(),
+        },
+        {
+          key: 'reverse',
+          label: '反推提示词',
+          icon: <IconPhotoSearch size={16} />,
+          onClick: () => onReversePrompt(),
+        },
+      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+    }
+    // default tools for other node kinds (kept minimal)
+    return [
+      { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
+      { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
+    ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+  }, [onReversePrompt, id, isCharacterNode, isImageNode, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt])
+
   const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
     if (!edgesToThis.length) {
@@ -2515,34 +2498,6 @@ const rewritePromptWithCharacters = React.useCallback(
     }
   }, [mentionOpen, mentionFilter])
 
-  // Define node-specific tools and overflow calculation
-  const uniqueDefs = React.useMemo(() => {
-    if (isCharacterNode) {
-      return [
-        { key: 'assets', label: '角色库', icon: <IconUsers size={16} />, onClick: () => setActivePanel('assets') },
-        { key: 'refresh', label: '刷新', icon: <IconRefresh size={16} />, onClick: () => refreshCharacters() },
-      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-    }
-    if (isImageNode) {
-      return [
-        // image 节点顶部工具条：只保留节点级的「图片编辑器」操作，避免和结果区工具条重复
-        { key: 'editor', label: '图片编辑器', icon: <IconPhotoEdit size={16} />, onClick: () => {} },
-      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-    }
-    // default tools for other node kinds (kept minimal)
-    return [
-      { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
-      { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
-    ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [id, isCharacterNode, isImageNode, openParamFor, refreshCharacters, setActivePanel])
-
-  const maxTools = 5
-  const commonLen = 2
-  const reserveForMore = uniqueDefs.length > (maxTools - commonLen) ? 1 : 0
-  const maxUniqueVisible = Math.max(0, maxTools - commonLen - reserveForMore)
-  const visibleDefs = uniqueDefs.slice(0, maxUniqueVisible)
-  const extraDefs = uniqueDefs.slice(maxUniqueVisible)
-
   const hasContent = React.useMemo(() => {
     if (isImageNode) return Boolean(imageUrl)
     if (isVideoNode) return Boolean((data as any)?.videoUrl)
@@ -2584,7 +2539,7 @@ const rewritePromptWithCharacters = React.useCallback(
     })
   }
 
-  const fixedWidth = isImageNode ? 320 : undefined
+  const fixedWidth = isImageNode || isMosaicNode ? 340 : undefined
   const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
   const hasAiText = lastText.trim().length > 0
 
@@ -2667,51 +2622,6 @@ const rewritePromptWithCharacters = React.useCallback(
     }
   }
 
-  const handleReversePrompt = React.useCallback(async () => {
-    if (!supportsReversePrompt) return
-
-    const targetUrl = imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''
-    if (!targetUrl) {
-      toast('请先上传或生成图片', 'error')
-      return
-    }
-
-    if (!REMOTE_IMAGE_URL_REGEX.test(targetUrl)) {
-      toast('请先上传图片到 Sora 或提供可访问的线上链接，再使用反推提示词', 'error')
-      return
-    }
-
-    try {
-      setReversePromptLoading(true)
-      const imagePayload = await resolveImageForReversePrompt(targetUrl)
-      if (!imagePayload.imageUrl) {
-        toast('当前图片不可用，请稍后重试', 'error')
-        setReversePromptLoading(false)
-        return
-      }
-      const task = await runTaskByVendor('openai', {
-        kind: 'image_to_prompt',
-        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
-        extras: {
-          ...imagePayload,
-          nodeId: id,
-        },
-      })
-      const nextPrompt = extractTextFromTaskResult(task)
-      if (nextPrompt) {
-        setPrompt(nextPrompt)
-        updateNodeData(id, { prompt: nextPrompt })
-        toast('已根据图片生成提示词', 'success')
-      } else {
-        toast('模型未返回提示词，请稍后重试', 'error')
-      }
-    } catch (error: any) {
-      const message = typeof error?.message === 'string' ? error.message : '反推提示词失败'
-      toast(message, 'error')
-    } finally {
-      setReversePromptLoading(false)
-    }
-  }, [supportsReversePrompt, imageResults, imagePrimaryIndex, id, updateNodeData, setPrompt, data])
   const defaultLabel = React.useMemo(() => {
     if (isComposerNode || schema.category === 'video') return '文生视频'
     if (isImageNode) return '图像节点'
@@ -2748,6 +2658,13 @@ const rewritePromptWithCharacters = React.useCallback(
   const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
   const subtitle = schema.label || defaultLabel
 
+  const maxTools = 5
+  const commonLen = 2
+  const reserveForMore = uniqueDefs.length > (maxTools - commonLen) ? 1 : 0
+  const maxUniqueVisible = Math.max(0, maxTools - commonLen - reserveForMore)
+  const visibleDefs = uniqueDefs.slice(0, maxUniqueVisible)
+  const extraDefs = uniqueDefs.slice(maxUniqueVisible)
+
   return (
     <div
       style={{
@@ -2762,6 +2679,7 @@ const rewritePromptWithCharacters = React.useCallback(
         transform: selected ? 'translateY(-2px)' : 'translateY(0)',
         position: 'relative',
         outline: shellOutline,
+        boxSizing: 'border-box',
         ...(fixedWidth ? { width: fixedWidth } : {}),
       } as React.CSSProperties}
     >
@@ -3009,6 +2927,28 @@ const rewritePromptWithCharacters = React.useCallback(
             />
           )
         })}
+        <Handle
+          id={`in-${defaultInputType}-wide`}
+          className="tc-handle tc-handle--wide"
+          type="target"
+          position={Position.Left}
+          style={{ ...wideHandleBase, left: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(-50%, -50%)' }}
+          data-handle-type={defaultInputType}
+          data-handle-position="left"
+          title={`输入: ${getHandleTypeLabel(defaultInputType)}`}
+          aria-label={`输入: ${getHandleTypeLabel(defaultInputType)}`}
+        />
+        <Handle
+          id={`out-${defaultOutputType}-wide`}
+          className="tc-handle tc-handle--wide"
+          type="source"
+          position={Position.Right}
+          style={{ ...wideHandleBase, right: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(50%, -50%)' }}
+          data-handle-type={defaultOutputType}
+          data-handle-position="right"
+          title={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
+          aria-label={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
+        />
       </div>
       {/* Content Area for Character/Image/Video/Text kinds */}
       {isCharacterNode && (
@@ -3087,12 +3027,65 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
         </div>
       )}
-      {isImageNode && (
-        <div style={{ position: 'relative', marginTop: 6 }}>
+      {isMosaicNode ? (
+        <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
+          {imageResults.length ? (
+            <div style={{ position: 'relative', width: '100%' }}>
+              <div
+                style={{
+                  position: 'relative',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  boxShadow: darkCardShadow,
+                  background: mediaFallbackSurface,
+                }}
+              >
+                <img
+                  src={imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''}
+                  alt="拼图结果"
+                  style={{ width: '100%', display: 'block', objectFit: 'cover' }}
+                />
+              </div>
+              <Group gap={6} mt={6} justify="flex-end">
+                <Button size="xs" variant="light" onClick={() => setMosaicModalOpen(true)}>
+                  重新拼图
+                </Button>
+                <Button size="xs" variant="subtle" onClick={() => handleMosaicSave()}>
+                  保存当前选择
+                </Button>
+              </Group>
+            </div>
+          ) : (
+            <Paper
+              radius="md"
+              p="md"
+              style={{
+                width: '100%',
+                minHeight: 140,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                textAlign: 'center',
+              }}
+            >
+              <IconLayoutGrid size={28} style={{ color: placeholderIconColor }} />
+              <Text size="sm" c="dimmed">
+                选择画布内的图片并拼成 {mosaicGrid}x{mosaicGrid} 网格。
+              </Text>
+              <Button size="xs" variant="light" onClick={() => setMosaicModalOpen(true)}>
+                打开拼图设置
+              </Button>
+            </Paper>
+          )}
+        </div>
+      ) : isImageNode && (
+        <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
           {!hasPrimaryImage ? (
             <>
               {/* 快捷操作列表，增强引导 */}
-              <div style={{ width: 296, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
                 {[
                   { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
                   { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
@@ -3132,7 +3125,7 @@ const rewritePromptWithCharacters = React.useCallback(
               </div>
             </>
           ) : (
-            <div style={{ position: 'relative', width: 296 }}>
+            <div style={{ position: 'relative', width: '100%' }}>
               {/* 背后影子卡片，暗示多图 */}
               {imageResults.length > 1 && (
                 <div
@@ -3168,27 +3161,6 @@ const rewritePromptWithCharacters = React.useCallback(
                     objectFit: 'cover',
                   }}
                 />
-                {/* 主图替换按钮 */}
-                <ActionIcon
-                  size={28}
-                  variant="light"
-                  style={{ position: 'absolute', right: 8, top: 8 }}
-                  title="替换图片"
-                  onClick={() => fileRef.current?.click()}
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <div style={{
-                      width: 14,
-                      height: 14,
-                      borderTop: '2px solid transparent',
-                      borderRadius: '50%',
-                      animation: 'spin 1s linear infinite',
-                    }} />
-                  ) : (
-                    <IconUpload size={14} />
-                  )}
-                </ActionIcon>
                 {/* Sora file_id indicator */}
                 {soraFileId && (
                     <div
@@ -3207,39 +3179,6 @@ const rewritePromptWithCharacters = React.useCallback(
                   >
                     ✓ Sora
                   </div>
-                )}
-                {supportsReversePrompt && primaryImageUrl && (
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-xs"
-                    onClick={handleReversePrompt}
-                    disabled={reversePromptLoading}
-                    style={{
-                      position: 'absolute',
-                      left: 8,
-                      bottom: 8,
-                      padding: 0,
-                      borderRadius: 0,
-                      border: 'none',
-                      background: 'transparent',
-                      color: mediaOverlayText,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      cursor: reversePromptLoading ? 'not-allowed' : 'pointer',
-                      transition: 'opacity .12s ease',
-                      opacity: reversePromptLoading ? 0.7 : 0.95,
-                    }}
-                  >
-                    {reversePromptLoading ? (
-                      <Loader size="xs" color={mediaOverlayText} />
-                    ) : (
-                      <IconPhotoSearch size={12} />
-                    )}
-                    <span style={{ fontSize: 11, color: mediaOverlayText }}>反推提示词</span>
-                  </Button>
                 )}
                 {/* 数量 + 展开标签 */}
                 {imageResults.length > 1 && (
@@ -3286,7 +3225,7 @@ const rewritePromptWithCharacters = React.useCallback(
             <div
               style={{
                 marginTop: 6,
-                width: 296,
+                width: '100%',
                 maxHeight: 80,
                 borderRadius: 8,
                 border: 'none',
@@ -3307,7 +3246,7 @@ const rewritePromptWithCharacters = React.useCallback(
         <div
           style={{
             marginTop: 6,
-            width: 296,
+            width: '100%',
             minHeight: 160,
             borderRadius: 10,
             background: mediaOverlayBackground,
@@ -3654,7 +3593,7 @@ const rewritePromptWithCharacters = React.useCallback(
         </div>
       )}
       {isVideoNode && resolvedVideoVendor === 'veo' && (
-        <Paper radius="md" withBorder p="sm" style={{ marginTop: 8, width: 296 }}>
+        <Paper radius="md" withBorder p="sm" style={{ marginTop: 8, width: '100%' }}>
           <Stack gap="xs">
             <Group justify="space-between" gap={6}>
               <Text size="sm" fw={500}>
@@ -4347,138 +4286,19 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
 
               {isStoryboardNode ? (
-                <Stack gap="xs">
-                  <TextInput
-                    label="分镜标题"
-                    placeholder="例如：武侠对决 · 紫禁之巅"
-                    value={storyboardTitle}
-                    onChange={(e) => setStoryboardTitle(e.currentTarget.value)}
-                    size="xs"
-                  />
-                  <Stack gap="xs">
-                    {storyboardScenes.map((scene, idx) => (
-                      <Paper
-                        key={scene.id}
-                        radius="md"
-                        p="xs"
-                        style={{ background: lightContentBackground }}
-                      >
-                        <Group justify="space-between" align="flex-start" mb={6}>
-                          <div>
-                            <Text size="sm" fw={600}>{`Scene ${idx + 1}`}</Text>
-                            <Text size="xs" c="dimmed">
-                              镜头描述与台词
-                            </Text>
-                          </div>
-                          <Group gap={4}>
-                            <Badge color="blue" variant="light">
-                              {scene.duration.toFixed(1)}s
-                            </Badge>
-                            <Button
-                              size="compact-xs"
-                              variant="light"
-                              onClick={() => handleSceneDurationDelta(scene.id, 15)}
-                              disabled={scene.duration >= STORYBOARD_MAX_DURATION}
-                            >
-                              +15s
-                            </Button>
-                            <ActionIcon
-                              size="sm"
-                              variant="subtle"
-                              color="red"
-                              onClick={() => handleRemoveScene(scene.id)}
-                              disabled={storyboardScenes.length === 1}
-                              title="删除该 Scene"
-                            >
-                              <IconTrash size={14} />
-                            </ActionIcon>
-                          </Group>
-                        </Group>
-                        <Textarea
-                          autosize
-                          minRows={3}
-                          maxRows={6}
-                          placeholder="描写镜头构图、动作、情绪、台词，以及需要引用的 @角色……"
-                          value={scene.description}
-                          onChange={(e) =>
-                            updateStoryboardScene(scene.id, { description: e.currentTarget.value })
-                          }
-                        />
-                        <Group gap="xs" mt={6} align="flex-end" wrap="wrap">
-                          <Select
-                            label="镜头景别"
-                            placeholder="可选"
-                            data={STORYBOARD_FRAMING_OPTIONS}
-                            value={scene.framing || null}
-                            onChange={(value) =>
-                              updateStoryboardScene(scene.id, {
-                                framing: (value as StoryboardScene['framing']) || undefined,
-                              })
-                            }
-                            size="xs"
-                            withinPortal
-                            clearable
-                          />
-                          <Select
-                            label="镜头运动"
-                            placeholder="可选"
-                            data={STORYBOARD_MOVEMENT_OPTIONS}
-                            value={scene.movement || null}
-                            onChange={(value) =>
-                              updateStoryboardScene(scene.id, {
-                                movement: (value as StoryboardScene['movement']) || undefined,
-                              })
-                            }
-                            size="xs"
-                            withinPortal
-                            clearable
-                          />
-                          <NumberInput
-                            label="时长 (秒)"
-                            size="xs"
-                            min={STORYBOARD_MIN_DURATION}
-                            max={STORYBOARD_MAX_DURATION}
-                            step={STORYBOARD_DURATION_STEP}
-                            value={scene.duration}
-                            onChange={(value) => {
-                              const next = typeof value === 'number' ? value : Number(value) || scene.duration
-                              updateStoryboardScene(scene.id, { duration: next })
-                            }}
-                            style={{ width: 120 }}
-                          />
-                        </Group>
-                      </Paper>
-                    ))}
-                  </Stack>
-                  <Button
-                    variant="light"
-                    size="xs"
-                    leftSection={<IconPlus size={14} />}
-                    onClick={handleAddScene}
-                  >
-                    添加 Scene
-                  </Button>
-                  <Textarea
-                    label="全局风格 / 备注"
-                    autosize
-                    minRows={2}
-                    maxRows={4}
-                    placeholder="补充整体风格、镜头节奏、素材要求，或写下 Sora 需要遵循的额外说明。"
-                    value={storyboardNotes}
-                    onChange={(e) => setStoryboardNotes(e.currentTarget.value)}
-                  />
-                  <Group justify="space-between">
-                    <Text size="xs" c="dimmed">
-                      当前共 {storyboardScenes.length} 个镜头。You're using {storyboardScenes.length} video gens with current settings.
-                    </Text>
-                    <Text
-                      size="xs"
-                      c={storyboardTotalDuration > STORYBOARD_MAX_TOTAL_DURATION ? 'red.4' : 'dimmed'}
-                    >
-                      总时长 {storyboardTotalDuration.toFixed(1)}s / {STORYBOARD_MAX_TOTAL_DURATION}s
-                    </Text>
-                  </Group>
-                </Stack>
+                <StoryboardEditor
+                  scenes={storyboardScenes}
+                  title={storyboardTitle}
+                  notes={storyboardNotes}
+                  totalDuration={storyboardTotalDuration}
+                  lightContentBackground={lightContentBackground}
+                  onTitleChange={(value) => setStoryboardTitle(value)}
+                  onAddScene={handleAddScene}
+                  onRemoveScene={handleRemoveScene}
+                  onDurationDelta={handleSceneDurationDelta}
+                  onUpdateScene={updateStoryboardScene}
+                  onNotesChange={(value) => setStoryboardNotes(value)}
+                />
               ) : (
                 <div style={{ position: 'relative' }}>
                 <div
@@ -4748,7 +4568,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 )}
                 </div>
               )}
-              {(isImageNode || isVideoNode) && (
+              {(isImageNode || isVideoNode) && !isMosaicNode && (
                 <SystemPromptPanel
                   target={isImageNode ? 'image' : 'video'}
                   enabled={showSystemPrompt}
@@ -4767,6 +4587,141 @@ const rewritePromptWithCharacters = React.useCallback(
         onClose={() => setPromptSamplesOpen(false)}
         onApplySample={handleApplyPromptSample}
       />
+      {isMosaicNode && (
+        <Modal
+          opened={mosaicModalOpen}
+          onClose={() => setMosaicModalOpen(false)}
+          title="拼图配置"
+          size="lg"
+          centered
+        >
+          <Stack gap="sm">
+            <Group justify="space-between">
+              <Text size="sm" fw={600}>选择拼图图片</Text>
+              <Select
+                label="网格"
+                data={MOSAIC_GRID_OPTIONS}
+                value={String(mosaicGrid)}
+                onChange={(v) => {
+                  const n = Number(v || 2)
+                  setMosaicGrid(Math.max(1, Math.min(3, Number.isFinite(n) ? n : 2)))
+                }}
+                withinPortal
+                w={140}
+              />
+            </Group>
+            <Group justify="space-between">
+              <Text size="xs" c="dimmed">最多 {mosaicLimit} 张，按顺序填充从左到右、从上到下。</Text>
+              <Badge size="xs" variant="light" color="blue">
+                已选 {mosaicSelected.length}/{mosaicLimit}
+              </Badge>
+            </Group>
+            <Stack gap={6}>
+              <Group justify="space-between" align="center">
+                <Text size="xs" c="dimmed">预览 & 调整顺序</Text>
+                {mosaicSelected.length > 0 && (
+                  <Text size="xs" c="dimmed">点击下方缩略图可调整顺序或移除</Text>
+                )}
+              </Group>
+              <Paper withBorder p={8} radius="sm" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', position: 'relative' }}>
+                {mosaicPreviewLoading && <Loader size="sm" />}
+                {!mosaicPreviewLoading && mosaicPreviewUrl && (
+                  <img src={mosaicPreviewUrl} alt="mosaic preview" style={{ width: '100%', display: 'block', borderRadius: 6, boxShadow: darkCardShadow }} />
+                )}
+                {!mosaicPreviewLoading && !mosaicPreviewUrl && (
+                  <Text size="xs" c="dimmed">
+                    {mosaicPreviewError || '选择图片后将显示拼图预览'}
+                  </Text>
+                )}
+              </Paper>
+              {mosaicSelected.length > 0 && (
+                <ScrollArea h={140} type="auto" offsetScrollbars>
+                  <Group gap={10} wrap="wrap">
+                    {mosaicSelected.map((url, idx) => (
+                      <Paper
+                        key={`order-${url}`}
+                        withBorder
+                        radius="md"
+                        p={6}
+                        style={{ width: 120, position: 'relative', background: mediaFallbackSurface }}
+                      >
+                        <Badge size="xs" variant="filled" style={{ position: 'absolute', top: 6, left: 6, zIndex: 2 }}>
+                          {idx + 1}
+                        </Badge>
+                        <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                          <img src={url} alt={`order-${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        </div>
+                        <Group gap={4} mt={6} justify="space-between">
+                          <ActionIcon variant="subtle" size="xs" onClick={() => moveMosaicItem(url, -1)} disabled={idx === 0}>
+                            <IconArrowUp size={12} />
+                          </ActionIcon>
+                          <ActionIcon variant="subtle" size="xs" onClick={() => handleMosaicToggle(url, false)}>
+                            <IconTrash size={12} />
+                          </ActionIcon>
+                          <ActionIcon variant="subtle" size="xs" onClick={() => moveMosaicItem(url, 1)} disabled={idx === mosaicSelected.length - 1}>
+                            <IconArrowDown size={12} />
+                          </ActionIcon>
+                        </Group>
+                      </Paper>
+                    ))}
+                  </Group>
+                </ScrollArea>
+              )}
+            </Stack>
+            <Text size="xs" fw={600}>从图库选择</Text>
+            <ScrollArea h={260} type="auto" offsetScrollbars>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                  gap: 10,
+                }}
+              >
+                {availableImages.map((url) => {
+                  const checked = mosaicSelected.includes(url)
+                  const disabled = !checked && mosaicSelected.length >= mosaicLimit
+                  return (
+                    <Paper
+                      key={`avail-${url}`}
+                      withBorder
+                      radius="md"
+                      p={6}
+                      style={{
+                        position: 'relative',
+                        cursor: disabled ? 'not-allowed' : 'pointer',
+                        opacity: disabled ? 0.5 : 1,
+                        background: mediaFallbackSurface,
+                        borderColor: checked ? accentPrimary : undefined,
+                        boxShadow: checked ? `0 0 0 2px ${rgba(accentPrimary, 0.18)}` : undefined,
+                      }}
+                      onClick={() => handleMosaicToggle(url, !checked)}
+                    >
+                      {checked && (
+                        <Badge
+                          size="xs"
+                          variant="filled"
+                          color="blue"
+                          style={{ position: 'absolute', top: 6, left: 6, zIndex: 2 }}
+                        >
+                          已选
+                        </Badge>
+                      )}
+                      <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                        <img src={url} alt="候选图片" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      </div>
+                    </Paper>
+                  )
+                })}
+              </div>
+              {availableImages.length === 0 && <Text size="xs" c="dimmed" mt="xs">暂无可用图片，请先上传或生成。</Text>}
+            </ScrollArea>
+            <Group justify="flex-end">
+              <Button variant="subtle" onClick={() => setMosaicModalOpen(false)}>取消</Button>
+              <Button onClick={handleMosaicSave}>保存并生成</Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
 
       <Modal
         opened={characterCreatorModalOpen}
@@ -5025,271 +4980,54 @@ const rewritePromptWithCharacters = React.useCallback(
         </Modal>
       )}
 
-      {/* 图片结果弹窗：选择主图 + 全屏预览 */}
+      {isImageNode && poseEditorModal}
+
       {isImageNode && imageResults.length > 1 && (
-        <Modal
+        <ImageResultModal
           opened={imageExpanded}
           onClose={() => setImageExpanded(false)}
-          title="选择主图"
-          centered
-          size="xl"
-          withinPortal
-          zIndex={300}
-        >
-          <Stack gap="sm">
-            <Text size="xs" c="dimmed">
-              当前共有 {imageResults.length} 张图片。点击「设为主图」可更新本节点主图，点击「全屏预览」可放大查看。
-            </Text>
-            <div
-              style={{
-                maxHeight: '60vh',
-                overflowY: 'auto',
-              }}
-            >
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                  gap: 12,
-                }}
-              >
-                {imageResults.map((img, idx) => {
-                  const isPrimary = idx === imagePrimaryIndex
-                  return (
-                    <Paper
-                      key={`${idx}-${img.url}`}
-                      radius="md"
-                      p="xs"
-                      style={{
-                        background: galleryCardBackground,
-                      }}
-                    >
-                      <div
-                        style={{
-                          borderRadius: 8,
-                          overflow: 'hidden',
-                          border: 'none',
-                          marginBottom: 6,
-                          background: mediaFallbackSurface,
-                        }}
-                      >
-                        <img
-                          src={img.url}
-                          alt={`结果 ${idx + 1}`}
-                          style={{
-                            width: '100%',
-                            height: 180,
-                            objectFit: 'cover',
-                            display: 'block',
-                          }}
-                        />
-                      </div>
-                      <Group justify="space-between">
-                        <Text size="xs" c="dimmed">
-                          {isPrimary ? `主图 · 第 ${idx + 1} 张` : `第 ${idx + 1} 张`}
-                        </Text>
-                        <Group gap={4}>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() => {
-                              const url = img.url
-                              if (!url) return
-                              const openPreview = useUIStore
-                                .getState()
-                                .openPreview
-                              openPreview({
-                                url,
-                                kind: 'image',
-                                name: data?.label || 'Image',
-                              })
-                            }}
-                          >
-                            预览
-                          </Button>
-                          {!isPrimary && (
-                            <Button
-                              size="xs"
-                              variant="subtle"
-                              onClick={() => {
-                                setImagePrimaryIndex(idx)
-                                updateNodeData(id, { imageUrl: img.url, imagePrimaryIndex: idx })
-                                setImageExpanded(false)
-                              }}
-                            >
-                              设为主图
-                            </Button>
-                          )}
-                        </Group>
-                      </Group>
-                    </Paper>
-                  )
-                })}
-              </div>
-            </div>
-          </Stack>
-        </Modal>
+          images={imageResults}
+          primaryIndex={imagePrimaryIndex}
+          onSelectPrimary={(idx, url) => {
+            setImagePrimaryIndex(idx)
+            updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
+            setImageExpanded(false)
+          }}
+          onPreview={(url) => {
+            if (!url) return
+            const openPreview = useUIStore.getState().openPreview
+            openPreview({
+              url,
+              kind: 'image',
+              name: data?.label || 'Image',
+            })
+          }}
+          galleryCardBackground={galleryCardBackground}
+          mediaFallbackSurface={mediaFallbackSurface}
+        />
       )}
 
-      {/* Video results modal: select primary video + fullscreen preview */}
       {isVideoNode && videoExpanded && (
-        <Modal
+        <VideoResultModal
           opened={videoExpanded}
           onClose={() => setVideoExpanded(false)}
-          title={videoResults.length > 0 ? "选择主视频" : "视频历史记录"}
-          centered
-          size="xl"
-          withinPortal
-          zIndex={300}
-        >
-          <Stack gap="sm">
-            {videoResults.length === 0 ? (
-              (() => {
-                const VideoHistoryIcon = isStoryboardNode ? IconMovie : IconVideo
-                return (
-                <div
-                  style={{
-                    padding: '40px 20px',
-                    textAlign: 'center',
-                    color: mediaFallbackText,
-                  }}
-                >
-                  <VideoHistoryIcon size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                  <Text size="sm" c="dimmed">
-                    暂无视频生成历史
-                  </Text>
-                  <Text size="xs" c="dimmed" mt={4}>
-                    生成视频后，这里将显示所有历史记录，你可以选择效果最好的作为主视频
-                  </Text>
-                </div>
-                )
-              })()
-            ) : (
-              <>
-                <Text size="xs" c="dimmed">
-                  当前共有 {videoResults.length} 个视频。点击「设为主视频」可更新本节点主视频，点击「全屏预览」可放大查看。
-                </Text>
-                <div
-                  style={{
-                    maxHeight: '60vh',
-                    overflowY: 'auto',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                      gap: 12,
-                    }}
-                  >
-                    {videoResults.map((video, idx) => {
-                  const isPrimary = idx === videoPrimaryIndex
-                  return (
-                        <Paper
-                          key={`${idx}-${video.url}`}
-                          radius="md"
-                          p="xs"
-                      style={{
-                        background: galleryCardBackground,
-                      }}
-                    >
-                      <div
-                        style={{
-                          borderRadius: 8,
-                          overflow: 'hidden',
-                          border: 'none',
-                          marginBottom: 6,
-                          background: mediaFallbackSurface,
-                          position: 'relative',
-                        }}
-                      >
-                        <video
-                          src={video.url}
-                          poster={video.thumbnailUrl || undefined}
-                          muted
-                          loop
-                          playsInline
-                          style={{
-                            width: '100%',
-                            height: 180,
-                            objectFit: 'cover',
-                            display: 'block',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.play().catch(() => {})
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.pause()
-                            e.currentTarget.currentTime = 0
-                          }}
-                        />
-                        {video.duration && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 4,
-                            right: 4,
-                            background: 'rgba(0,0,0,0.7)',
-                            color: theme.white,
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                          }}
-                          >
-                            {Math.round(video.duration)}s
-                          </div>
-                        )}
-                      </div>
-                      <Group justify="space-between">
-                        <Text size="xs" c="dimmed">
-                          {isPrimary ? `主视频 · 第 ${idx + 1} 个` : `第 ${idx + 1} 个`}
-                        </Text>
-                        <Group gap={4}>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() => {
-                              const url = video.url
-                              if (!url) return
-                              const openPreview = useUIStore
-                                .getState()
-                                .openPreview
-                              openPreview({
-                                url,
-                                kind: 'video',
-                                name: video.title || data?.label || 'Video',
-                              })
-                            }}
-                          >
-                            预览
-                          </Button>
-                          {!isPrimary && (
-                            <Button
-                              size="xs"
-                              variant="subtle"
-                              onClick={() => {
-                                handleSetPrimaryVideo(idx)
-                              }}
-                            >
-                              设为主视频
-                            </Button>
-                          )}
-                        </Group>
-                      </Group>
-                      {video.title && (
-                        <Text size="xs" lineClamp={2} c="dimmed" mt={4}>
-                          {video.title}
-                        </Text>
-                      )}
-                    </Paper>
-                  )
-                })}
-              </div>
-            </div>
-              </>
-            )}
-          </Stack>
-        </Modal>
+          videos={videoResults}
+          primaryIndex={videoPrimaryIndex}
+          onSelectPrimary={handleSetPrimaryVideo}
+          onPreview={(video) => {
+            const openPreview = useUIStore.getState().openPreview
+            openPreview({
+              url: video.url,
+              thumbnailUrl: video.thumbnailUrl,
+              kind: 'video',
+              name: video.title || data?.label || 'Video',
+            })
+          }}
+          galleryCardBackground={galleryCardBackground}
+          mediaFallbackSurface={mediaFallbackSurface}
+          mediaFallbackText={mediaFallbackText}
+          isStoryboardNode={isStoryboardNode}
+        />
       )}
 
       {/* More panel rendered directly under the top toolbar with 4px gap */}

@@ -126,17 +126,20 @@ export async function runFlowDag(
       void (async () => {
         const nodeMeta = graph.nodes.get(id)
         const kind = (nodeMeta?.data as any)?.kind
-        const shouldRemote =
-          kind === 'composeVideo' ||
-          kind === 'storyboard' ||
-          kind === 'tts' ||
-          kind === 'subtitleAlign' ||
-          kind === 'image'
-        if (shouldRemote) {
-          await runNodeRemote(id, get, set)
-        } else {
-          await runNodeMock(id, get, set)
-        }
+      const shouldRemote =
+        kind === 'composeVideo' ||
+        kind === 'storyboard' ||
+        kind === 'tts' ||
+        kind === 'subtitleAlign' ||
+        kind === 'image'
+      if (shouldRemote) {
+        await runNodeRemote(id, get, set)
+      } else if (kind === 'mosaic') {
+        const { runNodeMosaic } = await import('./mosaicRunner')
+        await runNodeMosaic(id, get, set)
+      } else {
+        await runNodeMock(id, get, set)
+      }
         running--
         done.add(id)
         const executed = get().nodes.find((n: Node) => n.id === id)

@@ -6,6 +6,46 @@ import { z } from 'zod'
  * - 描述的是前端真实可执行的能力，但文件仅在后端使用，避免前端编译依赖 zod
  */
 
+type TaskNodeTypeMeta = {
+  logicalType: string
+  kind: string
+  label: string
+  aliases?: readonly string[]
+}
+
+// 前端 taskNode schema 支持的逻辑类型（apps/web/src/canvas/nodes/taskNodeSchema.ts）
+const frontendTaskNodeTypes: readonly TaskNodeTypeMeta[] = [
+  { logicalType: 'image', kind: 'image', label: '图像' },
+  { logicalType: 'textToImage', kind: 'textToImage', label: '图像（textToImage 显式）', aliases: ['text_to_image'] },
+  { logicalType: 'composeVideo', kind: 'composeVideo', label: '文生视频', aliases: ['video'] },
+  { logicalType: 'audio', kind: 'tts', label: '语音 / TTS' },
+  { logicalType: 'subtitle', kind: 'subtitleAlign', label: '字幕 / 时间轴' },
+  { logicalType: 'character', kind: 'character', label: '角色卡' }
+] as const
+
+const frontendLogicalTypeOptions = (() => {
+  const options = Array.from(
+    new Set(frontendTaskNodeTypes.flatMap(item => [item.logicalType, ...(item.aliases ?? [])]))
+  )
+  if (!options.length) {
+    throw new Error('frontendTaskNodeTypes should not be empty')
+  }
+  return options as [string, ...string[]]
+})()
+
+const formatFrontendLogicalType = (item: (typeof frontendTaskNodeTypes)[number]) => {
+  const meta: string[] = []
+  if (item.aliases?.length) {
+    meta.push(`别名：${item.aliases.join('/')}`)
+  }
+  if (item.kind !== item.logicalType) {
+    meta.push(`前端 kind=${item.kind}`)
+  }
+  return meta.length ? `${item.logicalType}（${meta.join('，')}）` : item.logicalType
+}
+
+const frontendLogicalTypeSummary = frontendTaskNodeTypes.map(formatFrontendLogicalType).join('、')
+
 export const canvasToolSchemas = {
   getNodes: {
     description:
@@ -16,8 +56,7 @@ export const canvasToolSchemas = {
     inputSchema: z.object({})
   },
   createNode: {
-    description:
-      '创建新节点。type 是“逻辑节点类型”，会在前端映射为 taskNode + 对应 kind 并挂上默认/已配置模型；与视频相关的新内容统一使用 composeVideo，storyboard 仅保留兼容，禁止新建。text 类型已下线，请不要再使用 type=text 创建节点。\n' +
+    description: `创建新节点。type 是“逻辑节点类型”，由前端 taskNodeSchema 支持并在此处动态收集，当前允许：${frontendLogicalTypeSummary}；video 会映射为 composeVideo，text_to_image 映射为 textToImage，text/storyboard 不可新建。type 会在前端映射为 taskNode + 对应 kind 并挂上默认/已配置模型；与视频相关的新内容统一使用 composeVideo，storyboard 仅保留兼容，禁止新建。text 类型已下线，请不要再使用 type=text 创建节点。\n` +
       '常见取值含义：\n' +
       '- image：图像生成/强化节点，适合同一角色/场景的定妆照、设定图，以及从长篇剧情拆出的 storyboard stills 供视频节点引用（支持文生图与图生图）；推荐模型包括 Nano Banana（Gemini 2.5 Flash Image）、Nano Banana Pro（Gemini 3 Pro Image）、Qwen Image Plus、DALL·E 3、Stable Diffusion XL 等。' +
       '其中 Nano Banana 强调“快速/Flash”，适合日常创意、社交媒体、小型设计和大量草稿生成；Nano Banana Pro 面向专业级输出，支持更高分辨率（2K/4K）、更精细的文字渲染与信息图/图表生成、更强的多图合成与角色一致性控制，适合作为广告、品牌资产、印刷等高要求场景的最终稿模型。\n' +
@@ -33,7 +72,9 @@ export const canvasToolSchemas = {
       '- textToImage：显式指定图像生成 kind 的形式，等价于 image 节点的图像生成能力（文生图/图生图），同样适配 Nano Banana / Qwen Image Plus 等视觉模型。\n' +
       '- storyboard：历史兼容类型，当前禁止创建新的 storyboard 节点，如需分镜请使用多个 composeVideo 节点按镜头拆分。',
     inputSchema: z.object({
-      type: z.string().describe('逻辑节点类型，例如 image/composeVideo/character/textToImage 等'),
+      type: z
+        .enum(frontendLogicalTypeOptions)
+        .describe(`逻辑节点类型，前端已支持的取值：${frontendLogicalTypeSummary}`),
       label: z.string().optional().describe('节点显示名称，可选'),
       config: z
         .record(z.any())
@@ -77,10 +118,13 @@ export const canvasToolSchemas = {
   },
   findNodes: {
     description:
-      '按标签或类型查找节点，用于“先看一眼画布里有什么节点/角色/镜头”再决定后续操作，避免凭空假设。type 对应节点的 kind 字段（例如 image/composeVideo/textToImage/character）。',
+      `按标签或类型查找节点，用于“先看一眼画布里有什么节点/角色/镜头”再决定后续操作，避免凭空假设。type 对应节点的 kind 字段，当前支持（与前端 taskNodeSchema 同步）：${frontendLogicalTypeSummary}（storyboard/text 不作为可新建类型）。`,
     inputSchema: z.object({
       label: z.string().optional().describe('模糊匹配的标签关键字'),
-      type: z.string().optional().describe('逻辑类型，例如 image/composeVideo/character/textToImage')
+      type: z
+        .enum(frontendLogicalTypeOptions)
+        .optional()
+        .describe(`逻辑类型，例如：${frontendLogicalTypeSummary}`)
     })
   },
   deleteNode: {
@@ -137,7 +181,7 @@ export const canvasNodeSpecs = {
     kind: 'text',
     role: 'prompt_and_script',
     description:
-      '（历史兼容）文本/脚本/分镜描述节点，用于剧情构思、台词、旁白、提示词打磨和长文拆解。当前不再支持通过 createNode 创建新的 text 节点，仅保留读取/展示已有数据的兼容能力。',
+      '（历史兼容）文本/脚本/分镜描述节点，用于剧情构思、台词、旁白、提示词打磨和长文拆解。createNode 不再允许 type=text，仅保留读取/展示已有数据的兼容能力。',
     recommendedModels: ['Gemini 2.5 Flash', 'Gemini 2.5 Pro', 'Claude 3.5 Sonnet', 'GPT-4o', 'DeepSeek V3'],
     capabilities: [
       '长文剧情解析与分镜草稿',
@@ -162,6 +206,20 @@ export const canvasNodeSpecs = {
     notes:
       '单个 image 节点设计为承载有限数量的高价值垫图；需要大量 stills 时应拆分为多个 image 节点，并用连线表达顺序或依赖。'
   },
+  textToImage: {
+    kind: 'textToImage',
+    role: 'still_frame_and_reference',
+    description:
+      '显式 text-to-image 节点，能力等同于 image，适合需要明确声明 textToImage kind 的场景（type=textToImage 或 text_to_image）。',
+    recommendedModels: ['Nano Banana Pro', 'Nano Banana Fast', 'Qwen Image Plus', 'DALL·E 3', 'Stable Diffusion XL'],
+    capabilities: [
+      '文生图：根据英文 prompt 直接生成关键帧画面',
+      '图生图：基于上游图片或视频帧做风格/细节强化',
+      '从长剧情拆解出若干关键 stills 供视频节点引用'
+    ],
+    notes:
+      '同 image 节点，共享提示词与模型策略；区别仅在于显式声明 textToImage kind，便于前端配置。'
+  },
   composeVideo: {
     kind: 'composeVideo',
     role: 'video_shot',
@@ -175,13 +233,26 @@ export const canvasNodeSpecs = {
       '基于 image 节点提供的参考帧锁定角色/构图'
     ],
     notes:
-      '新视频内容一律使用 composeVideo；storyboard 仅保留兼容，不得作为新建类型。单节点默认最长 10 秒，长剧情必须拆成多个 composeVideo 节点按镜头执行。' +
+      '新视频内容一律使用 composeVideo（type=composeVideo/video 均映射至 kind=composeVideo）；storyboard 仅保留兼容，不得作为新建类型。单节点默认最长 10 秒，长剧情必须拆成多个 composeVideo 节点按镜头执行。' +
       '当画布绑定了自建的 Sora2API 厂商（vendor=sora2api）时，composeVideo 节点可通过统一任务通道直接调用本地 Sora2API 的 /v1/chat/completions 接口完成文生视频。'
   },
-  audio: {
-    kind: 'audio',
+  video: {
+    kind: 'video',
+    role: 'video_shot_legacy',
+    description:
+      '历史兼容的视频节点，通常用于展示/引用已有视频资产；新建视频内容统一使用 composeVideo。',
+    recommendedModels: ['Sora 2', 'Veo 3.1', 'Runway Gen-3'],
+    capabilities: [
+      '引用或播放已有视频资源',
+      '在少量旧节点中保留视频输出能力'
+    ],
+    notes:
+      '禁止通过 createNode 主动创建新 video 节点，保持兼容即可；需要生成视频时使用 composeVideo。'
+  },
+  tts: {
+    kind: 'tts',
     role: 'voice_and_sfx',
-    description: '音频生成节点，用于旁白、角色对白试音、环境声与音效草稿。',
+    description: '语音生成（TTS）节点，用于旁白、角色对白试音、环境声与音效草稿；type=audio 会映射为 kind=tts。',
     recommendedModels: ['TTS 模型（依实际配置而定）'],
     capabilities: [
       '根据脚本生成多角色对白',
@@ -191,10 +262,10 @@ export const canvasNodeSpecs = {
     notes:
       'prompt 中需用英文明确语气、性别、情绪和环境；复杂配音/混音流程仍由外部 DAW 处理，这里只负责草稿级别。'
   },
-  subtitle: {
-    kind: 'subtitle',
+  subtitleAlign: {
+    kind: 'subtitleAlign',
     role: 'text_timeline',
-    description: '字幕/时间轴节点，用于从脚本或视频内容中提取字幕行并附带时间信息。',
+    description: '字幕/时间轴节点，用于从脚本或视频内容中提取字幕行并附带时间信息；type=subtitle 会映射为 kind=subtitleAlign。',
     recommendedModels: ['Gemini 2.5 Flash', 'DeepSeek V3', 'Claude 3.5 Sonnet'],
     capabilities: [
       '将对话脚本拆分为字幕行',
