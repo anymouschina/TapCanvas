@@ -62,7 +62,6 @@ import {
   applyMentionFallback,
   blobToDataUrl,
   clampCharacterClipWindow,
-  CHARACTER_CLIP_MAX,
   computeHandleLayout,
   extractTextFromTaskResult,
   genTaskNodeId,
@@ -357,7 +356,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openParamFor = useUIStore(s => s.openParamFor)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const edgeRoute = useUIStore(s => s.edgeRoute)
-  const requestCharacterCreator = useUIStore(s => s.requestCharacterCreator)
+  const openCharacterCreatorModal = useUIStore(s => s.openCharacterCreatorModal)
   const runSelected = useRFStore(s => s.runSelected)
   const cancelNodeExecution = useRFStore(s => s.cancelNode)
   const setNodeStatus = useRFStore(s => s.setNodeStatus)
@@ -710,21 +709,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterCards, setCharacterCards] = React.useState<CharacterCard[]>([])
   const [characterCardLoading, setCharacterCardLoading] = React.useState(false)
   const [characterCardError, setCharacterCardError] = React.useState<string | null>(null)
-  const [characterCreatorModalOpen, setCharacterCreatorModalOpen] = React.useState(false)
-  const [characterCreatorCard, setCharacterCreatorCard] = React.useState<CharacterCard | null>(null)
-  const [characterCreatorTokenId, setCharacterCreatorTokenId] = React.useState<string | null>(null)
-  const [characterCreatorSource, setCharacterCreatorSource] = React.useState<{
-    videoUrl?: string | null
-    videoTitle?: string | null
-    videoTokenId?: string | null
-  } | null>(null)
-  const characterCreatorClipPreview = React.useMemo(() => {
-    if (!characterCreatorCard?.clipRange) return null
-    const start = Math.max(0, characterCreatorCard.clipRange.start)
-    const rawEnd = Math.max(start, characterCreatorCard.clipRange.end)
-    const end = Math.min(rawEnd, start + CHARACTER_CLIP_MAX)
-    return { start, end }
-  }, [characterCreatorCard])
   const describedFrameCount = React.useMemo(() => frameSamples.filter((sample) => Boolean(sample.description)).length, [frameSamples])
   const findNearestFrameSample = React.useCallback(
     (time?: number | null): FrameSample | null => {
@@ -954,19 +938,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
   const [characterTokenError, setCharacterTokenError] = React.useState<string | null>(null)
-  const characterTokenOptions = React.useMemo(() => {
-    const options = characterTokens.map((t) => ({
-      value: t.id,
-      label: `${t.label || '未命名'}${t.shared ? '（共享）' : ''}`,
-    }))
-    if (
-      characterCreatorTokenId &&
-      !options.some((opt) => opt.value === characterCreatorTokenId)
-    ) {
-      options.push({ value: characterCreatorTokenId, label: '当前视频 Token（共享）' })
-    }
-    return options
-  }, [characterTokens, characterCreatorTokenId])
   const [characterList, setCharacterList] = React.useState<any[]>([])
   const [characterCursor, setCharacterCursor] = React.useState<string | null>(null)
   const [characterLoading, setCharacterLoading] = React.useState(false)
@@ -1501,18 +1472,18 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const handleOpenCharacterCreatorModal = React.useCallback(
     (card: CharacterCard) => {
-      setCharacterCreatorCard(card)
-      setCharacterCreatorSource(null)
-      setCharacterCreatorModalOpen(true)
-      if (selectedCharacterTokenId) {
-        setCharacterCreatorTokenId(selectedCharacterTokenId)
-      } else if (characterTokens.length > 0) {
-        setCharacterCreatorTokenId(characterTokens[0].id)
-      } else {
-        setCharacterCreatorTokenId(null)
-      }
+      openCharacterCreatorModal({
+        source: 'character-card',
+        name: card.name,
+        summary: card.summary,
+        tags: card.tags,
+        clipRange: card.clipRange,
+        videoVendor: resolvedVideoVendor,
+        soraTokenId: selectedCharacterTokenId || null,
+      })
+      setActivePanel('assets')
     },
-    [characterTokens, selectedCharacterTokenId],
+    [openCharacterCreatorModal, resolvedVideoVendor, selectedCharacterTokenId, setActivePanel],
   )
 
   const handleQuickCreateCharacter = React.useCallback(() => {
@@ -1520,7 +1491,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       toast('该功能仅支持 Sora 视频节点', 'error')
       return
     }
-    if (!videoTokenId && !selectedCharacterTokenId && characterTokens.length === 0) {
+    const allowTokenless = resolvedVideoVendor === 'sora2api'
+    if (!allowTokenless && !videoTokenId && !selectedCharacterTokenId && characterTokens.length === 0) {
       toast('当前视频缺少 Sora Token 信息，请先在资产面板绑定密钥', 'error')
       setActivePanel('assets')
       return
@@ -1540,11 +1512,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
 
     const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
-    if (effectiveTokenId) {
-      requestCharacterCreator({
-        source: 'video-node',
-        name: quickCard.name,
-        summary: quickCard.summary,
+    openCharacterCreatorModal({
+      source: 'video-node',
+      name: quickCard.name,
+      summary: quickCard.summary,
       tags: quickCard.tags,
       videoVendor: resolvedVideoVendor,
       soraTokenId: effectiveTokenId,
@@ -1553,20 +1524,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       videoTitle: displayTitle,
     })
     setActivePanel('assets')
-    return
-  }
-
-    setCharacterCreatorCard(quickCard)
-    setCharacterCreatorSource({
-      videoUrl: primaryUrl,
-      videoTitle: displayTitle,
-      videoTokenId,
-    })
-    setCharacterCreatorModalOpen(true)
-    setCharacterCreatorTokenId(videoTokenId)
   }, [
     isVideoNode,
     isSoraVideoVendor,
+    resolvedVideoVendor,
     videoTokenId,
     selectedCharacterTokenId,
     characterTokens,
@@ -1574,13 +1535,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     videoPrimaryIndex,
     videoUrl,
     videoTitle,
-      videoPrompt,
-      prompt,
+    videoPrompt,
+    prompt,
+    openCharacterCreatorModal,
     setActivePanel,
-    setCharacterCreatorCard,
-    setCharacterCreatorModalOpen,
-    setCharacterCreatorSource,
-    setCharacterCreatorTokenId,
     toast,
   ])
 
@@ -1606,25 +1564,22 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       summary: videoPrompt || prompt || undefined,
       frames: [],
     }
-    setCharacterCreatorCard(quickCard)
-    setCharacterCreatorSource({
+    const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
+    openCharacterCreatorModal({
+      source: 'video-node',
+      name: quickCard.name,
+      summary: quickCard.summary,
+      tags: quickCard.tags,
+      videoVendor: resolvedVideoVendor,
+      soraTokenId: effectiveTokenId,
+      videoTokenId: videoTokenId || effectiveTokenId,
       videoUrl: primaryUrl,
       videoTitle: displayTitle,
-      videoTokenId,
     })
-    setCharacterCreatorModalOpen(true)
-    if (selectedCharacterTokenId) {
-      setCharacterCreatorTokenId(selectedCharacterTokenId)
-    } else if (videoTokenId) {
-      setCharacterCreatorTokenId(videoTokenId)
-    } else if (characterTokens.length > 0) {
-      setCharacterCreatorTokenId(characterTokens[0].id)
-    } else {
-      setCharacterCreatorTokenId(null)
-    }
+    setActivePanel('assets')
   }, [
     isVideoNode,
-    resolvedVideoVendor,
+    isSoraVideoVendor,
     hasPrimaryVideo,
     videoResults,
     videoPrimaryIndex,
@@ -1635,61 +1590,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     videoTokenId,
     selectedCharacterTokenId,
     characterTokens,
-    setCharacterCreatorCard,
-    setCharacterCreatorSource,
-    setCharacterCreatorModalOpen,
-    setCharacterCreatorTokenId,
+    resolvedVideoVendor,
+    setActivePanel,
     toast,
   ])
-
-  const closeCharacterCreatorModal = React.useCallback(() => {
-    setCharacterCreatorModalOpen(false)
-    setCharacterCreatorCard(null)
-    setCharacterCreatorTokenId(null)
-    setCharacterCreatorSource(null)
-  }, [])
-
-  const handleConfirmCharacterCreatorModal = React.useCallback(() => {
-    if (!characterCreatorCard) return
-    const effectiveTokenId = characterCreatorTokenId || characterCreatorSource?.videoTokenId || null
-    if (!effectiveTokenId) {
-      toast('暂无可用的 Sora Token，请先前往资产面板绑定', 'error')
-      return
-    }
-    requestCharacterCreator({
-      source: characterCreatorSource ? 'video-node' : 'character-card',
-      name: characterCreatorCard.name,
-      summary: characterCreatorCard.summary,
-      tags: characterCreatorCard.tags,
-      videoVendor: resolvedVideoVendor,
-      soraTokenId: effectiveTokenId,
-      videoTokenId: effectiveTokenId,
-      videoUrl: characterCreatorSource?.videoUrl || undefined,
-      videoTitle: characterCreatorSource?.videoTitle || undefined,
-    })
-    setActivePanel('assets')
-    closeCharacterCreatorModal()
-  }, [characterCreatorCard, characterCreatorTokenId, characterCreatorSource, closeCharacterCreatorModal, requestCharacterCreator, setActivePanel])
-
-  React.useEffect(() => {
-    if (!characterCreatorModalOpen) return
-    if (characterCreatorTokenId) return
-    if (characterCreatorSource?.videoTokenId) {
-      setCharacterCreatorTokenId(characterCreatorSource.videoTokenId)
-      return
-    }
-    if (selectedCharacterTokenId) {
-      setCharacterCreatorTokenId(selectedCharacterTokenId)
-      return
-    }
-    if (videoTokenId) {
-      setCharacterCreatorTokenId(videoTokenId)
-      return
-    }
-    if (characterTokens.length > 0) {
-      setCharacterCreatorTokenId(characterTokens[0].id)
-    }
-  }, [characterCreatorModalOpen, characterCreatorTokenId, selectedCharacterTokenId, characterTokens, videoTokenId, characterCreatorSource])
 
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = isVideoNode
@@ -2446,7 +2350,7 @@ const rewritePromptWithCharacters = React.useCallback(
   })
 
   React.useEffect(() => {
-    if (!isCharacterNode && !characterCreatorModalOpen) return
+    if (!isCharacterNode && !isSoraVideoNode) return
     let canceled = false
     const loadTokens = async () => {
       setCharacterTokensLoading(true)
@@ -2480,7 +2384,7 @@ const rewritePromptWithCharacters = React.useCallback(
     return () => {
       canceled = true
     }
-  }, [isCharacterNode, characterCreatorModalOpen])
+  }, [isCharacterNode, isSoraVideoNode])
 
   React.useEffect(() => {
     if (!isCharacterNode) return
@@ -4798,102 +4702,6 @@ const rewritePromptWithCharacters = React.useCallback(
         </Modal>
       )}
 
-      <Modal
-        opened={characterCreatorModalOpen}
-        onClose={closeCharacterCreatorModal}
-        title="一键创建角色"
-        centered
-        withinPortal
-        zIndex={12010}
-      >
-        <Stack gap="sm">
-          {characterCreatorCard ? (
-            <div>
-              <Text size="sm" fw={500}>{characterCreatorCard.name}</Text>
-              {characterCreatorCard.summary && (
-                <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
-                  {characterCreatorCard.summary}
-                </Text>
-              )}
-              {characterCreatorSource?.videoUrl && (
-                <Text size="xs" c="dimmed" mt={4}>
-                  将自动使用当前 Sora 视频片段创建角色。
-                </Text>
-              )}
-              <Text size="xs" c="dimmed" mt={6}>
-                {characterCreatorClipPreview
-                  ? `默认截取 ${characterCreatorClipPreview.start.toFixed(2)}s - ${characterCreatorClipPreview.end.toFixed(2)}s，最长 ${CHARACTER_CLIP_MAX}s`
-                  : '请在下一步选择截取区间（建议 1.2-3 秒）'}
-              </Text>
-            </div>
-          ) : (
-            <Text size="sm" c="dimmed">
-              请选择需要创建的角色卡
-            </Text>
-          )}
-
-          {characterTokensLoading ? (
-            <Group gap="xs">
-              <Loader size="xs" />
-              <Text size="xs" c="dimmed">正在加载 Sora Token…</Text>
-            </Group>
-          ) : characterTokenOptions.length > 0 ? (
-            <>
-              <Select
-                label="Sora Token"
-                placeholder="请选择 Token"
-                data={characterTokenOptions}
-                value={characterCreatorTokenId}
-                onChange={(value) => setCharacterCreatorTokenId(value)}
-                withinPortal
-                size="xs"
-              />
-              {characterTokens.length === 0 && characterCreatorTokenId && (
-                <Text size="xs" c="dimmed">
-                  将使用当前视频任务关联的 Sora Token。
-                </Text>
-              )}
-            </>
-          ) : (
-            <Stack gap={4}>
-              <Text size="xs" c="red">
-                暂无可用的 Sora Token
-              </Text>
-              <Text size="xs" c="dimmed">
-                请先前往资产面板绑定密钥，再尝试创建角色。
-              </Text>
-            </Stack>
-          )}
-          {characterTokenError && (
-            <Text size="xs" c="red">
-              {characterTokenError}
-            </Text>
-          )}
-          <Group justify="flex-end" mt="xs">
-            {characterTokens.length === 0 && (
-              <Button
-                variant="subtle"
-                size="xs"
-                onClick={() => {
-                  setActivePanel('assets')
-                  closeCharacterCreatorModal()
-                }}
-              >
-                管理 Token
-              </Button>
-            )}
-            <Button variant="default" onClick={closeCharacterCreatorModal}>
-              取消
-            </Button>
-            <Button
-              onClick={handleConfirmCharacterCreatorModal}
-              disabled={!characterCreatorCard || !characterCreatorTokenId}
-            >
-              开始创建
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
       {veoImageModalMode && (
         <Modal
           opened={true}

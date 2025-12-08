@@ -78,6 +78,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       errorDetails = normalizeErrorDetail(providerResponse);
     }
 
+    // Avoid propagating upstream 401 responses to the frontend; treat them as gateway errors instead.
+    const upstreamStatus =
+      errorDetails && typeof (errorDetails as any) === 'object'
+        ? (errorDetails as any).upstreamStatus
+        : null;
+    if (status === HttpStatus.UNAUTHORIZED && upstreamStatus === HttpStatus.UNAUTHORIZED) {
+      status = HttpStatus.BAD_GATEWAY;
+      if (!message || message.toLowerCase() === 'unauthorized') {
+        message = 'Upstream request unauthorized';
+      }
+    }
+
     // 构建错误响应
     const errorResponse = {
       statusCode: status,

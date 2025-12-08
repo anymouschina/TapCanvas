@@ -244,6 +244,8 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const startX = timeToX(trimStart)
   const endX = timeToX(trimEnd)
   const playheadX = timeToX(currentTime)
+  const contentMaxWidth = 1180
+  const contentPadding = '0 16px'
 
   return (
     <div
@@ -261,16 +263,19 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 16px',
+          justifyContent: 'center',
+          padding: '12px 0',
+          width: '100%',
         }}
       >
-        <Text fw={500} style={{ color: '#f9fafb' }}>
-          Trim your video
-        </Text>
-        <ActionIcon variant="light" onClick={onClose} title="关闭">
-          <IconX size={18} />
-        </ActionIcon>
+        <div style={{ width: '100%', maxWidth: contentMaxWidth, padding: contentPadding, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text fw={500} style={{ color: '#f9fafb' }}>
+            Trim your video
+          </Text>
+          <ActionIcon variant="light" onClick={onClose} title="关闭">
+            <IconX size={18} />
+          </ActionIcon>
+        </div>
       </div>
       <div
         style={{
@@ -278,19 +283,21 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '8px 16px',
+          padding: '8px 0',
           gap: 12,
+          width: '100%',
         }}
       >
         <div
           style={{
-            width: '86vw',
-            maxWidth: 960,
-            height: '48vh',
-            maxHeight: 420,
-            minHeight: 260,
-            background: 'black',
-            display: 'flex',
+          width: '100%',
+          maxWidth: contentMaxWidth,
+          padding: contentPadding,
+          height: '48vh',
+          maxHeight: 420,
+          minHeight: 260,
+          background: 'black',
+          display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             borderRadius: 8,
@@ -344,14 +351,15 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       </div>
       <div
         style={{
-          padding: '8px 16px 16px',
+          padding: '8px 0 16px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'center',
           gap: 12,
+          width: '100%',
         }}
       >
-        <Stack gap={6} style={{ flex: 1 }}>
+        <Stack gap={6} style={{ flex: 1, width: '100%', maxWidth: contentMaxWidth, padding: contentPadding }}>
           <div
             ref={timelineRef}
             style={{

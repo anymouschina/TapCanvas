@@ -33,7 +33,6 @@ import {
   type VideoHistoryRecord,
 } from '../api/server'
 import { IconPlayerPlay, IconPlus, IconTrash, IconPencil, IconRepeat, IconExternalLink, IconUpload, IconUserPlus } from '@tabler/icons-react'
-import { VideoTrimModal } from './VideoTrimModal'
 
 const MAX_CHARACTER_TRIM_SECONDS = 3
 const SORA_HISTORY_PAGE_SIZE = 12
@@ -62,6 +61,10 @@ export default function AssetPanel(): JSX.Element | null {
   const addNodes = useRFStore(s => s.load)
   const addNode = useRFStore(s => s.addNode)
   const openPreview = useUIStore(s => s.openPreview)
+  const openVideoTrimModal = useUIStore(s => s.openVideoTrimModal)
+  const updateVideoTrimModal = useUIStore(s => s.updateVideoTrimModal)
+  const closeVideoTrimModal = useUIStore(s => s.closeVideoTrimModal)
+  const videoTrimModal = useUIStore(s => s.videoTrimModal)
   const mounted = active === 'assets'
   const currentProject = useUIStore(s => s.currentProject)
   const characterCreatorRequest = useUIStore(s => s.characterCreatorRequest)
@@ -93,7 +96,6 @@ export default function AssetPanel(): JSX.Element | null {
   const [createCharFile, setCreateCharFile] = React.useState<File | null>(null)
   const [createCharVideoUrl, setCreateCharVideoUrl] = React.useState<string | null>(null)
   const [createCharDuration, setCreateCharDuration] = React.useState(0)
-  const [createCharTrimOpen, setCreateCharTrimOpen] = React.useState(false)
   const [createCharUploading, setCreateCharUploading] = React.useState(false)
   const [createCharFinalizeOpen, setCreateCharFinalizeOpen] = React.useState(false)
   const [createCharCameoId, setCreateCharCameoId] = React.useState<string | null>(null)
@@ -109,6 +111,7 @@ export default function AssetPanel(): JSX.Element | null {
   const createCharCoverInputRef = React.useRef<HTMLInputElement | null>(null)
   const [createCharProgress, setCreateCharProgress] = React.useState<number | null>(null)
   const [createCharDefaultRange, setCreateCharDefaultRange] = React.useState<{ start: number; end: number } | null>(null)
+  const [createCharVendor, setCreateCharVendor] = React.useState<string | null>(null)
   const [pickCharVideoOpen, setPickCharVideoOpen] = React.useState(false)
   const [pickCharTab, setPickCharTab] = React.useState<'local' | 'drafts' | 'published'>('local')
   const [pickCharLoading, setPickCharLoading] = React.useState(false)
@@ -120,6 +123,8 @@ export default function AssetPanel(): JSX.Element | null {
   const [soraHistoryTotal, setSoraHistoryTotal] = React.useState(0)
   const [soraHistoryOffset, setSoraHistoryOffset] = React.useState(0)
   const [soraHistoryError, setSoraHistoryError] = React.useState<string | null>(null)
+  const [sora2apiProvider, setSora2apiProvider] = React.useState<ModelProviderDto | null>(null)
+  const [sora2apiTokens, setSora2apiTokens] = React.useState<ModelTokenDto[]>([])
 
 const fetchSoraHistory = React.useCallback(
   async (reset: boolean) => {
@@ -147,12 +152,26 @@ const handleLoadMoreHistory = React.useCallback(() => {
     fetchSoraHistory(false).catch(() => {})
   }
 }, [historyHasMore, soraHistoryLoading, fetchSoraHistory])
-  const createCharThumbs = React.useMemo(() => {
-    if (!createCharVideoUrl || !createCharDuration) return []
-    const usedDuration = Math.min(createCharDuration, MAX_CHARACTER_TRIM_SECONDS)
-    const count = Math.max(10, Math.round(usedDuration))
-    return Array.from({ length: count }, () => createCharVideoUrl)
-  }, [createCharVideoUrl, createCharDuration])
+  React.useEffect(() => {
+    if (!videoTrimModal.open) return
+    if (!videoTrimModal.payload || videoTrimModal.payload.videoUrl !== createCharVideoUrl) return
+    const payload = videoTrimModal.payload
+    const needsUpdate =
+      payload.loading !== createCharUploading ||
+      payload.progressPct !== createCharProgress ||
+      (createCharDefaultRange && (
+        payload.defaultRange?.start !== createCharDefaultRange.start ||
+        payload.defaultRange?.end !== createCharDefaultRange.end
+      )) ||
+      (!createCharDefaultRange && payload.defaultRange)
+    if (needsUpdate) {
+      updateVideoTrimModal({
+        loading: createCharUploading,
+        progressPct: createCharProgress,
+        defaultRange: createCharDefaultRange || undefined,
+      })
+    }
+  }, [videoTrimModal.open, videoTrimModal.payload, createCharVideoUrl, createCharUploading, createCharProgress, createCharDefaultRange, updateVideoTrimModal])
   React.useEffect(() => {
     // 资产现在是用户级别的，不依赖项目
     const loader = mounted ? listServerAssets() : Promise.resolve([])
@@ -161,6 +180,13 @@ const handleLoadMoreHistory = React.useCallback(() => {
 
 React.useEffect(() => {
   if (!mounted || (tab !== 'sora' && tab !== 'sora-published' && tab !== 'sora-characters')) return
+  if (tab === 'sora-characters' && createCharVendor === 'sora2api') {
+    setCharLoading(false)
+    setCharacters([])
+    setCharCursor(null)
+    setSoraCharUsingShared(false)
+    return
+  }
   if (tab === 'sora') setDraftLoading(true)
   if (tab === 'sora-published') setPublishedLoading(true)
   if (tab === 'sora-characters') setCharLoading(true)
@@ -276,7 +302,7 @@ React.useEffect(() => {
         if (tab === 'sora-published') setPublishedLoading(false)
         if (tab === 'sora-characters') setCharLoading(false)
       })
-}, [mounted, tab, selectedTokenId])
+}, [mounted, tab, selectedTokenId, createCharVendor])
 
 React.useEffect(() => {
   if (!mounted || tab !== 'sora-history') return
@@ -453,7 +479,19 @@ React.useEffect(() => {
       setPickCharVideoOpen(false)
       setPickCharSelected(null)
       setPickCharTab('local')
-      setCreateCharTrimOpen(true)
+      const usedDuration = Math.min(duration, MAX_CHARACTER_TRIM_SECONDS)
+      const count = Math.max(10, Math.round(usedDuration))
+      const thumbs = Array.from({ length: count }, () => objectUrl)
+      openVideoTrimModal({
+        videoUrl: objectUrl,
+        originalDuration: duration || 0,
+        thumbnails: thumbs,
+        defaultRange: createCharDefaultRange || undefined,
+        loading: createCharUploading,
+        progressPct: createCharProgress,
+        onConfirm: handleTrimConfirm,
+        onClose: handleTrimClose,
+      })
       return true
     } catch (err: any) {
       console.error(err)
@@ -468,6 +506,7 @@ React.useEffect(() => {
   if (!characterCreatorRequest || !mounted) return
   let canceled = false
   const handleRequest = async () => {
+    setCreateCharVendor(characterCreatorRequest.payload?.videoVendor || null)
     const clip = characterCreatorRequest.payload?.clipRange
     if (clip) {
       const rawStart = Number(clip.start)
@@ -484,6 +523,22 @@ React.useEffect(() => {
     const requestedTokenId = characterCreatorRequest.payload?.soraTokenId || characterCreatorRequest.payload?.videoTokenId || null
     const videoVendor = characterCreatorRequest.payload?.videoVendor || null
     const allowWithoutToken = videoVendor === 'sora2api'
+    if (allowWithoutToken) {
+      try {
+        const providers = await listModelProviders()
+        const provider = providers.find((p) => p.vendor === 'sora2api') || null
+        setSora2apiProvider(provider || null)
+        if (provider) {
+          const tokens = await listModelTokens(provider.id)
+          setSora2apiTokens(tokens || [])
+        } else {
+          setSora2apiTokens([])
+        }
+      } catch (err: any) {
+        console.error('load sora2api tokens failed', err)
+        setSora2apiTokens([])
+      }
+    }
     const fallbackTokenId = selectedTokenId || requestedTokenId || soraTokens[0]?.id || null
     if (!fallbackTokenId && !allowWithoutToken) {
       toast('暂无可用的 Sora Token，请先在右上角绑定密钥', 'error')
@@ -559,7 +614,19 @@ React.useEffect(() => {
       setCreateCharFile(file)
       setCreateCharVideoUrl(url)
       setCreateCharDuration(duration || 0)
-      setCreateCharTrimOpen(true)
+      const usedDuration = Math.min(duration, MAX_CHARACTER_TRIM_SECONDS)
+      const count = Math.max(10, Math.round(usedDuration))
+      const thumbs = Array.from({ length: count }, () => url)
+      openVideoTrimModal({
+        videoUrl: url,
+        originalDuration: duration || 0,
+        thumbnails: thumbs,
+        defaultRange: createCharDefaultRange || undefined,
+        loading: createCharUploading,
+        progressPct: createCharProgress,
+        onConfirm: handleTrimConfirm,
+        onClose: handleTrimClose,
+      })
     } catch (err: any) {
       console.error(err)
       alert(err?.message || '无法读取视频时长，请稍后重试')
@@ -571,7 +638,7 @@ React.useEffect(() => {
   }
 
   const handleTrimClose = () => {
-    setCreateCharTrimOpen(false)
+    closeVideoTrimModal()
     if (createCharVideoUrl) {
       URL.revokeObjectURL(createCharVideoUrl)
     }
@@ -621,10 +688,93 @@ React.useEffect(() => {
   }
 
   const handleTrimConfirm = async (range: { start: number; end: number }) => {
-    if (!createCharFile || !selectedTokenId) return
+    if (!createCharFile) return
     if (createCharUploading) return
+    const isSora2apiVendor = createCharVendor === 'sora2api'
+    const targetTokenId = selectedTokenId || (isSora2apiVendor ? sora2apiTokens[0]?.id || null : null)
     setCreateCharUploading(true)
     setCreateCharProgress(0)
+
+    // Sora2API 走自建接口
+    if (isSora2apiVendor) {
+      const token = targetTokenId ? sora2apiTokens.find((t) => t.id === targetTokenId) : null
+      if (!token) {
+        setCreateCharUploading(false)
+        setCreateCharProgress(null)
+        toast('Sora2API 需先配置密钥后再创建角色', 'error')
+        return
+      }
+      const baseUrl = (sora2apiProvider?.baseUrl || '').trim() || 'http://localhost:8000'
+      try {
+        const arrayBuffer = await createCharFile.arrayBuffer()
+        const arrayToBase64 = (buf: ArrayBuffer) => {
+          const hasBuffer = typeof (globalThis as any).Buffer !== 'undefined'
+          if (hasBuffer) {
+            return (globalThis as any).Buffer.from(buf).toString('base64')
+          }
+          const bytes = new Uint8Array(buf)
+          let binary = ''
+          const chunkSize = 8192
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+          }
+          return btoa(binary)
+        }
+        const base64 = arrayToBase64(arrayBuffer)
+        const dataUrl = `data:${createCharFile.type || 'video/mp4'};base64,${base64}`
+        const payload = {
+          model: 'sora-video-landscape-10s',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'video_url',
+                  video_url: { url: dataUrl },
+                },
+              ],
+            },
+          ],
+          stream: false,
+        }
+        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token.secretToken}`,
+          },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const body = await res.text()
+          throw new Error(body || `Sora2API 角色创建失败：${res.status}`)
+        }
+        toast('已提交 Sora2API 角色创建任务', 'success')
+        closeVideoTrimModal()
+        if (createCharVideoUrl) {
+          URL.revokeObjectURL(createCharVideoUrl)
+        }
+        setCreateCharVideoUrl(null)
+        setCreateCharDuration(0)
+        setCreateCharFile(null)
+        setCreateCharDefaultRange(null)
+      } catch (err: any) {
+        console.error(err)
+        toast(err?.message || 'Sora2API 角色创建失败', 'error')
+      } finally {
+        setCreateCharUploading(false)
+        setCreateCharProgress(null)
+      }
+      return
+    }
+
+    // 默认 Sora 流程
+    if (!selectedTokenId) {
+      setCreateCharUploading(false)
+      setCreateCharProgress(null)
+      toast('暂无可用的 Sora Token，请先绑定', 'error')
+      return
+    }
     try {
       const start = Math.max(0, range.start)
       const end = Math.max(start, Math.min(range.end, start + MAX_CHARACTER_TRIM_SECONDS))
@@ -659,7 +809,7 @@ React.useEffect(() => {
         }
       }
 
-      setCreateCharTrimOpen(false)
+      closeVideoTrimModal()
       if (createCharVideoUrl) {
         URL.revokeObjectURL(createCharVideoUrl)
       }
@@ -2068,18 +2218,6 @@ React.useEffect(() => {
                 </Group>
               </Stack>
             </Modal>
-            <VideoTrimModal
-              opened={createCharTrimOpen}
-              videoUrl={createCharVideoUrl || ''}
-              originalDuration={createCharDuration || 0}
-              thumbnails={createCharThumbs}
-              loading={createCharUploading}
-              progressPct={createCharProgress}
-              defaultRange={createCharDefaultRange || undefined}
-              onClose={handleTrimClose}
-              onConfirm={handleTrimConfirm}
-              centered
-            />
           </div>
         )}
       </Transition>

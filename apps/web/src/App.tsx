@@ -36,6 +36,8 @@ import TemplatePanel from './ui/TemplatePanel'
 import AccountPanel from './ui/AccountPanel'
 import ProjectPanel from './ui/ProjectPanel'
 import AssetPanel from './ui/AssetPanel'
+import { CharacterCreatorModal } from './ui/CharacterCreatorModal'
+import { VideoTrimModalHost } from './ui/VideoTrimModalHost'
 import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
@@ -725,6 +727,8 @@ export default function App(): JSX.Element {
       <HistoryPanel />
       <ParamModal />
       <PreviewModal />
+      <CharacterCreatorModal />
+      <VideoTrimModalHost />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}
       {libraryFlowId && (<LibraryEditor flowId={libraryFlowId} onClose={closeLibraryFlow} />)}
     </AppShell>

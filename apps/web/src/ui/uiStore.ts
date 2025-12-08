@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type CharacterCreatorPayload = {
+export type CharacterCreatorPayload = {
   source?: string
   name?: string
   summary?: string
@@ -11,6 +11,17 @@ type CharacterCreatorPayload = {
   videoUrl?: string | null
   videoTitle?: string | null
   videoTokenId?: string | null
+}
+
+export type VideoTrimPayload = {
+  videoUrl: string
+  originalDuration: number
+  thumbnails: string[]
+  defaultRange?: { start: number; end: number }
+  loading?: boolean
+  progressPct?: number | null
+  onConfirm: (range: { start: number; end: number }) => void
+  onClose?: () => void
 }
 
 type UIState = {
@@ -52,6 +63,13 @@ type UIState = {
   setPromptSuggestMode: (m: 'off' | 'history' | 'semantic') => void
   soraVideoBaseUrl: string | null
   setSoraVideoBaseUrl: (url: string | null) => void
+  videoTrimModal: { open: boolean; payload?: VideoTrimPayload | null }
+  openVideoTrimModal: (payload: VideoTrimPayload) => void
+  updateVideoTrimModal: (patch: Partial<VideoTrimPayload>) => void
+  closeVideoTrimModal: () => void
+  characterCreatorModal: { open: boolean; payload?: CharacterCreatorPayload | null }
+  openCharacterCreatorModal: (payload: CharacterCreatorPayload) => void
+  closeCharacterCreatorModal: () => void
   characterCreatorRequest: { timestamp: number; payload?: CharacterCreatorPayload } | null
   requestCharacterCreator: (payload?: CharacterCreatorPayload | null) => void
   clearCharacterCreatorRequest: () => void
@@ -102,6 +120,18 @@ export const useUIStore = create<UIState>((set) => ({
   setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
   soraVideoBaseUrl: null,
   setSoraVideoBaseUrl: (url) => set({ soraVideoBaseUrl: url }),
+  videoTrimModal: { open: false, payload: null },
+  openVideoTrimModal: (payload) => set({ videoTrimModal: { open: true, payload } }),
+  updateVideoTrimModal: (patch) =>
+    set((s) => ({
+      videoTrimModal: s.videoTrimModal.open
+        ? { open: true, payload: { ...(s.videoTrimModal.payload || {}), ...patch } }
+        : s.videoTrimModal,
+    })),
+  closeVideoTrimModal: () => set({ videoTrimModal: { open: false, payload: null } }),
+  characterCreatorModal: { open: false, payload: null },
+  openCharacterCreatorModal: (payload) => set({ characterCreatorModal: { open: true, payload } }),
+  closeCharacterCreatorModal: () => set({ characterCreatorModal: { open: false, payload: null } }),
   characterCreatorRequest: null,
   requestCharacterCreator: (payload) =>
     set({
