@@ -5,6 +5,7 @@ type CharacterCreatorPayload = {
   name?: string
   summary?: string
   tags?: string[]
+  videoVendor?: string | null
   soraTokenId?: string | null
   clipRange?: { start: number; end: number }
   videoUrl?: string | null

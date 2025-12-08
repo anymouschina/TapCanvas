@@ -62,6 +62,7 @@ import {
   applyMentionFallback,
   blobToDataUrl,
   clampCharacterClipWindow,
+  CHARACTER_CLIP_MAX,
   computeHandleLayout,
   extractTextFromTaskResult,
   genTaskNodeId,
@@ -1241,7 +1242,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const existingImageVendor = (data as any)?.imageModelVendor
   const existingVideoVendor = (data as any)?.videoModelVendor
   const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
-  const isSoraVideoNode = isVideoNode && resolvedVideoVendor === 'sora'
+  const isSoraVideoVendor = resolvedVideoVendor === 'sora' || resolvedVideoVendor === 'sora2api'
+  const isSoraVideoNode = isVideoNode && isSoraVideoVendor
   const handlePoseSaved = React.useCallback(
     ({ poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, maskUrl, prompt: posePrompt }: { poseStickmanUrl: string; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string }) => {
     const stateBefore = useRFStore.getState()
@@ -1514,12 +1516,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   )
 
   const handleQuickCreateCharacter = React.useCallback(() => {
-    if (!isVideoNode || resolvedVideoVendor !== 'sora') {
+    if (!isVideoNode || !isSoraVideoVendor) {
       toast('该功能仅支持 Sora 视频节点', 'error')
       return
     }
-    if (!videoTokenId) {
-      toast('当前视频缺少 Sora Token 信息，请重新生成或绑定密钥', 'error')
+    if (!videoTokenId && !selectedCharacterTokenId && characterTokens.length === 0) {
+      toast('当前视频缺少 Sora Token 信息，请先在资产面板绑定密钥', 'error')
+      setActivePanel('assets')
       return
     }
     const activeVideo = videoResults[videoPrimaryIndex] || null
@@ -1529,20 +1532,30 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       return
     }
     const displayTitle = activeVideo?.title || videoTitle || 'Sora 角色'
-    const rawDuration = activeVideo?.duration ?? activeVideoDuration ?? videoDuration
-    const normalizedDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0
-      ? rawDuration
-      : CHARACTER_CLIP_MAX
-    const clipEnd = normalizedDuration >= CHARACTER_CLIP_MIN
-      ? Math.min(normalizedDuration, CHARACTER_CLIP_MAX)
-      : normalizedDuration
     const quickCard: CharacterCard = {
       id: `video-${Date.now().toString(36)}`,
       name: displayTitle,
       summary: videoPrompt || prompt || undefined,
       frames: [],
-      clipRange: { start: 0, end: clipEnd },
     }
+
+    const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
+    if (effectiveTokenId) {
+      requestCharacterCreator({
+        source: 'video-node',
+        name: quickCard.name,
+        summary: quickCard.summary,
+      tags: quickCard.tags,
+      videoVendor: resolvedVideoVendor,
+      soraTokenId: effectiveTokenId,
+      videoTokenId: videoTokenId || effectiveTokenId,
+      videoUrl: primaryUrl,
+      videoTitle: displayTitle,
+    })
+    setActivePanel('assets')
+    return
+  }
+
     setCharacterCreatorCard(quickCard)
     setCharacterCreatorSource({
       videoUrl: primaryUrl,
@@ -1553,19 +1566,78 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     setCharacterCreatorTokenId(videoTokenId)
   }, [
     isVideoNode,
-    resolvedVideoVendor,
+    isSoraVideoVendor,
     videoTokenId,
+    selectedCharacterTokenId,
+    characterTokens,
+    videoResults,
+    videoPrimaryIndex,
+    videoUrl,
+    videoTitle,
+      videoPrompt,
+      prompt,
+    setActivePanel,
+    setCharacterCreatorCard,
+    setCharacterCreatorModalOpen,
+    setCharacterCreatorSource,
+    setCharacterCreatorTokenId,
+    toast,
+  ])
+
+  const handleOpenCharacterCreatorFromVideo = React.useCallback(() => {
+    if (!isVideoNode || !isSoraVideoVendor) {
+      toast('该功能仅支持 Sora 视频节点', 'error')
+      return
+    }
+    if (!hasPrimaryVideo) {
+      toast('暂无可用的视频结果，无法创建角色', 'error')
+      return
+    }
+    const activeVideo = videoResults[videoPrimaryIndex] || null
+    const primaryUrl = activeVideo?.url || videoUrl || null
+    if (!primaryUrl) {
+      toast('暂无可用的视频结果，无法创建角色', 'error')
+      return
+    }
+    const displayTitle = activeVideo?.title || videoTitle || 'Sora 角色'
+    const quickCard: CharacterCard = {
+      id: `video-${Date.now().toString(36)}`,
+      name: displayTitle,
+      summary: videoPrompt || prompt || undefined,
+      frames: [],
+    }
+    setCharacterCreatorCard(quickCard)
+    setCharacterCreatorSource({
+      videoUrl: primaryUrl,
+      videoTitle: displayTitle,
+      videoTokenId,
+    })
+    setCharacterCreatorModalOpen(true)
+    if (selectedCharacterTokenId) {
+      setCharacterCreatorTokenId(selectedCharacterTokenId)
+    } else if (videoTokenId) {
+      setCharacterCreatorTokenId(videoTokenId)
+    } else if (characterTokens.length > 0) {
+      setCharacterCreatorTokenId(characterTokens[0].id)
+    } else {
+      setCharacterCreatorTokenId(null)
+    }
+  }, [
+    isVideoNode,
+    resolvedVideoVendor,
+    hasPrimaryVideo,
     videoResults,
     videoPrimaryIndex,
     videoUrl,
     videoTitle,
     videoPrompt,
     prompt,
-    activeVideoDuration,
-    videoDuration,
+    videoTokenId,
+    selectedCharacterTokenId,
+    characterTokens,
     setCharacterCreatorCard,
-    setCharacterCreatorModalOpen,
     setCharacterCreatorSource,
+    setCharacterCreatorModalOpen,
     setCharacterCreatorTokenId,
     toast,
   ])
@@ -1589,16 +1661,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       name: characterCreatorCard.name,
       summary: characterCreatorCard.summary,
       tags: characterCreatorCard.tags,
+      videoVendor: resolvedVideoVendor,
       soraTokenId: effectiveTokenId,
       videoTokenId: effectiveTokenId,
       videoUrl: characterCreatorSource?.videoUrl || undefined,
       videoTitle: characterCreatorSource?.videoTitle || undefined,
-      clipRange: characterCreatorCard.clipRange
-        ? {
-            start: characterCreatorCard.clipRange.start,
-            end: characterCreatorCard.clipRange.end,
-          }
-        : undefined,
     })
     setActivePanel('assets')
     closeCharacterCreatorModal()
@@ -3278,15 +3345,27 @@ const rewritePromptWithCharacters = React.useCallback(
             </Group>
           </Group>
           <Group gap={6} justify="space-between">
-            <Button
-              size="compact-xs"
-              variant="light"
-              leftSection={<IconPhotoSearch size={12} />}
-              loading={frameCaptureLoading}
-              onClick={handleCaptureVideoFrames}
-            >
-              抽帧预览
-            </Button>
+            <Group gap={6}>
+              <Button
+                size="compact-xs"
+                variant="light"
+                leftSection={<IconPhotoSearch size={12} />}
+                loading={frameCaptureLoading}
+                onClick={handleCaptureVideoFrames}
+              >
+                抽帧预览
+              </Button>
+              <Button
+                size="compact-xs"
+                variant="default"
+                leftSection={<IconUserPlus size={12} />}
+                onClick={handleOpenCharacterCreatorFromVideo}
+                disabled={!hasPrimaryVideo || !isSoraVideoVendor}
+                title="直接生成角色卡，跳过逐帧解析"
+              >
+                生成角色卡
+              </Button>
+            </Group>
             {frameSamples.length > 0 && (
               <Button
                 size="compact-xs"
@@ -3312,21 +3391,16 @@ const rewritePromptWithCharacters = React.useCallback(
                 variant="light"
                 loading={characterCardLoading}
                 onClick={handleGenerateCharacterCards}
+                title="使用帧描述聚类生成角色卡，适合需要精确分镜的场景"
               >
-                生成角色卡
+                逐帧解析角色卡
               </Button>
             </Group>
           )}
           {isSoraVideoNode && (
-            <Button
-              size="compact-xs"
-              variant="outline"
-              leftSection={<IconUserPlus size={12} />}
-              onClick={handleQuickCreateCharacter}
-              disabled={!hasPrimaryVideo}
-            >
-              一键创建角色
-            </Button>
+            <Text size="xs" c="dimmed" style={{ lineHeight: 1.35 }}>
+              “逐帧解析角色卡” 会抽帧+聚类；“一键生成角色卡” 直接跳到资产面板，由你自行选择截取区间。
+            </Text>
           )}
 
           {videoUrl ? (
@@ -4749,7 +4823,7 @@ const rewritePromptWithCharacters = React.useCallback(
               <Text size="xs" c="dimmed" mt={6}>
                 {characterCreatorClipPreview
                   ? `默认截取 ${characterCreatorClipPreview.start.toFixed(2)}s - ${characterCreatorClipPreview.end.toFixed(2)}s，最长 ${CHARACTER_CLIP_MAX}s`
-                  : `默认截取 ${CHARACTER_CLIP_MAX}s 片段，可在下一步微调`}
+                  : '请在下一步选择截取区间（建议 1.2-3 秒）'}
               </Text>
             </div>
           ) : (

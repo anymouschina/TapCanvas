@@ -416,13 +416,18 @@ React.useEffect(() => {
     v.src = url
   })
 
-  const prepareCharacterFromUrl = async (url: string | null, title: string, tokenOverride?: string | null): Promise<boolean> => {
+  const prepareCharacterFromUrl = async (
+    url: string | null,
+    title: string,
+    tokenOverride?: string | null,
+    allowWithoutToken?: boolean,
+  ): Promise<boolean> => {
     if (!url) {
       setPickCharError('该视频没有可用的播放地址')
       return false
     }
     const effectiveTokenId = tokenOverride ?? selectedTokenId
-    if (!effectiveTokenId) {
+    if (!effectiveTokenId && !allowWithoutToken) {
       setPickCharError('暂无可用的 Sora Token')
       return false
     }
@@ -477,8 +482,10 @@ React.useEffect(() => {
     }
     setTab('sora-characters')
     const requestedTokenId = characterCreatorRequest.payload?.soraTokenId || characterCreatorRequest.payload?.videoTokenId || null
+    const videoVendor = characterCreatorRequest.payload?.videoVendor || null
+    const allowWithoutToken = videoVendor === 'sora2api'
     const fallbackTokenId = selectedTokenId || requestedTokenId || soraTokens[0]?.id || null
-    if (!fallbackTokenId) {
+    if (!fallbackTokenId && !allowWithoutToken) {
       toast('暂无可用的 Sora Token，请先在右上角绑定密钥', 'error')
       setCreateCharDefaultRange(null)
       clearCharacterCreatorRequest()
@@ -495,7 +502,7 @@ React.useEffect(() => {
     let shouldOpenPicker = true
     if (autoVideoUrl) {
       const title = characterCreatorRequest.payload?.videoTitle || 'sora-video'
-      const success = await prepareCharacterFromUrl(autoVideoUrl, title, fallbackTokenId)
+      const success = await prepareCharacterFromUrl(autoVideoUrl, title, fallbackTokenId, allowWithoutToken)
       shouldOpenPicker = !success
       if (!success) {
         toast('自动读取视频失败，请手动选择来源', 'error')
