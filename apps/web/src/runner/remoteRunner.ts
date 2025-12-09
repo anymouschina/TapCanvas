@@ -238,14 +238,18 @@ function collectReferenceImages(state: any, targetId: string): string[] {
     const data: any = src.data || {}
     const kind: string | undefined = data.kind
     if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
-    const primary = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
-    if (primary) collected.push(primary)
     const results = Array.isArray(data.imageResults) ? data.imageResults : []
-    for (const item of results) {
-      if (!item) continue
-      const url = typeof item.url === 'string' ? item.url.trim() : ''
-      if (url) collected.push(url)
-    }
+    const primaryIndex =
+      typeof data.imagePrimaryIndex === 'number' && data.imagePrimaryIndex >= 0
+        ? data.imagePrimaryIndex
+        : 0
+    const primaryFromResults =
+      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
+        ? results[primaryIndex].url.trim()
+        : ''
+    const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    const primary = primaryFromResults || primaryFallback
+    if (primary) collected.push(primary)
   }
   const targetNode = nodes.find((n: Node) => n.id === targetId)
   if (targetNode) {
@@ -1587,6 +1591,10 @@ async function runGenericTask(ctx: RunnerContext) {
       typeof (data as any)?.poseMaskUrl === 'string' && (data as any)?.poseMaskUrl.trim()
         ? (data as any).poseMaskUrl.trim()
         : null
+    const systemPromptOpt =
+      (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
+        ? (data as any).systemPrompt
+        : undefined
     const referenceImagesRaw = isImageTask
       ? collectReferenceImages(state, id)
       : []
@@ -1617,6 +1625,11 @@ async function runGenericTask(ctx: RunnerContext) {
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
     let lastRes: any = null
+
+    const promptForModel =
+      isImageTask && systemPromptOpt
+        ? `${systemPromptOpt}\n\n${prompt}`
+        : prompt
 
     for (let i = 0; i < sampleCount; i++) {
       if (isCanceled(id)) {
@@ -1649,13 +1662,14 @@ async function runGenericTask(ctx: RunnerContext) {
 
       const res = await runTaskByVendor(vendor, {
         kind: effectiveTaskKind,
-        prompt,
+        prompt: promptForModel,
         extras: {
           nodeKind: kind,
           nodeId: id,
           modelKey: selectedModel,
           ...(isImageTask ? { aspectRatio } : {}),
           ...(wantsImageEdit ? { referenceImages, ...(maskUrl ? { maskUrl } : {}) } : {}),
+          ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
         },
       })
 
