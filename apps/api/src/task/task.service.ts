@@ -10,6 +10,7 @@ import type {
   TaskProgressEvent,
   TaskResult,
   TaskStatus,
+  TaskKind,
   TaskAsset,
 } from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
@@ -186,7 +187,12 @@ export class TaskService {
 
     try {
       const result = await this.runAdapter(adapter, req, ctx)
-      const assets = await this.hostTaskAssets(ctx.userId, result.assets)
+      const assets = await this.hostTaskAssets(ctx.userId, result.assets, {
+        taskKind: req.kind,
+        prompt: req.prompt,
+        vendor: adapter.name,
+        modelKey: ctx.modelKey,
+      })
       const normalized: TaskResult = {
         ...result,
         assets,
@@ -348,7 +354,10 @@ export class TaskService {
     const { ctx } = await this.resolveVendorContext(userId, 'veo', null)
     const snapshot = await fetchVeoResultSnapshot({ ctx, taskId: taskId.trim() })
     if (snapshot.asset) {
-      const assets = await this.hostTaskAssets(userId, [snapshot.asset])
+      const assets = await this.hostTaskAssets(userId, [snapshot.asset], {
+        taskKind: 'text_to_video',
+        vendor: 'veo',
+      })
       return {
         id: taskId,
         kind: 'text_to_video',
@@ -380,7 +389,10 @@ export class TaskService {
     const { ctx } = await this.resolveVendorContext(userId, 'sora2api', null)
     const snapshot = await fetchSora2ApiResultSnapshot({ ctx, taskId: taskId.trim() })
     if (snapshot.asset) {
-      const assets = await this.hostTaskAssets(userId, [snapshot.asset])
+      const assets = await this.hostTaskAssets(userId, [snapshot.asset], {
+        taskKind: 'text_to_video',
+        vendor: 'sora2api',
+      })
       return {
         id: taskId,
         kind: 'text_to_video',
@@ -478,7 +490,11 @@ export class TaskService {
     )
   }
 
-  private async hostTaskAssets(userId: string, assets: TaskAsset[] | undefined): Promise<TaskAsset[]> {
+  private async hostTaskAssets(
+    userId: string,
+    assets: TaskAsset[] | undefined,
+    meta?: { taskKind?: TaskKind; prompt?: string | null; vendor?: string; modelKey?: string | null },
+  ): Promise<TaskAsset[]> {
     if (!userId || !assets?.length) return assets || []
     const hosted: TaskAsset[] = []
     for (const asset of assets) {
@@ -519,12 +535,85 @@ export class TaskService {
         }
       }
 
-      hosted.push({
+      const hostedAsset: TaskAsset = {
         ...asset,
         url,
         thumbnailUrl,
+      }
+      hosted.push(hostedAsset)
+
+      this.persistGeneratedAsset(userId, {
+        type: hostedAsset.type,
+        url: hostedAsset.url,
+        thumbnailUrl: hostedAsset.thumbnailUrl,
+        vendor: meta?.vendor,
+        taskKind: meta?.taskKind,
+        prompt: meta?.prompt,
+        modelKey: meta?.modelKey ?? null,
+      }).catch((err) => {
+        this.logger.warn('持久化生成资产失败', { message: err?.message })
       })
     }
     return hosted
+  }
+
+  private buildGeneratedAssetName(payload: { type: 'image' | 'video'; prompt?: string | null }) {
+    const prefix = payload.type === 'video' ? 'Video' : 'Image'
+    const cleanedPrompt = (payload.prompt || '').replace(/\s+/g, ' ').trim()
+    if (cleanedPrompt) {
+      const shortened = cleanedPrompt.length > 64 ? `${cleanedPrompt.slice(0, 64)}...` : cleanedPrompt
+      return `${prefix} | ${shortened}`
+    }
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    return `${prefix} ${now}`
+  }
+
+  private async persistGeneratedAsset(
+    userId: string,
+    payload: {
+      type: 'image' | 'video'
+      url: string
+      thumbnailUrl?: string | null
+      vendor?: string
+      taskKind?: TaskKind
+      prompt?: string | null
+      modelKey?: string | null
+    },
+  ) {
+    const safeUrl = (payload.url || '').trim()
+    if (!safeUrl) return
+    try {
+      const existing = await this.prisma.asset.findFirst({
+        where: {
+          ownerId: String(userId),
+          data: {
+            path: ['url'],
+            equals: safeUrl,
+          } as any,
+        },
+      })
+      if (existing) return
+    } catch (err: any) {
+      this.logger.warn('检查生成资产去重失败', { message: err?.message })
+    }
+
+    const name = this.buildGeneratedAssetName({ type: payload.type, prompt: payload.prompt })
+    await this.prisma.asset.create({
+      data: {
+        name,
+        ownerId: String(userId),
+        projectId: null,
+        data: {
+          kind: 'generation',
+          type: payload.type,
+          url: safeUrl,
+          thumbnailUrl: payload.thumbnailUrl ?? null,
+          vendor: payload.vendor || null,
+          taskKind: payload.taskKind || null,
+          prompt: payload.prompt || null,
+          modelKey: payload.modelKey || null,
+        },
+      },
+    })
   }
 }

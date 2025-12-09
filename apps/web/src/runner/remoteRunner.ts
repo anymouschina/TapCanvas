@@ -254,6 +254,26 @@ function collectReferenceImages(state: any, targetId: string): string[] {
   const targetNode = nodes.find((n: Node) => n.id === targetId)
   if (targetNode) {
     const tdata: any = targetNode.data || {}
+    const targetKind: string | undefined = tdata.kind
+
+    // 当 image 节点没有上游图片时，使用自身图片作为参考图
+    if ((!inbound.length || !collected.length) && targetKind && IMAGE_NODE_KINDS.has(targetKind)) {
+      const selfResults = Array.isArray(tdata.imageResults) ? tdata.imageResults : []
+      const selfPrimaryIndex =
+        typeof tdata.imagePrimaryIndex === 'number' && tdata.imagePrimaryIndex >= 0
+          ? tdata.imagePrimaryIndex
+          : 0
+      const selfPrimaryFromResults =
+        selfResults[selfPrimaryIndex] && typeof selfResults[selfPrimaryIndex].url === 'string'
+          ? selfResults[selfPrimaryIndex].url.trim()
+          : ''
+      const selfPrimaryFallback = typeof tdata.imageUrl === 'string' ? tdata.imageUrl.trim() : ''
+      const selfPrimary = selfPrimaryFromResults || selfPrimaryFallback
+      if (selfPrimary) {
+        collected.push(selfPrimary)
+      }
+    }
+
     const poseRefs = Array.isArray(tdata.poseReferenceImages) ? tdata.poseReferenceImages : []
     if (poseRefs.length) {
       poseRefs.forEach((url: any) => {

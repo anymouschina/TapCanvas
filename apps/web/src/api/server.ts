@@ -1075,7 +1075,15 @@ export async function markDraftPromptUsed(prompt: string, provider = 'sora'): Pr
 }
 
 // Assets API - 用户级别资产
-export type ServerAssetDto = { id: string; name: string; data: any; createdAt: string; updatedAt: string; userId: string; projectId?: string|null }
+export type ServerAssetDto = {
+  id: string
+  name: string
+  data: any
+  createdAt: string
+  updatedAt: string
+  userId: string
+  projectId?: string | null
+}
 
 export async function listServerAssets(): Promise<ServerAssetDto[]> {
   const r = await fetch(`${API_BASE}/assets`, withAuth())

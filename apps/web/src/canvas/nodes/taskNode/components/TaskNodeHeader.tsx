@@ -14,6 +14,7 @@ type TaskNodeHeaderProps = {
   iconBadgeBackground: string
   iconBadgeShadow: string
   sleekChipBase: React.CSSProperties
+  labelSingleLine?: boolean
   onLabelDraftChange: (value: string) => void
   onCommitLabel: () => void
   onCancelEdit: () => void
@@ -33,6 +34,7 @@ export function TaskNodeHeader({
   iconBadgeBackground,
   iconBadgeShadow,
   sleekChipBase,
+  labelSingleLine,
   onLabelDraftChange,
   onCommitLabel,
   onCancelEdit,
@@ -81,7 +83,19 @@ export function TaskNodeHeader({
                 <Text
                   size="sm"
                   fw={600}
-                  style={{ color: nodeShellText, lineHeight: 1.2, cursor: 'pointer', flex: 1 }}
+                  style={{
+                    color: nodeShellText,
+                    lineHeight: 1.2,
+                    cursor: 'pointer',
+                    flex: 1,
+                    ...(labelSingleLine
+                      ? {
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }
+                      : {}),
+                  }}
                   title="双击重命名"
                   onDoubleClick={onStartEdit}
                 >

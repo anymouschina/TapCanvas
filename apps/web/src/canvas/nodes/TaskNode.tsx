@@ -2672,6 +2672,8 @@ const rewritePromptWithCharacters = React.useCallback(
   const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
   const subtitle = schema.label || defaultLabel
 
+  const isImageNode = kind === 'image'
+
   const maxTools = 5
   const commonLen = 2
   const reserveForMore = uniqueDefs.length > (maxTools - commonLen) ? 1 : 0
@@ -2709,6 +2711,7 @@ const rewritePromptWithCharacters = React.useCallback(
         iconBadgeBackground={iconBadgeBackground}
         iconBadgeShadow={iconBadgeShadow}
         sleekChipBase={sleekChipBase}
+        labelSingleLine={isImageNode}
         onLabelDraftChange={setLabelDraft}
         onCommitLabel={commitLabel}
         onCancelEdit={() => {
