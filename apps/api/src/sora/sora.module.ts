@@ -6,10 +6,11 @@ import { VideoHistoryService } from '../video/video-history.service'
 import { ProxyService } from '../proxy/proxy.service'
 import { SoraUploadController } from './sora-upload.controller'
 import { SoraUploadProxyService } from './sora-upload.service'
+import { R2StorageService } from '../storage/r2.service'
 
 @Module({
   controllers: [SoraController, SoraUploadController],
-  providers: [SoraService, TokenRouterService, VideoHistoryService, ProxyService, SoraUploadProxyService],
+  providers: [SoraService, TokenRouterService, VideoHistoryService, ProxyService, SoraUploadProxyService, R2StorageService],
   exports: [TokenRouterService],
 })
 export class SoraModule {}

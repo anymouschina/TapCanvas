@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import type { ModelProvider, ModelToken } from '@prisma/client'
 import { PrismaService } from 'nestjs-prisma'
 import { ProxyService } from '../proxy/proxy.service'
@@ -10,6 +10,7 @@ import type {
   TaskProgressEvent,
   TaskResult,
   TaskStatus,
+  TaskAsset,
 } from './task.types'
 import { soraAdapter } from './adapters/sora.adapter'
 import { sora2apiAdapter } from './adapters/sora2api.adapter'
@@ -21,15 +22,18 @@ import { fetchVeoResultSnapshot, pollVeoResult } from './adapters/veo.adapter'
 import { fetchSora2ApiResultSnapshot } from './adapters/sora2api.adapter'
 import { veoAdapter } from './adapters/veo.adapter'
 import { TaskProgressService } from './task-progress.service'
+import { R2StorageService } from '../storage/r2.service'
 
 @Injectable()
 export class TaskService {
+  private readonly logger = new Logger(TaskService.name)
   private readonly adapters: ProviderAdapter[]
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly proxyService: ProxyService,
     private readonly progress: TaskProgressService,
+    private readonly storage: R2StorageService,
   ) {
     this.adapters = [soraAdapter, sora2apiAdapter, geminiAdapter, qwenAdapter, anthropicAdapter, openaiAdapter, veoAdapter]
   }
@@ -182,14 +186,19 @@ export class TaskService {
 
     try {
       const result = await this.runAdapter(adapter, req, ctx)
+      const assets = await this.hostTaskAssets(ctx.userId, result.assets)
+      const normalized: TaskResult = {
+        ...result,
+        assets,
+      }
       emit?.({
-        status: result.status,
-        progress: result.status === 'succeeded' ? 100 : undefined,
-        taskId: result.id,
-        assets: result.assets,
-        raw: result.raw,
+        status: normalized.status,
+        progress: normalized.status === 'succeeded' ? 100 : undefined,
+        taskId: normalized.id,
+        assets: normalized.assets,
+        raw: normalized.raw,
       })
-      return result
+      return normalized
     } catch (error: any) {
       emit?.({ status: 'failed', message: error?.message || '任务执行失败' })
       throw error
@@ -339,11 +348,12 @@ export class TaskService {
     const { ctx } = await this.resolveVendorContext(userId, 'veo', null)
     const snapshot = await fetchVeoResultSnapshot({ ctx, taskId: taskId.trim() })
     if (snapshot.asset) {
+      const assets = await this.hostTaskAssets(userId, [snapshot.asset])
       return {
         id: taskId,
         kind: 'text_to_video',
         status: 'succeeded',
-        assets: [snapshot.asset],
+        assets,
         raw: {
           provider: 'veo',
           response: snapshot.raw,
@@ -370,11 +380,12 @@ export class TaskService {
     const { ctx } = await this.resolveVendorContext(userId, 'sora2api', null)
     const snapshot = await fetchSora2ApiResultSnapshot({ ctx, taskId: taskId.trim() })
     if (snapshot.asset) {
+      const assets = await this.hostTaskAssets(userId, [snapshot.asset])
       return {
         id: taskId,
         kind: 'text_to_video',
         status: 'succeeded',
-        assets: [snapshot.asset],
+        assets,
         raw: {
           provider: 'sora2api',
           response: snapshot.raw,
@@ -465,5 +476,55 @@ export class TaskService {
       vendor === 'veo' ||
       vendor === 'sora2api'
     )
+  }
+
+  private async hostTaskAssets(userId: string, assets: TaskAsset[] | undefined): Promise<TaskAsset[]> {
+    if (!userId || !assets?.length) return assets || []
+    const hosted: TaskAsset[] = []
+    for (const asset of assets) {
+      if (!asset || !asset.url) {
+        hosted.push(asset)
+        continue
+      }
+      let url = asset.url
+      let thumbnailUrl = asset.thumbnailUrl ?? null
+      try {
+        const uploaded = await this.storage.uploadFromUrl({
+          userId,
+          sourceUrl: asset.url,
+          prefix: `gen/${asset.type === 'video' ? 'videos' : 'images'}`,
+        })
+        if (uploaded?.url) {
+          url = uploaded.url
+        }
+      } catch (err: any) {
+        this.logger.warn('上传结果到 R2 失败（主资源），继续使用源地址', { message: err?.message, source: asset.url })
+      }
+
+      if (asset.thumbnailUrl) {
+        try {
+          const uploadedThumb = await this.storage.uploadFromUrl({
+            userId,
+            sourceUrl: asset.thumbnailUrl,
+            prefix: `gen/${asset.type === 'video' ? 'thumbnails' : 'images'}`,
+          })
+          if (uploadedThumb?.url) {
+            thumbnailUrl = uploadedThumb.url
+          }
+        } catch (err: any) {
+          this.logger.warn('上传结果到 R2 失败（缩略图），继续使用源地址', {
+            message: err?.message,
+            source: asset.thumbnailUrl,
+          })
+        }
+      }
+
+      hosted.push({
+        ...asset,
+        url,
+        thumbnailUrl,
+      })
+    }
+    return hosted
   }
 }

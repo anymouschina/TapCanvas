@@ -7,6 +7,7 @@ import { createReadStream } from 'fs'
 import { TokenRouterService } from './token-router.service'
 import { VideoHistoryService } from '../video/video-history.service'
 import { ProxyService, ResolvedProxyConfig } from '../proxy/proxy.service'
+import { R2StorageService } from '../storage/r2.service'
 
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY
 const SORA_VENDOR_ALIASES = ['sora', 'sora2api'] as const
@@ -40,6 +41,7 @@ export class SoraService {
     private readonly tokenRouter: TokenRouterService,
     private readonly videoHistory: VideoHistoryService,
     private readonly proxyService: ProxyService,
+    private readonly storage: R2StorageService,
   ) {}
 
   private isSoraVendor(vendor?: string | null): boolean {
@@ -70,6 +72,54 @@ export class SoraService {
     })
 
     return truncated
+  }
+
+  private async offloadVideoAssetsToR2(
+    userId: string,
+    urls: { videoUrl?: string | null; thumbnailUrl?: string | null },
+  ): Promise<{ videoUrl: string | null; thumbnailUrl: string | null }> {
+    let videoUrl = urls.videoUrl || null
+    let thumbnailUrl = urls.thumbnailUrl || null
+
+    if (videoUrl) {
+      try {
+        const uploaded = await this.storage.uploadFromUrl({
+          userId,
+          sourceUrl: videoUrl,
+          prefix: 'sora/videos',
+        })
+        if (uploaded?.url) {
+          videoUrl = uploaded.url
+        }
+      } catch (error: any) {
+        this.logger.warn('上传 Sora 视频到 R2 失败，使用源地址', {
+          userId,
+          message: error?.message,
+          videoUrl,
+        })
+      }
+    }
+
+    if (thumbnailUrl) {
+      try {
+        const uploadedThumb = await this.storage.uploadFromUrl({
+          userId,
+          sourceUrl: thumbnailUrl,
+          prefix: 'sora/thumbnails',
+        })
+        if (uploadedThumb?.url) {
+          thumbnailUrl = uploadedThumb.url
+        }
+      } catch (error: any) {
+        this.logger.warn('上传 Sora 缩略图到 R2 失败，使用源地址', {
+          userId,
+          message: error?.message,
+          thumbnailUrl,
+        })
+      }
+    }
+
+    return { videoUrl, thumbnailUrl }
   }
 
   async getDrafts(userId: string, tokenId?: string, cursor?: string, limit?: number) {
@@ -2840,7 +2890,16 @@ export class SoraService {
           raw: draftDetails,
         }
 
-        return result
+        const hosted = await this.offloadVideoAssetsToR2(userId, {
+          videoUrl: result.videoUrl,
+          thumbnailUrl: result.thumbnailUrl,
+        })
+
+        return {
+          ...result,
+          videoUrl: hosted.videoUrl,
+          thumbnailUrl: hosted.thumbnailUrl,
+        }
       } catch (error: any) {
         this.logger.warn('Direct draft API failed, trying legacy method', {
           userId,
@@ -2877,7 +2936,16 @@ export class SoraService {
           raw: postDetails,
         }
 
-        return result
+        const hosted = await this.offloadVideoAssetsToR2(userId, {
+          videoUrl: result.videoUrl,
+          thumbnailUrl: result.thumbnailUrl,
+        })
+
+        return {
+          ...result,
+          videoUrl: hosted.videoUrl,
+          thumbnailUrl: hosted.thumbnailUrl,
+        }
       } catch (error: any) {
         this.logger.warn('Post API failed, falling back to legacy method', {
           userId,
@@ -3075,11 +3143,28 @@ export class SoraService {
               tokensSearched: tokenIndex + 1,
             })
 
+            const hosted = await this.offloadVideoAssetsToR2(userId, {
+              videoUrl: finalVideoUrl || videoUrl,
+              thumbnailUrl: thumbnailUrl || thumbnail,
+            })
+            const hostedVideoUrl = hosted.videoUrl || finalVideoUrl || videoUrl
+            const hostedThumbnailUrl = hosted.thumbnailUrl || thumbnailUrl || thumbnail
+
+            if (hostedVideoUrl) {
+              matched.downloadable_url = hostedVideoUrl
+              matched.url = hostedVideoUrl
+              if (enc.source) enc.source.path = hostedVideoUrl
+            }
+            if (hostedThumbnailUrl) {
+              matched.thumbnail_url = hostedThumbnailUrl
+              if (enc.thumbnail) enc.thumbnail.path = hostedThumbnailUrl
+            }
+
             // 更新视频生成历史状态为成功
             await this.videoHistory.updateVideoGeneration(taskId, {
               status: 'success',
-              videoUrl: finalVideoUrl || videoUrl || undefined,
-              thumbnailUrl: thumbnailUrl || thumbnail || undefined,
+              videoUrl: hostedVideoUrl || undefined,
+              thumbnailUrl: hostedThumbnailUrl || undefined,
               duration: matched.duration || undefined,
               width: matched.width || undefined,
               height: matched.height || undefined,
@@ -3095,8 +3180,8 @@ export class SoraService {
 
             // 更新任务状态为成功
             await this.tokenRouter.updateTaskStatus(taskId, 'sora', 'success', {
-              videoUrl: finalVideoUrl || videoUrl,
-              thumbnailUrl: thumbnailUrl || thumbnail,
+              videoUrl: hostedVideoUrl || undefined,
+              thumbnailUrl: hostedThumbnailUrl || undefined,
               width: matched.width,
               height: matched.height,
               duration: matched.duration,
@@ -3108,8 +3193,8 @@ export class SoraService {
               id: matched.id,
               title: matched.title ?? null,
               prompt: matched.prompt ?? matched.creation_config?.prompt ?? null,
-              thumbnailUrl: thumbnailUrl || thumbnail,
-              videoUrl: finalVideoUrl || videoUrl,
+              thumbnailUrl: hostedThumbnailUrl,
+              videoUrl: hostedVideoUrl,
               postId,
               raw: matched,
             }
@@ -3285,12 +3370,16 @@ export class SoraService {
     }
 
     const primary = Array.isArray(result.results) && result.results.length ? result.results[0] : null
+    const hosted = await this.offloadVideoAssetsToR2(userId, {
+      videoUrl: primary?.url || null,
+      thumbnailUrl: primary?.thumbnail || primary?.thumbnailUrl || null,
+    })
     return {
       id: result.id,
       title: meta?.title || null,
       prompt: meta?.prompt || null,
-      thumbnailUrl: primary?.thumbnail || primary?.thumbnailUrl || null,
-      videoUrl: primary?.url || null,
+      thumbnailUrl: hosted.thumbnailUrl,
+      videoUrl: hosted.videoUrl,
       postId: primary?.pid || null,
       raw: result.raw || result,
     }
