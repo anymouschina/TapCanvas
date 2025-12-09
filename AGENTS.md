@@ -22,6 +22,7 @@
   - 默认以 orchestrator 模式运行复杂任务：维护和更新 To-Do plan（使用 Codex 的计划工具），拆分子任务并在每个阶段后做小结，直到明确满足用户目标才停止。
   - 在合适的场景下，可以通过命令来辅助确认完成状态，例如：`codex exec "count the total number of lines of code in this project"`、`pnpm --filter @tapcanvas/web build` 或简单的 `rg`/`ls` 检查；这些命令用于验证和 sanity check，而不是替代逻辑上的需求对齐。
   - 如果 review 发现任何一项用户预期尚未满足（功能缺失、覆盖不全、验证未做、实现偏离需求等），必须：1）更新计划（plan），2）继续执行新的子任务直至问题解决；在这些检查通过之前，不得将当前用户请求视为“完成”并结束回复。
+  - 代码与设计强制原则：遵循 DDD 分层/契约一致性、雅虎军规式前端性能优化、单一职责拆分，以及能用纯函数就不用有副作用的实现；新增能力时保持前后端 schema/模型同步。
 
 # Repository Guidelines
 

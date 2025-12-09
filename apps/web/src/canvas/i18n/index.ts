@@ -6,7 +6,6 @@
 
 // 英文翻译包
 const enTranslations = {
-  // 通用词汇
   '确定': 'OK',
   '取消': 'Cancel',
   '保存': 'Save',
@@ -92,8 +91,6 @@ const enTranslations = {
   '必填': 'Required',
   '自动': 'Auto',
   '手动': 'Manual',
-
-  // 节点相关
   '文本节点': 'Text Node',
   '图像节点': 'Image Node',
   '视频节点': 'Video Node',
@@ -105,19 +102,14 @@ const enTranslations = {
   '分组节点': 'Group Node',
   '输入节点': 'Input Node',
   '输出节点': 'Output Node',
-
-  // 节点状态
   '空闲': 'Idle',
   '排队中': 'Queued',
   '运行中': 'Running',
   '已完成': 'Completed',
   '错误': 'Error',
   '已取消': 'Canceled',
-  '失败': 'Failed',
   '等待中': 'Pending',
   '处理中': 'Processing',
-
-  // 节点操作
   '添加节点': 'Add Node',
   '创建节点': 'Create Node',
   '配置节点': 'Configure Node',
@@ -131,8 +123,6 @@ const enTranslations = {
   '聚焦': 'Focus',
   '选中': 'Select',
   '取消选中': 'Deselect',
-
-  // 节点配置
   '节点配置': 'Node Configuration',
   '基础配置': 'Basic Configuration',
   '高级配置': 'Advanced Configuration',
@@ -146,11 +136,8 @@ const enTranslations = {
   '质量': 'Quality',
   '分辨率': 'Resolution',
   '帧率': 'Frame Rate',
-  '时长': 'Duration',
   '语言': 'Language',
   '格式': 'Format',
-
-  // 边相关
   '平滑边': 'Smooth Edge',
   '直角边': 'Orthogonal Edge',
   '默认边': 'Default Edge',
@@ -160,8 +147,6 @@ const enTranslations = {
   '连接中': 'Connecting',
   '已连接': 'Connected',
   '已断开': 'Disconnected',
-
-  // 画布相关
   '画布': 'Canvas',
   '空画布': 'Empty Canvas',
   '拖拽节点到这里开始创作': 'Drag nodes here to start creating',
@@ -175,11 +160,9 @@ const enTranslations = {
   '隐藏网格': 'Hide Grid',
   '网格吸附': 'Snap to Grid',
   '网格大小': 'Grid Size',
-  '选择': 'Selection',
   '单选': 'Single Selection',
   '多选': 'Multiple Selection',
   '清除选择': 'Clear Selection',
-  '全选': 'Select All',
   '反选': 'Invert Selection',
   '布局': 'Layout',
   '自动布局': 'Auto Layout',
@@ -200,8 +183,6 @@ const enTranslations = {
   '清除历史': 'Clear History',
   '剪贴板': 'Clipboard',
   '剪切': 'Cut',
-  '复制': 'Copy',
-  '粘贴': 'Paste',
   '复制配置': 'Copy Configuration',
   '粘贴配置': 'Paste Configuration',
   '右键菜单': 'Context Menu',
@@ -209,18 +190,12 @@ const enTranslations = {
   '边': 'Edges',
   '画布设置': 'Canvas Settings',
   '属性': 'Properties',
-
-  // 工具栏
   '工具栏': 'Toolbar',
   '添加': 'Add',
   '移除': 'Remove',
   '修改': 'Modify',
-  '验证': 'Validate',
   '运行选中': 'Run Selected',
   '停止运行': 'Stop Running',
-
-  // 错误信息
-  '错误': 'Error',
   '未知错误': 'Unknown Error',
   '网络错误': 'Network Error',
   '超时错误': 'Timeout Error',
@@ -240,7 +215,6 @@ const enTranslations = {
   '连接数过多': 'Too Many Connections',
   '循环依赖': 'Circular Dependency',
   '边未找到': 'Edge Not Found',
-  '无效连接': 'Invalid Connection',
   '类型不兼容': 'Incompatible Types',
   '自连接': 'Self Connection',
   '重复连接': 'Duplicate Connection',
@@ -254,17 +228,12 @@ const enTranslations = {
   '不支持的文件类型': 'Unsupported File Type',
   '文件上传失败': 'File Upload Failed',
   '文件下载失败': 'File Download Failed',
-
-  // 界面文字
   '保存中': 'Saving',
   '正在保存当前项目…': 'Saving current project...',
   '项目「{{name}}」已保存': 'Project "{{name}}" saved',
-  '保存失败': 'Save Failed',
   '网络或服务器错误': 'Network or server error',
   '未保存': 'Unsaved',
   '项目名': 'Project Name',
-
-  // 公开项目功能
   '我的项目': 'My Projects',
   '公开项目': 'Public Projects',
   '公开': 'Public',
@@ -285,12 +254,8 @@ const enTranslations = {
   '公开项目已刷新': 'Public projects refreshed',
   '刷新公开项目失败': 'Failed to refresh public projects',
   '加载中...': 'Loading...',
-
-  // Canvas 界面文字
   '连接无效：类型不兼容、重复或形成环': 'Invalid connection: incompatible types, duplicate, or cycle',
   '连接会导致环': 'Connection creates a cycle',
-  '重复连接': 'Duplicate connection',
-  '类型不兼容': 'Incompatible types',
   '类型不兼容：{{from}} → {{to}}': 'Incompatible types: {{from}} → {{to}}',
   '不允许的连接方向': 'Invalid connection direction',
   '组': 'Group',
@@ -302,7 +267,6 @@ const enTranslations = {
   '了解更多': 'Learn More',
   '提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。': 'Tip: Select multiple nodes and press ⌘/Ctrl+G to group, ⌘/Ctrl+Enter to run.',
   '新建组': 'New Group',
-  '自动布局': 'Auto Layout',
   '宫格布局': 'Grid Layout',
   '水平布局': 'Horizontal Layout',
   '保存为资产名称：': 'Save as asset name:',
@@ -317,7 +281,6 @@ const enTranslations = {
   '重命名': 'Rename',
   '解组': 'Ungroup',
   '复制一份': 'Duplicate',
-  '删除': 'Delete',
   '运行该节点': 'Run Node',
   '停止该节点': 'Stop Node',
   '删除连线': 'Delete Edge',
@@ -333,9 +296,6 @@ const enTranslations = {
   '正交': 'Orthogonal',
   '平滑': 'Smooth',
   '支持拖拽模板/资产到画布': 'Drag templates/assets to canvas',
-
-  // 左侧导航栏
-  '添加': 'Add',
   '项目': 'Projects',
   '工作流': 'Workflows',
   '我的资产': 'My Assets',
@@ -343,38 +303,21 @@ const enTranslations = {
   '历史记录': 'History',
   '图片编辑': 'Image Editor',
   '标尺': 'Ruler',
-  '帮助': 'Help',
-
-  // 添加节点面板
-  '添加节点': 'Add Node',
   '文本': 'Text',
   '视频': 'Video',
   '音频': 'Audio',
-  '上传': 'Upload',
-
-  // 项目面板
-    '项目': 'Projects',
-    '未命名项目 {{time}}': 'Untitled Project {{time}}',
-    '新建项目': 'New Project',
-    '热门': 'Hot',
+  '未命名项目 {{time}}': 'Untitled Project {{time}}',
+  '新建项目': 'New Project',
+  '热门': 'Hot',
   '暂无项目': 'No Projects',
-  '选择': 'Select',
-
-  // 工作流面板
   '工作流（项目：{{project}}）': 'Workflows (Project: {{project}})',
-  '推荐': 'Recommended',
   '浏览全部': 'Browse All',
   '创建': 'Create',
   '公共工作流': 'Public Workflows',
   '我的工作流(服务端)': 'My Workflows (Server)',
   '使用': 'Use',
-
-  // 资产面板
   '当前配置不可用，请稍后再试': 'Current configuration unavailable, please try again later',
   'Sora 草稿': 'Sora Draft',
-
-  // 成功信息
-  '成功': 'Success',
   '已保存': 'Saved',
   '已加载': 'Loaded',
   '已导入': 'Imported',
@@ -384,7 +327,6 @@ const enTranslations = {
   '已删除': 'Deleted',
   '已更新': 'Updated',
   '已创建': 'Created',
-  '已完成': 'Completed',
   '节点已创建': 'Node Created',
   '节点已删除': 'Node Deleted',
   '节点已更新': 'Node Updated',
@@ -401,8 +343,6 @@ const enTranslations = {
   '画布已清空': 'Canvas Cleared',
   '布局已应用': 'Layout Applied',
   '选择已清空': 'Selection Cleared',
-
-  // 时间相关
   '刚刚': 'Just Now',
   '很快': 'Soon',
   '分钟前': '{{count}} Minutes Ago',
@@ -426,12 +366,7 @@ const enTranslations = {
   '年': 'y',
   '前': ' ago',
   '后': ' later',
-
-  // 文件相关
   '图片': 'Image',
-  '视频': 'Video',
-  '音频': 'Audio',
-  '文本': 'Text',
   'JSON文件': 'JSON File',
   'CSV文件': 'CSV File',
   'PDF文件': 'PDF File',
@@ -451,24 +386,12 @@ const enTranslations = {
   'MB': 'MB',
   'GB': 'GB',
   'TB': 'TB',
-
-  // 模态框
-  '节点配置': 'Node Configuration',
   '导出画布': 'Export Canvas',
   '导入画布': 'Import Canvas',
-  '设置': 'Settings',
-  '关于': 'About',
   '删除确认': 'Delete Confirmation',
   '文件': 'File',
-  '格式': 'Format',
-  '选项': 'Options',
   '文件名': 'Filename',
-  '语言': 'Language',
   '外观': 'Appearance',
-  '通用': 'General',
-  '高级': 'Advanced',
-  '重置': 'Reset',
-  '警告': 'Warning',
   '确认删除': 'Confirm Delete',
   '此操作不可恢复': 'This action cannot be undone',
   '确定要删除吗': 'Are you sure you want to delete',
@@ -476,8 +399,6 @@ const enTranslations = {
   '项目「{{name}}」已删除': 'Project "{{name}}" deleted',
   '删除项目失败': 'Failed to delete project',
   '确定要删除项目「{{name}}」吗？': 'Are you sure you want to delete project "{{name}}"?',
-
-  // 快捷键
   '快捷键': 'Shortcuts',
   '常规快捷键': 'General Shortcuts',
   '导航快捷键': 'Navigation Shortcuts',
@@ -501,56 +422,17 @@ const enTranslations = {
   '左箭头': 'Left Arrow',
   '右箭头': 'Right Arrow',
   '功能键': 'F',
-  '保存': 'Save',
   '加载': 'Load',
-  '导出': 'Export',
-  '导入': 'Import',
-  '撤销': 'Undo',
-  '重做': 'Redo',
-  '剪切': 'Cut',
-  '复制': 'Copy',
-  '粘贴': 'Paste',
-  '复制': 'Duplicate',
-  '删除': 'Delete',
-  '全选': 'Select All',
   '清空选择': 'Clear Selection',
   '查找': 'Find',
   '替换': 'Replace',
-  '放大': 'Zoom In',
-  '缩小': 'Zoom Out',
-  '适应屏幕': 'Fit to Screen',
-  '全屏': 'Fullscreen',
-  '帮助': 'Help',
-  '设置': 'Settings',
-
-  // 提示信息
   '放大画布': 'Zoom In Canvas',
   '缩小画布': 'Zoom Out Canvas',
-  '适应屏幕': 'Fit to Screen',
-  '显示网格': 'Show Grid',
-  '隐藏网格': 'Hide Grid',
-  '网格吸附': 'Snap to Grid',
-  '自动布局': 'Auto Layout',
-  '全选': 'Select All',
-  '清除选择': 'Clear Selection',
-  '撤销': 'Undo',
-  '重做': 'Redo',
-  '添加节点': 'Add Node',
-  '删除节点': 'Delete Node',
-  '配置节点': 'Configure Node',
-  '复制节点': 'Duplicate Node',
-  '分组节点': 'Group Nodes',
   '聚焦节点': 'Focus Nodes',
-  '运行节点': 'Run Node',
   '停止节点': 'Stop Node',
   '添加边': 'Add Edge',
   '删除边': 'Delete Edge',
   '修改边': 'Modify Edge',
-  '运行': 'Run',
-  '停止': 'Stop',
-  '配置': 'Configure',
-  '复制配置': 'Copy Configuration',
-  '粘贴配置': 'Paste Configuration',
 };
 
 // 当前语言
