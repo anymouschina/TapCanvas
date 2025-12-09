@@ -549,9 +549,10 @@ function CanvasInner(): JSX.Element {
     return 'in-any'
   }, [])
 
-  const quickConnectNodes = useCallback((sourceId: string, targetId: string) => {
+  const quickConnectNodes = useCallback((sourceId: string, targetId: string, opts?: { showInvalidToast?: boolean }) => {
+    const showInvalidToast = opts?.showInvalidToast !== false
     if (sourceId === targetId) {
-      toast('不能连接到自身', 'warning')
+      if (showInvalidToast) toast('不能连接到自身', 'warning')
       return false
     }
     const sourceNode = nodes.find(n => n.id === sourceId)
@@ -562,7 +563,7 @@ function CanvasInner(): JSX.Element {
       return false
     }
     if (edges.some(e => e.source === sourceId && e.target === targetId)) {
-      toast('节点之间已存在连接', 'info')
+      if (showInvalidToast) toast('节点之间已存在连接', 'info')
       return false
     }
     if (createsCycle({ source: sourceId, target: targetId })) {
@@ -571,7 +572,7 @@ function CanvasInner(): JSX.Element {
     const sKind = (sourceNode.data as any)?.kind
     const tKind = (targetNode.data as any)?.kind
     if (!isValidEdgeByType(sKind, tKind)) {
-      toast('当前两种节点类型不支持直连', 'warning')
+      if (showInvalidToast) toast('当前两种节点类型不支持直连', 'warning')
       return false
     }
     if (isImageKind(sKind) && isImageKind(tKind)) {
@@ -580,7 +581,7 @@ function CanvasInner(): JSX.Element {
         const reason = targetModel
           ? '目标节点的模型不支持图片编辑，请切换至支持的模型后再连线'
           : '请先为目标节点选择支持图片编辑的模型'
-        toast(reason, 'warning')
+        if (showInvalidToast) toast(reason, 'warning')
         return false
       }
     }
@@ -602,11 +603,9 @@ function CanvasInner(): JSX.Element {
       return
     }
     if (pending && pending.nodeId !== node.id) {
-      const ok = quickConnectNodes(pending.nodeId, node.id)
-      if (ok) {
-        tapConnectSourceRef.current = null
-        setConnectingType(null)
-      }
+      quickConnectNodes(pending.nodeId, node.id, { showInvalidToast: false })
+      tapConnectSourceRef.current = null
+      setConnectingType(null)
       return
     }
     tapConnectSourceRef.current = { nodeId: node.id }

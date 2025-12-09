@@ -1,38 +1,18 @@
 import React from 'react'
 import type { NodeProps } from 'reactflow'
-import { Handle, Position, NodeToolbar } from 'reactflow'
+import { Position, NodeToolbar } from 'reactflow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Textarea, Menu, Button, Text, Modal, Stack, TextInput, Select, Loader, NumberInput, Badge, Tooltip, ScrollArea, Checkbox, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { ActionIcon, Group, Paper, Button, Text, Stack, TextInput, Select, Loader, Badge, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import {
-  IconMaximize,
-  IconDownload,
   IconArrowsDiagonal2,
-  IconBrush,
-  IconDots,
   IconAdjustments,
-  IconUpload,
-  IconPlayerPlay,
-  IconPlayerStop,
-  IconTexture,
-  IconVideo,
-  IconScissors,
-  IconPhotoEdit,
   IconPhotoSearch,
-  IconClock,
-  IconChevronDown,
-  IconBrain,
-  IconBulb,
   IconRefresh,
   IconUsers,
-  IconPlus,
   IconTrash,
-  IconUserPlus,
-  IconArrowUp,
-  IconArrowDown,
-  IconLayoutGrid,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto, type TaskResultDto } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
 import {
   getDefaultModel,
   getModelLabel,
@@ -46,9 +26,6 @@ import {
   createScene,
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
-  STORYBOARD_FRAMING_OPTIONS,
-  STORYBOARD_MOVEMENT_OPTIONS,
-  STORYBOARD_DURATION_STEP,
   STORYBOARD_MIN_DURATION,
   STORYBOARD_MAX_DURATION,
   STORYBOARD_MAX_TOTAL_DURATION,
@@ -57,17 +34,14 @@ import {
   STORYBOARD_DEFAULT_DURATION,
   enforceStoryboardTotalLimit,
 } from './storyboardUtils'
-import { getTaskNodeSchema, type TaskNodeHandlesConfig, type TaskNodeFeature } from './taskNodeSchema'
+import { getTaskNodeSchema } from './taskNodeSchema'
+import { buildTaskNodeFeatureFlags, type TaskNodeFeatureFlags } from './taskNode/features'
 import {
   applyMentionFallback,
   blobToDataUrl,
   clampCharacterClipWindow,
   computeHandleLayout,
   extractTextFromTaskResult,
-  genTaskNodeId,
-  getHandlePositionName,
-  HANDLE_HORIZONTAL_OFFSET,
-  HANDLE_VERTICAL_OFFSET,
   isDynamicHandlesConfig,
   isStaticHandlesConfig,
   MAX_VEO_REFERENCE_IMAGES,
@@ -76,37 +50,33 @@ import {
   parseCharacterCardResult,
   parseFrameCompareSummary,
   resolveImageForReversePrompt,
-  buildHandleStyle,
 } from './taskNodeHelpers'
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
-import { SystemPromptPanel } from '../components/SystemPromptPanel'
-import { getHandleTypeLabel } from '../utils/handleLabels'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 import { usePoseEditor } from './taskNode/PoseEditor'
 import { ImageResultModal } from './taskNode/ImageResultModal'
+import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
+import { TopToolbar } from './taskNode/components/TopToolbar'
+import { TaskNodeHeader } from './taskNode/components/TaskNodeHeader'
+import { ControlChips } from './taskNode/components/ControlChips'
+import { StatusBanner } from './taskNode/components/StatusBanner'
+import { PromptSection } from './taskNode/components/PromptSection'
+import { VideoContent } from './taskNode/components/VideoContent'
+import { MosaicModal } from './taskNode/components/MosaicModal'
+import { VeoImageModal } from './taskNode/components/VeoImageModal'
 import { VideoResultModal } from './taskNode/VideoResultModal'
 import { StoryboardEditor } from './taskNode/StoryboardEditor'
-import { isRemoteUrl, REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
+import { renderFeatureBlocks } from './taskNode/featureRenderers'
+import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
 import { runNodeRemote } from '../../runner/remoteRunner'
-
-const RESOLUTION_OPTIONS = [
-  { value: '16:9', label: '16:9' },
-  { value: '1:1', label: '1:1' },
-  { value: '9:16', label: '9:16' },
-]
 
 const BASE_DURATION_OPTIONS = [
   { value: '10', label: '10s' },
   { value: '15', label: '15s' },
 ]
 const STORYBOARD_DURATION_OPTION = { value: '25', label: '25s' }
-
-const ORIENTATION_OPTIONS = [
-  { value: 'landscape', label: '横屏' },
-  { value: 'portrait', label: '竖屏' },
-]
 
 const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
 
@@ -167,12 +137,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     : '0 26px 55px rgba(15, 23, 42, 0.16)'
   const nodeShellGlow = `0 0 50px ${rgba(accentPrimary, isDarkUi ? 0.28 : 0.35)}`
   const nodeShellText = isDarkUi ? theme.white : (theme.colors.gray?.[9] || '#111321')
-  const nodeShellMuted = isDarkUi ? rgba(theme.white, 0.65) : rgba(theme.colors.gray?.[7] || '#475569', 0.85)
   const quickActionBackgroundActive = isDarkUi ? rgba(accentPrimary, 0.25) : rgba(accentPrimary, 0.12)
   const quickActionIconColor = rgba(nodeShellText, 0.55)
   const quickActionIconActive = accentPrimary
   const quickActionHint = rgba(nodeShellText, 0.55)
-  const mediaCardBackground = isDarkUi ? 'rgba(7, 12, 26, 0.92)' : 'rgba(255,255,255,0.95)'
   const mediaOverlayBackground = isDarkUi ? 'rgba(4, 7, 16, 0.92)' : 'rgba(246, 248, 255, 0.95)'
   const mediaOverlayText = nodeShellText
   const toolbarBackground = isDarkUi ? 'rgba(4, 7, 16, 0.9)' : 'rgba(255,255,255,0.96)'
@@ -181,10 +149,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const mediaFallbackSurface = isDarkUi ? 'rgba(3,6,12,0.92)' : 'rgba(244,247,255,0.95)'
   const mediaFallbackText = isDarkUi ? rgba(theme.colors.gray?.[4] || '#94a3b8', 0.85) : rgba(theme.colors.gray?.[6] || '#64748b', 0.85)
   const videoSurface = isDarkUi ? 'rgba(11, 16, 28, 0.9)' : 'rgba(236, 241, 255, 0.9)'
-  const summaryChipAccent = accentPrimary
-  const controlLabelColor = rgba(nodeShellText, 0.5)
   const inlineDividerColor = rgba(nodeShellText, 0.12)
-  const summaryChipBorderColor = rgba(nodeShellText, 0.15)
   const sleekChipBorderColor = rgba(nodeShellText, 0.08)
   const toolbarButtonBorderColor = rgba(nodeShellText, 0.12)
   const summaryChipStyles = React.useMemo(() => ({
@@ -201,14 +166,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     height: 30,
     lineHeight: 1.1,
     letterSpacing: 0.25,
-  }), [isDarkUi, nodeShellText, summaryChipBorderColor])
-  const controlLabelStyle = React.useMemo(() => ({
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    color: controlLabelColor,
-  }), [controlLabelColor])
+  }), [isDarkUi, nodeShellText])
   const controlValueStyle = React.useMemo(() => ({
     fontSize: 12,
     fontWeight: 600,
@@ -253,52 +211,47 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     height: 30,
     cursor: 'pointer',
   }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
-  const overlayIconButton = React.useMemo(() => ({
-    width: 30,
-    height: 30,
-    borderRadius: 12,
-    background: isDarkUi ? 'rgba(2,6,18,0.85)' : 'rgba(15,23,42,0.65)',
-    color: '#fff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    padding: 0,
-  }), [isDarkUi])
   const galleryCardBackground = isDarkUi ? 'rgba(7,12,24,0.96)' : 'rgba(255,255,255,0.96)'
 
-  const suggestionHighlight = rgba(accentPrimary, isDarkUi ? 0.4 : 0.3)
   const placeholderIconColor = nodeShellText
   const iconBadgeBackground = isDarkUi
     ? `linear-gradient(140deg, ${rgba(accentPrimary, 0.5)}, ${rgba(accentSecondary, 0.45)})`
     : `linear-gradient(140deg, ${rgba(accentPrimary, 0.2)}, ${rgba(accentSecondary, 0.25)})`
-   const iconBadgeShadow = isDarkUi ? '0 14px 26px rgba(0,0,0,0.45)' : '0 16px 28px rgba(15,23,42,0.12)'
+  const iconBadgeShadow = isDarkUi ? '0 14px 26px rgba(0,0,0,0.45)' : '0 16px 28px rgba(15,23,42,0.12)'
   const darkContentBackground = isDarkUi ? 'rgba(5,8,16,0.92)' : 'rgba(244,247,255,0.94)'
-   const darkCardShadow = isDarkUi ? '0 18px 36px rgba(0, 0, 0, 0.55)' : '0 18px 36px rgba(15, 23, 42, 0.12)'
+  const darkCardShadow = isDarkUi ? '0 18px 36px rgba(0, 0, 0, 0.55)' : '0 18px 36px rgba(15, 23, 42, 0.12)'
   const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.4)' : 'rgba(227,235,255,0.8)'
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
   const NodeIcon = schema.icon
-  const schemaFeatures = React.useMemo<Set<TaskNodeFeature>>(
-    () => new Set(schema.features),
-    [schema],
+  const featureFlags = React.useMemo<TaskNodeFeatureFlags>(
+    () => buildTaskNodeFeatureFlags(schema, kind),
+    [schema, kind],
   )
-  const isStoryboardNode = schema.category === 'storyboard'
-  const isComposerNode = schema.category === 'composer' || isStoryboardNode
-  const hasVideoOutputs = schemaFeatures.has('video') || schemaFeatures.has('videoResults')
-  const isVideoNode = hasVideoOutputs || isComposerNode
-  const isStandaloneVideoNode = hasVideoOutputs && !isComposerNode
-  const isMosaicNode = kind === 'mosaic'
-  const isImageNode =
-    !isMosaicNode &&
-    (schema.category === 'image' || schemaFeatures.has('image') || schemaFeatures.has('imageResults'))
-  const isCharacterNode = schema.category === 'character' || schemaFeatures.has('character')
-  const isAudioNode = schema.category === 'audio' || schemaFeatures.has('audio')
-  const isSubtitleNode = schema.category === 'subtitle' || schemaFeatures.has('subtitle')
-  const supportsSubflowHandles = schemaFeatures.has('subflow')
-  const supportsImageUpload = schemaFeatures.has('imageUpload')
-  const supportsReversePrompt = schemaFeatures.has('reversePrompt')
+  const {
+    isStoryboardNode,
+    isComposerNode,
+    isMosaicNode,
+    hasImage,
+    hasImageResults,
+    hasImageUpload: supportsImageUpload,
+    hasReversePrompt: supportsReversePrompt,
+    hasVideo,
+    hasVideoResults,
+    hasAudio: isAudioNode,
+    hasSubtitle: isSubtitleNode,
+    hasCharacter: isCharacterNode,
+    hasSystemPrompt,
+    hasModelSelect,
+    hasSampleCount,
+    hasAspect,
+    hasOrientation,
+    hasDuration,
+    hasTextResults,
+    supportsSubflowHandles,
+  } = featureFlags
+  const isVideoNode = hasVideo || hasVideoResults || isComposerNode
   const targets: { id: string; type: string; pos: Position }[] = []
   const sources: { id: string; type: string; pos: Position }[] = []
   const schemaHandles = schema.handles
@@ -372,24 +325,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       setPrompt(rawPrompt)
     }
   }, [rawPrompt])
-  const applyVideoRealismSnippet = React.useCallback(
-    (snippet: string) => {
-      const block = (snippet || '').trim()
-      if (!block) return
-      const base = (prompt || '').trim()
-      const merged = base ? `${base}\n\n${block}` : block
-      setPrompt(merged)
-      updateNodeData(id, { prompt: merged })
-    },
-    [id, prompt, updateNodeData]
-  )
   const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
-  const previewAspectRatio = React.useMemo(() => {
-    if (!isImageNode) return null
-    const [w, h] = (aspect || '').split(':').map((part) => Number(part))
-    if (!w || !h) return null
-    return `${w} / ${h}`
-  }, [aspect, isImageNode])
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
   const [storyboardScenes, setStoryboardScenes] = React.useState<StoryboardScene[]>(() =>
@@ -483,7 +419,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const rawShowSystemPrompt = (data as any)?.showSystemPrompt as boolean | undefined
   const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(() => {
     if (typeof rawShowSystemPrompt === 'boolean') return rawShowSystemPrompt
-    return isImageNode || isVideoNode
+    return hasSystemPrompt
   })
 
   React.useEffect(() => {
@@ -498,9 +434,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       return
     }
     if (rawShowSystemPrompt === undefined) {
-      setShowSystemPrompt(isImageNode || isVideoNode)
+      setShowSystemPrompt(hasSystemPrompt)
     }
-  }, [rawShowSystemPrompt, isImageNode, isVideoNode])
+  }, [rawShowSystemPrompt, hasSystemPrompt])
 
   React.useEffect(() => {
     const previous = typeof rawSystemPrompt === 'string' ? rawSystemPrompt : ''
@@ -1173,6 +1109,24 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (!selectedCharacter) return null
     return selectedCharacter.cover || selectedCharacter.avatar || null
   }, [selectedCharacter])
+
+  const primaryMedia = React.useMemo(() => {
+    if (isCharacterNode && characterPrimaryImage) return 'character' as const
+    if (hasPrimaryImage || hasImageResults) return 'image' as const
+    if (isVideoNode && (videoResults[videoPrimaryIndex]?.url || (data as any)?.videoUrl)) return 'video' as const
+    if (isAudioNode && (data as any)?.audioUrl) return 'audio' as const
+    return null
+  }, [
+    isCharacterNode,
+    characterPrimaryImage,
+    hasPrimaryImage,
+    hasImageResults,
+    isVideoNode,
+    videoResults,
+    videoPrimaryIndex,
+    data,
+    isAudioNode,
+  ])
   const characterRefs = React.useMemo(() => {
     return nodesForCharacters
       .filter((node) => {
@@ -1194,12 +1148,44 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     characterRefs.forEach((ref) => map.set(ref.nodeId, ref))
     return map
   }, [characterRefs])
+  const primaryMediaUrl = React.useMemo(() => {
+    switch (primaryMedia) {
+      case 'character':
+        return characterPrimaryImage || null
+      case 'image':
+        return (
+          imageResults[imagePrimaryIndex]?.url ||
+          imageUrl ||
+          (data as any)?.imageUrl ||
+          null
+        )
+      case 'video':
+        return (
+          videoResults[videoPrimaryIndex]?.url ||
+          (data as any)?.videoUrl ||
+          null
+        )
+      case 'audio':
+        return (data as any)?.audioUrl || null
+      default:
+        return null
+    }
+  }, [
+    primaryMedia,
+    characterPrimaryImage,
+    imageResults,
+    imagePrimaryIndex,
+    imageUrl,
+    data,
+    videoResults,
+    videoPrimaryIndex,
+  ])
 
-  const activeModelKey = isImageNode
-        ? imageModel
-        : isVideoNode
-          ? videoModel
-          : modelKey
+  const activeModelKey = hasImageResults
+    ? imageModel
+    : isVideoNode
+      ? videoModel
+      : modelKey
   const modelList = useModelOptions(kind as NodeKind)
   const findVendorForModel = React.useCallback(
     (value: string | null | undefined) => {
@@ -1291,12 +1277,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     onPoseSaved: handlePoseSaved,
   })
 
-  // Mosaic config
-  const MOSAIC_GRID_OPTIONS = [
-    { value: '1', label: '1 x 1' },
-    { value: '2', label: '2 x 2' },
-    { value: '3', label: '3 x 3（最多9张）' },
-  ]
   const [mosaicModalOpen, setMosaicModalOpen] = React.useState(false)
   const [mosaicInvalidUrls, setMosaicInvalidUrls] = React.useState<string[]>([])
   const [mosaicGrid, setMosaicGrid] = React.useState<number>(() => {
@@ -1486,62 +1466,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     [openCharacterCreatorModal, resolvedVideoVendor, selectedCharacterTokenId, setActivePanel],
   )
 
-  const handleQuickCreateCharacter = React.useCallback(() => {
-    if (!isVideoNode || !isSoraVideoVendor) {
-      toast('该功能仅支持 Sora 视频节点', 'error')
-      return
-    }
-    const allowTokenless = resolvedVideoVendor === 'sora2api'
-    if (!allowTokenless && !videoTokenId && !selectedCharacterTokenId && characterTokens.length === 0) {
-      toast('当前视频缺少 Sora Token 信息，请先在资产面板绑定密钥', 'error')
-      setActivePanel('assets')
-      return
-    }
-    const activeVideo = videoResults[videoPrimaryIndex] || null
-    const primaryUrl = activeVideo?.url || videoUrl || null
-    if (!primaryUrl) {
-      toast('暂无可用的视频结果，无法创建角色', 'error')
-      return
-    }
-    const displayTitle = activeVideo?.title || videoTitle || 'Sora 角色'
-    const quickCard: CharacterCard = {
-      id: `video-${Date.now().toString(36)}`,
-      name: displayTitle,
-      summary: videoPrompt || prompt || undefined,
-      frames: [],
-    }
-
-    const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
-    openCharacterCreatorModal({
-      source: 'video-node',
-      name: quickCard.name,
-      summary: quickCard.summary,
-      tags: quickCard.tags,
-      videoVendor: resolvedVideoVendor,
-      soraTokenId: effectiveTokenId,
-      videoTokenId: videoTokenId || effectiveTokenId,
-      videoUrl: primaryUrl,
-      videoTitle: displayTitle,
-    })
-    setActivePanel('assets')
-  }, [
-    isVideoNode,
-    isSoraVideoVendor,
-    resolvedVideoVendor,
-    videoTokenId,
-    selectedCharacterTokenId,
-    characterTokens,
-    videoResults,
-    videoPrimaryIndex,
-    videoUrl,
-    videoTitle,
-    videoPrompt,
-    prompt,
-    openCharacterCreatorModal,
-    setActivePanel,
-    toast,
-  ])
-
   const handleOpenCharacterCreatorFromVideo = React.useCallback(() => {
     if (!isVideoNode || !isSoraVideoVendor) {
       toast('该功能仅支持 Sora 视频节点', 'error')
@@ -1596,9 +1520,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   ])
 
   const rewriteModelOptions = useModelOptions('text')
-  const showTimeMenu = isVideoNode
-  const showResolutionMenu = isVideoNode || isImageNode
-  const showOrientationMenu = isVideoNode
+  const showTimeMenu = hasDuration
+  const showResolutionMenu = hasAspect && (isVideoNode || hasImageResults)
+  const showOrientationMenu = hasOrientation
   React.useEffect(() => {
     if (!modelList.some((m) => m.value === activeModelKey) && modelList.length) {
       const first = modelList[0]
@@ -1631,13 +1555,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [existingModelVendor, modelKey, findVendorForModel, id, updateNodeData])
 
   React.useEffect(() => {
-    if (!isImageNode) return
+    if (!hasImageResults) return
     if (existingImageVendor || !imageModel) return
     const vendor = findVendorForModel(imageModel)
     if (vendor) {
       updateNodeData(id, { imageModelVendor: vendor })
     }
-  }, [existingImageVendor, imageModel, findVendorForModel, updateNodeData, id, isImageNode])
+  }, [existingImageVendor, hasImageResults, imageModel, findVendorForModel, updateNodeData, id])
 
   React.useEffect(() => {
     if (!isVideoNode) return
@@ -1740,6 +1664,104 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     setVeoImageModalMode(mode)
   }, [])
   const closeVeoModal = React.useCallback(() => setVeoImageModalMode(null), [])
+
+  const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
+    const edgesToThis = s.edges.filter((e) => e.target === id)
+    if (!edgesToThis.length) {
+      return {
+        upstreamText: null as string | null,
+        upstreamImageUrl: null as string | null,
+        upstreamVideoUrl: null as string | null,
+        upstreamSoraFileId: null as string | null,
+      }
+    }
+    const last = edgesToThis[edgesToThis.length - 1]
+    const src = s.nodes.find((n) => n.id === last.source)
+    if (!src) {
+      return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
+    }
+    const sd: any = src.data || {}
+    const skind: string | undefined = sd.kind
+    const sourceSchema = getTaskNodeSchema(skind)
+    const sourceFeatures = new Set(sourceSchema.features)
+    const sourceIsImageNode =
+      sourceSchema.category === 'image' || sourceFeatures.has('image') || sourceFeatures.has('imageResults')
+    const sourceHasVideoResults =
+      sourceFeatures.has('videoResults') ||
+      sourceFeatures.has('video') ||
+      sourceSchema.category === 'video' ||
+      sourceSchema.category === 'composer' ||
+      sourceSchema.category === 'storyboard'
+
+    // 获取最新的主文本 / 提示词
+    const uText =
+      sd.prompt && typeof sd.prompt === 'string'
+        ? sd.prompt
+        : sourceFeatures.has('textResults') && sd.textResults && sd.textResults.length > 0
+          ? sd.textResults[sd.textResults.length - 1]
+          : sourceSchema.category === 'text'
+            ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
+            : null
+
+    // 获取最新的主图片 URL
+    let uImg = null
+    let uSoraFileId = null
+    if (sourceIsImageNode) {
+      uImg = (sd.imageUrl as string | undefined) || null
+      uSoraFileId = (sd.soraFileId as string | undefined) || null
+    } else if (sourceHasVideoResults && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+      uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
+    }
+
+    // 获取最新的主视频 URL
+    let uVideo = null
+    if (sourceHasVideoResults) {
+      if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
+        uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
+      } else {
+        uVideo = (sd.videoUrl as string | undefined) || null
+      }
+    }
+
+    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
+  })
+
+  const buildFeaturePatch = React.useCallback((nextPrompt: string) => {
+    const patch: any = { prompt: nextPrompt }
+    if (hasAspect) patch.aspect = aspect
+    if (hasImageResults) {
+      patch.imageModel = imageModel
+      patch.imageModelVendor = findVendorForModel(imageModel)
+    }
+    if (hasSampleCount) patch.sampleCount = sampleCount
+    if (isComposerNode || hasVideo || hasVideoResults) {
+      patch.videoModel = videoModel
+      patch.videoModelVendor = findVendorForModel(videoModel)
+      if (hasDuration) patch.videoDurationSeconds = videoDuration
+      if (hasOrientation) patch.orientation = orientation
+      if (upstreamSoraFileId) patch.inpaintFileId = upstreamSoraFileId
+    }
+    patch.modelVendor = findVendorForModel(modelKey)
+    return patch
+  }, [
+    aspect,
+    findVendorForModel,
+    hasAspect,
+    hasDuration,
+    hasImageResults,
+    hasOrientation,
+    hasSampleCount,
+    hasVideo,
+    hasVideoResults,
+    imageModel,
+    modelKey,
+    sampleCount,
+    videoDuration,
+    videoModel,
+    isComposerNode,
+    upstreamSoraFileId,
+  ])
+
   const runNode = () => {
     let nextPrompt = (prompt || (data as any)?.prompt || '').trim()
     const patch: any = {}
@@ -1753,40 +1775,226 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.storyboardTitle = storyboardTitle
       patch.storyboard = nextPrompt
     }
-    patch.prompt = nextPrompt
-    if (isImageNode || isComposerNode) {
-      patch.aspect = aspect
-    }
-    if (isImageNode) {
-      patch.imageModel = imageModel
-      patch.imageModelVendor = findVendorForModel(imageModel)
-      patch.sampleCount = sampleCount
-    }
-    if (isComposerNode) {
-      patch.sampleCount = sampleCount
-      patch.videoModel = videoModel
-      patch.videoModelVendor = findVendorForModel(videoModel)
-      patch.videoDurationSeconds = videoDuration
-      patch.orientation = orientation
-      // Include upstream Sora file_id if available
-      if (upstreamSoraFileId) {
-        patch.inpaintFileId = upstreamSoraFileId
-      }
-    }
-    if (isStandaloneVideoNode) {
-      patch.orientation = orientation
-      // Include upstream Sora file_id if available
-      if (upstreamSoraFileId) {
-        patch.inpaintFileId = upstreamSoraFileId
-      }
-    }
-    if (isImageNode) {
+    const featurePatch = buildFeaturePatch(nextPrompt)
+    Object.assign(patch, featurePatch)
+    if (hasImage) {
       setPrompt(nextPrompt)
     }
-    patch.modelVendor = findVendorForModel(modelKey)
     updateNodeData(id, patch)
     runSelected()
   }
+
+  const videoContent = !isVideoNode
+    ? null
+    : (
+      <VideoContent
+        videoResults={videoResults}
+        videoPrimaryIndex={videoPrimaryIndex}
+        videoUrl={videoUrl}
+        videoThumbnailUrl={videoThumbnailUrl}
+        videoTitle={videoTitle}
+        hasPrimaryVideo={hasPrimaryVideo}
+        isSoraVideoVendor={isSoraVideoVendor}
+        isSoraVideoNode={isSoraVideoNode}
+        frameCaptureLoading={frameCaptureLoading}
+        frameCompareLoading={frameCompareLoading}
+        characterCardLoading={characterCardLoading}
+        characterCardError={characterCardError}
+        frameCompareResult={frameCompareResult}
+        frameCompareSummary={frameCompareSummary}
+        frameCompareVerdict={frameCompareVerdict}
+        frameSamples={frameSamples}
+        frameCompareTimes={frameCompareTimes}
+        characterCards={characterCards}
+        describedFrameCount={describedFrameCount}
+        handleCaptureVideoFrames={handleCaptureVideoFrames}
+        handleOpenCharacterCreatorFromVideo={handleOpenCharacterCreatorFromVideo}
+        handleCompareCharacters={handleCompareCharacters}
+        handleGenerateCharacterCards={handleGenerateCharacterCards}
+        cleanupFrameSamples={cleanupFrameSamples}
+        toggleFrameCompare={toggleFrameCompare}
+        setFrameCompareTimes={setFrameCompareTimes}
+        mediaOverlayBackground={mediaOverlayBackground}
+        mediaOverlayText={mediaOverlayText}
+        mediaFallbackSurface={mediaFallbackSurface}
+        mediaFallbackText={mediaFallbackText}
+        inlineDividerColor={inlineDividerColor}
+        accentPrimary={accentPrimary}
+        rgba={rgba}
+        videoSurface={videoSurface}
+        handleOpenCharacterCreatorModal={handleOpenCharacterCreatorModal}
+        onOpenVideoModal={() => setVideoExpanded(true)}
+      />
+    )
+
+  const characterContentProps = isCharacterNode
+    ? {
+      characterPrimaryImage,
+      selectedCharacter,
+      placeholderColor: placeholderIconColor,
+      onOpenAssets: () => setActivePanel('assets'),
+      onRefresh: refreshCharacters,
+      tokenReady: !!selectedCharacterTokenId,
+    }
+    : null
+
+  const mosaicProps = {
+    imageResults,
+    imagePrimaryIndex,
+    placeholderColor: placeholderIconColor,
+    mosaicGrid,
+    onOpenModal: () => setMosaicModalOpen(true),
+    onSave: handleMosaicSave,
+  }
+
+  const handleImageUpload = React.useCallback(async (file: File) => {
+    if (!supportsImageUpload) return
+
+    try {
+      setUploading(true)
+
+      const localUrl = URL.createObjectURL(file)
+      let localDataUrl: string | undefined
+      try {
+        localDataUrl = await blobToDataUrl(file)
+      } catch {
+        localDataUrl = undefined
+      }
+      updateNodeData(id, { imageUrl: localUrl, reverseImageData: localDataUrl })
+
+      const result = await uploadImageWithRetry(file)
+
+      if (result.file_id) {
+        const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
+        updateNodeData(id, {
+          imageUrl: remoteUrl,
+          soraFileId: result.file_id,
+          assetPointer: result.asset_pointer,
+          reverseImageData: localDataUrl,
+        })
+        if (remoteUrl !== localUrl) {
+          URL.revokeObjectURL(localUrl)
+        }
+
+        if ((window as any).silentSaveProject) {
+          (window as any).silentSaveProject()
+        }
+      }
+    } catch (error) {
+      console.error('Failed to upload image to Sora:', error)
+      toast('上传图片到 Sora 失败，请稍后再试', 'error')
+    } finally {
+      setUploading(false)
+    }
+  }, [supportsImageUpload, id, updateNodeData, uploadImageWithRetry])
+
+  const connectToRight = (targetKind: string, targetLabel: string) => {
+    const all = useRFStore.getState().nodes
+    const self = all.find((n) => n.id === id)
+    if (!self) return
+    const pos = { x: self.position.x + 260, y: self.position.y }
+    const newId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? (crypto as any).randomUUID()
+        : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    useRFStore.setState((s: any) => {
+      const node = {
+        id: newId,
+        type: 'taskNode' as const,
+        position: pos,
+        data: { label: targetLabel, kind: targetKind },
+      }
+      const edge: any = {
+        id: `e-${id}-${newId}-${Date.now().toString(36)}`,
+        source: id,
+        target: newId,
+        sourceHandle: 'out-image',
+        targetHandle: 'in-image',
+        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+        animated: true,
+      }
+      return {
+        nodes: [...s.nodes, node],
+        edges: [...s.edges, edge],
+      }
+    })
+  }
+
+  const imageProps = {
+    hasPrimaryImage,
+    imageResults,
+    imagePrimaryIndex,
+    primaryImageUrl,
+    fileRef,
+    onUpload: supportsImageUpload ? handleImageUpload : undefined,
+    connectToRight,
+    hovered,
+    setHovered,
+    quickActionBackgroundActive,
+    quickActionIconActive,
+    quickActionIconColor,
+    quickActionHint,
+    nodeShellText,
+    darkContentBackground,
+    darkCardShadow,
+    mediaFallbackSurface,
+    mediaOverlayText,
+    subtleOverlayBackground,
+    soraFileId,
+    imageUrl,
+    themeWhite: theme.white,
+    setImageExpanded,
+    upstreamText,
+  }
+
+  const toolbarPreview = React.useMemo(() => {
+    if (primaryMedia && primaryMediaUrl) {
+      const kind = primaryMedia === 'character' ? 'image' : primaryMedia
+      return { url: primaryMediaUrl, kind: kind as any }
+    }
+    // Fallbacks for legacy nodes
+    if (hasImageResults) return { url: imageUrl || (data as any)?.imageUrl || null, kind: 'image' as const }
+    if (isVideoNode) {
+      const url = (data as any)?.videoUrl || videoResults[videoPrimaryIndex]?.url || null
+      return { url, kind: 'video' as const }
+    }
+    if (isAudioNode) return { url: (data as any)?.audioUrl || null, kind: 'audio' as const }
+    return { url: null, kind: 'image' as const }
+  }, [
+    primaryMedia,
+    primaryMediaUrl,
+    hasImageResults,
+    imageUrl,
+    data,
+    isVideoNode,
+    videoResults,
+    videoPrimaryIndex,
+    isAudioNode,
+  ])
+
+  const handlePreview = React.useCallback(() => {
+    if (!toolbarPreview.url) return
+    useUIStore.getState().openPreview({ url: toolbarPreview.url, kind: toolbarPreview.kind as any, name: data?.label })
+  }, [data?.label, toolbarPreview])
+
+  const handleDownload = React.useCallback(() => {
+    if (!toolbarPreview.url) return
+    const a = document.createElement('a')
+    a.href = toolbarPreview.url
+    a.download = `${(data?.label || kind || 'node')}-${Date.now()}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }, [data?.label, kind, toolbarPreview])
+
+  const featureBlocks = renderFeatureBlocks(schema.features, {
+    featureFlags,
+    isMosaicNode,
+    videoContent,
+    characterProps: characterContentProps,
+    mosaicProps,
+    imageProps,
+  })
   const [mentionOpen, setMentionOpen] = React.useState(false)
   const [mentionFilter, setMentionFilter] = React.useState('')
   const [mentionItems, setMentionItems] = React.useState<any[]>([])
@@ -2223,83 +2431,31 @@ const rewritePromptWithCharacters = React.useCallback(
         },
       ]
     }
-    if (isImageNode) {
-      return [
+    if (hasImageResults) {
+      const tools: { key: string; label: string; icon: JSX.Element; onClick: () => void }[] = [
         {
           key: 'pose',
           label: '调整姿势',
           icon: <IconAdjustments size={16} />,
           onClick: () => openPoseEditor(),
         },
-        {
+      ]
+      if (supportsReversePrompt) {
+        tools.push({
           key: 'reverse',
           label: '反推提示词',
           icon: <IconPhotoSearch size={16} />,
           onClick: () => onReversePrompt(),
-        },
-      ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+        })
+      }
+      return tools
     }
     // default tools for other node kinds (kept minimal)
     return [
       { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
       { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [onReversePrompt, id, isCharacterNode, isImageNode, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt])
-
-  const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
-    const edgesToThis = s.edges.filter((e) => e.target === id)
-    if (!edgesToThis.length) {
-      return {
-        upstreamText: null as string | null,
-        upstreamImageUrl: null as string | null,
-        upstreamVideoUrl: null as string | null,
-        upstreamSoraFileId: null as string | null,
-      }
-    }
-    const last = edgesToThis[edgesToThis.length - 1]
-    const src = s.nodes.find((n) => n.id === last.source)
-    if (!src) {
-      return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
-    }
-    const sd: any = src.data || {}
-    const skind: string | undefined = sd.kind
-    const sourceSchema = getTaskNodeSchema(skind)
-    const sourceFeatures = new Set(sourceSchema.features)
-    const sourceIsImageNode =
-      sourceSchema.category === 'image' || sourceFeatures.has('image') || sourceFeatures.has('imageResults')
-    const sourceHasVideoResults =
-      sourceFeatures.has('videoResults') ||
-      sourceFeatures.has('video') ||
-      sourceSchema.category === 'video' ||
-      sourceSchema.category === 'composer' ||
-      sourceSchema.category === 'storyboard'
-    const uText = sourceIsImageNode
-      ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
-      : null
-
-    // 获取最新的主图片 URL
-    let uImg = null
-    let uSoraFileId = null
-    if (sourceIsImageNode) {
-      uImg = (sd.imageUrl as string | undefined) || null
-      uSoraFileId = (sd.soraFileId as string | undefined) || null
-    } else if (sourceHasVideoResults && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-      // 对于 video 节点，优先获取主视频的缩略图作为上游图片
-      uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
-    }
-
-    // 获取最新的主视频 URL
-    let uVideo = null
-    if (sourceHasVideoResults) {
-      if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-        uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
-      } else {
-        uVideo = (sd.videoUrl as string | undefined) || null
-      }
-    }
-
-    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
-  })
+  }, [hasImageResults, id, isCharacterNode, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt])
 
   type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
   const veoCandidateImages = useRFStore((s) => {
@@ -2471,136 +2627,22 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [mentionOpen, mentionFilter])
 
   const hasContent = React.useMemo(() => {
-    if (isImageNode) return Boolean(imageUrl)
-    if (isVideoNode) return Boolean((data as any)?.videoUrl)
+    if (hasImageResults) return Boolean(imageUrl || imageResults.length)
+    if (isVideoNode || hasVideoResults) return Boolean((data as any)?.videoUrl)
     if (isAudioNode) return Boolean((data as any)?.audioUrl)
     if (isCharacterNode) return Boolean(characterPrimaryImage)
     return false
-  }, [isImageNode, isVideoNode, isAudioNode, isCharacterNode, imageUrl, data, characterPrimaryImage])
+  }, [hasImageResults, isVideoNode, hasVideoResults, isAudioNode, isCharacterNode, imageUrl, imageResults.length, data, characterPrimaryImage])
 
-  const connectToRight = (targetKind: string, targetLabel: string) => {
-    const all = useRFStore.getState().nodes
-    const self = all.find((n) => n.id === id)
-    if (!self) return
-    const pos = { x: self.position.x + 260, y: self.position.y }
-    const newId =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? (crypto as any).randomUUID()
-        : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    useRFStore.setState((s: any) => {
-      const node = {
-        id: newId,
-        type: 'taskNode' as const,
-        position: pos,
-        data: { label: targetLabel, kind: targetKind },
-      }
-      const edge: any = {
-        id: `e-${id}-${newId}-${Date.now().toString(36)}`,
-        source: id,
-        target: newId,
-        sourceHandle: 'out-image',
-        targetHandle: 'in-image',
-        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-        animated: true,
-      }
-      return {
-        nodes: [...s.nodes, node],
-        edges: [...s.edges, edge],
-        nextId: s.nextId + 1,
-      }
-    })
-  }
-
-  const fixedWidth = isImageNode || isMosaicNode ? 340 : undefined
-  const hasPrompt = ((prompt || (data as any)?.prompt || upstreamText || '')).trim().length > 0
-  const hasAiText = lastText.trim().length > 0
-
-  const connectFromText = (targetKind: 'image' | 'video') => {
-    const all = useRFStore.getState().nodes
-    const self = all.find((n: any) => n.id === id)
-    if (!self) return
-    const pos = { x: self.position.x + 260, y: self.position.y }
-    useRFStore.setState((s: any) => {
-      const newId = genTaskNodeId()
-      const label = targetKind === 'image' ? 'Image' : 'Video'
-      const newKind = targetKind === 'image' ? 'image' : 'composeVideo'
-      const basePrompt = (self.data as any)?.prompt as string | undefined
-      const nodeData: any = {
-        label,
-        kind: newKind,
-        // 继承文本节点的生成次数配置，用于多次生成图像/视频
-        sampleCount: (self.data as any)?.sampleCount,
-      }
-      if (basePrompt && basePrompt.trim()) nodeData.prompt = basePrompt
-      const node = { id: newId, type: 'taskNode', position: pos, data: nodeData }
-      const edgeId = `e-${id}-${newId}-${Date.now().toString(36)}`
-      const targetHandle = 'in-image'
-      const edge: any = {
-        id: edgeId,
-        source: id,
-        target: newId,
-        sourceHandle: 'out-any',
-        targetHandle,
-        type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-        animated: true,
-      }
-      return { nodes: [...s.nodes, node], edges: [...s.edges, edge], nextId: s.nextId + 1 }
-    })
-  }
-
-  // Handle image upload with Sora API
-  const handleImageUpload = async (file: File) => {
-    if (!supportsImageUpload) return
-
-    try {
-      setUploading(true)
-
-      // First, create a local URL for immediate preview
-      const localUrl = URL.createObjectURL(file)
-      let localDataUrl: string | undefined
-      try {
-        localDataUrl = await blobToDataUrl(file)
-      } catch {
-        localDataUrl = undefined
-      }
-      updateNodeData(id, { imageUrl: localUrl, reverseImageData: localDataUrl })
-
-      // Then upload to Sora to get file_id
-      const result = await uploadImageWithRetry(file)
-
-      if (result.file_id) {
-        const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
-        updateNodeData(id, {
-          imageUrl: remoteUrl,
-          soraFileId: result.file_id,
-          assetPointer: result.asset_pointer,
-          reverseImageData: localDataUrl,
-        })
-        if (remoteUrl !== localUrl) {
-          URL.revokeObjectURL(localUrl)
-        }
-
-        // 静默保存项目状态
-        if ((window as any).silentSaveProject) {
-          (window as any).silentSaveProject()
-        }
-      }
-    } catch (error) {
-      console.error('Failed to upload image to Sora:', error)
-      toast('上传图片到 Sora 失败，请稍后再试', 'error')
-      // Keep the local URL even if upload fails
-    } finally {
-      setUploading(false)
-    }
-  }
+  const fixedWidth = (hasImageResults || isMosaicNode) ? 340 : undefined
 
   const defaultLabel = React.useMemo(() => {
-    if (isComposerNode || schema.category === 'video') return '文生视频'
-    if (isImageNode) return '图像节点'
+    if (isComposerNode || hasVideo || hasVideoResults || schema.category === 'video') return '文生视频'
+    if (hasImageResults) return '图像节点'
     if (isAudioNode) return '音频节点'
     if (isSubtitleNode) return '字幕节点'
     return 'Task'
-  }, [isComposerNode, isImageNode, isAudioNode, isSubtitleNode, schema.category])
+  }, [hasImageResults, hasVideo, hasVideoResults, isComposerNode, isAudioNode, isSubtitleNode, schema.category])
   const currentLabel = React.useMemo(() => {
     const text = (data?.label ?? '').trim()
     return text || defaultLabel
@@ -2655,922 +2697,54 @@ const rewritePromptWithCharacters = React.useCallback(
         ...(fixedWidth ? { width: fixedWidth } : {}),
       } as React.CSSProperties}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 14,
-              background: iconBadgeBackground,
-              boxShadow: iconBadgeShadow,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              color: '#fff',
-            }}
-          >
-            <NodeIcon size={18} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {editing ? (
-              <TextInput
-                ref={labelInputRef}
-                size="xs"
-                value={labelDraft}
-                onChange={(e) => setLabelDraft(e.currentTarget.value)}
-                onBlur={commitLabel}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    commitLabel()
-                  } else if (e.key === 'Escape') {
-                    setLabelDraft(currentLabel)
-                    setEditing(false)
-                  }
-                }}
-              />
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Text
-                    size="sm"
-                    fw={600}
-                    style={{ color: nodeShellText, lineHeight: 1.2, cursor: 'pointer', flex: 1 }}
-                    title="双击重命名"
-                    onDoubleClick={() => setEditing(true)}
-                  >
-                    {currentLabel}
-                  </Text>
-                  <ActionIcon size="sm" variant="subtle" color="gray" title="重命名" onClick={() => setEditing(true)}>
-                    <IconBrush size={12} />
-                  </ActionIcon>
-                </div>
-                <Text size="xs" c="dimmed" style={{ marginTop: 2 }}>
-                  {subtitle}
-                </Text>
-              </>
-            )}
-          </div>
-        </div>
-        {statusLabel?.trim() && (
-          <div
-            style={{
-              ...sleekChipBase,
-              color,
-              fontSize: 12,
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
-            <span>{statusLabel}</span>
-          </div>
-        )}
-      </div>
-      {/* Top floating toolbar anchored to node */}
-      <NodeToolbar isVisible={!!selected && selectedCount === 1 && hasContent} position={Position.Top} align="center">
-        <div ref={moreRef} style={{ position: 'relative', display: 'inline-block' }} data-more-root>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '6px 12px',
-              borderRadius: 999,
-              background: toolbarBackground,
-              boxShadow: toolbarShadow,
-              backdropFilter: 'blur(18px)',
-            }}
-          >
-            <ActionIcon
-              variant="transparent"
-              radius={0}
-              size="sm"
-              title="放大预览"
-              styles={toolbarActionIconStyles}
-              onClick={() => {
-                const url =
-                  isCharacterNode
-                    ? characterPrimaryImage || undefined
-                    : isImageNode
-                      ? imageUrl || (data as any)?.imageUrl
-                      : isVideoNode
-                        ? (data as any)?.videoUrl
-                        : isAudioNode
-                          ? (data as any)?.audioUrl
-                          : undefined
-                const k: any =
-                  isCharacterNode
-                    ? 'image'
-                    : isAudioNode
-                      ? 'audio'
-                      : isVideoNode
-                        ? 'video'
-                        : 'image'
-                if (url) useUIStore.getState().openPreview({ url, kind: k, name: data?.label })
-              }}
-            >
-              <IconMaximize size={16} />
-            </ActionIcon>
-            <ActionIcon
-              variant="transparent"
-              radius={0}
-              size="sm"
-              styles={toolbarActionIconStyles}
-              title="下载"
-              onClick={() => {
-                const url =
-                  isCharacterNode
-                    ? characterPrimaryImage || undefined
-                    : isImageNode
-                      ? imageUrl || (data as any)?.imageUrl
-                      : isVideoNode
-                        ? (data as any)?.videoUrl
-                        : isAudioNode
-                          ? (data as any)?.audioUrl
-                          : undefined
-                if (!url) return
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `${(data?.label || kind)}-${Date.now()}`
-                document.body.appendChild(a)
-                a.click()
-                a.remove()
-              }}
-            >
-              <IconDownload size={16} />
-            </ActionIcon>
-            {visibleDefs.length > 0 && (
-              <div style={{ width: 1, height: 24, background: inlineDividerColor }} />
-            )}
-            {visibleDefs.map((d) => (
-              <Button
-                key={d.key}
-                type="button"
-                variant="transparent"
-                radius={0}
-                size="compact-sm"
-                onClick={d.onClick}
-                style={toolbarTextButtonStyle}
-              >
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {d.icon}
-                  <span>{d.label}</span>
-                </span>
-              </Button>
-            ))}
-            {extraDefs.length > 0 && (
-              <ActionIcon
-                variant="transparent"
-                radius={0}
-                size="sm"
-                title="更多"
-                styles={toolbarActionIconStyles}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowMore((v) => !v)
-                }}
-              >
-                <IconDots size={16} />
-              </ActionIcon>
-            )}
-          </div>
-          {showMore && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 2 }}>
-              <Paper shadow="md" radius="md" className="glass" p="xs" style={{ width: 260 }}>
-                <Text size="xs" c="dimmed" mb={6}>
-                  更多
-                </Text>
-                <Group wrap="wrap" gap={6}>
-                  {extraDefs.map((d) => (
-                    <Button
-                      key={d.key}
-                      size="xs"
-                      variant="subtle"
-                      leftSection={<>{d.icon}</>}
-                      onClick={() => {
-                        setShowMore(false)
-                        d.onClick()
-                      }}
-                    >
-                      {d.label}
-                    </Button>
-                  ))}
-                </Group>
-              </Paper>
-            </div>
-          )}
-        </div>
-      </NodeToolbar>
-      <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        {targets.map((h) => {
-          const handleLabel = getHandleTypeLabel(h.type)
-          const handlePositionName = getHandlePositionName(h.pos)
-          return (
-            <Handle
-              key={h.id}
-              id={h.id}
-              className="tc-handle"
-              type="target"
-              position={h.pos}
-              style={buildHandleStyle(h, handleLayoutMap)}
-              data-handle-type={h.type}
-              data-handle-position={handlePositionName}
-              title={`输入: ${handleLabel}`}
-              aria-label={`输入: ${handleLabel}`}
-            />
-          )
-        })}
-        {sources.map((h) => {
-          const handleLabel = getHandleTypeLabel(h.type)
-          const handlePositionName = getHandlePositionName(h.pos)
-          return (
-            <Handle
-              key={h.id}
-              id={h.id}
-              className="tc-handle"
-              type="source"
-              position={h.pos}
-              style={buildHandleStyle(h, handleLayoutMap)}
-              data-handle-type={h.type}
-              data-handle-position={handlePositionName}
-              title={`输出: ${handleLabel}`}
-              aria-label={`输出: ${handleLabel}`}
-            />
-          )
-        })}
-        <Handle
-          id={`in-${defaultInputType}-wide`}
-          className="tc-handle tc-handle--wide"
-          type="target"
-          position={Position.Left}
-          style={{ ...wideHandleBase, left: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(-50%, -50%)' }}
-          data-handle-type={defaultInputType}
-          data-handle-position="left"
-          title={`输入: ${getHandleTypeLabel(defaultInputType)}`}
-          aria-label={`输入: ${getHandleTypeLabel(defaultInputType)}`}
-        />
-        <Handle
-          id={`out-${defaultOutputType}-wide`}
-          className="tc-handle tc-handle--wide"
-          type="source"
-          position={Position.Right}
-          style={{ ...wideHandleBase, right: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(50%, -50%)' }}
-          data-handle-type={defaultOutputType}
-          data-handle-position="right"
-          title={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
-          aria-label={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
-        />
-      </div>
+      <TaskNodeHeader
+        NodeIcon={NodeIcon}
+        editing={editing}
+        labelDraft={labelDraft}
+        currentLabel={currentLabel}
+        subtitle={subtitle}
+        statusLabel={statusLabel}
+        statusColor={color}
+        nodeShellText={nodeShellText}
+        iconBadgeBackground={iconBadgeBackground}
+        iconBadgeShadow={iconBadgeShadow}
+        sleekChipBase={sleekChipBase}
+        onLabelDraftChange={setLabelDraft}
+        onCommitLabel={commitLabel}
+        onCancelEdit={() => {
+          setLabelDraft(currentLabel)
+          setEditing(false)
+        }}
+        onStartEdit={() => setEditing(true)}
+        labelInputRef={labelInputRef}
+      />
+      <TopToolbar
+        isVisible={!!selected}
+        selectedCount={selectedCount}
+        hasContent={hasContent}
+        moreRef={moreRef}
+        showMore={showMore}
+        setShowMore={setShowMore}
+        toolbarBackground={toolbarBackground}
+        toolbarShadow={toolbarShadow}
+        toolbarActionIconStyles={toolbarActionIconStyles}
+        toolbarTextButtonStyle={toolbarTextButtonStyle}
+        inlineDividerColor={inlineDividerColor}
+        visibleDefs={visibleDefs}
+        extraDefs={extraDefs}
+        onPreview={handlePreview}
+        onDownload={handleDownload}
+      />
+      <TaskNodeHandles
+        targets={targets}
+        sources={sources}
+        layout={handleLayoutMap}
+        defaultInputType={defaultInputType}
+        defaultOutputType={defaultOutputType}
+        wideHandleBase={wideHandleBase}
+      />
       {/* Content Area for Character/Image/Video/Text kinds */}
-      {isCharacterNode && (
-        <div style={{ position: 'relative', marginTop: 6 }}>
-          {characterPrimaryImage ? (
-            <div
-              style={{
-                borderRadius: 10,
-                overflow: 'hidden',
-                border: 'none',
-                position: 'relative',
-                background: mediaCardBackground,
-              }}
-            >
-              <img
-                src={characterPrimaryImage}
-                alt={selectedCharacter?.displayName || 'Sora 角色'}
-                style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }}
-              />
-              <div
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  padding: '12px 12px 10px',
-                  background: 'linear-gradient(0deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.0) 80%)',
-                  color: '#fff',
-                }}
-              >
-                <Text size="sm" fw={600} style={{ marginBottom: 2 }}>
-                  {selectedCharacter?.displayName || 'Sora 角色'}
-                </Text>
-                {selectedCharacter?.username && (
-                  <Text size="xs" c="dimmed">
-                    @{selectedCharacter.username}
-                  </Text>
-                )}
-              </div>
-              <Button
-                size="xs"
-                variant="light"
-                style={{ position: 'absolute', top: 8, right: 8 }}
-                onClick={() => setActivePanel('assets')}
-              >
-                管理角色
-              </Button>
-            </div>
-          ) : (
-            <Paper
-              radius="md"
-              p="md"
-              style={{
-                minHeight: 140,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                textAlign: 'center',
-              }}
-            >
-              <IconUsers size={28} style={{ color: placeholderIconColor }} />
-              <Text size="sm" c="dimmed">
-                选择一个 Sora 角色，封面将显示在此处并可连接到视频节点。
-              </Text>
-              <Group gap={6}>
-                <Button size="xs" variant="light" onClick={() => setActivePanel('assets')}>
-                  打开资产面板
-                </Button>
-                <Button size="xs" variant="subtle" onClick={refreshCharacters} disabled={!selectedCharacterTokenId}>
-                  刷新角色
-                </Button>
-              </Group>
-            </Paper>
-          )}
-        </div>
-      )}
-      {isMosaicNode ? (
-        <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
-          {imageResults.length ? (
-            <div style={{ position: 'relative', width: '100%' }}>
-              <div
-                style={{
-                  position: 'relative',
-                  borderRadius: 10,
-                  overflow: 'hidden',
-                  boxShadow: darkCardShadow,
-                  background: mediaFallbackSurface,
-                }}
-              >
-                <img
-                  src={imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''}
-                  alt="拼图结果"
-                  style={{ width: '100%', display: 'block', objectFit: 'cover' }}
-                />
-              </div>
-              <Group gap={6} mt={6} justify="flex-end">
-                <Button size="xs" variant="light" onClick={() => setMosaicModalOpen(true)}>
-                  重新拼图
-                </Button>
-                <Button size="xs" variant="subtle" onClick={() => handleMosaicSave()}>
-                  保存当前选择
-                </Button>
-              </Group>
-            </div>
-          ) : (
-            <Paper
-              radius="md"
-              p="md"
-              style={{
-                width: '100%',
-                minHeight: 140,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                textAlign: 'center',
-              }}
-            >
-              <IconLayoutGrid size={28} style={{ color: placeholderIconColor }} />
-              <Text size="sm" c="dimmed">
-                选择画布内的图片并拼成 {mosaicGrid}x{mosaicGrid} 网格。
-              </Text>
-              <Button size="xs" variant="light" onClick={() => setMosaicModalOpen(true)}>
-                打开拼图设置
-              </Button>
-            </Paper>
-          )}
-        </div>
-      ) : isImageNode && (
-        <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
-          {!hasPrimaryImage ? (
-            <>
-              {/* 快捷操作列表，增强引导 */}
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }} onMouseLeave={()=>setHovered(null)}>
-                {[
-                  { label: '上传图片并编辑', icon: <IconUpload size={16} />, onClick: () => fileRef.current?.click(), hint: '图片大小不能超过30MB' },
-                  { label: '图片换背景', icon: <IconTexture size={16} />, onClick: () => connectToRight('image','Image') },
-                  { label: '图生视频', icon: <IconVideo size={16} />, onClick: () => connectToRight('video','Video') },
-                                                                          ].map((row, idx) => {
-                  const active = hovered === idx
-                  const dimOthers = hovered !== null && hovered !== idx
-                  return (
-                    <div key={row.label}
-                      onMouseEnter={()=>setHovered(idx)}
-                      onClick={row.onClick}
-                      style={{
-                        cursor: 'pointer',
-                        padding: '8px 10px', borderRadius: 6,
-                        background: active ? quickActionBackgroundActive : 'transparent',
-                        transition: 'background .12s ease, opacity .12s ease',
-                        opacity: dimOthers ? 0.8 : 1,
-                      }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ color: active ? quickActionIconActive : quickActionIconColor }}>{row.icon}</div>
-                        <div style={{ flex: 1, color: nodeShellText, fontSize: 13 }}>{row.label}</div>
-                        <div style={{ width: 12, height: 12 }} />
-                      </div>
-                      {active && idx === 0 && (
-                        <div style={{ marginLeft: 36, marginTop: 4, color: quickActionHint, fontSize: 11 }}>
-                          图片大小不能超过30MB
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-                <input ref={fileRef} type="file" accept="image/*" hidden onChange={async (e)=>{
-                  const f = e.currentTarget.files?.[0]
-                  if (!f) return
-                  await handleImageUpload(f)
-                }} />
-              </div>
-            </>
-          ) : (
-            <div style={{ position: 'relative', width: '100%' }}>
-              {/* 背后影子卡片，暗示多图 */}
-              {imageResults.length > 1 && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 8,
-                    top: 8,
-                    width: '100%',
-                    borderRadius: 10,
-                    height: '100%',
-                    background: darkContentBackground,
-                    transform: 'translate(4px, 4px)',
-                    zIndex: 0,
-                  }}
-                />
-              )}
-              <div
-                style={{
-                  position: 'relative',
-                  borderRadius: 10,
-                  overflow: 'hidden',
-                  boxShadow: darkCardShadow,
-                  background: mediaFallbackSurface,
-                }}
-              >
-                <img
-                  src={primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''}
-                  alt="主图"
-                  style={{
-                    width: '100%',
-                    height: 'auto',
-                    display: 'block',
-                    objectFit: 'cover',
-                  }}
-                />
-                {/* Sora file_id indicator */}
-                {soraFileId && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 8,
-                        top: 8,
-                        padding: '2px 6px',
-                        borderRadius: 4,
-                        background: 'rgba(34, 197, 94, 0.9)',
-                        color: theme.white,
-                        fontSize: '10px',
-                        fontWeight: 500,
-                      }}
-                    title={`Sora File ID: ${soraFileId}`}
-                  >
-                    ✓ Sora
-                  </div>
-                )}
-                {/* 数量 + 展开标签 */}
-                {imageResults.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-xs"
-                    onClick={() => setImageExpanded(true)}
-                    style={{
-                      position: 'absolute',
-                      right: 8,
-                      bottom: 8,
-                      padding: 0,
-                      borderRadius: 0,
-                      border: 'none',
-                      background: 'transparent',
-                      color: mediaOverlayText,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontSize: 11,
-                    }}
-                  >
-                    <span>{imageResults.length}</span>
-                    <IconChevronDown size={12} />
-                  </Button>
-                )}
-              </div>
-            <input
-              ref={fileRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={async (e) => {
-                  const f = e.currentTarget.files?.[0]
-                  if (!f) return
-                  await handleImageUpload(f)
-                }}
-              />
-            </div>
-          )}
-          {!imageUrl && upstreamText && (
-            <div
-              style={{
-                marginTop: 6,
-                width: '100%',
-                maxHeight: 80,
-                borderRadius: 8,
-                border: 'none',
-                background: subtleOverlayBackground,
-                padding: '6px 8px',
-                color: mediaOverlayText,
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-                overflowY: 'auto',
-              }}
-            >
-              {upstreamText}
-            </div>
-          )}
-        </div>
-      )}
-      {isVideoNode && (
-        <div
-          style={{
-            marginTop: 6,
-            width: '100%',
-            minHeight: 160,
-            borderRadius: 10,
-            background: mediaOverlayBackground,
-            padding: 8,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            color: mediaOverlayText,
-          }}
-        >
-          {/* Video results toolbar */}
-          <Group justify="space-between" gap={4}>
-            <Text size="xs" c="dimmed">
-              {videoResults.length > 0
-                ? `共 ${videoResults.length} 个视频${videoPrimaryIndex >= 0 ? ` (主视频: 第 ${videoPrimaryIndex + 1} 个)` : ''}`
-                : '视频生成中...'
-              }
-            </Text>
-            <Group gap={2}>
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                onClick={() => setVideoExpanded(true)}
-                leftSection={<IconClock size={12} />}
-              >
-                {videoResults.length > 0 ? '选择主视频' : '查看历史'}
-              </Button>
-            </Group>
-          </Group>
-          <Group gap={6} justify="space-between">
-            <Group gap={6}>
-              <Button
-                size="compact-xs"
-                variant="light"
-                leftSection={<IconPhotoSearch size={12} />}
-                loading={frameCaptureLoading}
-                onClick={handleCaptureVideoFrames}
-              >
-                抽帧预览
-              </Button>
-              <Button
-                size="compact-xs"
-                variant="default"
-                leftSection={<IconUserPlus size={12} />}
-                onClick={handleOpenCharacterCreatorFromVideo}
-                disabled={!hasPrimaryVideo || !isSoraVideoVendor}
-                title="直接生成角色卡，跳过逐帧解析"
-              >
-                生成角色卡
-              </Button>
-            </Group>
-            {frameSamples.length > 0 && (
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                onClick={cleanupFrameSamples}
-              >
-                清空帧
-              </Button>
-            )}
-          </Group>
-          {frameSamples.length > 0 && (
-            <Group gap={6} justify="space-between">
-              <Button
-                size="compact-xs"
-                variant="default"
-                loading={frameCompareLoading}
-                onClick={handleCompareCharacters}
-              >
-                AI 判同人
-              </Button>
-              <Button
-                size="compact-xs"
-                variant="light"
-                loading={characterCardLoading}
-                onClick={handleGenerateCharacterCards}
-                title="使用帧描述聚类生成角色卡，适合需要精确分镜的场景"
-              >
-                逐帧解析角色卡
-              </Button>
-            </Group>
-          )}
-          {isSoraVideoNode && (
-            <Text size="xs" c="dimmed" style={{ lineHeight: 1.35 }}>
-              “逐帧解析角色卡” 会抽帧+聚类；“一键生成角色卡” 直接跳到资产面板，由你自行选择截取区间。
-            </Text>
-          )}
-
-          {videoUrl ? (
-            <video
-              src={videoResults[videoPrimaryIndex]?.url || videoUrl}
-              poster={videoResults[videoPrimaryIndex]?.thumbnailUrl || videoThumbnailUrl || undefined}
-              controls
-              loop
-              muted
-              playsInline
-              style={{
-                borderRadius: 8,
-                width: '100%',
-                height: 160,
-                objectFit: 'cover',
-                backgroundColor: videoSurface,
-              }}
-            />
-          ) : (
-            <div
-              style={{
-                height: 160,
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: mediaFallbackText,
-                fontSize: 12,
-              }}
-            >
-              等待 Sora 视频生成完成…
-            </div>
-          )}
-          {videoTitle && (
-            <Text size="xs" lineClamp={1} c="dimmed">
-              {videoTitle}
-            </Text>
-          )}
-          {frameSamples.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 6 }}>
-              {frameSamples.map((f) => {
-                const active = frameCompareTimes.includes(f.time)
-                return (
-                  <div
-                    key={`${f.url}-${f.time}`}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer' }}
-                    onClick={() => toggleFrameCompare(f.time)}
-                    title={active ? '已加入对比，点击取消' : '加入对比'}
-                  >
-                    <div
-                      style={{
-                        borderRadius: 8,
-                        overflow: 'hidden',
-                        background: mediaFallbackSurface,
-                        border: active ? `2px solid ${accentPrimary}` : `1px solid ${inlineDividerColor}`,
-                        width: '100%',
-                        aspectRatio: '4 / 3',
-                        boxShadow: active ? `0 0 0 2px ${rgba(accentPrimary, 0.2)}` : 'none',
-                      }}
-                    >
-                      <img
-                        src={f.url}
-                        alt={`frame-${f.time.toFixed(2)}s`}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                      />
-                    </div>
-                    <Tooltip
-                      label={(!f.describing && f.description) ? f.description : undefined}
-                      disabled={!f.description || f.describing}
-                      withinPortal
-                      multiline
-                      maw={280}
-                      position="top"
-                      withArrow
-                    >
-                      <Text size="xs" c="dimmed">
-                        {f.time.toFixed(2)}s
-                      </Text>
-                    </Tooltip>
-                    {f.describing && (
-                      <Text size="xs" c="dimmed">
-                        解析中...
-                      </Text>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-          {frameCompareTimes.length > 0 && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <Group justify="space-between" gap={6}>
-                <Text size="xs" fw={600}>
-                  对比视图（{frameCompareTimes.length}）
-                </Text>
-                <Button size="compact-xs" variant="subtle" onClick={() => setFrameCompareTimes([])}>
-                  清空对比
-                </Button>
-              </Group>
-              <div style={{ display: 'grid', gridTemplateColumns: frameCompareTimes.length > 1 ? 'repeat(auto-fit, minmax(120px, 1fr))' : '1fr', gap: 8 }}>
-                {frameCompareTimes.map((t) => {
-                  const f = frameSamples.find((fs) => fs.time === t)
-                  if (!f) return null
-                  return (
-                    <div key={`compare-${t}`} style={{ border: `1px solid ${inlineDividerColor}`, borderRadius: 10, overflow: 'hidden', background: mediaFallbackSurface }}>
-                      <img src={f.url} alt={`compare-${t}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                      <div style={{ padding: '6px 8px' }}>
-                        <Text size="xs" c="dimmed">
-                          {t.toFixed(2)}s
-                        </Text>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-          {frameCompareResult && (
-            <Paper shadow="xs" radius="md" withBorder p="sm" style={{ marginTop: 8, background: mediaOverlayBackground, color: mediaOverlayText }}>
-              <Group justify="space-between" gap={6} mb={4}>
-                <Text size="xs" fw={600}>
-                  AI 判定
-                </Text>
-                {frameCompareVerdict && (
-                  <Badge size="xs" color={frameCompareVerdict.color} variant="filled">
-                    {frameCompareVerdict.label}
-                  </Badge>
-                )}
-              </Group>
-              {frameCompareSummary ? (
-                <>
-                  {frameCompareSummary.reason && (
-                    <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      理由：{frameCompareSummary.reason}
-                    </Text>
-                  )}
-                  {frameCompareSummary.tags && frameCompareSummary.tags.length > 0 && (
-                    <Group gap={4} mt={frameCompareSummary.reason ? 6 : 0} wrap="wrap">
-                      {frameCompareSummary.tags.map((tag) => (
-                        <Badge key={tag} size="xs" variant="light" color="blue">
-                          {tag}
-                        </Badge>
-                      ))}
-                    </Group>
-                  )}
-                  {frameCompareSummary.frames && frameCompareSummary.frames.length > 0 && (
-                    <Stack gap={4} mt={frameCompareSummary.tags && frameCompareSummary.tags.length > 0 ? 6 : 10}>
-                      {frameCompareSummary.frames.map((frame, idx) => (
-                        <Group key={`frame-summary-${frame.time ?? idx}`} gap={6} align="flex-start" wrap="nowrap">
-                          <Badge size="xs" variant="outline" color="gray">
-                            {typeof frame.time === 'number' ? `${frame.time.toFixed(2)}s` : `帧 ${idx + 1}`}
-                          </Badge>
-                          <Text size="xs" style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                            {frame.desc || '无描述'}
-                          </Text>
-                        </Group>
-                      ))}
-                    </Stack>
-                  )}
-                </>
-              ) : (
-                <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {frameCompareResult}
-                </Text>
-              )}
-            </Paper>
-          )}
-          {characterCardLoading && (
-            <Text size="xs" c="dimmed" mt={8}>
-              正在生成角色卡… (已解析 {describedFrameCount} 帧)
-            </Text>
-          )}
-          {characterCardError && (
-            <Text size="xs" c="red" mt={4}>
-              {characterCardError}
-            </Text>
-          )}
-          {characterCards.length > 0 && (
-            <Stack gap={6} mt={8}>
-              <Text size="xs" fw={600}>
-                角色卡（{characterCards.length}）
-              </Text>
-              <Stack gap={8}>
-                {characterCards.map((card) => (
-                  <Paper key={card.id} withBorder radius="md" p="sm" style={{ background: mediaOverlayBackground, color: mediaOverlayText }}>
-                    <Group justify="space-between" gap={6} mb={6} align="flex-start">
-                      <div>
-                        <Text size="sm" fw={600}>
-                          {card.name}
-                        </Text>
-                        {card.summary && (
-                          <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
-                            {card.summary}
-                          </Text>
-                        )}
-                        {card.clipRange && (
-                          <Text size="xs" c="dimmed">
-                            片段 {card.clipRange.start.toFixed(2)}s - {card.clipRange.end.toFixed(2)}s（{(card.clipRange.end - card.clipRange.start).toFixed(2)}s）
-                          </Text>
-                        )}
-                      </div>
-                      {card.tags && card.tags.length > 0 && (
-                        <Group gap={4} wrap="wrap" justify="flex-end">
-                          {card.tags.map((tag) => (
-                            <Badge key={`${card.id}-${tag}`} size="xs" variant="light" color="blue">
-                              {tag}
-                            </Badge>
-                          ))}
-                        </Group>
-                      )}
-                    </Group>
-                      {(card.startFrame || card.endFrame) && (
-                        <Group gap={8} mb={6} align="stretch">
-                        {card.startFrame && (
-                          <div style={{ flex: 1 }}>
-                            <Text size="xs" c="dimmed" mb={2}>
-                              首次出现 {card.startFrame.time.toFixed(2)}s
-                            </Text>
-                            <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                              <img src={card.startFrame.url} alt={`${card.name}-start`} style={{ width: '100%', display: 'block' }} />
-                            </div>
-                          </div>
-                        )}
-                        {card.endFrame && (
-                          <div style={{ flex: 1 }}>
-                            <Text size="xs" c="dimmed" mb={2}>
-                              最后出现 {card.endFrame.time.toFixed(2)}s
-                            </Text>
-                            <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                              <img src={card.endFrame.url} alt={`${card.name}-end`} style={{ width: '100%', display: 'block' }} />
-                            </div>
-                          </div>
-                        )}
-                      </Group>
-                    )}
-                    <Stack gap={4}>
-                      {card.frames.map((frame) => (
-                        <Group key={`${card.id}-${frame.time}`} gap={6} align="flex-start">
-                          <Badge size="xs" variant="outline" color="gray">
-                            {frame.time.toFixed(2)}s
-                          </Badge>
-                          <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
-                            {frame.desc}
-                          </Text>
-                        </Group>
-                      ))}
-                    </Stack>
-                    <Group justify="flex-end" gap={6} mt={8}>
-                      <Tooltip label="打开创建角色弹窗" withArrow>
-                        <Button
-                          size="compact-xs"
-                          variant="outline"
-                          leftSection={<IconUserPlus size={12} />}
-                          onClick={() => handleOpenCharacterCreatorModal(card)}
-                        >
-                          一键创建角色
-                        </Button>
-                      </Tooltip>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            </Stack>
-          )}
-        </div>
-      )}
+      {featureBlocks}
       {isVideoNode && resolvedVideoVendor === 'veo' && (
         <Paper radius="md" withBorder p="sm" style={{ marginTop: 8, width: '100%' }}>
           <Stack gap="xs">
@@ -3732,205 +2906,56 @@ const rewritePromptWithCharacters = React.useCallback(
               gap: 12,
             }}
           >
-           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                <Menu.Target>
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-sm"
-                    style={{
-                      ...summaryChipStyles,
-                      minWidth: 0,
-                      maxWidth: 220,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                    title={`模型 · ${summaryModelLabel}`}
-                  >
-                    <span style={controlValueStyle}>{summaryModelLabel}</span>
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {modelList.map((option) => (
-                    <Menu.Item
-                      key={option.value}
-                      onClick={() => {
-                        setModelKey(option.value)
-                        setImageModel(option.value)
-                        setVideoModel(option.value)
-                        updateNodeData(id, {
-                          geminiModel: option.value,
-                          imageModel: option.value,
-                          videoModel: option.value,
-                          modelVendor: option.vendor || null,
-                          imageModelVendor: option.vendor || null,
-                          videoModelVendor: option.vendor || null,
-                        })
-                      }}
-                    >
-                      {option.label}
-                    </Menu.Item>
-                  ))}
-                </Menu.Dropdown>
-              </Menu>
-              {showTimeMenu && (
-                <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                <Menu.Target>
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-sm"
-                    style={{
-                      ...summaryChipStyles,
-                      minWidth: 0,
-                    }}
-                    title="时长"
-                  >
-                    <span style={controlValueStyle}>{summaryDuration}</span>
-                  </Button>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {durationOptions.map((option) => (
-                      <Menu.Item
-                        key={option.value}
-                        onClick={() => {
-                          const num = Number(option.value)
-                          setVideoDuration(num)
-                          updateNodeData(id, { videoDurationSeconds: num })
-                        }}
-                      >
-                        {option.label}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-              )}
-              {showResolutionMenu && (
-              <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                <Menu.Target>
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-sm"
-                    style={summaryChipStyles}
-                    title="分辨率"
-                  >
-                    <span style={controlValueStyle}>{summaryResolution}</span>
-                  </Button>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {RESOLUTION_OPTIONS.map((option) => (
-                      <Menu.Item
-                        key={option.value}
-                        onClick={() => {
-                          setAspect(option.value)
-                          updateNodeData(id, { aspect: option.value })
-                        }}
-                      >
-                        {option.label}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-              )}
-              {showOrientationMenu && (
-                <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                <Menu.Target>
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-sm"
-                    style={{
-                      ...summaryChipStyles,
-                      minWidth: 0,
-                    }}
-                    title="方向"
-                  >
-                    <span style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
-                  </Button>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {ORIENTATION_OPTIONS.map((option) => (
-                      <Menu.Item
-                        key={option.value}
-                        onClick={() => {
-                          setOrientation(option.value as 'portrait' | 'landscape')
-                          updateNodeData(id, { orientation: option.value })
-                        }}
-                      >
-                        {option.label}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-              )}
-              <Menu withinPortal position="bottom-start" transition="pop-top-left">
-                <Menu.Target>
-                  <Button
-                    type="button"
-                    variant="transparent"
-                    radius={0}
-                    size="compact-sm"
-                    style={{
-                      ...summaryChipStyles,
-                      minWidth: 0,
-                    }}
-                    title="生成次数"
-                  >
-                    <span style={controlValueStyle}>{summaryExec}</span>
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {SAMPLE_OPTIONS.map((value) => (
-                    <Menu.Item
-                      key={value}
-                      onClick={() => {
-                        setSampleCount(value)
-                        updateNodeData(id, { sampleCount: value })
-                      }}
-                    >
-                      {value}x
-                    </Menu.Item>
-                  ))}
-                </Menu.Dropdown>
-              </Menu>
-              {!isCharacterNode && (
-                <>
-                  {isRunning && (
-                    <ActionIcon
-                      size="md"
-                      variant="light"
-                      color="red"
-                      title="停止当前任务"
-                      onClick={handleCancelRun}
-                    >
-                      <IconPlayerStop size={16} />
-                    </ActionIcon>
-                  )}
-                  <ActionIcon
-                    size="md"
-                    title="执行节点"
-                    loading={isRunning}
-                    disabled={isRunning}
-                    onClick={runNode}
-                    radius="md"
-                    style={{
-                      width: 20,
-                      height: 20,
-                      background: 'linear-gradient(135deg, #4c6ef5, #60a5fa)',
-                      boxShadow: '0 18px 30px rgba(76, 110, 245, 0.35)',
-                    }}
-                  >
-                    <IconPlayerPlay size={18} />
-                  </ActionIcon>
-                </>
-              )}
-            </div>
+            <ControlChips
+              summaryChipStyles={summaryChipStyles}
+              controlValueStyle={controlValueStyle}
+              summaryModelLabel={summaryModelLabel}
+              summaryDuration={summaryDuration}
+              summaryResolution={summaryResolution}
+              summaryExec={summaryExec}
+              modelList={modelList}
+              onModelChange={(value) => {
+                setModelKey(value)
+                setImageModel(value)
+                setVideoModel(value)
+                const option = modelList.find((m) => m.value === value)
+                updateNodeData(id, {
+                  geminiModel: value,
+                  imageModel: value,
+                  videoModel: value,
+                  modelVendor: option?.vendor || null,
+                  imageModelVendor: option?.vendor || null,
+                  videoModelVendor: option?.vendor || null,
+                })
+              }}
+              showTimeMenu={showTimeMenu}
+              durationOptions={durationOptions}
+              onDurationChange={(num) => {
+                setVideoDuration(num)
+                updateNodeData(id, { videoDurationSeconds: num })
+              }}
+              showResolutionMenu={showResolutionMenu}
+              onAspectChange={(value) => {
+                setAspect(value)
+                updateNodeData(id, { aspect: value })
+              }}
+              showOrientationMenu={showOrientationMenu}
+              orientation={orientation}
+              onOrientationChange={(value) => {
+                setOrientation(value)
+                updateNodeData(id, { orientation: value })
+              }}
+              sampleOptions={SAMPLE_OPTIONS}
+              sampleCount={sampleCount}
+              onSampleChange={(value) => {
+                setSampleCount(value)
+                updateNodeData(id, { sampleCount: value })
+              }}
+              isCharacterNode={isCharacterNode}
+              isRunning={isRunning}
+              onCancelRun={handleCancelRun}
+              onRun={runNode}
+            />
           </div>
           {isCharacterNode ? (
             <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
@@ -3938,29 +2963,8 @@ const rewritePromptWithCharacters = React.useCallback(
             <Text size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : ''}</Text>
           )}
 
-          {!isCharacterNode && status === 'error' && (data as any)?.lastError && (
-            <Paper
-              radius="md"
-              p="xs"
-              mb="xs"
-              style={{
-                background: 'rgba(239,68,68,0.1)',
-                borderColor: 'rgba(239,68,68,0.3)',
-                border: 'none',
-              }}
-            >
-              <Text size="xs" c="red.4" style={{ fontWeight: 500 }}>
-                执行错误
-              </Text>
-              <Text size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
-                {(data as any).lastError}
-              </Text>
-              {(data as any)?.httpStatus === 429 && (
-                <Text size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
-                  💡 提示：API 配额已用尽，请稍后重试或升级您的服务计划
-                </Text>
-              )}
-            </Paper>
+          {!isCharacterNode && (
+            <StatusBanner status={status} lastError={(data as any)?.lastError} httpStatus={(data as any)?.httpStatus} />
           )}
 
           {isCharacterNode ? (
@@ -4279,281 +3283,36 @@ const rewritePromptWithCharacters = React.useCallback(
                   onNotesChange={(value) => setStoryboardNotes(value)}
                 />
               ) : (
-                <div style={{ position: 'relative' }}>
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 8,
-                    right: 8,
-                    zIndex: 10,
-                    display: 'flex',
-                    gap: 6,
-                  }}
-                >
-                  <ActionIcon
-                    variant="subtle"
-                    size="xs"
-                    onClick={() => setPromptSamplesOpen(true)}
-                    title="打开提示词支持共享配置"
-                      style={{
-                        border: 'none',
-                        background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                      }}
-                  >
-                    <IconBulb size={12} style={{ color: nodeShellText }} />
-                  </ActionIcon>
-                  {prompt.length >= 6 && suggestionsAllowed && (
-                    <ActionIcon
-                      variant="subtle"
-                      size="xs"
-                      style={{
-                        background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
-                        border: 'none',
-                      }}
-                      onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
-                      title={suggestionsEnabled ? "智能建议已启用 (Ctrl/Cmd+Space 切换)" : "智能建议已禁用 (Ctrl/Cmd+Space 启用)"}
-                    >
-                      <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
-                    </ActionIcon>
-                  )}
-                </div>
-                <Textarea
-                  autosize
-                  minRows={2}
-                  maxRows={6}
-                  placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
-                  value={prompt}
-                  onChange={(e)=>{
-                    const el = e.currentTarget
-                    const v = el.value
-                    setPrompt(v)
-                    updateNodeData(id, { prompt: v })
-
-                    const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
-                    const before = v.slice(0, caret)
-                    const lastAt = before.lastIndexOf('@')
-                    const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
-                    if (lastAt >= 0 && lastAt >= lastSpace) {
-                      const filter = before.slice(lastAt + 1)
-                      setMentionFilter(filter)
-                      setMentionOpen(true)
-                      mentionMetaRef.current = { at: lastAt, caret }
-                    } else {
-                      setMentionOpen(false)
-                      setMentionFilter('')
-                      mentionMetaRef.current = null
-                    }
-                  }}
-                  onBlur={() => {
-                    setPromptSuggestions([])
-                    setMentionOpen(false)
-                    setMentionFilter('')
-                  }}
-                  onKeyDown={(e) => {
-                    const isMac = navigator.platform.toLowerCase().includes('mac')
-                    const mod = isMac ? e.metaKey : e.ctrlKey
-
-                    if (e.key === 'Escape') {
-                      if (mentionOpen) {
-                        e.stopPropagation()
-                        setMentionOpen(false)
-                        setMentionFilter('')
-                        mentionMetaRef.current = null
-                        return
-                      }
-                      if (!mentionOpen && promptSuggestions.length > 0) {
-                        e.preventDefault()
-                        setPromptSuggestions([])
-                        setSuggestionsEnabled(false)
-                        return
-                      }
-                    }
-
-                    if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
-                      e.preventDefault()
-                      if (!suggestionsAllowed) return
-                      const value = prompt.trim()
-                      if (value.length >= 6) {
-                        setSuggestionsEnabled(true)
-                      }
-                      return
-                    }
-
-                    if (!promptSuggestions.length) return
-                    if (e.key === 'ArrowDown') {
-                      e.preventDefault()
-                      setActiveSuggestion((idx) => (idx + 1) % promptSuggestions.length)
-                    } else if (e.key === 'ArrowUp') {
-                      e.preventDefault()
-                      setActiveSuggestion((idx) => (idx - 1 + promptSuggestions.length) % promptSuggestions.length)
-                    } else if (e.key === 'Tab') {
-                      e.preventDefault()
-                      const suggestion = promptSuggestions[activeSuggestion]
-                      if (suggestion) {
-                        setPrompt(suggestion)
-                        setPromptSuggestions([])
-                        setSuggestionsEnabled(false)
-                        markDraftPromptUsed(suggestion, 'sora').catch(() => {})
-                      }
-                    } else if (e.key === 'Escape') {
-                      setPromptSuggestions([])
-                      setSuggestionsEnabled(false)
-                    }
-                  }}
-                />
-                {mentionOpen && (
-                  <Paper
-                    shadow="sm"
-                    radius="md"
-                    className="glass"
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      top: '100%',
-                      marginTop: 4,
-                      zIndex: 11,
-                      maxHeight: 220,
-                      overflowY: 'auto',
-                    }}
-                  >
-                    <Text size="xs" c="dimmed" px={8} py={4}>
-                      引用角色（仅 Sora2 支持）：输入 @ 后选择
-                    </Text>
-                    {mentionLoading && (
-                      <Text size="xs" c="dimmed" px={8} py={4}>
-                        正在加载角色列表…
-                      </Text>
-                    )}
-                    {!mentionLoading && mentionItems.length === 0 && (
-                      <Text size="xs" c="dimmed" px={8} py={4}>
-                        暂无可引用角色
-                      </Text>
-                    )}
-                    {!mentionLoading &&
-                      mentionItems
-                        .filter((it) => {
-                          const p = (it && (it.profile as any)) || {}
-                          if (!p.can_cameo) return false
-                          const u = String(p.username || '').toLowerCase()
-                          const f = mentionFilter.trim().toLowerCase()
-                          if (!f) return true
-                          return u.includes(f)
-                        })
-                        .map((it) => {
-                          const p = (it && (it.profile as any)) || {}
-                          const username = String(p.username || '').trim()
-                          const displayName = String(p.display_name || p.displayName || '').trim()
-                          const label = username ? `@${username}` : ''
-                          const key = p.user_id || username || it.token || Math.random().toString(36).slice(2)
-                          const avatar = String(p.profile_picture_url || '')
-                          return (
-                            <div
-                              key={key}
-                              onMouseDown={(ev) => {
-                                ev.preventDefault()
-                                if (!username) return
-                                const value = prompt
-                                const meta = mentionMetaRef.current
-                                let next = value
-                                if (meta) {
-                                  const { at, caret } = meta
-                                  const beforeAt = value.slice(0, at)
-                                  const afterCaret = value.slice(caret)
-                                  next = `${beforeAt}@${username}${afterCaret}`
-                                } else {
-                                  next = `${value}${value.endsWith(' ') || !value ? '' : ' '}@${username} `
-                                }
-                                setPrompt(next)
-                                updateNodeData(id, { prompt: next })
-                                setMentionOpen(false)
-                                setMentionFilter('')
-                                mentionMetaRef.current = null
-                              }}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: 12,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                              }}
-                            >
-                              {avatar && (
-                                <img
-                                  src={avatar}
-                                  alt={username}
-                                  style={{
-                                    width: 24,
-                                    height: 24,
-                                    borderRadius: '50%',
-                                    objectFit: 'cover',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                              )}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                <span style={{ color: nodeShellText }}>{label}</span>
-                                {displayName && (
-                                  <span style={{ color: nodeShellMuted, fontSize: 11 }}>
-                                    {displayName}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
-                  </Paper>
-                )}
-
-                {!mentionOpen && promptSuggestions.length > 0 && (
-                  <Paper
-                    shadow="sm"
-                    radius="md"
-                    className="glass"
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      bottom: '100%',
-                      marginBottom: 4,
-                      zIndex: 10,
-                      maxHeight: 180,
-                      overflowY: 'auto',
-                    }}
-                  >
-                    {promptSuggestions.map((s, idx) => (
-                      <div
-                        key={`${idx}-${s.slice(0,16)}`}
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          setPrompt(s)
-                          setPromptSuggestions([])
-                          markDraftPromptUsed(s, 'sora').catch(() => {})
-                        }}
-                        onMouseEnter={() => setActiveSuggestion(idx)}
-                        style={{
-                          padding: '4px 8px',
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          background: idx === activeSuggestion ? suggestionHighlight : 'transparent',
-                          color: nodeShellText,
-                        }}
-                      >
-                        {s}
-                      </div>
-                    ))}
-                  </Paper>
-                )}
-                </div>
-              )}
-              {(isImageNode || isVideoNode) && !isMosaicNode && (
-                <SystemPromptPanel
-                  target={isImageNode ? 'image' : 'video'}
-                  enabled={showSystemPrompt}
-                  value={systemPrompt}
-                  onEnabledChange={handleSystemPromptToggle}
-                  onChange={handleSystemPromptChange}
+                <PromptSection
+                  isCharacterNode={isCharacterNode}
+                  isComposerNode={isComposerNode}
+                  isStoryboardNode={isStoryboardNode}
+                  hasSystemPrompt={hasSystemPrompt && !isMosaicNode}
+                  prompt={prompt}
+                  setPrompt={setPrompt}
+                  onUpdateNodeData={(patch) => updateNodeData(id, patch)}
+                  suggestionsAllowed={suggestionsAllowed}
+                  suggestionsEnabled={suggestionsEnabled}
+                  setSuggestionsEnabled={setSuggestionsEnabled}
+                  promptSuggestions={promptSuggestions}
+                  activeSuggestion={activeSuggestion}
+                  setActiveSuggestion={setActiveSuggestion}
+                  setPromptSuggestions={setPromptSuggestions}
+                  markPromptUsed={(value) => markDraftPromptUsed(value, 'sora').catch(() => {})}
+                  mentionOpen={mentionOpen}
+                  mentionItems={mentionItems}
+                  mentionLoading={mentionLoading}
+                  mentionFilter={mentionFilter}
+                  setMentionFilter={setMentionFilter}
+                  setMentionOpen={setMentionOpen}
+                  mentionMetaRef={mentionMetaRef}
+                  showSystemPrompt={showSystemPrompt}
+                  systemPrompt={systemPrompt}
+                  handleSystemPromptToggle={handleSystemPromptToggle}
+                  handleSystemPromptChange={handleSystemPromptChange}
+                  isDarkUi={isDarkUi}
+                  nodeShellText={nodeShellText}
+                  onOpenPromptSamples={() => setPromptSamplesOpen(true)}
                 />
               )}
             </>
@@ -4567,305 +3326,55 @@ const rewritePromptWithCharacters = React.useCallback(
         onApplySample={handleApplyPromptSample}
       />
       {isMosaicNode && (
-        <Modal
+        <MosaicModal
           opened={mosaicModalOpen}
+          mosaicGrid={mosaicGrid}
+          mosaicLimit={mosaicLimit}
+          mosaicSelected={mosaicSelected}
+          mosaicPreviewLoading={mosaicPreviewLoading}
+          mosaicPreviewUrl={mosaicPreviewUrl}
+          mosaicPreviewError={mosaicPreviewError}
+          availableImages={availableImages}
+          darkCardShadow={darkCardShadow}
+          mediaFallbackSurface={mediaFallbackSurface}
+          inlineDividerColor={inlineDividerColor}
+          accentPrimary={accentPrimary}
+          rgba={rgba}
           onClose={() => setMosaicModalOpen(false)}
-          title="拼图配置"
-          size="lg"
-          centered
-        >
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Text size="sm" fw={600}>选择拼图图片</Text>
-              <Select
-                label="网格"
-                data={MOSAIC_GRID_OPTIONS}
-                value={String(mosaicGrid)}
-                onChange={(v) => {
-                  const n = Number(v || 2)
-                  setMosaicGrid(Math.max(1, Math.min(3, Number.isFinite(n) ? n : 2)))
-                }}
-                withinPortal
-                w={140}
-              />
-            </Group>
-            <Group justify="space-between">
-              <Text size="xs" c="dimmed">最多 {mosaicLimit} 张，按顺序填充从左到右、从上到下。</Text>
-              <Badge size="xs" variant="light" color="blue">
-                已选 {mosaicSelected.length}/{mosaicLimit}
-              </Badge>
-            </Group>
-            <Stack gap={6}>
-              <Group justify="space-between" align="center">
-                <Text size="xs" c="dimmed">预览 & 调整顺序</Text>
-                {mosaicSelected.length > 0 && (
-                  <Text size="xs" c="dimmed">点击下方缩略图可调整顺序或移除</Text>
-                )}
-              </Group>
-              <Paper withBorder p={8} radius="sm" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', position: 'relative' }}>
-                {mosaicPreviewLoading && <Loader size="sm" />}
-                {!mosaicPreviewLoading && mosaicPreviewUrl && (
-                  <img src={mosaicPreviewUrl} alt="mosaic preview" style={{ width: '100%', display: 'block', borderRadius: 6, boxShadow: darkCardShadow }} />
-                )}
-                {!mosaicPreviewLoading && !mosaicPreviewUrl && (
-                  <Text size="xs" c="dimmed">
-                    {mosaicPreviewError || '选择图片后将显示拼图预览'}
-                  </Text>
-                )}
-              </Paper>
-              {mosaicSelected.length > 0 && (
-                <ScrollArea h={140} type="auto" offsetScrollbars>
-                  <Group gap={10} wrap="wrap">
-                    {mosaicSelected.map((url, idx) => (
-                      <Paper
-                        key={`order-${url}`}
-                        withBorder
-                        radius="md"
-                        p={6}
-                        style={{ width: 120, position: 'relative', background: mediaFallbackSurface }}
-                      >
-                        <Badge size="xs" variant="filled" style={{ position: 'absolute', top: 6, left: 6, zIndex: 2 }}>
-                          {idx + 1}
-                        </Badge>
-                        <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                          <img src={url} alt={`order-${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                        </div>
-                        <Group gap={4} mt={6} justify="space-between">
-                          <ActionIcon variant="subtle" size="xs" onClick={() => moveMosaicItem(url, -1)} disabled={idx === 0}>
-                            <IconArrowUp size={12} />
-                          </ActionIcon>
-                          <ActionIcon variant="subtle" size="xs" onClick={() => handleMosaicToggle(url, false)}>
-                            <IconTrash size={12} />
-                          </ActionIcon>
-                          <ActionIcon variant="subtle" size="xs" onClick={() => moveMosaicItem(url, 1)} disabled={idx === mosaicSelected.length - 1}>
-                            <IconArrowDown size={12} />
-                          </ActionIcon>
-                        </Group>
-                      </Paper>
-                    ))}
-                  </Group>
-                </ScrollArea>
-              )}
-            </Stack>
-            <Text size="xs" fw={600}>从图库选择</Text>
-            <ScrollArea h={260} type="auto" offsetScrollbars>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                  gap: 10,
-                }}
-              >
-                {availableImages.map((url) => {
-                  const checked = mosaicSelected.includes(url)
-                  const disabled = !checked && mosaicSelected.length >= mosaicLimit
-                  return (
-                    <Paper
-                      key={`avail-${url}`}
-                      withBorder
-                      radius="md"
-                      p={6}
-                      style={{
-                        position: 'relative',
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        opacity: disabled ? 0.5 : 1,
-                        background: mediaFallbackSurface,
-                        borderColor: checked ? accentPrimary : undefined,
-                        boxShadow: checked ? `0 0 0 2px ${rgba(accentPrimary, 0.18)}` : undefined,
-                      }}
-                      onClick={() => handleMosaicToggle(url, !checked)}
-                    >
-                      {checked && (
-                        <Badge
-                          size="xs"
-                          variant="filled"
-                          color="blue"
-                          style={{ position: 'absolute', top: 6, left: 6, zIndex: 2 }}
-                        >
-                          已选
-                        </Badge>
-                      )}
-                      <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                        <img src={url} alt="候选图片" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                      </div>
-                    </Paper>
-                  )
-                })}
-              </div>
-              {availableImages.length === 0 && <Text size="xs" c="dimmed" mt="xs">暂无可用图片，请先上传或生成。</Text>}
-            </ScrollArea>
-            <Group justify="flex-end">
-              <Button variant="subtle" onClick={() => setMosaicModalOpen(false)}>取消</Button>
-              <Button onClick={handleMosaicSave}>保存并生成</Button>
-            </Group>
-          </Stack>
-        </Modal>
+          onGridChange={(grid) => setMosaicGrid(grid)}
+          onMoveItem={moveMosaicItem}
+          onToggleImage={handleMosaicToggle}
+          onSave={handleMosaicSave}
+        />
       )}
 
       {veoImageModalMode && (
-        <Modal
-          opened={true}
+        <VeoImageModal
+          opened
+          mode={veoImageModalMode}
+          statusColor={color}
+          firstFrameLocked={firstFrameLocked}
+          trimmedFirstFrameUrl={trimmedFirstFrameUrl}
+          trimmedLastFrameUrl={trimmedLastFrameUrl}
+          veoReferenceImages={veoReferenceImages}
+          veoReferenceLimitReached={veoReferenceLimitReached}
+          veoCustomImageInput={veoCustomImageInput}
+          veoCandidateImages={veoCandidateImages}
+          mediaFallbackSurface={mediaFallbackSurface}
+          inlineDividerColor={inlineDividerColor}
           onClose={closeVeoModal}
-          title={
-            veoImageModalMode === 'first'
-              ? '选择首帧图片'
-              : veoImageModalMode === 'last'
-                ? '选择尾帧图片'
-                : '管理参考图'
-          }
-          size="lg"
-          centered
-          withinPortal
-          zIndex={8200}
-        >
-          <Stack gap="sm">
-            {veoImageModalMode === 'reference' && (
-              <>
-                {firstFrameLocked && (
-                  <Text size="xs" c="red">
-                    已设置首帧时无法添加或选择参考图。请先清空首帧 URL。
-                  </Text>
-                )}
-                <Group gap="xs" align="flex-end">
-                  <TextInput
-                    label="添加参考图"
-                    placeholder="https://example.com/ref.png"
-                    value={veoCustomImageInput}
-                    onChange={(e) => setVeoCustomImageInput(e.currentTarget.value)}
-                    style={{ flex: 1 }}
-                    disabled={firstFrameLocked}
-                  />
-                  <Button
-                    size="xs"
-                    onClick={handleAddCustomReferenceImage}
-                    disabled={firstFrameLocked || !veoCustomImageInput.trim() || veoReferenceLimitReached}
-                  >
-                    添加
-                  </Button>
-                </Group>
-                {veoReferenceImages.length === 0 ? (
-                  <Text size="xs" c="dimmed">
-                    未选择参考图。
-                  </Text>
-                ) : (
-                  <Group gap={6} wrap="wrap">
-                    {veoReferenceImages.map((url) => (
-                      <Paper key={url} radius="md" p="xs" withBorder style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div
-                          style={{
-                            width: 48,
-                            height: 48,
-                            borderRadius: 6,
-                            overflow: 'hidden',
-                            border: `1px solid ${inlineDividerColor}`,
-                            background: mediaFallbackSurface,
-                          }}
-                        >
-                          <img src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        </div>
-                        <ActionIcon size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
-                          <IconTrash size={12} />
-                        </ActionIcon>
-                      </Paper>
-                    ))}
-                  </Group>
-                )}
-              </>
-            )}
-            {veoCandidateImages.length === 0 ? (
-              <Text size="sm" c="dimmed">
-                暂无可用图片，试着连接图像节点。
-              </Text>
-            ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                  gap: 12,
-                }}
-              >
-                {veoCandidateImages.map((candidate) => {
-                  const isSelected = veoReferenceImages.includes(candidate.url)
-                  const isFirstFrame = firstFrameLocked && trimmedFirstFrameUrl === candidate.url
-                  const isLastFrame = firstFrameLocked && trimmedLastFrameUrl === candidate.url
-                  const isImageSource = candidate.sourceType === 'image'
-                  const borderColor = isFirstFrame || isLastFrame || isSelected ? color : inlineDividerColor
-                  return (
-                    <Paper key={`${candidate.url}-${candidate.label}`} radius="md" p="xs" withBorder style={{ borderColor }}>
-                      <div
-                        style={{
-                          borderRadius: 6,
-                          overflow: 'hidden',
-                          marginBottom: 6,
-                          border: `1px solid ${inlineDividerColor}`,
-                          background: mediaFallbackSurface,
-                        }}
-                      >
-                        <img src={candidate.url} alt={candidate.label} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
-                      </div>
-                      <Text size="xs" c="dimmed" lineClamp={1}>
-                        {candidate.label}
-                      </Text>
-                      <Group gap={4} mt={6} wrap="wrap">
-                        {veoImageModalMode === 'first' && (
-                          <Button
-                            size="compact-xs"
-                            variant="subtle"
-                            disabled={!isImageSource}
-                            onClick={() => {
-                              handleSetFirstFrameUrl(candidate.url)
-                              closeVeoModal()
-                            }}
-                          >
-                            {isFirstFrame ? '已设首帧' : '设为首帧'}
-                          </Button>
-                        )}
-                        {veoImageModalMode === 'last' && (
-                          <Button
-                            size="compact-xs"
-                            variant="subtle"
-                            disabled={!firstFrameLocked || !isImageSource}
-                            onClick={() => {
-                              handleSetLastFrameUrl(candidate.url)
-                              closeVeoModal()
-                            }}
-                          >
-                            {isLastFrame ? '已设尾帧' : '设为尾帧'}
-                          </Button>
-                        )}
-                        {veoImageModalMode === 'reference' && (
-                          <Button
-                            size="compact-xs"
-                            variant={isSelected ? 'filled' : 'subtle'}
-                            disabled={firstFrameLocked || (!isSelected && veoReferenceLimitReached)}
-                            onClick={() => handleReferenceToggle(candidate.url)}
-                          >
-                            {isSelected ? '已选参考' : '添加参考'}
-                          </Button>
-                        )}
-                      </Group>
-                    </Paper>
-                  )
-                })}
-              </div>
-            )}
-            {veoImageModalMode === 'first' && trimmedFirstFrameUrl && (
-              <Button variant="subtle" size="xs" onClick={() => handleSetFirstFrameUrl('')}>
-                清除首帧
-              </Button>
-            )}
-            {veoImageModalMode === 'last' && trimmedLastFrameUrl && (
-              <Button variant="subtle" size="xs" onClick={() => handleSetLastFrameUrl('')} disabled={!firstFrameLocked}>
-                清除尾帧
-              </Button>
-            )}
-          </Stack>
-        </Modal>
+          onCustomImageInputChange={setVeoCustomImageInput}
+          onAddCustomReferenceImage={handleAddCustomReferenceImage}
+          onRemoveReferenceImage={handleRemoveReferenceImage}
+          onSetFirstFrameUrl={handleSetFirstFrameUrl}
+          onSetLastFrameUrl={handleSetLastFrameUrl}
+          onToggleReference={handleReferenceToggle}
+        />
       )}
 
-      {isImageNode && poseEditorModal}
+      {hasImageResults && !isMosaicNode && poseEditorModal}
 
-      {isImageNode && imageResults.length > 1 && (
+      {hasImageResults && !isMosaicNode && imageResults.length > 1 && (
         <ImageResultModal
           opened={imageExpanded}
           onClose={() => setImageExpanded(false)}
