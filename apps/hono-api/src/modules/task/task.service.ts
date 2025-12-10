@@ -149,7 +149,7 @@ async function resolveVendorContext(
 		return { baseUrl, apiKey };
 	}
 
-	// 2) Fallback to model_providers + model_tokens
+	// 2) Fallback to model_providers + model_tokens（含跨用户共享 Token）
 	const providers = await c.env.DB.prepare(
 		`SELECT * FROM model_providers WHERE owner_id = ? AND vendor = ? ORDER BY created_at ASC`,
 	)
@@ -157,58 +157,10 @@ async function resolveVendorContext(
 		.all<ProviderRow>()
 		.then((r) => r.results || []);
 
-	if (!providers.length) {
-		// 对于 sora2api，允许使用 Env 级别的全局配置作为号池网关。
-		if (v === "sora2api") {
-			const envAny = c.env as any;
-			const envApiKey =
-				(typeof envAny.SORA2API_API_KEY === "string" &&
-					envAny.SORA2API_API_KEY.trim()) ||
-				"";
-			if (envApiKey) {
-				const rawBase =
-					(typeof envAny.SORA2API_BASE_URL === "string" &&
-						envAny.SORA2API_BASE_URL) ||
-					(typeof envAny.SORA2API_BASE === "string" &&
-						envAny.SORA2API_BASE) ||
-					"http://localhost:8000";
-				const baseUrl = normalizeBaseUrl(rawBase);
-				return { baseUrl, apiKey: envApiKey };
-			}
-		}
+	let provider: ProviderRow | null = providers[0] ?? null;
+	let sharedTokenProvider: ProviderRow | null = null;
+	let apiKey = "";
 
-		throw new AppError(`No provider configured for vendor ${v}`, {
-			status: 400,
-			code: "provider_not_configured",
-		});
-	}
-
-	const provider = providers[0];
-
-	// Find best token for provider: prefer user-owned enabled, then shared enabled
-	const ownedRows = await c.env.DB.prepare(
-		`SELECT * FROM model_tokens
-     WHERE provider_id = ? AND user_id = ? AND enabled = 1
-     ORDER BY created_at ASC LIMIT 1`,
-	)
-		.bind(provider.id, userId)
-		.all<TokenRow>();
-	let token: TokenRow | null = (ownedRows.results || [])[0] ?? null;
-
-	if (!token) {
-		const nowIso = new Date().toISOString();
-		const sharedRows = await c.env.DB.prepare(
-			`SELECT * FROM model_tokens
-       WHERE provider_id = ? AND shared = 1 AND enabled = 1
-         AND (shared_disabled_until IS NULL OR shared_disabled_until < ?)
-       ORDER BY updated_at ASC LIMIT 1`,
-		)
-			.bind(provider.id, nowIso)
-			.all<TokenRow>();
-		token = (sharedRows.results || [])[0] ?? null;
-	}
-
-	// Resolve API key: prefer DB token, then env-level fallback for sora2api.
 	const envAny = c.env as any;
 	const envSora2ApiKey =
 		v === "sora2api" &&
@@ -217,31 +169,111 @@ async function resolveVendorContext(
 			? (envAny.SORA2API_API_KEY as string).trim()
 			: "";
 
-	const apiKeyFromToken =
-		token && typeof token.secret_token === "string"
-			? token.secret_token.trim()
-			: "";
+	if (requiresApiKeyForVendor(v)) {
+		let token: TokenRow | null = null;
 
-	const apiKey = apiKeyFromToken || envSora2ApiKey;
+		// 2.1 优先使用当前用户在该 Provider 下的 Token（自己配置优先）
+		if (provider) {
+			const ownedRows = await c.env.DB.prepare(
+				`SELECT * FROM model_tokens
+         WHERE provider_id = ? AND user_id = ? AND enabled = 1
+         ORDER BY created_at ASC LIMIT 1`,
+			)
+				.bind(provider.id, userId)
+				.all<TokenRow>();
+			token = (ownedRows.results || [])[0] ?? null;
 
-	if (!apiKey) {
-		throw new AppError(`No API key configured for vendor ${v}`, {
+			// 2.2 若没有自己的 Token，尝试该 Provider 下的共享 Token
+			if (!token) {
+				const nowIso = new Date().toISOString();
+				const sharedRows = await c.env.DB.prepare(
+					`SELECT * FROM model_tokens
+           WHERE provider_id = ? AND shared = 1 AND enabled = 1
+             AND (shared_disabled_until IS NULL OR shared_disabled_until < ?)
+           ORDER BY updated_at ASC LIMIT 1`,
+				)
+					.bind(provider.id, nowIso)
+					.all<TokenRow>();
+				token = (sharedRows.results || [])[0] ?? null;
+			}
+
+			if (token && typeof token.secret_token === "string") {
+				apiKey = token.secret_token.trim();
+			}
+		}
+
+		// 2.3 对于 sora2api，允许使用 Env 级别的号池 API Key
+		if (!apiKey && envSora2ApiKey) {
+			apiKey = envSora2ApiKey;
+		}
+
+		// 2.4 仍未拿到，则从任意用户的共享 Token 中为该 vendor 选择一个（全局共享池）
+		if (!apiKey) {
+			const shared = await findSharedTokenForVendor(c, v);
+			if (shared && typeof shared.token.secret_token === "string") {
+				apiKey = shared.token.secret_token.trim();
+				sharedTokenProvider = shared.provider;
+			}
+		}
+
+		if (!apiKey) {
+			throw new AppError(`No API key configured for vendor ${v}`, {
+				status: 400,
+				code: "api_key_missing",
+			});
+		}
+	}
+
+	// 2.5 若用户自己没有 Provider，但通过共享 Token 找到了 Provider，则使用该 Provider
+	if (!provider && sharedTokenProvider) {
+		provider = sharedTokenProvider;
+	}
+
+	// 2.6 provider 仍不存在时，对于 sora2api 允许完全依赖 Env 级别配置；其他 vendor 报错
+	if (!provider) {
+		if (v === "sora2api" && envSora2ApiKey) {
+			const rawBase =
+				(typeof envAny.SORA2API_BASE_URL === "string" &&
+					envAny.SORA2API_BASE_URL) ||
+				(typeof envAny.SORA2API_BASE === "string" &&
+					envAny.SORA2API_BASE) ||
+				"http://localhost:8000";
+			const baseUrl = normalizeBaseUrl(rawBase);
+			if (!baseUrl) {
+				throw new AppError(`No base URL configured for vendor ${v}`, {
+					status: 400,
+					code: "base_url_missing",
+				});
+			}
+			return { baseUrl, apiKey: envSora2ApiKey || apiKey };
+		}
+
+		throw new AppError(`No provider configured for vendor ${v}`, {
 			status: 400,
-			code: "api_key_missing",
+			code: "provider_not_configured",
 		});
 	}
 
-	const baseUrl = normalizeBaseUrl(
+	// 2.7 解析 baseUrl：优先 Provider.base_url，其次 shared_base_url，全局默认
+	let baseUrl = normalizeBaseUrl(
 		provider.base_url ||
 			(await resolveSharedBaseUrl(c, v)) ||
-			(v === "veo"
-				? "https://api.grsai.com"
-				: v === "sora2api"
-					? ((envAny.SORA2API_BASE_URL as string | undefined) ||
-						(envAny.SORA2API_BASE as string | undefined) ||
-						"http://localhost:8000")
-					: ""),
+			"",
 	);
+
+	if (!baseUrl) {
+		if (v === "veo") {
+			baseUrl = normalizeBaseUrl("https://api.grsai.com");
+		} else if (v === "sora2api") {
+			const rawBase =
+				(typeof envAny.SORA2API_BASE_URL === "string" &&
+					envAny.SORA2API_BASE_URL) ||
+				(typeof envAny.SORA2API_BASE === "string" &&
+					envAny.SORA2API_BASE) ||
+				"http://localhost:8000";
+			baseUrl = normalizeBaseUrl(rawBase);
+		}
+	}
 
 	if (!baseUrl) {
 		throw new AppError(`No base URL configured for vendor ${v}`, {
@@ -265,6 +297,95 @@ async function resolveSharedBaseUrl(
 		.bind(vendor)
 		.first<{ base_url: string | null }>();
 	return row?.base_url ?? null;
+}
+
+type SharedTokenWithProvider = {
+	token: TokenRow;
+	provider: ProviderRow;
+};
+
+async function findSharedTokenForVendor(
+	c: AppContext,
+	vendor: string,
+): Promise<SharedTokenWithProvider | null> {
+	const nowIso = new Date().toISOString();
+	const row = await c.env.DB.prepare(
+		`SELECT
+       t.id,
+       t.provider_id,
+       t.label,
+       t.secret_token,
+       t.user_agent,
+       t.user_id,
+       t.enabled,
+       t.shared,
+       t.shared_failure_count,
+       t.shared_last_failure_at,
+       t.shared_disabled_until,
+       t.created_at,
+       t.updated_at,
+       p.id   AS p_id,
+       p.name AS p_name,
+       p.vendor AS p_vendor,
+       p.base_url AS p_base_url,
+       p.shared_base_url AS p_shared_base_url,
+       p.owner_id AS p_owner_id,
+       p.created_at AS p_created_at,
+       p.updated_at AS p_updated_at
+     FROM model_tokens t
+     JOIN model_providers p ON p.id = t.provider_id
+     WHERE t.shared = 1
+       AND t.enabled = 1
+       AND p.vendor = ?
+       AND (t.shared_disabled_until IS NULL OR t.shared_disabled_until < ?)
+     ORDER BY t.updated_at ASC
+     LIMIT 1`,
+	)
+		.bind(vendor, nowIso)
+		.first<any>();
+
+	if (!row) return null;
+
+	const token: TokenRow = {
+		id: row.id,
+		provider_id: row.provider_id,
+		label: row.label,
+		secret_token: row.secret_token,
+		user_agent: row.user_agent,
+		user_id: row.user_id,
+		enabled: row.enabled,
+		shared: row.shared,
+		shared_failure_count: row.shared_failure_count,
+		shared_last_failure_at: row.shared_last_failure_at,
+		shared_disabled_until: row.shared_disabled_until,
+		created_at: row.created_at,
+		updated_at: row.updated_at,
+	};
+
+	const provider: ProviderRow = {
+		id: row.p_id,
+		name: row.p_name,
+		vendor: row.p_vendor,
+		base_url: row.p_base_url,
+		shared_base_url: row.p_shared_base_url,
+		owner_id: row.p_owner_id,
+		created_at: row.p_created_at,
+		updated_at: row.p_updated_at,
+	};
+
+	return { token, provider };
+}
+
+function requiresApiKeyForVendor(vendor: string): boolean {
+	const v = vendor.toLowerCase();
+	return (
+		v === "gemini" ||
+		v === "qwen" ||
+		v === "anthropic" ||
+		v === "openai" ||
+		v === "veo" ||
+		v === "sora2api"
+	);
 }
 
 // ---------- VEO ----------
@@ -552,7 +673,10 @@ export async function fetchVeoTaskResult(
 			assets: [asset],
 			meta: {
 				taskKind: "text_to_video",
-				prompt: null,
+				prompt:
+					typeof payload.prompt === "string"
+						? payload.prompt
+						: null,
 				vendor: "veo",
 				modelKey:
 					typeof payload.model === "string"
@@ -808,6 +932,7 @@ export async function fetchSora2ApiTaskResult(
 	);
 
 	let assetPayload: any = undefined;
+	let promptForAsset: string | null = null;
 
 	if (status === "succeeded") {
 		const directVideo =
@@ -854,6 +979,14 @@ export async function fetchSora2ApiTaskResult(
 				url: videoUrl,
 				thumbnailUrl: thumbnail,
 			};
+			if (typeof data.prompt === "string") {
+				promptForAsset = data.prompt;
+			} else if (
+				data.input &&
+				typeof (data.input as any).prompt === "string"
+			) {
+				promptForAsset = (data.input as any).prompt;
+			}
 		}
 	}
 
@@ -866,7 +999,7 @@ export async function fetchSora2ApiTaskResult(
 			assets: [asset],
 			meta: {
 				taskKind: "text_to_video",
-				prompt: null,
+				prompt: promptForAsset,
 				vendor: "sora2api",
 				modelKey:
 					typeof data.model === "string" ? data.model : undefined,

@@ -184,8 +184,18 @@ export default function App(): JSX.Element {
   )
 
   React.useEffect(() => {
+    // 登录用户变化时，重新拉取 grsai 代理配置；未登录则清空本地状态
+    if (!auth.user) {
+      setGrsaiProxy(null)
+      setGrsaiCredits(null)
+      setGrsaiCreditsError(null)
+      setGrsaiStatuses({})
+      setGrsaiStatusError(null)
+      setStatusPopoverOpened(false)
+      return
+    }
     loadGrsaiProxyConfig().catch(() => {})
-  }, [loadGrsaiProxyConfig])
+  }, [auth.user?.sub, loadGrsaiProxyConfig])
 
   React.useEffect(() => {
     const handler = (event: Event) => {
@@ -235,11 +245,17 @@ export default function App(): JSX.Element {
         }
       }
     }
+
+    if (!auth.user) {
+      useUIStore.getState().setSoraVideoBaseUrl(null)
+      return
+    }
+
     loadVideoEndpoint()
     return () => {
       canceled = true
     }
-  }, [])
+  }, [auth.user?.sub])
 
   // Sora 视频去水印工具（基于 sora2api /get-sora-link）
   const [unwatermarkOpen, setUnwatermarkOpen] = React.useState(false)
@@ -277,6 +293,16 @@ export default function App(): JSX.Element {
 
   // 初始化时：根据 URL 中的 projectId 选择项目；否则默认第一个项目
   React.useEffect(() => {
+    // 根据当前登录用户加载其项目；退出登录时清空项目和画布
+    if (!auth.user) {
+      setProjects([])
+      setCurrentProject(null)
+      useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
+      setCurrentFlow({ id: null, name: '未命名', source: 'local' })
+      setDirty(false)
+      return
+    }
+
     listProjects()
       .then((ps) => {
         setProjects(ps)
@@ -292,10 +318,18 @@ export default function App(): JSX.Element {
         } else if (!existing && ps.length) {
           const first = ps[0]
           setCurrentProject({ id: first.id, name: first.name })
+        } else if (!ps.length) {
+          // 没有任何项目时清空当前项目与画布
+          setCurrentProject(null)
+          useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
+          setCurrentFlow({ id: null, name: '未命名', source: 'local' })
+          setDirty(false)
         }
       })
-      .catch(() => {})
-  }, [setCurrentProject])
+      .catch(() => {
+        // 加载失败时保持现有状态，不影响当前会话
+      })
+  }, [auth.user?.sub, setCurrentProject, setCurrentFlow, setDirty])
 
   // 当 currentProject 变化时，将 projectId 同步到 URL
   React.useEffect(() => {

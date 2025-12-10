@@ -16,11 +16,12 @@ import {
   Badge,
   Tooltip,
 } from '@mantine/core'
-import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
 import { toast } from './toast'
+import { useRFStore } from '../canvas/store'
 
 function formatDate(ts: string) {
   const date = new Date(ts)
@@ -37,6 +38,7 @@ export default function TapshowPanel(): JSX.Element | null {
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const openPreview = useUIStore((s) => s.openPreview)
+  const addNode = useRFStore((s) => s.addNode)
 
   const mounted = active === 'tapshow'
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
@@ -258,6 +260,36 @@ export default function TapshowPanel(): JSX.Element | null {
                                         }
                                       >
                                         {isVideo ? <IconPlayerPlay size={16} /> : <IconPhoto size={16} />}
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  )}
+                                  {asset.url && (
+                                    <Tooltip label="加入画布" withArrow>
+                                      <ActionIcon
+                                        size="sm"
+                                        variant="light"
+                                        onClick={() => {
+                                          const kind = isVideo ? 'video' : 'image'
+                                          addNode('taskNode', label, {
+                                            kind,
+                                            autoLabel: false,
+                                            prompt: asset.prompt || '',
+                                            imageUrl: !isVideo ? asset.url : undefined,
+                                            videoUrl: isVideo ? asset.url : undefined,
+                                            videoThumbnailUrl: isVideo ? asset.thumbnailUrl || undefined : undefined,
+                                            imageResults:
+                                              !isVideo && asset.url ? [{ url: asset.url }] : undefined,
+                                            videoResults:
+                                              isVideo && asset.url
+                                                ? [{ url: asset.url, thumbnailUrl: asset.thumbnailUrl || undefined }]
+                                                : undefined,
+                                            modelKey: asset.modelKey || undefined,
+                                            source: asset.vendor || 'tapshow',
+                                          })
+                                          setActivePanel(null)
+                                        }}
+                                      >
+                                        <IconPlus size={16} />
                                       </ActionIcon>
                                     </Tooltip>
                                   )}
