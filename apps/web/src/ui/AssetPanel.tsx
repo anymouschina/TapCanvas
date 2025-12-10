@@ -386,7 +386,27 @@ export default function AssetPanel(): JSX.Element | null {
     const label = asset.name || (isVideo ? '视频' : '图片')
     return (
       <Card key={asset.id} withBorder radius="md" shadow="sm">
-        {cover ? (
+        {isVideo ? (
+          data.url ? (
+            <div
+              style={{
+                borderRadius: 8,
+                overflow: 'hidden',
+                height: 160,
+              }}
+            >
+              <video
+                src={data.url}
+                poster={cover || undefined}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                controls
+                playsInline
+              />
+            </div>
+          ) : (
+            <PlaceholderImage label="视频" />
+          )
+        ) : cover ? (
           <Image
             src={cover}
             alt={label}
@@ -395,7 +415,7 @@ export default function AssetPanel(): JSX.Element | null {
             fit="cover"
           />
         ) : (
-          <PlaceholderImage label={isVideo ? '视频' : label} />
+          <PlaceholderImage label={label} />
         )}
         <Stack gap={6} mt="sm">
           <Group gap="xs">

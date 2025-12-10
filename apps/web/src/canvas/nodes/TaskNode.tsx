@@ -419,7 +419,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const rawShowSystemPrompt = (data as any)?.showSystemPrompt as boolean | undefined
   const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(() => {
     if (typeof rawShowSystemPrompt === 'boolean') return rawShowSystemPrompt
-    return hasSystemPrompt
+    // 默认关闭系统提示词，由用户手动开启
+    return false
   })
 
   React.useEffect(() => {
@@ -429,14 +430,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [rawSystemPrompt])
 
   React.useEffect(() => {
-    if (typeof rawShowSystemPrompt === 'boolean') {
+    if (typeof rawShowSystemPrompt === 'boolean' && rawShowSystemPrompt !== showSystemPrompt) {
       setShowSystemPrompt(rawShowSystemPrompt)
-      return
     }
-    if (rawShowSystemPrompt === undefined) {
-      setShowSystemPrompt(hasSystemPrompt)
-    }
-  }, [rawShowSystemPrompt, hasSystemPrompt])
+  }, [rawShowSystemPrompt, showSystemPrompt])
 
   React.useEffect(() => {
     const previous = typeof rawSystemPrompt === 'string' ? rawSystemPrompt : ''
@@ -556,12 +553,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         setReversePromptLoading(false)
         return
       }
+      const persist = useUIStore.getState().assetPersistenceEnabled
       const task = await runTaskByVendor('openai', {
         kind: 'image_to_prompt',
         prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
         extras: {
           ...imagePayload,
           nodeId: id,
+          persistAssets: persist,
         },
       })
       const nextPrompt = extractTextFromTaskResult(task)
@@ -825,6 +824,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       for (const f of picks) {
         const remoteUrl = await ensureFrameRemoteUrl(f)
         updateFrameSample(f.time, { remoteUrl })
+        const persist = useUIStore.getState().assetPersistenceEnabled
         const task = await runTaskByVendor('openai', {
           kind: 'image_to_prompt',
           prompt: '用简短中文描述画面中的人物外观、性别、年龄段、发型、服饰、表情、动作。不要写场景或镜头信息。',
@@ -833,6 +833,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
             systemPrompt:
               '你是人物识别助手。请用中文一两句话只描述人物的外观（性别、年龄段、脸型、发型、服饰颜色款式、表情、动作），不要写镜头、背景、光线。',
             nodeId: id,
+            persistAssets: persist,
           },
         })
         const text = extractTextFromTaskResult(task)
@@ -851,6 +852,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         list,
       ].join('\n')
 
+      const persistJudge = useUIStore.getState().assetPersistenceEnabled
       const judgeTask = await runTaskByVendor('openai', {
         kind: 'prompt_refine',
         prompt: judgePrompt,
@@ -858,6 +860,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           systemPrompt:
             '你是一个严谨的镜头角色判定助手。只输出 JSON，键使用英文，内容使用中文，避免幻觉，不确定则 same="unknown".',
           modelKey: 'gpt-5.1',
+          persistAssets: persistJudge,
         },
       })
       const resultText = extractTextFromTaskResult(judgeTask)
@@ -2164,10 +2167,11 @@ const rewritePromptWithCharacters = React.useCallback(
       throw new Error('当前模型暂未接入自动替换接口，请选择 Gemini 或 GLM 系列模型')
     }
     const vendor = provider === 'google' ? 'gemini' : 'anthropic'
+    const persist = useUIStore.getState().assetPersistenceEnabled
     const task = await runTaskByVendor(vendor, {
       kind: 'prompt_refine',
       prompt: instructions,
-      extras: { systemPrompt, modelKey: modelValue },
+      extras: { systemPrompt, modelKey: modelValue, persistAssets: persist },
     })
     const text = extractTextFromTaskResult(task)
     return text.trim()
