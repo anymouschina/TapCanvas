@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders, IconSettings } from '@tabler/icons-react'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders, IconSettings, IconMovie } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
@@ -109,6 +109,7 @@ export default function FloatingNav(): JSX.Element {
           <Item label={$('项目')} icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
           <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
           <Item label={$('我的资产')} icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
+          <Item label={$('TapShow')} icon={<IconMovie size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }} />
           <Item label={$('模型配置')} icon={<IconSettings size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
           <Item label={$('历史记录')} icon={<IconHistory size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
           {/* <Item label="图片编辑" icon={<IconPhotoEdit size={18} />}  badge="Beta" /> */}

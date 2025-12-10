@@ -63,6 +63,20 @@ async function uploadToR2FromUrl(options: {
 		return null;
 	}
 
+	// 本地 / 开发环境可通过 ASSET_HOSTING_DISABLED=1 关闭 OSS 上传，
+	// 直接使用上游返回的资源 URL，避免依赖 R2。
+	const hostingDisabledFlag = String(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		((c.env as any).ASSET_HOSTING_DISABLED ?? ""),
+	).toLowerCase();
+	const hostingDisabled =
+		hostingDisabledFlag === "1" ||
+		hostingDisabledFlag === "true" ||
+		hostingDisabledFlag === "yes";
+	if (hostingDisabled) {
+		return null;
+	}
+
 	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
 	if (!bucket) {
 		console.warn(

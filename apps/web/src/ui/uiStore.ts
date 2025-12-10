@@ -1,5 +1,16 @@
 import { create } from 'zustand'
 
+function getInitialAssetPersistence(): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    const v = window.localStorage.getItem('tapcanvas_asset_persist')
+    if (v === '0') return false
+  } catch {
+    // ignore
+  }
+  return true
+}
+
 export type CharacterCreatorPayload = {
   source?: string
   name?: string
@@ -37,8 +48,8 @@ type UIState = {
   setAddPanelOpen: (v: boolean) => void
   templatePanelOpen: boolean
   setTemplatePanelOpen: (v: boolean) => void
-  activePanel: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null
-  setActivePanel: (p: 'add' | 'template' | 'assets' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null) => void
+  activePanel: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null
+  setActivePanel: (p: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null) => void
   panelAnchorY: number | null
   setPanelAnchorY: (y: number | null) => void
   paramNodeId: string | null
@@ -79,6 +90,8 @@ type UIState = {
   clearAiMessages: () => void
   selectedAiModel: string
   setSelectedAiModel: (model: string) => void
+  assetPersistenceEnabled: boolean
+  setAssetPersistenceEnabled: (v: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -148,4 +161,15 @@ export const useUIStore = create<UIState>((set) => ({
   clearAiMessages: () => set({ aiChatMessages: [] }),
   selectedAiModel: 'gemini-2.0-flash-exp',
   setSelectedAiModel: (model) => set({ selectedAiModel: model }),
+  assetPersistenceEnabled: getInitialAssetPersistence(),
+  setAssetPersistenceEnabled: (v) => {
+    set({ assetPersistenceEnabled: v })
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('tapcanvas_asset_persist', v ? '1' : '0')
+      } catch {
+        // ignore
+      }
+    }
+  },
 }))

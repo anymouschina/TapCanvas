@@ -11,6 +11,12 @@ export type AssetRow = {
 	updated_at: string;
 };
 
+export type PublicAssetRow = AssetRow & {
+	owner_login: string | null;
+	owner_name: string | null;
+	project_name: string | null;
+};
+
 export async function listAssetsForUser(
 	db: D1Database,
 	userId: string,
@@ -98,3 +104,24 @@ export async function deleteAssetRow(
 	await execute(db, `DELETE FROM assets WHERE id = ?`, [id]);
 }
 
+export async function listPublicAssets(
+	db: D1Database,
+	params?: { limit?: number },
+): Promise<PublicAssetRow[]> {
+	const rawLimit = params?.limit;
+	const limit =
+		typeof rawLimit === "number" && !Number.isNaN(rawLimit)
+			? Math.max(1, Math.min(rawLimit, 96))
+			: 48;
+
+	return queryAll<PublicAssetRow>(
+		db,
+		`SELECT a.*, u.login AS owner_login, u.name AS owner_name, p.name AS project_name
+     FROM assets a
+     LEFT JOIN projects p ON a.project_id = p.id
+     LEFT JOIN users u ON u.id = a.owner_id
+     ORDER BY a.created_at DESC
+     LIMIT ?`,
+		[limit],
+	);
+}

@@ -112,6 +112,24 @@ function extractTextFromResponse(raw: any): string {
   return ''
 }
 
+function normalizeImagePromptOutput(text: string): string {
+  if (!text) return ''
+  let normalized = text.trim()
+
+  // Strip common leading "Prompt" labels and Markdown headings.
+  normalized = normalized.replace(/^\s*\*{0,2}\s*prompt\s*\*{0,2}\s*[-:]\s*/i, '')
+
+  // Remove surrounding quotes if the entire output is quoted.
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1).trim()
+  }
+
+  return normalized.trim()
+}
+
 function safeParseJson(data: string): any | null {
   try {
     return JSON.parse(data)
@@ -513,11 +531,13 @@ export const openaiAdapter: ProviderAdapter = {
       throw new Error('imageUrl 或 imageData 必须提供一个用于 image_to_prompt')
     }
 
-    const userPrompt = req.prompt?.trim() || '请详细分析这张图片，并输出可用于复现它的提示词。'
+    const userPrompt =
+      req.prompt?.trim() ||
+      'Describe this image in rich detail and output a single, well-structured English prompt that can be used to recreate it. Do not add any explanations, headings, markdown formatting, or non-English text.'
     const systemPrompt =
       typeof extras.systemPrompt === 'string' && extras.systemPrompt.trim()
         ? extras.systemPrompt.trim()
-        : 'You are an expert prompt engineer. When a user provides an image, describe it in rich detail and return a well-structured English prompt that could be used to recreate the image. Include subjects, environment, composition, camera, lighting, and style cues. Optionally append a concise Chinese summary.'
+        : 'You are an expert prompt engineer. When a user provides an image, you must return a single detailed English prompt that can be used to recreate it. Describe subjects, environment, composition, camera, lighting, and style cues. Do not add explanations, headings, markdown, or any non-English text; output only the final English prompt.'
     const modelKeyOverride = typeof extras.modelKey === 'string' ? extras.modelKey : ctx.modelKey || undefined
     const temperature =
       typeof extras.temperature === 'number' && !Number.isNaN(extras.temperature) ? extras.temperature : 0.2
@@ -528,13 +548,15 @@ export const openaiAdapter: ProviderAdapter = {
       preparedImageSource = converted || imageSource
     }
 
-    const { text, raw } = await callOpenAIChat(userPrompt, ctx, {
+    const { text: rawText, raw } = await callOpenAIChat(userPrompt, ctx, {
       systemPrompt,
       modelKey: modelKeyOverride,
       temperature,
       imageUrls: [preparedImageSource],
       preferResponses: typeof extras.preferResponses === 'boolean' ? extras.preferResponses : undefined,
     })
+
+    const text = normalizeImagePromptOutput(rawText)
 
     const id = raw?.id || `openai-${Date.now().toString(36)}`
     return {

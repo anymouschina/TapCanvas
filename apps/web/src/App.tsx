@@ -36,6 +36,7 @@ import TemplatePanel from './ui/TemplatePanel'
 import AccountPanel from './ui/AccountPanel'
 import ProjectPanel from './ui/ProjectPanel'
 import AssetPanel from './ui/AssetPanel'
+import TapshowPanel from './ui/TapshowPanel'
 import { CharacterCreatorModal } from './ui/CharacterCreatorModal'
 import { VideoTrimModalHost } from './ui/VideoTrimModalHost'
 import ModelPanel from './ui/ModelPanel'
@@ -723,6 +724,7 @@ export default function App(): JSX.Element {
       <ProjectPanel />
       <AccountPanel />
       <AssetPanel />
+      <TapshowPanel />
       <ModelPanel />
       <HistoryPanel />
       <ParamModal />
