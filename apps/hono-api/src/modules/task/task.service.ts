@@ -208,7 +208,22 @@ async function resolveVendorContext(
 		token = (sharedRows.results || [])[0] ?? null;
 	}
 
-	const apiKey = (token?.secret_token || "").trim();
+	// Resolve API key: prefer DB token, then env-level fallback for sora2api.
+	const envAny = c.env as any;
+	const envSora2ApiKey =
+		v === "sora2api" &&
+		typeof envAny.SORA2API_API_KEY === "string" &&
+		envAny.SORA2API_API_KEY.trim()
+			? (envAny.SORA2API_API_KEY as string).trim()
+			: "";
+
+	const apiKeyFromToken =
+		token && typeof token.secret_token === "string"
+			? token.secret_token.trim()
+			: "";
+
+	const apiKey = apiKeyFromToken || envSora2ApiKey;
+
 	if (!apiKey) {
 		throw new AppError(`No API key configured for vendor ${v}`, {
 			status: 400,
@@ -222,7 +237,9 @@ async function resolveVendorContext(
 			(v === "veo"
 				? "https://api.grsai.com"
 				: v === "sora2api"
-					? "http://localhost:8000"
+					? ((envAny.SORA2API_BASE_URL as string | undefined) ||
+						(envAny.SORA2API_BASE as string | undefined) ||
+						"http://localhost:8000")
 					: ""),
 	);
 
