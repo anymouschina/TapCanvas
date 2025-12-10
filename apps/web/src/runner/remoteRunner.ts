@@ -1706,6 +1706,16 @@ async function runGenericTask(ctx: RunnerContext) {
         throw new Error(errMsg)
       }
 
+      if (vendor === 'gemini' && res.status === 'failed') {
+        const rawResponse = (res.raw as any)?.response || res.raw
+        const errMsg =
+          rawResponse?.failure_reason ||
+          rawResponse?.error ||
+          rawResponse?.message ||
+          'Banana 图像生成失败'
+        throw new Error(errMsg)
+      }
+
       const textOut = (res.raw && (res.raw.text as string)) || ''
       if (textOut.trim()) {
         allTexts.push(textOut.trim())

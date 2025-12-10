@@ -227,56 +227,6 @@ export class SoraService {
         ),
       )
 
-      // fill embeddings for new prompts using SiliconFlow + pgvector
-      if (SILICONFLOW_API_KEY) {
-        const ids = items.map((it) => it.id)
-        if (ids.length) {
-          const drafts = await this.prisma.externalDraft.findMany({
-            where: {
-              userId,
-              provider: 'sora',
-              remoteId: { in: ids },
-            },
-          })
-          const needing = drafts.filter((d) => !(d as any).embedding && (d.prompt || '').trim().length > 0)
-          if (needing.length) {
-            try {
-              const inputs = needing.map((d) => (d.prompt || '').trim())
-              const embRes = await axios.post(
-                'https://api.siliconflow.cn/v1/embeddings',
-                {
-                  model: 'BAAI/bge-m3',
-                  input: inputs,
-                },
-                {
-                  headers: {
-                    Authorization: `Bearer ${SILICONFLOW_API_KEY}`,
-                    'Content-Type': 'application/json',
-                  },
-                  timeout: 10000,
-                },
-              )
-              const vectors: number[][] = (embRes.data?.data || []).map(
-                (d: any) => d.embedding as number[],
-              )
-              // update each embedding via raw SQL
-              await Promise.all(
-                needing.map((draft, idx) => {
-                  const vec = vectors[idx]
-                  if (!Array.isArray(vec) || !vec.length) return Promise.resolve()
-                  const literal = '[' + vec.join(',') + ']'
-                  return this.prisma.$executeRawUnsafe(
-                    `UPDATE "ExternalDraft" SET "embedding" = '${literal}'::vector WHERE "id" = '${draft.id}'`,
-                  )
-                }),
-              )
-            } catch {
-              // ignore embedding errors; suggestions will fall back as needed
-            }
-          }
-        }
-      }
-
       return {
         items: items.map(({ raw, ...rest }) => rest),
         cursor: data?.cursor ?? null,

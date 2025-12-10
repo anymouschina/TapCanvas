@@ -1,0 +1,1421 @@
+import type { AppContext } from "../../types";
+import { AppError } from "../../middleware/error";
+import { SoraVideoDraftResponseSchema } from "./sora.schemas";
+
+type SoraToken = {
+	id: string;
+	label: string;
+	secretToken: string;
+	userAgent: string | null;
+	shared: boolean;
+	providerVendor: string;
+	providerBaseUrl: string | null;
+};
+
+async function listSoraTokens(
+	c: AppContext,
+	userId: string,
+): Promise<SoraToken[]> {
+	const sql = `
+    SELECT
+      t.id,
+      t.label,
+      t.secret_token as secretToken,
+      t.user_agent as userAgent,
+      t.shared as shared,
+      p.vendor as providerVendor,
+      p.base_url as providerBaseUrl
+    FROM model_tokens t
+    JOIN model_providers p ON p.id = t.provider_id
+    WHERE t.enabled = 1
+      AND p.vendor = 'sora'
+      AND (t.user_id = ? OR t.shared = 1)
+    ORDER BY t.created_at ASC
+  `;
+
+	const { results } = await c.env.DB.prepare(sql)
+		.bind(userId)
+		.all<SoraToken>();
+	return results ?? [];
+}
+
+async function resolveSoraToken(
+	c: AppContext,
+	userId: string,
+	tokenId?: string | null,
+): Promise<SoraToken> {
+	if (tokenId) {
+		const sql = `
+      SELECT
+        t.id,
+        t.label,
+        t.secret_token as secretToken,
+        t.user_agent as userAgent,
+        t.shared as shared,
+        p.vendor as providerVendor,
+        p.base_url as providerBaseUrl
+      FROM model_tokens t
+      JOIN model_providers p ON p.id = t.provider_id
+      WHERE t.id = ?
+        AND t.enabled = 1
+        AND p.vendor = 'sora'
+        AND (t.user_id = ? OR t.shared = 1)
+      LIMIT 1
+    `;
+		const row = await c.env.DB.prepare(sql)
+			.bind(tokenId, userId)
+			.first<SoraToken>();
+		if (row) return row;
+	}
+
+	const tokens = await listSoraTokens(c, userId);
+	if (!tokens.length) {
+		throw new AppError("未找到可用的 Sora Token", {
+			status: 400,
+			code: "sora_token_missing",
+		});
+	}
+	return tokens[0];
+}
+
+function getDefaultSoraBase(vendor?: string | null): string {
+	const v = (vendor || "").toLowerCase();
+	if (v === "sora2api") {
+		const envVal =
+			(globalThis as any).SORA2API_BASE_URL ||
+			(globalThis as any).SORA2API_BASE ||
+			"http://localhost:8000";
+		return String(envVal);
+	}
+	return "https://sora.chatgpt.com";
+}
+
+function buildSoraBaseUrl(token: SoraToken): string {
+	return (token.providerBaseUrl || getDefaultSoraBase(token.providerVendor)).replace(
+		/\/+$/,
+		"",
+	);
+}
+
+function decodeJwtPayload(token: string): any | null {
+	const parts = token.split(".");
+	if (parts.length < 2) return null;
+	const payloadSeg = parts[1];
+	try {
+		let base64 = payloadSeg.replace(/-/g, "+").replace(/_/g, "/");
+		const pad = base64.length % 4;
+		if (pad) base64 += "=".repeat(4 - pad);
+		const json = atob(base64);
+		return JSON.parse(json);
+	} catch {
+		return null;
+	}
+}
+
+async function resolveSoraProfileId(
+	token: SoraToken,
+	baseUrl: string,
+): Promise<string> {
+	let profileId: string | undefined;
+
+	const payload = decodeJwtPayload(token.secretToken);
+	if (payload && typeof payload === "object") {
+		const auth = (payload as any)["https://api.openai.com/auth"] || {};
+		const uid =
+			auth.user_id ||
+			(payload as any).user_id ||
+			undefined;
+		if (typeof uid === "string" && uid.startsWith("user-")) {
+			profileId = uid;
+		}
+	}
+
+	if (!profileId) {
+		const sessionUrl = new URL("/api/auth/session", baseUrl).toString();
+		const res = await fetch(sessionUrl, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
+		});
+		if (res.ok) {
+			try {
+				const data: any = await res.json();
+				profileId =
+					data?.user?.user_id ||
+					data?.user?.id ||
+					data?.user_id ||
+					undefined;
+			} catch {
+				// ignore parse error
+			}
+		}
+	}
+
+	if (!profileId) {
+		throw new AppError("Sora session missing profile user id", {
+			status: 502,
+			code: "sora_profile_missing",
+		});
+	}
+
+	return profileId;
+}
+
+export async function unwatermarkVideo(c: AppContext, url: string) {
+	const soraUrl = url.trim();
+	if (!soraUrl) {
+		throw new AppError("url is required", {
+			status: 400,
+			code: "invalid_request",
+		});
+	}
+
+	const endpoint =
+		(c.env as any).SORA_UNWATERMARK_ENDPOINT?.trim() ||
+		"https://sorai.me/get-sora-link";
+
+	let res: Response;
+	try {
+		res = await fetch(endpoint, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ url: soraUrl }),
+		});
+	} catch (error: any) {
+		throw new AppError("Failed to call unwatermark endpoint", {
+			status: 502,
+			code: "unwatermark_upstream_error",
+			details: {
+				message: error?.message ?? String(error),
+			},
+		});
+	}
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok || (data && data.error)) {
+		const message =
+			(typeof data?.error === "string" && data.error) ||
+			`Sora unwatermark failed: ${res.status}`;
+		throw new AppError(message, {
+			status: 502,
+			code: "unwatermark_upstream_error",
+			details: {
+				upstreamStatus: res.status,
+				upstreamBody: data,
+			},
+		});
+	}
+
+	const downloadUrl: unknown = data?.download_link ?? data?.downloadLink;
+	if (typeof downloadUrl !== "string" || !downloadUrl.trim()) {
+		throw new AppError("解析成功但未返回下载链接", {
+			status: 502,
+			code: "unwatermark_missing_download_url",
+			details: {
+				upstreamStatus: res.status,
+				upstreamBody: data,
+			},
+		});
+	}
+
+	return {
+		downloadUrl: downloadUrl.trim(),
+		raw: data,
+	};
+}
+
+export async function createSoraVideoTask(
+	c: AppContext,
+	userId: string,
+	input: {
+		tokenId?: string | null;
+		prompt: string;
+		orientation: "portrait" | "landscape" | "square";
+		size?: string;
+		n_frames?: number;
+		inpaintFileId?: string | null;
+		imageUrl?: string | null;
+		remixTargetId?: string | null;
+		operation?: string | null;
+		title?: string | null;
+	},
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId ?? undefined);
+	if ((token.providerVendor || "").toLowerCase() !== "sora") {
+		throw new AppError("token not found or not a Sora token", {
+			status: 400,
+			code: "invalid_sora_token",
+		});
+	}
+
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL("/backend/nf/create", baseUrl).toString();
+	const userAgent = token.userAgent || "TapCanvas/1.0";
+
+	const body: any = {
+		kind: "video",
+		prompt: input.prompt,
+		title: input.title ?? null,
+		orientation: input.orientation || "portrait",
+		size: input.size || "small",
+		n_frames:
+			typeof input.n_frames === "number" ? input.n_frames : 300,
+		inpaint_items: input.inpaintFileId
+			? [{ kind: "file", file_id: input.inpaintFileId }]
+			: [],
+		remix_target_id: input.remixTargetId ?? null,
+		metadata: null,
+		cameo_ids: null,
+		cameo_replacements: null,
+		model: "sy_8",
+		style_id: null,
+		audio_caption: null,
+		audio_transcript: null,
+		video_caption: null,
+		storyboard_id: null,
+	};
+	if (input.operation) {
+		body.operation = input.operation;
+	}
+
+	const nowIso = new Date().toISOString();
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": userAgent,
+				Accept: "*/*",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("Sora video create request failed", {
+			status: 502,
+			code: "sora_create_failed",
+			details: {
+				message: error?.message ?? String(error),
+			},
+		});
+	}
+
+	if (!res.ok) {
+		const upstreamError =
+			data?.error ||
+			(typeof data?.message === "object" ? data.message : null);
+		const msg =
+			(upstreamError && upstreamError.message) ||
+			data?.message ||
+			data?.error ||
+			`Sora video create failed with status ${res.status}`;
+
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_create_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: data ?? null,
+			},
+		});
+	}
+
+	const result: any = data ?? {};
+	// Record basic history if task id exists
+	if (result.id && typeof result.id === "string") {
+		const id = crypto.randomUUID();
+		await c.env.DB.prepare(
+			`INSERT INTO video_generation_histories
+       (id, user_id, node_id, project_id, prompt, parameters, image_url,
+        task_id, generation_id, status, video_url, thumbnail_url,
+        duration, width, height, token_id, provider, model, cost,
+        is_favorite, rating, notes, remix_target_id, created_at, updated_at)
+       VALUES (?, ?, NULL, NULL, ?, ?, NULL,
+        ?, NULL, ?, NULL, NULL,
+        NULL, NULL, NULL, ?, ?, NULL, NULL,
+        0, NULL, NULL, ?, ?, ?)
+      `,
+		)
+			.bind(
+				id,
+				userId,
+				input.prompt,
+				JSON.stringify({
+					orientation: input.orientation,
+					size: input.size,
+					n_frames: input.n_frames,
+					inpaintFileId: input.inpaintFileId,
+					imageUrl: input.imageUrl,
+					remixTargetId: input.remixTargetId,
+				}),
+				result.id,
+				"pending",
+				token.id,
+				"sora",
+				input.remixTargetId ?? null,
+				nowIso,
+				nowIso,
+			)
+			.run();
+	}
+
+	result.__usedTokenId = token.id;
+	result.__switchedFromTokenIds = [];
+	result.__tokenSwitched = false;
+	return result;
+}
+
+export async function listSoraPendingVideos(c: AppContext, userId: string) {
+	// Simplified implementation: query pending from the first Sora token if available.
+	let token: SoraToken | null = null;
+	try {
+		token = await resolveSoraToken(c, userId);
+	} catch {
+		return [];
+	}
+
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL("/backend/nf/pending", baseUrl).toString();
+	const userAgent = token.userAgent || "TapCanvas/1.0";
+
+	try {
+		const res = await fetch(url, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": userAgent,
+				Accept: "*/*",
+			},
+		});
+
+		let data: any = null;
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+
+		if (!res.ok) {
+			return [];
+		}
+
+		if (Array.isArray(data)) return data;
+		if (Array.isArray(data?.items)) return data.items;
+		return [];
+	} catch {
+		return [];
+	}
+}
+
+export async function listSoraDrafts(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; cursor?: string | null; limit?: number },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL("/backend/project_y/profile/drafts", baseUrl);
+	const params: Record<string, string> = {};
+	if (input.cursor) params.cursor = input.cursor;
+	if (typeof input.limit === "number" && !Number.isNaN(input.limit)) {
+		params.limit = String(input.limit);
+	}
+	Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+	const userAgent = token.userAgent || "TapCanvas/1.0";
+
+	const res = await fetch(url.toString(), {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": userAgent,
+			Accept: "application/json",
+		},
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora drafts request failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_drafts_failed",
+		});
+	}
+
+	const rawItems: any[] = Array.isArray(data?.items)
+		? data.items
+		: Array.isArray(data)
+			? data
+			: [];
+	const items = rawItems.map((item) => {
+		const enc = item.encodings || {};
+		const rawThumbnail =
+			enc.thumbnail?.path ||
+			item.preview_image_url ||
+			item.thumbnail_url ||
+			null;
+		const rawVideoUrl =
+			item.downloadable_url || item.url || enc.source?.path || null;
+
+		const rawCreated: any = (item as any).created_at;
+		let createdAt: number | null = null;
+		if (typeof rawCreated === "number" && !Number.isNaN(rawCreated)) {
+			createdAt = rawCreated;
+		} else if (typeof rawCreated === "string") {
+			const ts = Date.parse(rawCreated);
+			if (!Number.isNaN(ts)) {
+				createdAt = Math.floor(ts / 1000);
+			}
+		}
+
+		return {
+			id: String(item.id),
+			kind: item.kind ?? "sora_draft",
+			title: item.title ?? null,
+			prompt:
+				item.prompt ??
+					item.creation_config?.prompt ??
+					null,
+			width: item.width ?? null,
+			height: item.height ?? null,
+			generationType: item.generation_type ?? null,
+			createdAt,
+			thumbnailUrl: rawThumbnail,
+			videoUrl: rawVideoUrl,
+			platform: "sora" as const,
+		};
+	});
+
+	return {
+		items,
+		cursor: data?.cursor ?? null,
+	};
+}
+
+export async function deleteSoraDraft(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; draftId: string },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		`/backend/project_y/profile/drafts/${input.draftId}`,
+		baseUrl,
+	).toString();
+
+	const res = await fetch(url, {
+		method: "DELETE",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "*/*",
+		},
+	});
+
+	if (!res.ok) {
+		throw new AppError("Sora delete draft request failed", {
+			status: res.status,
+			code: "sora_delete_draft_failed",
+		});
+	}
+}
+
+export async function getSoraVideoDraftByTask(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; taskId: string },
+) {
+	// Simplified: search across all user's Sora tokens in drafts
+	const tokens = await listSoraTokens(c, userId);
+	if (!tokens.length) {
+		throw new AppError("No Sora tokens available", {
+			status: 400,
+			code: "sora_token_missing",
+		});
+	}
+
+	const preferredId = input.tokenId ?? null;
+	const orderedTokens = [...tokens];
+	if (preferredId) {
+		orderedTokens.sort((a, b) => {
+			if (a.id === preferredId && b.id !== preferredId) return -1;
+			if (a.id !== preferredId && b.id === preferredId) return 1;
+			return 0;
+		});
+	}
+
+	for (const token of orderedTokens) {
+		const baseUrl = buildSoraBaseUrl(token);
+		const url = new URL("/backend/project_y/profile/drafts", baseUrl);
+		url.searchParams.set("limit", "20");
+		const userAgent = token.userAgent || "TapCanvas/1.0";
+
+		try {
+			const res = await fetch(url.toString(), {
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token.secretToken}`,
+					"User-Agent": userAgent,
+					Accept: "application/json",
+				},
+			});
+			let data: any = null;
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+			if (!res.ok) {
+				continue;
+			}
+			const items: any[] = Array.isArray(data?.items)
+				? data.items
+				: Array.isArray(data)
+					? data
+					: [];
+			const needle = String(input.taskId);
+			const matched = items.find((item) => {
+				try {
+					const text = JSON.stringify(item);
+					return text.includes(needle);
+				} catch {
+					return false;
+				}
+			});
+			if (!matched) continue;
+
+			const enc = matched.encodings || {};
+			const rawThumbnail =
+				enc.thumbnail?.path ||
+				matched.preview_image_url ||
+				matched.thumbnail_url ||
+				null;
+			const rawVideoUrl =
+				matched.downloadable_url ||
+				matched.url ||
+				enc.source?.path ||
+				null;
+
+			const draft = {
+				id: String(matched.id),
+				title: matched.title ?? null,
+				prompt:
+					matched.prompt ??
+					matched.creation_config?.prompt ??
+					null,
+				thumbnailUrl: rawThumbnail,
+				videoUrl: rawVideoUrl,
+				postId: null,
+				status:
+					(typeof matched.status === "string" &&
+						matched.status) ||
+					null,
+				progress:
+					typeof matched.progress === "number"
+						? matched.progress
+						: null,
+				raw: matched,
+			};
+
+			// Update history when video becomes available
+			const videoUrl =
+				draft.videoUrl && typeof draft.videoUrl === "string"
+					? draft.videoUrl
+					: null;
+			const thumb =
+				draft.thumbnailUrl &&
+				typeof draft.thumbnailUrl === "string"
+					? draft.thumbnailUrl
+					: null;
+			const duration =
+				typeof (matched as any).duration === "number"
+					? (matched as any).duration
+					: null;
+			const width =
+				typeof (matched as any).width === "number"
+					? (matched as any).width
+					: null;
+			const height =
+				typeof (matched as any).height === "number"
+					? (matched as any).height
+					: null;
+			const generationId =
+				(matched as any).generation_id ||
+				(matched as any).id ||
+				null;
+
+			const nowIso = new Date().toISOString();
+			await c.env.DB.prepare(
+				`UPDATE video_generation_histories
+         SET status = ?, video_url = ?, thumbnail_url = ?,
+             duration = ?, width = ?, height = ?, generation_id = ?, updated_at = ?
+         WHERE user_id = ? AND task_id = ?`,
+			)
+				.bind(
+					"success",
+					videoUrl,
+					thumb,
+					duration,
+					width,
+					height,
+					generationId,
+					nowIso,
+					userId,
+					input.taskId,
+				)
+				.run();
+
+			return SoraVideoDraftResponseSchema.parse(draft);
+		} catch {
+			continue;
+		}
+	}
+
+	throw new AppError(
+		"在所有 Sora 账号的草稿中未找到对应视频，请稍后再试",
+		{
+			status: 404,
+			code: "sora_draft_not_found",
+		},
+	);
+}
+
+export async function listSoraCharacters(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; cursor?: string | null; limit?: number },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const profileId = await resolveSoraProfileId(token, baseUrl);
+	const url = new URL(
+		`/backend/project_y/profile/${profileId}/characters`,
+		baseUrl,
+	);
+	if (input.cursor) url.searchParams.set("cursor", input.cursor);
+	if (typeof input.limit === "number" && !Number.isNaN(input.limit)) {
+		url.searchParams.set("limit", String(input.limit));
+	}
+
+	const res = await fetch(url.toString(), {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+		},
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora characters request failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_characters_failed",
+		});
+	}
+
+	const items: any[] = Array.isArray(data?.items)
+		? data.items
+		: Array.isArray(data)
+			? data
+			: [];
+
+	return {
+		items,
+		cursor: data?.cursor ?? null,
+	};
+}
+
+export async function deleteSoraCharacter(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; characterId: string },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		`/backend/project_y/characters/${input.characterId}`,
+		baseUrl,
+	).toString();
+
+	const res = await fetch(url, {
+		method: "DELETE",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "*/*",
+		},
+	});
+
+	if (!res.ok) {
+		throw new AppError("Sora delete character request failed", {
+			status: res.status,
+			code: "sora_delete_character_failed",
+		});
+	}
+}
+
+export async function updateSoraCharacter(
+	c: AppContext,
+	userId: string,
+	input: {
+		tokenId: string;
+		characterId: string;
+		username?: string;
+		display_name?: string | null;
+		profile_asset_pointer?: any;
+	},
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		`/backend/project_y/characters/${input.characterId}/update`,
+		baseUrl,
+	).toString();
+
+	const body: any = {};
+	if (typeof input.username === "string") {
+		body.username = input.username;
+	}
+	if ("display_name" in input) {
+		body.display_name = input.display_name ?? null;
+	}
+	if ("profile_asset_pointer" in input) {
+		body.profile_asset_pointer = input.profile_asset_pointer ?? null;
+	}
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("Sora update character request failed", {
+			status: 502,
+			code: "sora_update_character_failed",
+			details: {
+				message: error?.message ?? String(error),
+			},
+		});
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora update character failed with status ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_update_character_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: data ?? null,
+			},
+		});
+	}
+
+	return data;
+}
+
+export async function checkCharacterUsername(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; username: string },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		"/backend/project_y/profile/username/check",
+		baseUrl,
+	).toString();
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "*/*",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ username: input.username }),
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora username check failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_username_check_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function searchSoraMentions(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; username: string; intent?: string; limit?: number },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		"/backend/project_y/profile/search_mentions",
+		baseUrl,
+	);
+	url.searchParams.set("username", input.username);
+	url.searchParams.set("intent", input.intent || "cameo");
+	if (typeof input.limit === "number" && !Number.isNaN(input.limit)) {
+		url.searchParams.set("limit", String(input.limit));
+	}
+
+	const res = await fetch(url.toString(), {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "*/*",
+		},
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora search mentions failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_mentions_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function getCameoStatus(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; id: string },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		`/backend/project_y/cameos/in_progress/${input.id}`,
+		baseUrl,
+	).toString();
+
+	const res = await fetch(url, {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+		},
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora cameo status failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_cameo_status_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function setCameoPublic(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; cameoId: string },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		`/backend/project_y/cameos/by_id/${input.cameoId}/update_v2`,
+		baseUrl,
+	).toString();
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ visibility: "public" }),
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora set cameo public failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_cameo_public_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function finalizeCharacter(
+	c: AppContext,
+	userId: string,
+	input: {
+		tokenId: string;
+		cameo_id: string;
+		username: string;
+		display_name: string;
+		profile_asset_pointer: any;
+	},
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL("/backend/characters/finalize", baseUrl).toString();
+
+	const body = {
+		cameo_id: input.cameo_id,
+		username: input.username,
+		display_name: input.display_name,
+		profile_asset_pointer: input.profile_asset_pointer,
+		instruction_set: null,
+		safety_instruction_set: null,
+	};
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora finalize character failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_finalize_character_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: data ?? null,
+			},
+		});
+	}
+
+	return data;
+}
+
+async function uploadSoraFile(
+	token: SoraToken,
+	baseUrl: string,
+	file: File,
+	useCase: string,
+): Promise<any> {
+	const url = new URL("/backend/project_y/file/upload", baseUrl).toString();
+	const form = new FormData();
+	const filename = (file as any).name || "upload.bin";
+	form.append("file", file, filename);
+	form.append("use_case", useCase);
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+		},
+		body: form,
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora file upload failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_upload_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function uploadProfileAsset(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; file: File },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	return uploadSoraFile(token, baseUrl, input.file, "profile");
+}
+
+export async function uploadSoraImage(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; file: File },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	return uploadSoraFile(token, baseUrl, input.file, "profile");
+}
+
+export async function uploadCharacterVideo(
+	c: AppContext,
+	userId: string,
+	input: { tokenId: string; file: File; range: [number, number] },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL("/backend/characters/upload", baseUrl).toString();
+	const [start, end] = input.range;
+
+	const form = new FormData();
+	const filename = (input.file as any).name || "character.mp4";
+	form.append("file", input.file, filename);
+	form.append("timestamps", `${start},${end}`);
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+		},
+		body: form,
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora upload character video failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_upload_character_failed",
+		});
+	}
+
+	return data;
+}
+
+export async function listSoraPublishedVideos(
+	c: AppContext,
+	userId: string,
+	input: { tokenId?: string | null; limit?: number },
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const url = new URL(
+		"/backend/project_y/profile_feed/me",
+		baseUrl,
+	);
+	const limit =
+		typeof input.limit === "number" && !Number.isNaN(input.limit)
+			? input.limit
+			: 8;
+
+	url.searchParams.set("limit", String(limit));
+	url.searchParams.set("cut", "nf2");
+
+	const res = await fetch(url.toString(), {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+		},
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Published videos fetch failed with status ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_published_failed",
+		});
+	}
+
+	const items: any[] = Array.isArray(data?.items)
+		? data.items
+		: [];
+
+	const processed = items.map((item) => {
+		const post = item.post || {};
+		const attachments = post.attachments || [];
+		const soraAttachment = attachments.find(
+			(att: any) => att && att.kind === "sora",
+		);
+
+		const rawPostedAt: any = post.posted_at;
+		let createdAt: number | null = null;
+		if (typeof rawPostedAt === "number" && !Number.isNaN(rawPostedAt)) {
+			createdAt = rawPostedAt;
+		} else if (typeof rawPostedAt === "string") {
+			const ts = Date.parse(rawPostedAt);
+			if (!Number.isNaN(ts)) {
+				createdAt = Math.floor(ts / 1000);
+			}
+		}
+
+		if (!soraAttachment) {
+			return {
+				id: String(post.id),
+				kind: "sora_published",
+				title: post.text ?? null,
+				prompt: post.text ?? null,
+				width: null,
+				height: null,
+				generationType: null,
+				createdAt,
+				thumbnailUrl: post.preview_image_url ?? null,
+				videoUrl: null,
+				platform: "sora" as const,
+			};
+		}
+
+		const enc = soraAttachment.encodings || {};
+
+		const thumbnail =
+			enc.thumbnail?.path || post.preview_image_url || null;
+		const videoUrl =
+			enc.source?.path ||
+			soraAttachment.url ||
+			soraAttachment.downloadable_url ||
+			null;
+
+		return {
+			id: String(post.id),
+			kind: "sora_published",
+			title: post.text ?? null,
+			prompt: soraAttachment.prompt ?? post.text ?? null,
+			width: soraAttachment.width ?? null,
+			height: soraAttachment.height ?? null,
+			generationType: null,
+			createdAt,
+			thumbnailUrl: thumbnail,
+			videoUrl,
+			platform: "sora" as const,
+		};
+	});
+
+	return {
+		items: processed,
+		cursor: data?.cursor ?? null,
+	};
+}
+
+export async function publishSoraVideo(
+	c: AppContext,
+	userId: string,
+	input: {
+		tokenId?: string | null;
+		taskId: string;
+		postText?: string;
+		generationId?: string;
+	},
+) {
+	const token = await resolveSoraToken(c, userId, input.tokenId);
+	const baseUrl = buildSoraBaseUrl(token);
+	const finalGenerationId = input.generationId || input.taskId;
+
+	if (!finalGenerationId) {
+		throw new AppError("No generation_id provided", {
+			status: 400,
+			code: "sora_publish_missing_generation",
+		});
+	}
+
+	let text = (input.postText || "").trim();
+	if (!text) {
+		throw new AppError("No post text available", {
+			status: 400,
+			code: "sora_publish_missing_text",
+		});
+	}
+
+	// Soft truncate to avoid 413 / moderation issues
+	const maxLen = 2000;
+	if (text.length > maxLen) {
+		text = text.slice(0, maxLen);
+	}
+
+	const url = new URL("/backend/project_y/post", baseUrl).toString();
+	const body = {
+		attachments_to_create: [
+			{ generation_id: finalGenerationId, kind: "sora" },
+		],
+		post_text: text,
+	};
+
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token.secretToken}`,
+			"User-Agent": token.userAgent || "TapCanvas/1.0",
+			Accept: "application/json",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+
+	let data: any = null;
+	try {
+		data = await res.json();
+	} catch {
+		data = null;
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error)) ||
+			`Sora publish video failed: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora_publish_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: data ?? null,
+			},
+		});
+	}
+
+	const postId =
+		(typeof data?.id === "string" && data.id) ||
+		(typeof data?.post?.id === "string" && data.post.id) ||
+		(typeof data?.post_id === "string" && data.post_id) ||
+		null;
+
+	if (postId) {
+		const nowIso = new Date().toISOString();
+		await c.env.DB.prepare(
+			`UPDATE video_generation_histories
+       SET updated_at = ?, notes = COALESCE(notes, ''), generation_id = COALESCE(generation_id, ?)
+       WHERE user_id = ? AND task_id = ?`,
+		)
+			.bind(nowIso, finalGenerationId, userId, input.taskId)
+			.run();
+	}
+
+	return {
+		success: !!postId,
+		postId,
+		message: postId
+			? "Video published successfully"
+			: "Publish succeeded but no postId returned",
+	};
+}

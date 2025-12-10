@@ -1,0 +1,44 @@
+/**
+ * Example Wrangler config for hono-api.
+ * 
+ * - 复制本文件为 wrangler.jsonc
+ * - 用你自己的实际值替换下面的占位符
+ * - 把 wrangler.jsonc 加到 .gitignore，避免把密钥提交到仓库
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "hono-api",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-12-09",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "tapcanvas",
+			"database_id": "YOUR_D1_DATABASE_ID"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "R2_ASSETS",
+			"bucket_name": "tapcanvas",
+			"preview_bucket_name": "tapcanvas"
+		}
+	],
+	"vars": {
+		"JWT_SECRET": "change-me",
+		"GITHUB_CLIENT_ID": "YOUR_GITHUB_CLIENT_ID",
+		"GITHUB_CLIENT_SECRET": "YOUR_GITHUB_CLIENT_SECRET",
+
+		"R2_ACCOUNT_ID": "YOUR_R2_ACCOUNT_ID",
+		"R2_ACCESS_KEY_ID": "YOUR_R2_ACCESS_KEY_ID",
+		"R2_SECRET_ACCESS_KEY": "YOUR_R2_SECRET_ACCESS_KEY",
+		"R2_BUCKET": "tapcanvas",
+		"R2_PUBLIC_BASE_URL": "https://oss.example.com",
+		"R2_PROXY_VIDEOS_BASE": "https://videos.example.com",
+		"R2_PROXY_SORA_BASE": "https://sora2.example.com"
+	},
+	"observability": {
+		"enabled": true
+	}
+}
+
