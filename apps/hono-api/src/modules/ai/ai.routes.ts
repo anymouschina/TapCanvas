@@ -10,6 +10,12 @@ import {
 	type ToolEventMessageDto,
 } from "./ai.schemas";
 import {
+	addToolEventSubscriber,
+	removeToolEventSubscriber,
+	publishToolEvent,
+	type ToolEventSubscriber,
+} from "./tool-events.bus";
+import {
 	createPromptSample,
 	deletePromptSample,
 	listPromptSamples,
@@ -73,48 +79,6 @@ aiRouter.post("/chat/stream", async (c) => {
 });
 
 // ---- Tool events SSE + tool result reporting ----
-
-type ToolEventSubscriber = {
-	push: (event: ToolEventMessageDto) => void;
-};
-
-const toolEventSubscribers = new Map<string, Set<ToolEventSubscriber>>();
-
-function addToolEventSubscriber(
-	userId: string,
-	subscriber: ToolEventSubscriber,
-) {
-	const existing = toolEventSubscribers.get(userId);
-	if (existing) {
-		existing.add(subscriber);
-	} else {
-		toolEventSubscribers.set(userId, new Set([subscriber]));
-	}
-}
-
-function removeToolEventSubscriber(
-	userId: string,
-	subscriber: ToolEventSubscriber,
-) {
-	const existing = toolEventSubscribers.get(userId);
-	if (!existing) return;
-	existing.delete(subscriber);
-	if (existing.size === 0) {
-		toolEventSubscribers.delete(userId);
-	}
-}
-
-function publishToolEvent(userId: string, event: ToolEventMessageDto) {
-	const subscribers = toolEventSubscribers.get(userId);
-	if (!subscribers || subscribers.size === 0) return;
-	for (const sub of subscribers) {
-		try {
-			sub.push(event);
-		} catch (err) {
-			console.warn("[tool-events] subscriber push failed", err);
-		}
-	}
-}
 
 aiRouter.get("/tool-events", (c) => {
 	const userId = c.get("userId");

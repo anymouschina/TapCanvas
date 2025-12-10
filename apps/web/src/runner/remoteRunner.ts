@@ -12,6 +12,7 @@ import {
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
+import { notifyAssetRefresh } from '../ui/assetEvents'
 import { isAnthropicModel } from '../config/modelSource'
 import { getDefaultModel, isImageEditModel } from '../config/models'
 import {
@@ -808,6 +809,9 @@ async function runSora2ApiVideoTask(
         videoTaskId: taskId,
       })
       appendLog(id, `[${nowLabel()}] Sora2API 视频生成完成。`)
+      if (snapshot.assets && snapshot.assets.length) {
+        notifyAssetRefresh()
+      }
       return
     }
 
@@ -1562,6 +1566,10 @@ function applyVeoTaskResult(
   })
 
   appendLog(id, `[${nowLabel()}] Veo3 视频生成完成，已写入当前节点。`)
+
+  if (result.assets && result.assets.length) {
+    notifyAssetRefresh()
+  }
 }
 
 async function runGenericTask(ctx: RunnerContext) {
@@ -1798,6 +1806,10 @@ async function runGenericTask(ctx: RunnerContext) {
       },
       ...patchExtra,
     })
+
+    if (res?.assets && res.assets.length) {
+      notifyAssetRefresh()
+    }
 
     if (text.trim()) {
       appendLog(id, `[${nowLabel()}] AI: ${text.slice(0, 120)}`)

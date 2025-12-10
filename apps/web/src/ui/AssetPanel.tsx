@@ -31,6 +31,7 @@ import {
 } from '@tabler/icons-react'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
+import { ASSET_REFRESH_EVENT } from './assetEvents'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { toast } from './toast'
 import { listServerAssets, renameServerAsset, deleteServerAsset, type ServerAssetDto } from '../api/server'
@@ -129,6 +130,16 @@ export default function AssetPanel(): JSX.Element | null {
   React.useEffect(() => {
     if (!mounted) return
     reloadAssets().catch(() => {})
+  }, [mounted, reloadAssets])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handler = () => {
+      if (!mounted) return
+      reloadAssets().catch(() => {})
+    }
+    window.addEventListener(ASSET_REFRESH_EVENT, handler)
+    return () => window.removeEventListener(ASSET_REFRESH_EVENT, handler)
   }, [mounted, reloadAssets])
 
   const generationAssets = React.useMemo(() => assets.filter(isGenerationAsset), [assets])

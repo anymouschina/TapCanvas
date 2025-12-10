@@ -613,6 +613,43 @@ export class CanvasService {
   }
 
   /**
+   * 智能整理画布：全选 + 自动布局，并可选聚焦到指定节点
+   */
+  static async smartLayout(params: { focusNodeId?: string } = {}): Promise<FunctionResult> {
+    try {
+      const { selectAll, autoLayoutAllDag } = useRFStore.getState()
+      selectAll()
+      autoLayoutAllDag()
+
+      const focusId = params.focusNodeId
+      if (focusId) {
+        // 仅更新选中状态，具体视图居中交给 Canvas 组件的现有逻辑处理
+        useRFStore.setState((state) => ({
+          nodes: state.nodes.map((node) => ({
+            ...node,
+            selected: node.id === focusId,
+          })),
+        }))
+      }
+
+      return {
+        success: true,
+        data: {
+          message: focusId
+            ? `已整理画布并选中节点 ${focusId}`
+            : '已整理画布布局',
+          focusNodeId: focusId,
+        },
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '智能整理画布失败',
+      }
+    }
+  }
+
+  /**
    * 获取所有节点
    */
   static async getNodes(): Promise<FunctionResult> {
@@ -780,4 +817,5 @@ export const functionHandlers = {
   runNode: CanvasService.runNode,
   runDag: CanvasService.runDag,
   formatAll: CanvasService.formatAll,
+  canvas_smartLayout: CanvasService.smartLayout,
 } as const

@@ -11,7 +11,7 @@ import type {
 } from '../task.types'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com'
-const DEFAULT_MODEL = 'gpt-5.1-codex'
+const DEFAULT_MODEL = 'gpt-5.1'
 const DEFAULT_IMAGE_MODEL = 'gpt-image-1'
 const DEFAULT_IMAGE_SIZE = '1024x1024'
 const OPENAI_IMAGE_SIZE_REGEX = /^\d{2,4}x\d{2,4}$/i

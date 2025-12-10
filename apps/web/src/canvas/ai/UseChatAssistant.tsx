@@ -22,7 +22,7 @@ interface UseChatAssistantProps {
   intelligentMode?: boolean
 }
 
-const OPENAI_DEFAULT_MODEL = 'gpt-5.1-codex'
+const OPENAI_DEFAULT_MODEL = 'gpt-5.1'
 const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
   { value: 'gpt-5.1', label: 'GPT-5.1' },
   { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },

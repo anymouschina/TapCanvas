@@ -1113,7 +1113,9 @@ function CanvasInner(): JSX.Element {
                 const data = { nodes: sel, edges: es }
                 // 资产现在是用户级别的，不需要项目ID
                 const { createServerAsset } = await import('../api/server')
+                const { notifyAssetRefresh } = await import('../ui/assetEvents')
                 await createServerAsset({ name, data })
+                notifyAssetRefresh()
               }}>创建资产</Button>
               {!selectionPartialOverlaps && (
                 <Button size="xs" variant="subtle" onClick={()=>{
