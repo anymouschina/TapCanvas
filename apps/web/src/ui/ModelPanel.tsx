@@ -114,6 +114,8 @@ const buildVendorPresetMap = (items: AvailableModelDto[]): Record<string, Predef
 
 export default function ModelPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
+  const assetPersistenceEnabled = useUIStore((s) => s.assetPersistenceEnabled)
+  const setAssetPersistenceEnabled = useUIStore((s) => s.setAssetPersistenceEnabled)
 
   // 导出模型配置
   const handleExport = async () => {
@@ -1324,6 +1326,24 @@ const handleCloseProxyModal = () => {
               </Group>
               <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
                 <Stack gap="sm">
+                  <Paper withBorder radius="md" p="sm">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text size="sm" fw={500}>
+                          TapCanvas 持久化
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          控制是否将生成的图片 / 视频结果持久化到 TapCanvas（资产 / TapShow）。
+                        </Text>
+                      </div>
+                      <Switch
+                        size="sm"
+                        checked={assetPersistenceEnabled}
+                        label={assetPersistenceEnabled ? '已启用' : '已关闭'}
+                        onChange={(e) => setAssetPersistenceEnabled(e.currentTarget.checked)}
+                      />
+                    </Group>
+                  </Paper>
                   <Paper withBorder radius="md" p="sm">
                     <Group justify="space-between" align="flex-start">
                       <div>

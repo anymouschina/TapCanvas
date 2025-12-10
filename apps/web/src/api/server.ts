@@ -1108,6 +1108,33 @@ export async function deleteServerAsset(id: string): Promise<void> {
   if (!r.ok) throw new Error(`delete asset failed: ${r.status}`)
 }
 
+export type PublicAssetDto = {
+  id: string
+  name: string
+  type: 'image' | 'video'
+  url: string
+  thumbnailUrl?: string | null
+  prompt?: string | null
+  vendor?: string | null
+  modelKey?: string | null
+  createdAt: string
+  ownerLogin?: string | null
+  ownerName?: string | null
+  projectName?: string | null
+}
+
+export async function listPublicAssets(limit?: number): Promise<PublicAssetDto[]> {
+  const qs = new URLSearchParams()
+  if (typeof limit === 'number' && !Number.isNaN(limit)) {
+    qs.set('limit', String(limit))
+  }
+  const query = qs.toString()
+  const url = query ? `${API_BASE}/assets/public?${query}` : `${API_BASE}/assets/public`
+  const r = await fetch(url, withAuth())
+  if (!r.ok) throw new Error(`list public assets failed: ${r.status}`)
+  return r.json()
+}
+
 // Unified task API
 export type TaskKind =
   | 'chat'

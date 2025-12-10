@@ -299,6 +299,7 @@ const enTranslations = {
   '项目': 'Projects',
   '工作流': 'Workflows',
   '我的资产': 'My Assets',
+  'TapShow': 'TapShow',
   '模型配置': 'Model Settings',
   '历史记录': 'History',
   '图片编辑': 'Image Editor',

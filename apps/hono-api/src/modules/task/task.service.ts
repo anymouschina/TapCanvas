@@ -876,6 +876,144 @@ function normalizeTemperature(input: unknown, fallback: number): number {
 	return clamp01(input);
 }
 
+// ---- OpenAI / Codex responses helpers (align with Nest openaiAdapter) ----
+
+type OpenAIContentPartForTask =
+	| { type: "text"; text: string }
+	| { type: "image_url"; image_url: { url: string } | string };
+
+type OpenAIChatMessageForTask = {
+	role: string;
+	content: string | OpenAIContentPartForTask[];
+};
+
+function normalizeOpenAIBaseForTask(baseUrl?: string | null): string {
+	const raw = (baseUrl || "https://api.openai.com").trim();
+	return raw.replace(/\/+$/, "");
+}
+
+function buildOpenAIResponsesUrlForTask(baseUrl?: string | null): string {
+	const normalized = normalizeOpenAIBaseForTask(baseUrl);
+	if (/\/responses$/i.test(normalized)) {
+		return normalized;
+	}
+	const hasVersion = /\/v\d+(?:beta)?$/i.test(normalized);
+	return `${normalized}${hasVersion ? "" : "/v1"}/responses`;
+}
+
+function normalizeMessageContentForResponses(
+	content: string | OpenAIContentPartForTask[],
+): OpenAIContentPartForTask[] {
+	if (typeof content === "string") {
+		return [{ type: "text", text: content }];
+	}
+	return content;
+}
+
+function convertPartForResponses(
+	part: OpenAIContentPartForTask,
+): { type: string; [key: string]: any } {
+	if (part.type === "text") {
+		return { type: "input_text", text: (part as any).text ?? "" };
+	}
+	if (part.type === "image_url") {
+		const source =
+			typeof (part as any).image_url === "string"
+				? (part as any).image_url
+				: (part as any).image_url?.url;
+		return { type: "input_image", image_url: source || "" };
+	}
+	return part as any;
+}
+
+function convertMessagesToResponsesInput(
+	messages: OpenAIChatMessageForTask[],
+) {
+	return messages.map((msg) => ({
+		role: msg.role,
+		content: normalizeMessageContentForResponses(
+			msg.content,
+		).map(convertPartForResponses),
+	}));
+}
+
+function extractTextFromOpenAIResponseForTask(raw: any): string {
+	// 兼容传统 chat.completions 结构
+	if (Array.isArray(raw?.choices)) {
+		const choice = raw.choices[0];
+		const message = choice?.message;
+		if (Array.isArray(message?.content)) {
+			return message.content
+				.map((part: any) =>
+					typeof part?.text === "string"
+						? part.text
+						: part?.content || "",
+				)
+				.join("")
+				.trim();
+		}
+		if (typeof message?.content === "string") {
+			return message.content.trim();
+		}
+	}
+
+	// 兼容 responses 格式：output / output_text
+	const output = raw?.output;
+	if (Array.isArray(output)) {
+		const buffer: string[] = [];
+		output.forEach((entry: any) => {
+			if (Array.isArray(entry?.content)) {
+				entry.content.forEach((part: any) => {
+					if (typeof part?.text === "string") {
+						buffer.push(part.text);
+					} else if (typeof part?.content === "string") {
+						buffer.push(part.content);
+					} else if (typeof part?.output_text === "string") {
+						buffer.push(part.output_text);
+					}
+				});
+			}
+		});
+		const merged = buffer.join("").trim();
+		if (merged) return merged;
+	}
+
+	if (Array.isArray(raw?.output_text)) {
+		const merged = raw.output_text
+			.filter((v: any) => typeof v === "string")
+			.join("")
+			.trim();
+		if (merged) return merged;
+	}
+
+	if (typeof raw?.text === "string") {
+		return raw.text.trim();
+	}
+
+	return "";
+}
+
+function normalizeImagePromptOutputForTask(text: string): string {
+	if (!text) return "";
+	let normalized = text.trim();
+
+	// Strip common "Prompt" labels and Markdown headings at the beginning.
+	normalized = normalized.replace(
+		/^\s*\*{0,2}\s*prompt\s*\*{0,2}\s*[-:]\s*/i,
+		"",
+	);
+
+	// Remove surrounding quotes if the whole output is quoted.
+	if (
+		(normalized.startsWith('"') && normalized.endsWith('"')) ||
+		(normalized.startsWith("'") && normalized.endsWith("'"))
+	) {
+		normalized = normalized.slice(1, -1).trim();
+	}
+
+	return normalized.trim();
+}
+
 function pickModelKey(
 	req: TaskRequestDto,
 	ctx: { modelKey?: string | null },
@@ -940,16 +1078,141 @@ async function callJsonApi(
 	return data;
 }
 
+function safeParseJsonForTask(data: string): any | null {
+	try {
+		return JSON.parse(data);
+	} catch {
+		return null;
+	}
+}
+
+// 解析 Codex / OpenAI Responses SSE 文本，提取最终的 completed response
+function parseSseResponseForTask(raw: string): any | null {
+	if (typeof raw !== "string" || !raw.trim()) return null;
+	const chunks = raw.split(/\n\n+/);
+	let completedResponse: any = null;
+	let aggregatedText = "";
+
+	chunks.forEach((chunk) => {
+		const trimmed = chunk.trim();
+		if (!trimmed) return;
+
+		const dataLines = trimmed
+			.split("\n")
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trim())
+			.filter(Boolean);
+		if (!dataLines.length) return;
+
+		const payload = safeParseJsonForTask(dataLines.join("\n"));
+		if (!payload || typeof payload !== "object") return;
+
+		if (payload.type === "response.completed" && payload.response) {
+			completedResponse = payload.response;
+			return;
+		}
+
+		if (
+			payload.type === "response.output_text.delta" &&
+			typeof payload.delta === "string"
+		) {
+			aggregatedText += payload.delta;
+		}
+
+		if (!aggregatedText) {
+			if (
+				payload.type === "response.output_text.done" &&
+				typeof payload.text === "string"
+			) {
+				aggregatedText = payload.text;
+			} else if (
+				payload.type === "response.content_part.done" &&
+				payload.part &&
+				typeof payload.part.text === "string"
+			) {
+				aggregatedText = payload.part.text;
+			}
+		}
+	});
+
+	if (completedResponse) return completedResponse;
+	if (aggregatedText) {
+		return {
+			text: aggregatedText,
+			output_text: [aggregatedText],
+		};
+	}
+	return null;
+}
+
+// 专用于 OpenAI/Codex responses 端点，保留原始文本以便调试和前端展示
+async function callOpenAIResponsesForTask(
+	url: string,
+	apiKey: string,
+	body: Record<string, any>,
+): Promise<{ parsed: any; rawBody: string }> {
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+				Authorization: `Bearer ${apiKey}`,
+			},
+			body: JSON.stringify(body),
+		});
+	} catch (error: any) {
+		throw new AppError("openai 请求失败", {
+			status: 502,
+			code: "openai_request_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	let rawText = "";
+	try {
+		rawText = await res.text();
+	} catch {
+		rawText = "";
+	}
+
+	let parsed: any = null;
+	if (rawText && rawText.trim()) {
+		// 优先尝试按 SSE 流解析（Codex 默认），失败再退回普通 JSON。
+		parsed = parseSseResponseForTask(rawText) || safeParseJsonForTask(rawText);
+	}
+
+	if (res.status < 200 || res.status >= 300) {
+		const msg =
+			(parsed &&
+				(parsed.error?.message ||
+					parsed.message ||
+					parsed.error)) ||
+			`openai 调用失败: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "openai_request_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: parsed ?? rawText ?? null,
+			},
+		});
+	}
+
+	return { parsed, rawBody: rawText };
+}
+
 // ---- OpenAI text (chat / prompt_refine) ----
 
 async function runOpenAiTextTask(
 	c: AppContext,
 	userId: string,
 	req: TaskRequestDto,
-): Promise<TaskResult> {
-	const ctx = await resolveVendorContext(c, userId, "openai");
-	const base = normalizeBaseUrl(ctx.baseUrl) || "https://api.openai.com/v1";
-	const apiKey = ctx.apiKey.trim();
+	): Promise<TaskResult> {
+		const ctx = await resolveVendorContext(c, userId, "openai");
+		const responsesUrl = buildOpenAIResponsesUrlForTask(ctx.baseUrl);
+		const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 OpenAI API Key", {
 			status: 400,
@@ -957,7 +1220,9 @@ async function runOpenAiTextTask(
 		});
 	}
 
-	const model = pickModelKey(req, { modelKey: undefined }) || "gpt-4.1-mini";
+	const model =
+		pickModelKey(req, { modelKey: undefined }) ||
+		"gpt-5.1-codex";
 
 	const extras = (req.extras || {}) as Record<string, any>;
 
@@ -971,41 +1236,34 @@ async function runOpenAiTextTask(
 
 	const temperature = normalizeTemperature(extras.temperature, 0.7);
 
-	const messages: Array<{ role: string; content: string }> = [];
+	const messages: OpenAIChatMessageForTask[] = [];
 	if (systemPrompt) {
 		messages.push({ role: "system", content: systemPrompt });
 	}
 	messages.push({ role: "user", content: req.prompt });
 
-	const url = `${base.replace(/\/+$/, "")}/chat/completions`;
-	const body = {
-		model,
-		messages,
-		temperature,
-	};
+		const input = convertMessagesToResponsesInput(messages);
+		const body = {
+			model,
+			input,
+			max_output_tokens: 800,
+			stream: false,
+			temperature,
+		};
 
-	const data = await callJsonApi(
-		url,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify(body),
-		},
-		{ provider: "openai" },
-	);
+		const { parsed, rawBody } = await callOpenAIResponsesForTask(
+			responsesUrl,
+			apiKey,
+			body,
+		);
 
-	const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
-	const text =
-		typeof choice?.message?.content === "string"
-			? choice.message.content.trim()
-			: "";
+		const text =
+			extractTextFromOpenAIResponseForTask(parsed) ||
+			(typeof rawBody === "string" ? rawBody.trim() : "");
 
-	const id =
-		(typeof data?.id === "string" && data.id.trim()) ||
-		`openai-${Date.now().toString(36)}`;
+		const id =
+			(typeof parsed?.id === "string" && parsed.id.trim()) ||
+			`openai-${Date.now().toString(36)}`;
 
 	return TaskResultSchema.parse({
 		id,
@@ -1013,11 +1271,12 @@ async function runOpenAiTextTask(
 		status: "succeeded",
 		assets: [],
 		raw: {
-			provider: "openai",
-			response: data,
-			text,
-		},
-	});
+				provider: "openai",
+				response: parsed,
+				rawBody,
+				text,
+			},
+		});
 }
 
 // ---- OpenAI image_to_prompt ----
@@ -1026,9 +1285,9 @@ async function runOpenAiImageToPromptTask(
 	c: AppContext,
 	userId: string,
 	req: TaskRequestDto,
-): Promise<TaskResult> {
+	): Promise<TaskResult> {
 	const ctx = await resolveVendorContext(c, userId, "openai");
-	const base = normalizeBaseUrl(ctx.baseUrl) || "https://api.openai.com/v1";
+	const responsesUrl = buildOpenAIResponsesUrlForTask(ctx.baseUrl);
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 OpenAI API Key", {
@@ -1054,15 +1313,17 @@ async function runOpenAiImageToPromptTask(
 		});
 	}
 
-	const model = pickModelKey(req, { modelKey: undefined }) || "gpt-4.1-mini";
+	const model =
+		pickModelKey(req, { modelKey: undefined }) ||
+		"gpt-5.1-codex";
 
 	const userPrompt =
 		req.prompt?.trim() ||
-		"请详细分析这张图片，并输出可用于复现它的提示词。";
+		"Describe this image in rich detail and output a single, well-structured English prompt that can be used to recreate it. Do not add any explanations, headings, markdown formatting, or non-English text.";
 
 	const systemPrompt = pickSystemPrompt(
 		req,
-		"You are an expert prompt engineer. When a user provides an image, describe it in rich detail and return a well-structured English prompt that could be used to recreate the image. Include subjects, environment, composition, camera, lighting, and style cues. Optionally append a concise Chinese summary.",
+		"You are an expert prompt engineer. When a user provides an image, you must return a single detailed English prompt that can be used to recreate it. Describe subjects, environment, composition, camera, lighting, and style cues. Do not add explanations, headings, markdown, or any non-English text; output only the final English prompt.",
 	);
 
 	const parts: any[] = [];
@@ -1070,61 +1331,56 @@ async function runOpenAiImageToPromptTask(
 		parts.push({ type: "text", text: systemPrompt });
 	}
 	parts.push({ type: "text", text: userPrompt });
-
 	const imageSource = imageData || imageUrl!;
 	parts.push({
 		type: "image_url",
 		image_url: { url: imageSource },
 	});
 
-	const messages = [
-		{
-			role: "user",
-			content: parts,
-		},
-	];
-
-	const url = `${base.replace(/\/+$/, "")}/chat/completions`;
-	const body = {
-		model,
-		messages,
-		temperature: 0.2,
-	};
-
-	const data = await callJsonApi(
-		url,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		const messages: OpenAIChatMessageForTask[] = [
+			{
+				role: "user",
+				content: parts,
 			},
-			body: JSON.stringify(body),
-		},
-		{ provider: "openai" },
-	);
+		];
 
-	const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
-	const text =
-		typeof choice?.message?.content === "string"
-			? choice.message.content.trim()
-			: "";
+		const input = convertMessagesToResponsesInput(messages);
+		const body = {
+			model,
+			input,
+			max_output_tokens: 800,
+			stream: false,
+			temperature: 0.2,
+		};
 
-	const id =
-		(typeof data?.id === "string" && data.id.trim()) ||
-		`openai-img-${Date.now().toString(36)}`;
+		const { parsed, rawBody } = await callOpenAIResponsesForTask(
+			responsesUrl,
+			apiKey,
+			body,
+		);
+
+		const rawText =
+			extractTextFromOpenAIResponseForTask(parsed) ||
+			(typeof rawBody === "string" ? rawBody.trim() : "");
+
+		const text = normalizeImagePromptOutputForTask(rawText);
+
+		const id =
+			(typeof parsed?.id === "string" && parsed.id.trim()) ||
+			`openai-img-${Date.now().toString(36)}`;
 
 	return TaskResultSchema.parse({
 		id,
 		kind: "image_to_prompt",
 		status: "succeeded",
 		assets: [],
-		raw: {
-			provider: "openai",
-			response: data,
-			text,
-			imageSource,
-		},
+			raw: {
+				provider: "openai",
+				response: parsed,
+				rawBody,
+				text,
+				imageSource,
+			},
 	});
 }
 
@@ -1403,7 +1659,7 @@ async function runGeminiBananaImageTask(
 	const modelKeyOverride =
 		typeof extras.modelKey === "string" ? extras.modelKey : undefined;
 	const normalizedModel =
-		normalizeBananaModelKey(modelKeyOverride || ctx.baseUrl) ||
+		normalizeBananaModelKey(modelKeyOverride) ||
 		"nano-banana-fast";
 
 	if (!BANANA_MODELS.has(normalizedModel)) {
@@ -1470,7 +1726,6 @@ async function runGeminiBananaImageTask(
 			},
 			body: JSON.stringify(body),
 		});
-		console.log(res,'resresres')
 		const ct = (res.headers.get("content-type") || "").toLowerCase();
 		if (ct.includes("application/json")) {
 			try {
@@ -1851,25 +2106,32 @@ export async function runGenericTaskForVendor(
 			});
 		}
 
-		// 将生成结果写入 assets（仅记录元数据，URL 仍使用源地址）
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets: result.assets,
-			meta: {
-				taskKind: req.kind,
-				prompt: req.prompt,
-				vendor: v,
-				modelKey:
-					(typeof (req.extras as any)?.modelKey === "string" &&
-						(req.extras as any).modelKey) ||
-					undefined,
-			},
-		});
-		result = TaskResultSchema.parse({
-			...result,
-			assets: hostedAssets,
-		});
+		const persistAssets =
+			typeof (req.extras as any)?.persistAssets === "boolean"
+				? (req.extras as any).persistAssets
+				: true;
+
+		if (persistAssets && result.assets && result.assets.length > 0) {
+			// 将生成结果写入 assets（仅记录元数据，URL 仍使用源地址）
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: result.assets,
+				meta: {
+					taskKind: req.kind,
+					prompt: req.prompt,
+					vendor: v,
+					modelKey:
+						(typeof (req.extras as any)?.modelKey === "string" &&
+							(req.extras as any).modelKey) ||
+						undefined,
+				},
+			});
+			result = TaskResultSchema.parse({
+				...result,
+				assets: hostedAssets,
+			});
+		}
 
 		// 统一发出完成事件，便于前端通过 /tasks/stream 或 /tasks/pending 聚合观察
 		emitProgress(userId, progressCtx, {

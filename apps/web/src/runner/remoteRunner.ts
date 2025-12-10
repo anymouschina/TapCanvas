@@ -668,6 +668,7 @@ async function runSora2ApiVideoTask(
       setNodeStatus(id, 'running', { progress: 5 })
       appendLog(id, `[${nowLabel()}] 调用 Sora2API 视频模型…`)
 
+      const persist = useUIStore.getState().assetPersistenceEnabled
       const res = await runTaskByVendor('sora2api', {
         kind: 'text_to_video',
         prompt,
@@ -676,6 +677,7 @@ async function runSora2ApiVideoTask(
           nodeId: id,
           modelKey,
           durationSeconds,
+          persistAssets: persist,
         },
       })
 

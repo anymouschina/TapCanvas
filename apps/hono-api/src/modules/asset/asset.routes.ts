@@ -3,6 +3,7 @@ import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import {
 	CreateAssetSchema,
+	PublicAssetSchema,
 	RenameAssetSchema,
 	ServerAssetSchema,
 } from "./asset.schemas";
@@ -10,6 +11,7 @@ import {
 	createAssetRow,
 	deleteAssetRow,
 	listAssetsForUser,
+	listPublicAssets,
 	renameAssetRow,
 } from "./asset.repo";
 
@@ -100,6 +102,84 @@ assetRouter.delete("/:id", async (c) => {
 	return c.body(null, 204);
 });
 
+// Public TapShow feed: all OSS-hosted image/video assets
+assetRouter.get("/public", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const limitParam = c.req.query("limit");
+	const limit =
+		typeof limitParam === "string" && limitParam
+			? Number(limitParam)
+			: undefined;
+
+	const rawBase =
+		typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
+			? ((c.env as any).R2_PUBLIC_BASE_URL as string)
+			: "";
+	const publicBase = rawBase.trim().replace(/\/+$/, "");
+	const isHosted = (url: string): boolean => {
+		const trimmed = (url || "").trim();
+		if (!trimmed) return false;
+		if (publicBase) {
+			return trimmed.startsWith(`${publicBase}/`);
+		}
+		// Fallback: default R2 key prefix
+		return /^\/?gen\//.test(trimmed);
+	};
+
+	const rows = await listPublicAssets(c.env.DB, { limit });
+	const items = rows
+		.map((row) => {
+			let parsed: any = null;
+			try {
+				parsed = row.data ? JSON.parse(row.data) : null;
+			} catch {
+				parsed = null;
+			}
+			const data = (parsed || {}) as any;
+			const rawType =
+				typeof data.type === "string"
+					? (data.type.toLowerCase() as string)
+					: "";
+			const type =
+				rawType === "image" || rawType === "video" ? rawType : null;
+			const url = typeof data.url === "string" ? data.url : null;
+			if (!type || !url || !isHosted(url)) {
+				return null;
+			}
+
+			const thumbnailUrl =
+				typeof data.thumbnailUrl === "string"
+					? data.thumbnailUrl
+					: null;
+			const prompt =
+				typeof data.prompt === "string" ? data.prompt : null;
+			const vendor =
+				typeof data.vendor === "string" ? data.vendor : null;
+			const modelKey =
+				typeof data.modelKey === "string" ? data.modelKey : null;
+
+			return PublicAssetSchema.parse({
+				id: row.id,
+				name: row.name,
+				type,
+				url,
+				thumbnailUrl,
+				prompt,
+				vendor,
+				modelKey,
+				createdAt: row.created_at,
+				ownerLogin: row.owner_login,
+				ownerName: row.owner_name,
+				projectName: row.project_name,
+			});
+		})
+		.filter((v): v is ReturnType<typeof PublicAssetSchema.parse> => !!v);
+
+	return c.json(items);
+});
+
 // Proxy image: /assets/proxy-image?url=...
 assetRouter.get("/proxy-image", async (c) => {
 	const raw = (c.req.query("url") || "").trim();
@@ -139,4 +219,3 @@ assetRouter.get("/proxy-image", async (c) => {
 		);
 	}
 });
-

@@ -15,6 +15,7 @@ type SoraToken = {
 async function listSoraTokens(
 	c: AppContext,
 	userId: string,
+	vendor: string,
 ): Promise<SoraToken[]> {
 	const sql = `
     SELECT
@@ -28,13 +29,13 @@ async function listSoraTokens(
     FROM model_tokens t
     JOIN model_providers p ON p.id = t.provider_id
     WHERE t.enabled = 1
-      AND p.vendor = 'sora'
+      AND p.vendor = ?
       AND (t.user_id = ? OR t.shared = 1)
     ORDER BY t.created_at ASC
   `;
 
 	const { results } = await c.env.DB.prepare(sql)
-		.bind(userId)
+		.bind(vendor, userId)
 		.all<SoraToken>();
 	return results ?? [];
 }
@@ -44,6 +45,7 @@ async function resolveSoraToken(
 	userId: string,
 	tokenId?: string | null,
 ): Promise<SoraToken> {
+	const vendor = "sora";
 	if (tokenId) {
 		const sql = `
       SELECT
@@ -58,19 +60,60 @@ async function resolveSoraToken(
       JOIN model_providers p ON p.id = t.provider_id
       WHERE t.id = ?
         AND t.enabled = 1
-        AND p.vendor = 'sora'
+        AND p.vendor = ?
         AND (t.user_id = ? OR t.shared = 1)
       LIMIT 1
     `;
 		const row = await c.env.DB.prepare(sql)
-			.bind(tokenId, userId)
+			.bind(tokenId, vendor, userId)
 			.first<SoraToken>();
 		if (row) return row;
 	}
 
-	const tokens = await listSoraTokens(c, userId);
+	const tokens = await listSoraTokens(c, userId, vendor);
 	if (!tokens.length) {
 		throw new AppError("未找到可用的 Sora Token", {
+			status: 400,
+			code: "sora_token_missing",
+		});
+	}
+	return tokens[0];
+}
+
+// 尝试解析 Sora2API Token（model_providers.vendor = 'sora2api'）
+async function resolveSora2ApiToken(
+	c: AppContext,
+	userId: string,
+	tokenId?: string | null,
+): Promise<SoraToken> {
+	const vendor = "sora2api";
+	if (tokenId) {
+		const sql = `
+      SELECT
+        t.id,
+        t.label,
+        t.secret_token as secretToken,
+        t.user_agent as userAgent,
+        t.shared as shared,
+        p.vendor as providerVendor,
+        p.base_url as providerBaseUrl
+      FROM model_tokens t
+      JOIN model_providers p ON p.id = t.provider_id
+      WHERE t.id = ?
+        AND t.enabled = 1
+        AND p.vendor = ?
+        AND (t.user_id = ? OR t.shared = 1)
+      LIMIT 1
+    `;
+		const row = await c.env.DB.prepare(sql)
+			.bind(tokenId, vendor, userId)
+			.first<SoraToken>();
+		if (row) return row;
+	}
+
+	const tokens = await listSoraTokens(c, userId, vendor);
+	if (!tokens.length) {
+		throw new AppError("未找到可用的 Sora2API Token", {
 			status: 400,
 			code: "sora_token_missing",
 		});
@@ -914,7 +957,35 @@ export async function searchSoraMentions(
 	userId: string,
 	input: { tokenId?: string | null; username: string; intent?: string; limit?: number },
 ) {
-	const token = await resolveSoraToken(c, userId, input.tokenId);
+	// 优先尝试使用官方 Sora Token；若未配置，则兜底使用 Sora2API Token。
+	let token: SoraToken;
+	try {
+		token = await resolveSoraToken(c, userId, input.tokenId);
+	} catch (err: any) {
+		const isAppError =
+			err instanceof AppError ||
+			(!!err &&
+				typeof err === "object" &&
+				"code" in err &&
+				"status" in err);
+		const code = isAppError ? (err as any).code : null;
+		if (code !== "sora_token_missing") {
+			throw err;
+		}
+		// 没有 Sora Token 时，尝试使用 Sora2API Token 兜底；如果仍然没有，则视为未配置。
+		try {
+			token = await resolveSora2ApiToken(c, userId, input.tokenId);
+		} catch {
+			// 对于纯 mentions 功能，缺少 Token 时退化为“无结果”而非报错，避免打断编辑体验。
+			return { items: [] };
+		}
+	}
+
+	// 若 token 来自 Sora2API，自建服务通常不提供 profile/search_mentions，直接退化为空列表。
+	if ((token.providerVendor || "").toLowerCase() === "sora2api") {
+		return { items: [] };
+	}
+
 	const baseUrl = buildSoraBaseUrl(token);
 	const url = new URL(
 		"/backend/project_y/profile/search_mentions",
@@ -1155,10 +1226,115 @@ export async function uploadSoraImage(
 	userId: string,
 	input: { tokenId?: string | null; file: File },
 ) {
-	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
-	return uploadSoraFile(token, baseUrl, input.file, "profile");
-}
+	let token: SoraToken | null = null;
+
+	// 1) 优先尝试使用 Sora2API Token（与 Nest 版保持一致：/sora/upload/image 专供 sora2api）
+	try {
+		token = await resolveSora2ApiToken(c, userId, input.tokenId);
+	} catch (err: any) {
+		const isAppError =
+			err instanceof AppError ||
+			(!!err &&
+				typeof err === "object" &&
+				"code" in err &&
+				"status" in err);
+		const code = isAppError ? (err as any).code : null;
+		if (code !== "sora_token_missing") {
+			throw err;
+		}
+	}
+
+	// 2) 若未配置 sora2api，再尝试使用 Sora 官方 Token。
+	if (!token) {
+		try {
+			token = await resolveSoraToken(c, userId, input.tokenId);
+		} catch (err: any) {
+			const isAppError =
+				err instanceof AppError ||
+				(!!err &&
+					typeof err === "object" &&
+					"code" in err &&
+					"status" in err);
+			const code = isAppError ? (err as any).code : null;
+			// 仅在「未找到可用的 Sora Token」时启用 OSS 兜底，其它错误继续抛出。
+			if (code !== "sora_token_missing") {
+				throw err;
+			}
+		}
+	}
+
+	// 有可用的 Sora / Sora2API Token，按原路径上传到对应服务。
+	if (token) {
+		const baseUrl = buildSoraBaseUrl(token);
+		return uploadSoraFile(token, baseUrl, input.file, "profile");
+	}
+
+	// 3) 两种 Token 都没有：上传到 OSS（R2）兜底。
+	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+	if (!bucket) {
+		// 环境未绑定 R2，保留原始报错语义，避免静默失败。
+		throw new AppError(
+			"未找到可用的 Sora/Sora2API Token，且 OSS 存储未配置",
+			{
+				status: 400,
+				code: "sora_token_missing",
+			},
+		);
+	}
+
+	// 生成与 asset.hosting 类似的 key：uploads/sora/<userId>/<yyyymmdd>/<uuid>.<ext>
+	const file = input.file;
+	const contentType =
+		(file.type && String(file.type).split(";")[0].trim()) ||
+		"application/octet-stream";
+
+	let ext = "bin";
+	const name = (file as any).name as string | undefined;
+	if (name && typeof name === "string") {
+		const match = name.match(/\.([a-zA-Z0-9]+)$/);
+		if (match && match[1]) {
+			ext = match[1].toLowerCase();
+		}
+	}
+	if (ext === "bin") {
+		if (contentType.startsWith("image/")) {
+			ext = contentType.slice("image/".length) || "png";
+		} else if (contentType === "video/mp4") {
+			ext = "mp4";
+		}
+	}
+
+	const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+	const now = new Date();
+	const datePrefix = `${now.getUTCFullYear()}${String(
+		now.getUTCMonth() + 1,
+	).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}`;
+	const random = crypto.randomUUID();
+	const key = `uploads/sora/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
+
+	const body = await file.arrayBuffer();
+
+	await bucket.put(key, body, {
+		httpMetadata: {
+			contentType,
+			cacheControl: "public, max-age=31536000, immutable",
+		},
+	});
+
+	const publicBase = (c.env.R2_PUBLIC_BASE_URL || "").trim().replace(
+		/\/+$/,
+		"",
+	);
+	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+
+	// 兼容前端期望的字段：file_id + (asset_pointer|azure_asset_pointer|url)
+	return {
+		file_id: `r2_${key}`,
+		url,
+		asset_pointer: url,
+		azure_asset_pointer: url,
+	};
+	}
 
 export async function uploadCharacterVideo(
 	c: AppContext,
