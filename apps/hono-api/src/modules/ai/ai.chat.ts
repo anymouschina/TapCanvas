@@ -1,4 +1,4 @@
-import { convertToModelMessages, streamText, tool } from "ai";
+import { convertToModelMessages, streamText, tool, zodSchema } from "ai";
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import {
 	createGoogleGenerativeAI,
@@ -16,7 +16,9 @@ import {
 	formatPromptSample,
 	matchPromptSamples,
 } from "../../../../api/src/ai/prompt-samples";
+import { z } from "zod";
 import { canvasToolSchemas } from "../../../../api/src/ai/tool-schemas";
+import { publishToolEvent } from "./tool-events.bus";
 
 type Provider = "openai" | "anthropic" | "google";
 type ProviderVendor = "openai" | "anthropic" | "gemini";
@@ -80,6 +82,27 @@ type ChatMessageDto = {
 
 function normalizePart(part: any) {
 	if (!part) return null;
+	// 丢弃早期 Worker 占位工具输出，避免模型误以为无法访问画布
+	try {
+		const msg =
+			typeof part?.message === "string"
+				? part.message
+				: typeof part?.output?.message === "string"
+					? part.output.message
+					: typeof part?.errorText === "string"
+						? part.errorText
+						: undefined;
+		if (
+			msg &&
+			msg.includes(
+				"Canvas 工具仅在前端执行（clientToolExecution 模式），当前 Worker 未实现该工具。",
+			)
+		) {
+			return null;
+		}
+	} catch {
+		// ignore
+	}
 	if (part.type === "item_reference") {
 		return null;
 	}
@@ -167,29 +190,435 @@ function normalizeProvidedTools(tools: unknown): Record<string, any> | null {
 	return null;
 }
 
+// 将后端共享的 canvasToolSchemas（description + inputSchema:zod）转换为
+// Vercel AI SDK 标准的 Tool 定义，确保发给 Codex/OpenAI 的 parameters 是合法 JSON Schema。
+// 注意：这里不提供 execute，让工具在前端 clientToolExecution 模式下执行。
 const canvasToolsForClient: Record<string, any> = Object.fromEntries(
-	Object.entries(canvasToolSchemas).map(([name, def]) => [
-		name,
-		tool({
-			description: def.description,
-			// 直接复用 apps/api 中定义的 Zod schema，
-			// 让 AI SDK 自行转换为 JSON Schema，保持与 Nest 实现一致。
-			inputSchema: def.inputSchema as any,
-		}),
-	]),
+	Object.entries(canvasToolSchemas as Record<string, any>).map(
+		([name, def]) => [
+			name,
+			tool({
+				description: def?.description,
+				inputSchema: def?.inputSchema,
+			}),
+		],
+	),
 );
 
-function resolveToolsForChat(input: ChatStreamRequest): Record<string, any> | undefined {
+// 额外的高层画布工具（仅在前端执行），例如智能布局。
+const extraCanvasClientTools: Record<string, any> = {
+	canvas_smartLayout: tool({
+		description:
+			"智能整理当前画布布局：全选并自动布局节点，可选聚焦到指定节点。适用于“画布太乱/帮我整理一下”这类指令。",
+		inputSchema: z.object({
+			focusNodeId: z
+				.string()
+				.describe("可选：希望重点聚焦的节点 ID")
+				.optional(),
+		}),
+	}),
+};
+
+const UpdatePlanSchema = z.object({
+	planId: z.string().min(1),
+	sessionId: z.string().min(1),
+	explanation: z.string().optional(),
+	summary: z
+		.object({
+			strategy: z.string().optional(),
+			estimatedTime: z.number().optional(),
+			estimatedCost: z.number().optional(),
+		})
+		.optional(),
+	steps: z
+		.array(
+			z.object({
+				id: z.string().min(1),
+				name: z.string().min(1),
+				description: z.string().min(1),
+				status: z.enum(["pending", "in_progress", "completed", "failed"]),
+				reasoning: z.string().optional(),
+				acceptance: z.array(z.string()).optional(),
+			}),
+		)
+		.min(1),
+});
+
+const EmitThinkingSchema = z.object({
+	type: z.enum([
+		"intent_analysis",
+		"planning",
+		"reasoning",
+		"decision",
+		"execution",
+		"result",
+	]),
+	content: z.string().min(1),
+	metadata: z.record(z.any()).optional(),
+});
+
+function resolveToolsForChat(
+	input: ChatStreamRequest,
+	c: AppContext,
+	userId: string,
+): Record<string, any> | undefined {
 	const provided = normalizeProvidedTools((input as any).tools);
 	if (provided) return provided;
 
-	// 客户端执行：仅提供 schema，实际执行交给前端 functionHandlers
-	if (input.clientToolExecution) {
-		return canvasToolsForClient;
+	// 基础画布工具（始终提供给模型，用于感知/操作画布）
+	const baseCanvasTools = {
+		...canvasToolsForClient,
+		...extraCanvasClientTools,
+	};
+
+	// 根据开关决定是否启用 webSearch 工具（与 Nest 版保持一致语义）
+	const shouldEnableWebSearch = input.enableWebSearch !== false;
+
+	if (!shouldEnableWebSearch) {
+		return baseCanvasTools;
 	}
 
-	// 兜底：暂不在 Worker 上执行画布工具，只暴露 schema
-	return canvasToolsForClient;
+	// Worker 版 webSearch：使用 Env 中的 WEB_SEARCH_API_KEY / WEB_SEARCH_BASE_URL
+	const webSearchTool = {
+		webSearch: tool({
+			description:
+				"联网搜索当前问题相关的最新信息，用于新闻、技术更新、具体数据等需要实时信息的场景；不要用于纯小说创作、分镜脑补等不依赖事实的任务。",
+			inputSchema: z.object({
+				query: z.string().min(4, "query 太短"),
+				maxResults: z.number().min(1).max(8).default(4),
+				locale: z.string().default("zh-CN"),
+			}),
+			// 注意：这里的参数类型让 TypeScript 从 Zod schema 推断，不强行声明，避免与 ai-sdk 类型冲突。
+			execute: async (args: {
+				query: string;
+				maxResults?: number;
+				locale?: string;
+			}) => {
+				const { query, maxResults, locale } = args;
+				const apiKey = (c.env as any).WEB_SEARCH_API_KEY as
+					| string
+					| undefined;
+				const baseUrl = (c.env as any).WEB_SEARCH_BASE_URL as
+					| string
+					| undefined;
+
+				if (!apiKey || !baseUrl) {
+					throw new Error(
+						"WebSearch 未配置：请在 Worker 环境中设置 WEB_SEARCH_API_KEY 与 WEB_SEARCH_BASE_URL",
+					);
+				}
+
+				const trimmedQuery = (query || "").trim();
+				if (!trimmedQuery) {
+					throw new Error("搜索 query 不能为空");
+				}
+
+				const url = baseUrl.replace(/\/+$/, "");
+				const payload = {
+					query: trimmedQuery,
+					max_results: Math.min(Math.max(maxResults ?? 4, 1), 8),
+					search_lang: locale || "zh-CN",
+				};
+
+				const resp = await fetch(url, {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify(payload),
+				});
+
+				if (!resp.ok) {
+					let details = "";
+					try {
+						details = await resp.text();
+					} catch {
+						// ignore
+					}
+					throw new Error(
+						`WebSearch 请求失败：${resp.status} ${resp.statusText}${
+							details ? ` - ${details.slice(0, 200)}` : ""
+						}`,
+					);
+				}
+
+				let data: any = null;
+				try {
+					data = await resp.json();
+				} catch {
+					data = null;
+				}
+
+				const items = Array.isArray(data?.results) ? data.results : [];
+				return items.map((item: any) => ({
+					title: String(item?.title || "").slice(0, 200),
+					url: String(item?.url || item?.link || ""),
+					snippet: String(item?.content || item?.snippet || "").slice(
+						0,
+						600,
+					),
+				}));
+			},
+		}),
+	};
+
+	// 智能助手相关工具：由模型主动维护计划与思考过程
+	const enableThinking = input.enableThinking !== false;
+	const intelligent = input.intelligentMode === true;
+
+	const intelligentTools: Record<string, any> = {};
+
+	if (enableThinking) {
+		intelligentTools.ai_emit_thinking = tool({
+			description:
+				"输出一条结构化的思考事件，用于在侧边栏展示你的推理过程，例如意图分析、规划、决策或执行结果。",
+			inputSchema: EmitThinkingSchema,
+			execute: async (args: {
+				type: string;
+				content: string;
+				metadata?: Record<string, any>;
+			}) => {
+				const now = new Date();
+				const event = {
+					id: args.metadata?.id || `thinking_${now.getTime()}`,
+					sessionId:
+						typeof args.metadata?.sessionId === "string"
+							? args.metadata.sessionId
+							: (typeof input.sessionId === "string" &&
+									input.sessionId.trim()) ||
+								"default",
+					type: args.type as any,
+					timestamp: now,
+					content: args.content,
+					metadata: args.metadata,
+				};
+
+				publishToolEvent(userId, {
+					type: "tool-result",
+					toolCallId: event.id,
+					toolName: "ai.thinking.process",
+					output: event,
+				});
+
+				return { ok: true };
+			},
+		});
+	}
+
+	if (intelligent) {
+		intelligentTools.ai_update_plan = tool({
+			description:
+				"更新当前会话的执行计划。steps 中应列出清晰的多步骤行动及其状态，用于在侧边栏展示可执行计划。",
+			inputSchema: UpdatePlanSchema,
+			execute: async (args: any) => {
+				const nowIso = new Date().toISOString();
+				const planId =
+					typeof args.planId === "string" && args.planId.trim()
+						? args.planId.trim()
+						: `plan_${Date.now()}`;
+				const sessionId =
+					typeof args.sessionId === "string" && args.sessionId.trim()
+						? args.sessionId.trim()
+						: (typeof input.sessionId === "string" &&
+								input.sessionId.trim()) ||
+							"default";
+
+				const payload = {
+					planId,
+					sessionId,
+					explanation:
+						typeof args.explanation === "string"
+							? args.explanation
+							: undefined,
+					summary:
+						args.summary && typeof args.summary === "object"
+							? {
+									strategy: args.summary.strategy,
+									estimatedTime: args.summary.estimatedTime,
+									estimatedCost: args.summary.estimatedCost,
+								}
+							: undefined,
+					steps: Array.isArray(args.steps)
+						? args.steps.map((step: any) => ({
+								id: String(step.id || ""),
+								name: String(step.name || ""),
+								description: String(step.description || ""),
+								status:
+									step.status === "completed" ||
+									step.status === "in_progress" ||
+									step.status === "failed"
+										? step.status
+										: "pending",
+								reasoning:
+									typeof step.reasoning === "string"
+										? step.reasoning
+										: undefined,
+								acceptance: Array.isArray(step.acceptance)
+									? step.acceptance.map((v: any) => String(v))
+									: undefined,
+							}))
+						: [],
+					updatedAt: nowIso,
+				};
+
+				publishToolEvent(userId, {
+					type: "tool-result",
+					toolCallId: planId,
+					toolName: "ai.plan.update",
+					output: payload,
+				});
+
+				return { ok: true };
+			},
+		});
+	}
+
+	return {
+		...baseCanvasTools,
+		...webSearchTool,
+		...intelligentTools,
+	};
+}
+
+function emitSimpleIntelligentEvents(
+	c: AppContext,
+	userId: string,
+	input: ChatStreamRequest,
+	lastUserText?: string,
+) {
+	const intelligent = input.intelligentMode === true;
+	const enableThinking = input.enableThinking !== false;
+	if (!intelligent && !enableThinking) return;
+
+	const sessionId =
+		(typeof input.sessionId === "string" && input.sessionId.trim()) ||
+		"default";
+
+	const now = new Date();
+	const nowIso = now.toISOString();
+	const baseId = `${sessionId}_${now.getTime()}`;
+
+	if (enableThinking) {
+		const thinkingEvent = {
+			id: `thinking_${baseId}`,
+			sessionId,
+			type: "intent_analysis" as const,
+			timestamp: now,
+			content:
+				lastUserText && lastUserText.trim().length
+					? `正在分析你的意图：「${lastUserText.trim()}」`
+					: "正在分析你的意图与当前画布状态。",
+			metadata: {
+				confidence: 0.6,
+				context: {
+					hasCanvasContext: !!input.context,
+					model: input.model,
+				},
+			},
+		};
+
+		publishToolEvent(userId, {
+			type: "tool-result",
+			toolCallId: `thinking_${baseId}`,
+			toolName: "ai.thinking.process",
+			output: thinkingEvent,
+		});
+	}
+
+	if (!intelligent) return;
+
+	const summary =
+		input.context && typeof input.context === "object"
+			? (input.context as any).summary || null
+			: null;
+	const nodeCount =
+		typeof summary?.nodeCount === "number"
+			? summary.nodeCount
+			: Array.isArray((input.context as any)?.nodes)
+				? ((input.context as any).nodes as any[]).length
+				: undefined;
+
+	const planId = `plan_${baseId}`;
+
+	const steps = [
+		{
+			id: `${planId}_1`,
+			name: "理解意图与当前画布",
+			description: "阅读本轮指令并结合当前画布节点/连接情况，确认目标。",
+			status: "in_progress" as const,
+			reasoning:
+				"优先搞清楚你想做什么，以及画布上已经有哪些节点和素材。",
+			acceptance: [
+				"能用一句话复述你的需求",
+				"知道画布上至少有哪些关键节点",
+			],
+		},
+		{
+			id: `${planId}_2`,
+			name: "规划需要的画布操作",
+			description:
+				"决定是创建新节点、修改现有节点，还是整理布局/执行工作流。",
+			status: "pending" as const,
+			reasoning:
+				"根据需求选择最少但最有价值的画布操作，避免无谓改动。",
+			acceptance: [
+				"列出 2–4 个具体操作",
+				"每个操作都能说明价值",
+			],
+		},
+		{
+			id: `${planId}_3`,
+			name: "执行并回显结果",
+			description:
+				"逐步执行选定的画布操作，并在对话中解释做了什么以及如何继续。",
+			status: "pending" as const,
+			reasoning:
+				"让每一步操作都有反馈，确保你始终知道画布发生了什么变化。",
+			acceptance: [
+				"画布状态与计划一致",
+				"你知道接下来还能让助手做什么",
+			],
+		},
+	];
+
+	const explanationParts: string[] = [];
+	if (lastUserText && lastUserText.trim().length) {
+		explanationParts.push(`用户意图：${lastUserText.trim()}`);
+	}
+	if (typeof nodeCount === "number") {
+		explanationParts.push(`当前画布节点数：${nodeCount}`);
+	}
+	explanationParts.push(
+		"将按照「理解 → 规划 → 执行」三步节奏协助你操作画布。",
+	);
+
+	const planPayload = {
+		planId,
+		sessionId,
+		explanation: explanationParts.join("；"),
+		summary: {
+			strategy: "轻量智能助手：先读懂你的意图，再建议或执行少量高价值操作。",
+			estimatedTime: 1,
+			estimatedCost: 0,
+		},
+		steps: steps.map((step) => ({
+			id: step.id,
+			name: step.name,
+			description: step.description,
+			status: step.status,
+			reasoning: step.reasoning,
+			acceptance: step.acceptance,
+		})),
+		updatedAt: nowIso,
+	};
+
+	publishToolEvent(userId, {
+		type: "tool-result",
+		toolCallId: planId,
+		toolName: "ai.plan.update",
+		output: planPayload,
+	});
 }
 
 function composeSystemPromptFromContext(
@@ -708,30 +1137,6 @@ export async function handleChatStream(
 		});
 	}
 
-	const toolsValue = resolveToolsForChat(input) || undefined;
-
-	if (!Array.isArray(input.messages) || input.messages.length === 0) {
-		throw new AppError("Invalid chat request body: messages is empty", {
-			status: 400,
-			code: "invalid_chat_request",
-		});
-	}
-
-	const uiMessages = normalizeMessagesForModel(input.messages);
-	// Convert cleaned UIMessage[] → ModelMessage[] as required by streamText
-	const modelMessages = convertToModelMessages(uiMessages as any, {
-		tools: toolsValue,
-	});
-
-	const providerOptions =
-		provider === "openai"
-			? {
-					openai: {
-						store: true,
-					},
-				}
-			: undefined;
-
 	const lastUserText =
 		(Array.isArray(input.messages) && input.messages.length
 			? (() => {
@@ -755,6 +1160,33 @@ export async function handleChatStream(
 				})()
 			: undefined);
 
+	const toolsValue = resolveToolsForChat(input, c, userId) || undefined;
+
+	if (!Array.isArray(input.messages) || input.messages.length === 0) {
+		throw new AppError("Invalid chat request body: messages is empty", {
+			status: 400,
+			code: "invalid_chat_request",
+		});
+	}
+
+	// 在主对话流开始前触发一次轻量级智能事件，用于驱动前端的思考过程与计划面板。
+	emitSimpleIntelligentEvents(c, userId, input, lastUserText);
+
+	const uiMessages = normalizeMessagesForModel(input.messages);
+	// Convert cleaned UIMessage[] → ModelMessage[] as required by streamText
+	const modelMessages = convertToModelMessages(uiMessages as any, {
+		tools: toolsValue,
+	});
+
+	const providerOptions =
+		provider === "openai"
+			? {
+					openai: {
+						store: true,
+					},
+				}
+			: undefined;
+
 	const systemPrompt = composeSystemPromptFromContext(
 		input.context,
 		lastUserText,
@@ -766,7 +1198,6 @@ export async function handleChatStream(
 		messages: modelMessages,
 		tools: toolsValue,
 		providerOptions,
-		maxToolRoundtrips: input.maxToolRoundtrips ?? 3,
 		temperature:
 			typeof input.temperature === "number" ? input.temperature : 0.7,
 	});

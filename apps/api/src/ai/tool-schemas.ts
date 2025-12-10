@@ -225,7 +225,7 @@ export const canvasNodeSpecs = {
     role: 'video_shot',
     description:
       '统一的视频镜头节点，封装 Sora 2 / 自建 Sora2API / Veo 3.1 等模型，负责短片分镜（单节点默认 ≤10 秒）与续写、Remix。',
-    recommendedModels: ['Sora 2', 'Sora2API (self-hosted)', 'Veo 3.1 Pro', 'Veo 3.1 Fast', 'Runway Gen-3'],
+    recommendedModels: ['Sora2API (self-hosted)', 'Sora 2', 'Veo 3.1 Pro', 'Veo 3.1 Fast', 'Runway Gen-3'],
     capabilities: [
       '文本 → 视频（单镜头）',
       '图像/帧 → 视频续写（img2vid）',
