@@ -37,6 +37,11 @@
 		"R2_PROXY_VIDEOS_BASE": "https://videos.example.com",
 		"R2_PROXY_SORA_BASE": "https://sora2.example.com",
 
+		// 自建 Sora2API 号池网关（与 Nest SORA2API_BASE_URL 保持一致）
+		"SORA2API_BASE_URL": "http://3.27.218.109:8000",
+		// Sora2API 网关级 API Key（可选，作为 vendor 级共享凭证；若配置，则在未设置 model_providers/model_tokens 时也能使用号池）
+		"SORA2API_API_KEY": "YOUR_SORA2API_API_KEY",
+
 		"WEB_SEARCH_API_KEY": "YOUR_WEB_SEARCH_API_KEY",
 		"WEB_SEARCH_BASE_URL": "https://your-web-search-endpoint.example.com"
 	},

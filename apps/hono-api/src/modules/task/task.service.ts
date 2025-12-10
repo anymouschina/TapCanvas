@@ -158,6 +158,25 @@ async function resolveVendorContext(
 		.then((r) => r.results || []);
 
 	if (!providers.length) {
+		// 对于 sora2api，允许使用 Env 级别的全局配置作为号池网关。
+		if (v === "sora2api") {
+			const envAny = c.env as any;
+			const envApiKey =
+				(typeof envAny.SORA2API_API_KEY === "string" &&
+					envAny.SORA2API_API_KEY.trim()) ||
+				"";
+			if (envApiKey) {
+				const rawBase =
+					(typeof envAny.SORA2API_BASE_URL === "string" &&
+						envAny.SORA2API_BASE_URL) ||
+					(typeof envAny.SORA2API_BASE === "string" &&
+						envAny.SORA2API_BASE) ||
+					"http://localhost:8000";
+				const baseUrl = normalizeBaseUrl(rawBase);
+				return { baseUrl, apiKey: envApiKey };
+			}
+		}
+
 		throw new AppError(`No provider configured for vendor ${v}`, {
 			status: 400,
 			code: "provider_not_configured",

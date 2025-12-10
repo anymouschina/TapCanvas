@@ -1,4 +1,4 @@
-import type { AppContext } from "../../types";
+import type { AppContext, WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
 import { SoraVideoDraftResponseSchema } from "./sora.schemas";
 
@@ -121,20 +121,22 @@ async function resolveSora2ApiToken(
 	return tokens[0];
 }
 
-function getDefaultSoraBase(vendor?: string | null): string {
+function getDefaultSoraBase(env: WorkerEnv, vendor?: string | null): string {
 	const v = (vendor || "").toLowerCase();
 	if (v === "sora2api") {
 		const envVal =
-			(globalThis as any).SORA2API_BASE_URL ||
-			(globalThis as any).SORA2API_BASE ||
+			env.SORA2API_BASE_URL ||
+			// 兼容早期自定义绑定名称
+			((env as any).SORA2API_BASE as string | undefined) ||
 			"http://localhost:8000";
-		return String(envVal);
+		return String(envVal).trim();
 	}
 	return "https://sora.chatgpt.com";
 }
 
-function buildSoraBaseUrl(token: SoraToken): string {
-	return (token.providerBaseUrl || getDefaultSoraBase(token.providerVendor)).replace(
+function buildSoraBaseUrl(env: WorkerEnv, token: SoraToken): string {
+	return (token.providerBaseUrl ||
+		getDefaultSoraBase(env, token.providerVendor)).replace(
 		/\/+$/,
 		"",
 	);
@@ -302,7 +304,7 @@ export async function createSoraVideoTask(
 		});
 	}
 
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL("/backend/nf/create", baseUrl).toString();
 	const userAgent = token.userAgent || "TapCanvas/1.0";
 
@@ -436,7 +438,7 @@ export async function listSoraPendingVideos(c: AppContext, userId: string) {
 		return [];
 	}
 
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL("/backend/nf/pending", baseUrl).toString();
 	const userAgent = token.userAgent || "TapCanvas/1.0";
 
@@ -475,7 +477,7 @@ export async function listSoraDrafts(
 	input: { tokenId?: string | null; cursor?: string | null; limit?: number },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL("/backend/project_y/profile/drafts", baseUrl);
 	const params: Record<string, string> = {};
 	if (input.cursor) params.cursor = input.cursor;
@@ -568,7 +570,7 @@ export async function deleteSoraDraft(
 	input: { tokenId: string; draftId: string },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		`/backend/project_y/profile/drafts/${input.draftId}`,
 		baseUrl,
@@ -616,7 +618,7 @@ export async function getSoraVideoDraftByTask(
 	}
 
 	for (const token of orderedTokens) {
-		const baseUrl = buildSoraBaseUrl(token);
+		const baseUrl = buildSoraBaseUrl(c.env, token);
 		const url = new URL("/backend/project_y/profile/drafts", baseUrl);
 		url.searchParams.set("limit", "20");
 		const userAgent = token.userAgent || "TapCanvas/1.0";
@@ -757,7 +759,7 @@ export async function listSoraCharacters(
 	input: { tokenId?: string | null; cursor?: string | null; limit?: number },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const profileId = await resolveSoraProfileId(token, baseUrl);
 	const url = new URL(
 		`/backend/project_y/profile/${profileId}/characters`,
@@ -812,7 +814,7 @@ export async function deleteSoraCharacter(
 	input: { tokenId: string; characterId: string },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		`/backend/project_y/characters/${input.characterId}`,
 		baseUrl,
@@ -847,7 +849,7 @@ export async function updateSoraCharacter(
 	},
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		`/backend/project_y/characters/${input.characterId}/update`,
 		baseUrl,
@@ -915,7 +917,7 @@ export async function checkCharacterUsername(
 	input: { tokenId?: string | null; username: string },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		"/backend/project_y/profile/username/check",
 		baseUrl,
@@ -986,7 +988,7 @@ export async function searchSoraMentions(
 		return { items: [] };
 	}
 
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		"/backend/project_y/profile/search_mentions",
 		baseUrl,
@@ -1032,7 +1034,7 @@ export async function getCameoStatus(
 	input: { tokenId: string; id: string },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		`/backend/project_y/cameos/in_progress/${input.id}`,
 		baseUrl,
@@ -1073,7 +1075,7 @@ export async function setCameoPublic(
 	input: { tokenId: string; cameoId: string },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		`/backend/project_y/cameos/by_id/${input.cameoId}/update_v2`,
 		baseUrl,
@@ -1122,7 +1124,7 @@ export async function finalizeCharacter(
 	},
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL("/backend/characters/finalize", baseUrl).toString();
 
 	const body = {
@@ -1199,12 +1201,18 @@ async function uploadSoraFile(
 	}
 
 	if (!res.ok) {
+		const rawMessage = data && (data.message || data.error);
 		const msg =
-			(data && (data.message || data.error)) ||
-			`Sora file upload failed: ${res.status}`;
+			typeof rawMessage === "string"
+				? rawMessage
+				: `Sora file upload failed: ${res.status}`;
 		throw new AppError(msg, {
 			status: res.status,
 			code: "sora_upload_failed",
+			details: {
+				upstreamStatus: res.status,
+				upstreamData: data ?? null,
+			},
 		});
 	}
 
@@ -1217,7 +1225,7 @@ export async function uploadProfileAsset(
 	input: { tokenId: string; file: File },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	return uploadSoraFile(token, baseUrl, input.file, "profile");
 }
 
@@ -1226,11 +1234,12 @@ export async function uploadSoraImage(
 	userId: string,
 	input: { tokenId?: string | null; file: File },
 ) {
-	let token: SoraToken | null = null;
+	let sora2Token: SoraToken | null = null;
+	let soraToken: SoraToken | null = null;
 
 	// 1) 优先尝试使用 Sora2API Token（与 Nest 版保持一致：/sora/upload/image 专供 sora2api）
 	try {
-		token = await resolveSora2ApiToken(c, userId, input.tokenId);
+		sora2Token = await resolveSora2ApiToken(c, userId, input.tokenId);
 	} catch (err: any) {
 		const isAppError =
 			err instanceof AppError ||
@@ -1245,9 +1254,9 @@ export async function uploadSoraImage(
 	}
 
 	// 2) 若未配置 sora2api，再尝试使用 Sora 官方 Token。
-	if (!token) {
+	if (!sora2Token) {
 		try {
-			token = await resolveSoraToken(c, userId, input.tokenId);
+			soraToken = await resolveSoraToken(c, userId, input.tokenId);
 		} catch (err: any) {
 			const isAppError =
 				err instanceof AppError ||
@@ -1263,10 +1272,43 @@ export async function uploadSoraImage(
 		}
 	}
 
-	// 有可用的 Sora / Sora2API Token，按原路径上传到对应服务。
-	if (token) {
-		const baseUrl = buildSoraBaseUrl(token);
-		return uploadSoraFile(token, baseUrl, input.file, "profile");
+	const tryUploadWithToken = async (
+		token: SoraToken | null,
+	): Promise<any | null> => {
+		if (!token) return null;
+		const baseUrl = buildSoraBaseUrl(c.env, token);
+		try {
+			return await uploadSoraFile(
+				token,
+				baseUrl,
+				input.file,
+				"profile",
+			);
+		} catch (err: any) {
+			const isAppError = err instanceof AppError;
+			const status = isAppError ? err.status : undefined;
+			const code = isAppError ? err.code : undefined;
+			// 对于认证失败 / 无权限 / 路由不存在等情况，视为该 Token 不可用，继续尝试下一个。
+			if (
+				isAppError &&
+				code === "sora_upload_failed" &&
+				(status === 401 ||
+					status === 403 ||
+					status === 404)
+			) {
+				return null;
+			}
+			throw err;
+		}
+	};
+
+	// 先尝试 sora2api，再尝试官方 Sora。
+	let uploadResult = await tryUploadWithToken(sora2Token);
+	if (!uploadResult) {
+		uploadResult = await tryUploadWithToken(soraToken);
+	}
+	if (uploadResult) {
+		return uploadResult;
 	}
 
 	// 3) 两种 Token 都没有：上传到 OSS（R2）兜底。
@@ -1342,7 +1384,7 @@ export async function uploadCharacterVideo(
 	input: { tokenId: string; file: File; range: [number, number] },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL("/backend/characters/upload", baseUrl).toString();
 	const [start, end] = input.range;
 
@@ -1387,7 +1429,7 @@ export async function listSoraPublishedVideos(
 	input: { tokenId?: string | null; limit?: number },
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const url = new URL(
 		"/backend/project_y/profile_feed/me",
 		baseUrl,
@@ -1506,7 +1548,7 @@ export async function publishSoraVideo(
 	},
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
-	const baseUrl = buildSoraBaseUrl(token);
+	const baseUrl = buildSoraBaseUrl(c.env, token);
 	const finalGenerationId = input.generationId || input.taskId;
 
 	if (!finalGenerationId) {
