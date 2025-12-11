@@ -34,10 +34,9 @@ export const IMAGE_MODELS: ModelOption[] = [
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
-  { value: 'sora-2', label: 'Sora 2 (Sora2API)', vendor: 'sora2api' },
+  { value: 'sora-2', label: 'Sora 2', vendor: 'sora2api' },
   { value: 'veo3.1-pro', label: 'Veo 3.1 Pro', vendor: 'veo' },
   { value: 'veo3.1-fast', label: 'Veo 3.1 Fast', vendor: 'veo' },
-  { value: 'sora2-video', label: 'Sora2API 本地视频', vendor: 'sora2api' },
 ]
 
 export type NodeKind =
