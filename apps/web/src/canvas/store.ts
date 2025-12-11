@@ -222,11 +222,32 @@ export const useRFStore = create<RFState>((set, get) => ({
       Number.isFinite(preferredPosition.y)
     const position = hasPreferred ? preferredPosition : defaultPosition
 
+    let dataExtra = restExtra
+    if (type === 'taskNode') {
+      const kindValue =
+        typeof dataExtra.kind === 'string' && dataExtra.kind.trim()
+          ? dataExtra.kind.trim()
+          : null
+      if (
+        (kindValue === 'composeVideo' ||
+          kindValue === 'storyboard' ||
+          kindValue === 'video') &&
+        (dataExtra as any).videoModel == null
+      ) {
+        dataExtra = {
+          ...dataExtra,
+          videoModel: 'sora-2',
+          videoModelVendor:
+            (dataExtra as any).videoModelVendor ?? 'sora2api',
+        }
+      }
+    }
+
     const node: Node = {
       id,
       type: type as any,
       position,
-      data: { label: finalLabel, ...restExtra },
+      data: { label: finalLabel, ...dataExtra },
     }
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: [...s.nodes, node], nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
