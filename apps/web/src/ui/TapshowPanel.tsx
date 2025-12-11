@@ -156,6 +156,25 @@ export default function TapshowPanel(): JSX.Element | null {
                   </Text>
                 </Stack>
                 <Group gap="xs">
+                  <Tooltip label="全屏预览" withArrow>
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => {
+                        try {
+                          const url = new URL(window.location.href)
+                          url.pathname = '/tapshow'
+                          url.search = ''
+                          url.hash = ''
+                          window.open(url.toString(), '_blank', 'noopener,noreferrer')
+                        } catch {
+                          window.open('/tapshow', '_blank', 'noopener,noreferrer')
+                        }
+                      }}
+                    >
+                      <IconPlayerPlay size={16} />
+                    </ActionIcon>
+                  </Tooltip>
                   <Tooltip label="刷新" withArrow>
                     <ActionIcon
                       size="sm"
