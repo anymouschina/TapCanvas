@@ -11,13 +11,10 @@ import {
 	ChatStreamRequestSchema,
 	type ChatStreamRequest,
 } from "./ai.schemas";
-import { SYSTEM_PROMPT } from "../../../../api/src/ai/constants";
-import {
-	formatPromptSample,
-	matchPromptSamples,
-} from "../../../../api/src/ai/prompt-samples";
+import { SYSTEM_PROMPT } from "./constants";
+import { formatPromptSample, matchPromptSamples } from "./prompt-samples.data";
 import { z } from "zod";
-import { canvasToolSchemas } from "../../../../api/src/ai/tool-schemas";
+import { canvasToolSchemas } from "./tool-schemas";
 import { publishToolEvent } from "./tool-events.bus";
 
 type Provider = "openai" | "anthropic" | "google";
@@ -99,6 +96,14 @@ type ChatMessageDto = {
 	parts?: Array<any>;
 	metadata?: Record<string, any>;
 };
+
+// 在后端共享 SYSTEM_PROMPT 的基础上，针对 Worker 侧补充一条关键原则：
+// “能通过当前工具链完成的事情，优先由 AI 自己调用工具完成，而不是让用户去点按钮或手动操作”，
+// 只有在能力确实受限或需要额外授权/业务决策时才请用户出手。
+const WORKER_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+【Worker 扩展规则 · 主动执行】
+- 默认由你主动完成一切当前工具链可以实现的功能：优先自己创建/修改节点、连接边、运行任务和更新配置，而不是让用户去点击界面或手动调用 API；只有在明确超出现有工具能力、涉及高风险/敏感操作需要用户确认，或缺少关键业务决策输入（例如预算上限、账号绑定等）时，才请用户手动执行或补充信息。`;
 
 function normalizePart(part: any) {
 	if (!part) return null;
@@ -645,7 +650,7 @@ function composeSystemPromptFromContext(
 	context?: any,
 	latestUserText?: string,
 ): string {
-	const pieces: string[] = [SYSTEM_PROMPT];
+	const pieces: string[] = [WORKER_SYSTEM_PROMPT];
 
 	if (context) {
 		const summary = context.summary ? JSON.stringify(context.summary) : "";

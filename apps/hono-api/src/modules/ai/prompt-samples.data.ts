@@ -11,6 +11,33 @@ export type PromptSample = {
 	keywords: string[];
 };
 
+// 将官方/自定义提示词样例格式化为适合嵌入 SYSTEM_PROMPT 的文案片段。
+export function formatPromptSample(sample: PromptSample): string {
+	const lines: string[] = [];
+	lines.push(
+		`【${sample.scene} · ${sample.commandType}】${sample.title}（${
+			sample.nodeKind
+		}）`,
+	);
+	lines.push(sample.prompt);
+
+	const meta: string[] = [];
+	if (sample.inputHint) {
+		meta.push(`输入建议：${sample.inputHint}`);
+	}
+	if (sample.outputNote) {
+		meta.push(`输出特征：${sample.outputNote}`);
+	}
+	if (sample.keywords?.length) {
+		meta.push(`关键词：${sample.keywords.join(" / ")}`);
+	}
+	if (meta.length) {
+		lines.push(meta.join("；"));
+	}
+
+	return lines.join("\n");
+}
+
 export const PROMPT_SAMPLES: PromptSample[] = [
 	{
 		id: "video-realism-golden-hour",
@@ -127,4 +154,3 @@ export function matchPromptSamples(
 		.slice(0, limit)
 		.map((entry) => entry.sample);
 }
-
