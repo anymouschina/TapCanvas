@@ -1,6 +1,5 @@
 import React from 'react'
-import { Button } from '@mantine/core'
-import { IconChevronDown, IconTexture, IconUpload, IconVideo } from '@tabler/icons-react'
+import { IconChevronRight, IconTexture, IconUpload, IconVideo } from '@tabler/icons-react'
 
 type ImageResult = { url: string }
 
@@ -112,21 +111,38 @@ export function ImageContent({
         </>
       ) : (
         <div style={{ position: 'relative', width: '100%' }}>
-          {imageResults.length > 1 && (
-            <div
-              style={{
-                position: 'absolute',
-                left: 8,
-                top: 8,
-                width: '100%',
-                borderRadius: 10,
-                height: '100%',
-                background: darkContentBackground,
-                transform: 'translate(4px, 4px)',
-                zIndex: 0,
-              }}
-            />
-          )}
+            {imageResults.length > 1 && (
+              <>
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 8,
+                    top: 10,
+                    width: '100%',
+                    height: '100%',
+                    borderRadius: 14,
+                    background: darkContentBackground,
+                    transform: 'translate(8px, 10px)',
+                    opacity: 0.5,
+                    zIndex: 0,
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 4,
+                    top: 6,
+                    width: '100%',
+                    height: '100%',
+                    borderRadius: 12,
+                    background: darkContentBackground,
+                    transform: 'translate(4px, 5px)',
+                    opacity: 0.7,
+                    zIndex: 0,
+                  }}
+                />
+              </>
+            )}
           <div
             style={{
               position: 'relative',
@@ -165,30 +181,33 @@ export function ImageContent({
               </div>
             )}
             {imageResults.length > 1 && (
-              <Button
+              <button
                 type="button"
-                variant="transparent"
-                radius={0}
-                size="compact-xs"
                 onClick={() => setImageExpanded(true)}
                 style={{
                   position: 'absolute',
-                  right: 8,
-                  bottom: 8,
-                  padding: 0,
-                  borderRadius: 0,
-                  border: 'none',
-                  background: 'transparent',
+                  right: 12,
+                  top: 12,
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  border: '1px solid rgba(15,23,42,0.6)',
+                  background:
+                    'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(15,23,42,0.86))',
+                  boxShadow:
+                    '0 12px 32px rgba(0,0,0,0.65)',
                   color: mediaOverlayText,
-                  display: 'inline-flex',
+                  display: 'flex',
                   alignItems: 'center',
-                  gap: 4,
+                  gap: 6,
                   fontSize: 11,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  outline: 'none',
                 }}
               >
                 <span>{imageResults.length}</span>
-                <IconChevronDown size={12} />
-              </Button>
+                <IconChevronRight size={12} />
+              </button>
             )}
           </div>
           <input

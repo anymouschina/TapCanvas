@@ -268,6 +268,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
   const glowingSendBackground = 'linear-gradient(135deg, #3d7eff, #6ae0ff)'
   const imagePromptInputRef = useRef<HTMLInputElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const [sessions, setSessions] = useState<AssistantSession[]>(() => [createEmptyAssistantSession('会话 1')])
   const [activeSessionId, setActiveSessionId] = useState<string>(() => (sessions[0]?.id ?? ''))
   const [imagePromptLoadingCount, setImagePromptLoadingCount] = useState(0)
@@ -1327,6 +1328,18 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
       ? `一次最多上传 ${MAX_IMAGE_PROMPT_ATTACHMENTS} 张图片`
       : '上传或粘贴图片生成提示词'
 
+  // 保持会话视图默认滚动到底部（新消息与切换会话时）
+  useEffect(() => {
+    if (!isExpanded) return
+    if (!messagesEndRef.current) return
+    if (messages.length === 0 && !isThinking) return
+    try {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    } catch {
+      // ignore scroll errors
+    }
+  }, [messages, isExpanded, activeSessionId, isThinking])
+
   return (
     <Box
       style={{
@@ -1567,6 +1580,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                         <Text size="xs" c="rgba(255,255,255,0.6)">Aurora 正在思考…</Text>
                       </Group>
                     )}
+                    <div ref={messagesEndRef} />
                   </Stack>
                 </ScrollArea>
               </Box>
