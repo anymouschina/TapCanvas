@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>WebCut 文档</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Description">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="canonical" href="https://docs.webcut.top/">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <style>
+    .cover-main img {
+      width: 200px;
+      height: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.$docsify = {
+      name: 'WebCut',
+      repo: 'https://github.com/tangshuang/webcut',
+      routerMode: 'hash',
+      subMaxLevel: 3,
+      auto2top: true,
+      homepage: 'zh-cn/README.md',
+      coverpage: true,
+      loadSidebar: true,
+      alias: {
+        '/_sidebar.md': '/zh-cn/_sidebar.md'
+      },
+      plugins: [
+        function (hook, vm) {
+          hook.afterEach(function (html, next) {
+            var langSwitch = '<div class="lang-switch" style="position:fixed;right:80px;top:20px;font-size:14px;z-index:9999;">' +
+              '<a href="#/zh-cn/" style="margin-right:8px;">中文</a>' +
+              '<a href="#/en/">EN</a>' +
+            '</div>';
+            next(html + langSwitch);
+          });
+        }
+      ]
+    }
+  </script>
+  <!-- Docsify v4 -->
+  <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+</body>
+</html>

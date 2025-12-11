@@ -1,0 +1,15 @@
+export enum TextCssRule {
+    Color = 'color',
+    FontFamily = 'font-family',
+    FontSize = 'font-size',
+    Padding = 'padding',
+    Margin = 'margin',
+    BorderRadius = 'border-radius',
+    Bottom = 'bottom',
+    BgColor = 'background-color',
+    TextStroke = 'text-stroke',
+    TextAlign = 'text-align',
+    Rotate = 'rotate',
+    Uppercase = 'uppercase',
+    Width = 'width',
+}

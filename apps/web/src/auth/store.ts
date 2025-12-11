@@ -9,6 +9,12 @@ function base64UrlDecode(input: string): string {
   try { return atob(input) } catch { return '' }
 }
 
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 function decodeJwtUser(token: string | null): User | null {
   if (!token) return null
   const parts = token.split('.')
@@ -20,7 +26,11 @@ function decodeJwtUser(token: string | null): User | null {
   } catch { return null }
 }
 
-const initialToken = localStorage.getItem('tap_token')
+const initialToken = (() => {
+  const local = typeof localStorage !== 'undefined' ? localStorage.getItem('tap_token') : null
+  if (local) return local
+  return readCookie('tap_token')
+})()
 const initialUser = (() => {
   const cached = localStorage.getItem('tap_user')
   if (cached) { try { return JSON.parse(cached) as User } catch {} }
@@ -73,4 +83,8 @@ export const useAuth = create<AuthState>((set, get) => ({
   clear: () => { localStorage.removeItem('tap_token'); localStorage.removeItem('tap_user'); set({ token: null, user: null }) },
 }))
 
-export function getAuthToken() { return localStorage.getItem('tap_token') }
+export function getAuthToken() {
+  const local = typeof localStorage !== 'undefined' ? localStorage.getItem('tap_token') : null
+  return local || getAuthTokenFromCookie()
+}
+export function getAuthTokenFromCookie() { return readCookie('tap_token') }

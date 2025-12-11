@@ -1,6 +1,7 @@
 import type { Next } from "hono";
 import type { AppContext } from "../types";
 import { getConfig } from "../config";
+import { getCookie } from "hono/cookie";
 import { verifyJwtHS256 } from "../jwt";
 
 export type AuthPayload = {
@@ -14,9 +15,11 @@ export type AuthPayload = {
 
 export async function authMiddleware(c: AppContext, next: Next) {
 	const authHeader = c.req.header("Authorization") || "";
-	const token = authHeader.startsWith("Bearer ")
+	const headerToken = authHeader.startsWith("Bearer ")
 		? authHeader.slice("Bearer ".length).trim()
 		: null;
+	const cookieToken = getCookie(c, "tap_token") || null;
+	const token = headerToken || cookieToken;
 
 	if (!token) {
 		return c.json({ error: "Unauthorized" }, 401);
@@ -38,4 +41,3 @@ export async function authMiddleware(c: AppContext, next: Next) {
 
 	return next();
 }
-
