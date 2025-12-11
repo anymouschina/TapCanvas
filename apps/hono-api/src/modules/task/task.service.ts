@@ -682,6 +682,7 @@ export async function fetchVeoTaskResult(
 					typeof payload.model === "string"
 						? payload.model
 						: undefined,
+				taskId: (payload.id || taskId) ?? null,
 			},
 		});
 
@@ -1009,6 +1010,7 @@ export async function fetchSora2ApiTaskResult(
 				vendor: "sora2api",
 				modelKey:
 					typeof data.model === "string" ? data.model : undefined,
+				taskId: taskId ?? null,
 			},
 		});
 
@@ -2300,6 +2302,9 @@ export async function runGenericTaskForVendor(
 						(typeof (req.extras as any)?.modelKey === "string" &&
 							(req.extras as any).modelKey) ||
 						undefined,
+					taskId:
+						(typeof result.id === "string" && result.id.trim()) ||
+						null,
 				},
 			});
 			result = TaskResultSchema.parse({

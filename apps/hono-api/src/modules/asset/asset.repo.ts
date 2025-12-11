@@ -17,6 +17,27 @@ export type PublicAssetRow = AssetRow & {
 	project_name: string | null;
 };
 
+export async function findGeneratedAssetBySourceUrl(
+	db: D1Database,
+	userId: string,
+	sourceUrl: string,
+): Promise<AssetRow | null> {
+	const trimmed = (sourceUrl || "").trim();
+	if (!trimmed) return null;
+
+	return queryOne<AssetRow>(
+		db,
+		`SELECT *
+     FROM assets
+     WHERE owner_id = ?
+       AND json_extract(data, '$.kind') = 'generation'
+       AND json_extract(data, '$.sourceUrl') = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+		[userId, trimmed],
+	);
+}
+
 export async function listAssetsForUser(
 	db: D1Database,
 	userId: string,

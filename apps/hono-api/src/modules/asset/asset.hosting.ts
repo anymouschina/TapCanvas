@@ -4,7 +4,7 @@ import {
 	type TaskAssetDto,
 	type TaskKind,
 } from "../task/task.schemas";
-import { createAssetRow } from "./asset.repo";
+import { createAssetRow, findGeneratedAssetBySourceUrl } from "./asset.repo";
 
 type HostedAssetMeta = {
 	type: "image" | "video";
@@ -14,6 +14,8 @@ type HostedAssetMeta = {
 	taskKind?: TaskKind;
 	prompt?: string | null;
 	modelKey?: string | null;
+	taskId?: string | null;
+	sourceUrl?: string | null;
 };
 
 function detectExtension(url: string, contentType: string): string {
@@ -180,6 +182,14 @@ async function persistGeneratedAsset(
 				taskKind: meta.taskKind || null,
 				prompt: meta.prompt || null,
 				modelKey: meta.modelKey || null,
+				taskId:
+					typeof meta.taskId === "string" && meta.taskId.trim()
+						? meta.taskId.trim()
+						: null,
+				sourceUrl:
+					typeof meta.sourceUrl === "string"
+						? meta.sourceUrl
+						: null,
 			},
 			projectId: null,
 		},
@@ -196,6 +206,7 @@ export async function hostTaskAssetsInWorker(options: {
 		prompt?: string | null;
 		vendor?: string;
 		modelKey?: string | null;
+		taskId?: string | null;
 	};
 }): Promise<TaskAssetDto[]> {
 	const { c, userId, assets, meta } = options;
@@ -208,46 +219,98 @@ export async function hostTaskAssetsInWorker(options: {
 		if (!parsed.success) continue;
 		let value = parsed.data;
 
+		const originalUrl = (value.url || "").trim();
+		if (!originalUrl) {
+			continue;
+		}
+
+		let reusedExisting = false;
+
 		try {
-			const uploaded = await uploadToR2FromUrl({
-				c,
+			const existing = await findGeneratedAssetBySourceUrl(
+				c.env.DB,
 				userId,
-				sourceUrl: value.url,
-				prefix:
-					value.type === "video"
-						? "gen/videos"
-						: "gen/images",
-			});
-			if (uploaded?.url) {
-				value = TaskAssetSchema.parse({
-					...value,
-					url: uploaded.url,
-				});
+				originalUrl,
+			);
+			if (existing && existing.data) {
+				let parsedData: any = null;
+				try {
+					parsedData = JSON.parse(existing.data);
+				} catch {
+					parsedData = null;
+				}
+				const existingUrl =
+					parsedData && typeof parsedData.url === "string"
+						? parsedData.url.trim()
+						: "";
+				const existingThumb =
+					parsedData &&
+					typeof parsedData.thumbnailUrl === "string"
+						? parsedData.thumbnailUrl
+						: value.thumbnailUrl ?? null;
+
+				if (existingUrl) {
+					value = TaskAssetSchema.parse({
+						...value,
+						url: existingUrl,
+						thumbnailUrl: existingThumb,
+					});
+					reusedExisting = true;
+				}
 			}
 		} catch (err: any) {
 			console.warn(
-				"[asset-hosting] uploadToR2FromUrl failed",
+				"[asset-hosting] findGeneratedAssetBySourceUrl failed",
 				err?.message || err,
 			);
 		}
 
+		if (!reusedExisting) {
+			try {
+				const uploaded = await uploadToR2FromUrl({
+					c,
+					userId,
+					sourceUrl: originalUrl,
+					prefix:
+						value.type === "video"
+							? "gen/videos"
+							: "gen/images",
+				});
+				if (uploaded?.url) {
+					value = TaskAssetSchema.parse({
+						...value,
+						url: uploaded.url,
+					});
+				}
+			} catch (err: any) {
+				console.warn(
+					"[asset-hosting] uploadToR2FromUrl failed",
+					err?.message || err,
+				);
+			}
+		}
+
 		hosted.push(value);
 
-		try {
-			await persistGeneratedAsset(c, userId, {
-				type: value.type,
-				url: value.url,
-				thumbnailUrl: value.thumbnailUrl ?? null,
-				vendor: meta?.vendor,
-				taskKind: meta?.taskKind,
-				prompt: meta?.prompt,
-				modelKey: meta?.modelKey ?? null,
-			});
-		} catch (err: any) {
-			console.warn(
-				"[asset-hosting] persistGeneratedAsset failed",
-				err?.message || err,
-			);
+		if (!reusedExisting) {
+			try {
+				await persistGeneratedAsset(c, userId, {
+					type: value.type,
+					url: value.url,
+					thumbnailUrl: value.thumbnailUrl ?? null,
+					vendor: meta?.vendor,
+					taskKind: meta?.taskKind,
+					prompt: meta?.prompt,
+					modelKey: meta?.modelKey ?? null,
+					taskId: meta?.taskId ?? null,
+					sourceUrl: originalUrl,
+				});
+			} catch (err: any) {
+				console.warn(
+					"[asset-hosting] persistGeneratedAsset failed",
+					err?.message || err,
+				);
+			}
 		}
 	}
 
