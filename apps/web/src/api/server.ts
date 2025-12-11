@@ -1,11 +1,15 @@
 import type { Edge, Node } from 'reactflow'
-import { getAuthToken } from '../auth/store'
+import { getAuthToken, getAuthTokenFromCookie } from '../auth/store'
 // self-import guard: only used for type re-export in the same module
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
 function withAuth(init?: RequestInit): RequestInit {
-  const t = getAuthToken()
-  return { ...(init || {}), headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } }
+  const t = getAuthToken() || getAuthTokenFromCookie()
+  return {
+    credentials: init?.credentials ?? 'include',
+    ...(init || {}),
+    headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+  }
 }
 
 export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }

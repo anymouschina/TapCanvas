@@ -27,7 +27,7 @@ app.use("*", errorMiddleware);
 app.use(
 	"*",
 	cors({
-		origin: "*",
+		origin: (origin) => origin || "*",
 		allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		allowHeaders: ["Content-Type", "Authorization", "Accept"],
 		credentials: true,

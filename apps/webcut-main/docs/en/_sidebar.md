@@ -1,0 +1,8 @@
+- [Home](/en/README)
+- [Getting Started](/en/getting-started)
+- [Web Components](/en/webcomponents)
+- [Components](/en/components)
+- [Hooks](/en/hooks)
+- [Libs](/en/libs)
+- [FAQ](/en/faq)
+- [API Reference](/en/api)
