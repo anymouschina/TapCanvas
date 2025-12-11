@@ -13,16 +13,22 @@ export type AuthPayload = {
 	guest?: boolean;
 };
 
-export async function authMiddleware(c: AppContext, next: Next) {
+export function readAuthToken(c: AppContext): string | null {
 	const authHeader = c.req.header("Authorization") || "";
 	const headerToken = authHeader.startsWith("Bearer ")
 		? authHeader.slice("Bearer ".length).trim()
 		: null;
 	const cookieToken = getCookie(c, "tap_token") || null;
-	const token = headerToken || cookieToken;
+	return headerToken || cookieToken;
+}
+
+export async function resolveAuth(
+	c: AppContext,
+): Promise<{ token: string; payload: AuthPayload } | null> {
+	const token = readAuthToken(c);
 
 	if (!token) {
-		return c.json({ error: "Unauthorized" }, 401);
+		return null;
 	}
 
 	const config = getConfig(c.env);
@@ -33,11 +39,21 @@ export async function authMiddleware(c: AppContext, next: Next) {
 	);
 
 	if (!payload || !payload.sub) {
-		return c.json({ error: "Invalid or expired token" }, 401);
+		return null;
 	}
 
-	c.set("userId", payload.sub);
-	c.set("auth", payload);
+	return { token, payload };
+}
+
+export async function authMiddleware(c: AppContext, next: Next) {
+	const resolved = await resolveAuth(c);
+
+	if (!resolved) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	c.set("userId", resolved.payload.sub);
+	c.set("auth", resolved.payload);
 
 	return next();
 }

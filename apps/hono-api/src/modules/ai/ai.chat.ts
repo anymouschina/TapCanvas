@@ -853,6 +853,16 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	return val.replace(/\/+$/, "");
 }
 
+function expandProxyVendorKeys(vendor: string): string[] {
+	const v = vendor.toLowerCase();
+	const keys = [v];
+	// 兼容历史配置：面板里使用 "sora" 作为代理目标，但任务里使用 "sora2api"
+	if (v === "sora2api") {
+		keys.push("sora");
+	}
+	return Array.from(new Set(keys));
+}
+
 function normalizeChatBaseUrl(
 	provider: ChatProvider,
 	baseUrl?: string | null,
@@ -926,27 +936,37 @@ async function resolveProxyForVendor(
 	userId: string,
 	vendor: string,
 ): Promise<ProxyProviderRow | null> {
-	const v = vendor.toLowerCase();
+	const keys = expandProxyVendorKeys(vendor);
 
 	// 1) Direct match on vendor (legacy)
-	const directRes = await c.env.DB.prepare(
-		`SELECT * FROM proxy_providers
+	const direct: ProxyProviderRow[] = [];
+	for (const key of keys) {
+		const res = await c.env.DB.prepare(
+			`SELECT * FROM proxy_providers
      WHERE owner_id = ? AND vendor = ? AND enabled = 1`,
-	)
-		.bind(userId, v)
-		.all<ProxyProviderRow>();
-	const direct = directRes.results || [];
+		)
+			.bind(userId, key)
+			.all<ProxyProviderRow>();
+		if (res.results?.length) {
+			direct.push(...res.results);
+		}
+	}
 
 	// 2) Match via enabled_vendors JSON (recommended)
-	const viaEnabledRes = await c.env.DB.prepare(
-		`SELECT * FROM proxy_providers
+	const viaEnabled: ProxyProviderRow[] = [];
+	for (const key of keys) {
+		const res = await c.env.DB.prepare(
+			`SELECT * FROM proxy_providers
      WHERE owner_id = ? AND enabled = 1
        AND enabled_vendors IS NOT NULL
        AND enabled_vendors LIKE ?`,
-	)
-		.bind(userId, `%"${v}"%`)
-		.all<ProxyProviderRow>();
-	const viaEnabled = viaEnabledRes.results || [];
+		)
+			.bind(userId, `%"${key}"%`)
+			.all<ProxyProviderRow>();
+		if (res.results?.length) {
+			viaEnabled.push(...res.results);
+		}
+	}
 
 	const all: ProxyProviderRow[] = [];
 	for (const row of direct) {
