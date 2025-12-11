@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type User = { sub: string|number; login: string; name?: string; avatarUrl?: string; email?: string; guest?: boolean }
+export type User = { sub: string|number; login: string; name?: string; avatarUrl?: string; email?: string; guest?: boolean }
 
 function base64UrlDecode(input: string): string {
   input = input.replace(/-/g, '+').replace(/_/g, '/')

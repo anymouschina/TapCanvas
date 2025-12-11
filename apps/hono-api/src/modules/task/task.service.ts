@@ -18,6 +18,7 @@ import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 type VendorContext = {
 	baseUrl: string;
 	apiKey: string;
+	viaProxyVendor?: string;
 };
 
 type TaskResult = ReturnType<typeof TaskResultSchema.parse>;
@@ -82,32 +83,57 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	return val.replace(/\/+$/, "");
 }
 
+function isGrsaiBaseUrl(url: string): boolean {
+	const val = url.toLowerCase();
+	return val.includes("grsai");
+}
+
+function expandProxyVendorKeys(vendor: string): string[] {
+	const v = vendor.toLowerCase();
+	const keys = [v];
+	// 兼容历史配置：面板里使用 "sora" 作为代理目标，但任务里使用 "sora2api"
+	if (v === "sora2api") {
+		keys.push("sora");
+	}
+	return Array.from(new Set(keys));
+}
+
 async function resolveProxyForVendor(
 	c: AppContext,
 	userId: string,
 	vendor: string,
 ): Promise<ProxyProviderRow | null> {
-	const v = vendor.toLowerCase();
+	const keys = expandProxyVendorKeys(vendor);
 
 	// 1) Direct match on vendor (for legacy configs)
-	const directRes = await c.env.DB.prepare(
-		`SELECT * FROM proxy_providers
+	const direct: ProxyProviderRow[] = [];
+	for (const key of keys) {
+		const res = await c.env.DB.prepare(
+			`SELECT * FROM proxy_providers
      WHERE owner_id = ? AND vendor = ? AND enabled = 1`,
-	)
-		.bind(userId, v)
-		.all<ProxyProviderRow>();
-	const direct = directRes.results || [];
+		)
+			.bind(userId, key)
+			.all<ProxyProviderRow>();
+		if (res.results?.length) {
+			direct.push(...res.results);
+		}
+	}
 
 	// 2) Match via enabled_vendors JSON (recommended)
-	const viaEnabledRes = await c.env.DB.prepare(
-		`SELECT * FROM proxy_providers
+	const viaEnabled: ProxyProviderRow[] = [];
+	for (const key of keys) {
+		const res = await c.env.DB.prepare(
+			`SELECT * FROM proxy_providers
      WHERE owner_id = ? AND enabled = 1
        AND enabled_vendors IS NOT NULL
        AND enabled_vendors LIKE ?`,
-	)
-		.bind(userId, `%"${v}"%`)
-		.all<ProxyProviderRow>();
-	const viaEnabled = viaEnabledRes.results || [];
+		)
+			.bind(userId, `%"${key}"%`)
+			.all<ProxyProviderRow>();
+		if (res.results?.length) {
+			viaEnabled.push(...res.results);
+		}
+	}
 
 	const all: ProxyProviderRow[] = [];
 	for (const row of direct) {
@@ -146,7 +172,7 @@ async function resolveVendorContext(
 				code: "proxy_misconfigured",
 			});
 		}
-		return { baseUrl, apiKey };
+		return { baseUrl, apiKey, viaProxyVendor: proxy.vendor };
 	}
 
 	// 2) Fallback to model_providers + model_tokens（含跨用户共享 Token）
@@ -749,6 +775,8 @@ export async function runSora2ApiVideoTask(
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const isGrsaiBase =
+		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 sora2api API Key", {
@@ -774,90 +802,230 @@ export async function runSora2ApiVideoTask(
 				? extras.durationSeconds
 				: 10;
 
-	const model = normalizeSora2ApiModelKey(
-		typeof extras.modelKey === "string" ? extras.modelKey : ctx.baseUrl,
-		orientation,
-		durationSeconds,
-	);
+	const model = isGrsaiBase
+		? (typeof extras.modelKey === "string" && extras.modelKey.trim()
+				? extras.modelKey.trim()
+				: "sora-2")
+		: normalizeSora2ApiModelKey(
+				typeof extras.modelKey === "string" ? extras.modelKey : ctx.baseUrl,
+				orientation,
+				durationSeconds,
+			);
+	const aspectRatio = orientation === "portrait" ? "9:16" : "16:9";
+	const webHook =
+		typeof extras.webHook === "string" && extras.webHook.trim()
+			? extras.webHook.trim()
+			: "-1";
+	const shutProgress = extras.shutProgress === true;
+	const remixTargetId =
+		(typeof extras.remixTargetId === "string" &&
+			extras.remixTargetId.trim()) ||
+		(typeof extras.pid === "string" && extras.pid.trim()) ||
+		null;
+	const size =
+		typeof extras.size === "string" && extras.size.trim()
+			? extras.size.trim()
+			: "small";
+	const characters = Array.isArray(extras.characters)
+		? extras.characters
+		: undefined;
+	const referenceUrl =
+		(typeof extras.url === "string" && extras.url.trim()) ||
+		(typeof extras.firstFrameUrl === "string" &&
+			extras.firstFrameUrl.trim()) ||
+		(Array.isArray(extras.urls) && extras.urls[0]
+			? String(extras.urls[0]).trim()
+			: null) ||
+		null;
 
-	const body = {
-		model,
-		prompt: req.prompt,
-		durationSeconds,
-		orientation,
-	};
+	const body: Record<string, any> = isGrsaiBase
+		? {
+				// grsai / Sora 协议（与 sora2/sora2api 一致）
+				model,
+				prompt: req.prompt,
+				aspectRatio,
+				duration: durationSeconds,
+				webHook,
+				shutProgress,
+				size,
+				...(remixTargetId ? { remixTargetId } : {}),
+				...(characters ? { characters } : {}),
+				...(referenceUrl ? { url: referenceUrl } : {}),
+			}
+		: {
+				// 兼容 sora2api 号池协议
+				model,
+				prompt: req.prompt,
+				durationSeconds,
+				orientation,
+				duration: durationSeconds,
+				aspectRatio,
+				webHook,
+				shutProgress,
+				size,
+				...(remixTargetId ? { remixTargetId } : {}),
+				...(characters ? { characters } : {}),
+				...(referenceUrl ? { url: referenceUrl } : {}),
+			};
 
-	let res: Response;
-	let data: any = null;
-	try {
-		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
-		res = await fetch(`${baseUrl}/v1/video/tasks`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify(body),
+	const creationEndpoints = (() => {
+		if (!isGrsaiBase) return [`${baseUrl}/v1/video/tasks`];
+		// Try the grsai-compatible endpoints (avoid non-v1 /video/sora-video)
+		const candidates = [
+			`${baseUrl}/v1/video/sora-video`,
+			`${baseUrl}/v1/video/sora`,
+			`${baseUrl}/v1/video/tasks`,
+			`${baseUrl}/client/v1/video/sora-video`,
+			`${baseUrl}/client/v1/video/sora`,
+			`${baseUrl}/client/video/sora-video`,
+			`${baseUrl}/client/video/sora`,
+		];
+		// Deduplicate while preserving order
+		const seen = new Set<string>();
+		return candidates.filter((url) => {
+			if (seen.has(url)) return false;
+			seen.add(url);
+			return true;
 		});
+	})();
+
+	let createdTaskId: string | null = null;
+	let createdPayload: any = null;
+	let creationStatus: "running" | "succeeded" | "failed" = "running";
+	let creationProgress: number | undefined;
+	const attemptedEndpoints: Array<{ url: string; status?: number | null }> =
+		[];
+	let lastError: {
+		status: number;
+		data: any;
+		message: string;
+		endpoint?: string;
+	} | null = null;
+
+	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+	for (const endpoint of creationEndpoints) {
+		let res: Response;
+		let data: any = null;
 		try {
-			data = await res.json();
-		} catch {
-			data = null;
+			res = await fetch(endpoint, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			});
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+			attemptedEndpoints.push({ url: endpoint, status: res.status });
+		} catch (error: any) {
+			lastError = {
+				status: 502,
+				data: null,
+				message: error?.message ?? String(error),
+				endpoint,
+				requestBody: body,
+			};
+			attemptedEndpoints.push({ url: endpoint, status: null });
+			continue;
 		}
-	} catch (error: any) {
-		throw new AppError("sora2api 调用失败", {
-			status: 502,
+
+		if (res.status < 200 || res.status >= 300) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					(data &&
+						(data.error?.message ||
+							data.message ||
+							data.error)) ||
+					`sora2api 调用失败: ${res.status} (${endpoint})`,
+				endpoint,
+				requestBody: body,
+			};
+			continue;
+		}
+
+		const payload =
+			typeof data?.code === "number" && data.code === 0 && data.data
+				? data.data
+				: data;
+		if (typeof data?.code === "number" && data.code !== 0) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					data?.msg ||
+					data?.message ||
+					data?.error ||
+					`sora2api 调用失败: code ${data.code}`,
+				endpoint,
+				requestBody: body,
+			};
+			break;
+		}
+		const id =
+			(typeof payload?.id === "string" && payload.id.trim()) ||
+			(typeof payload?.taskId === "string" && payload.taskId.trim()) ||
+			null;
+		if (!id) {
+			lastError = {
+				status: 502,
+				data,
+				message: "sora2api 未返回任务 ID",
+				endpoint,
+			};
+			continue;
+		}
+
+		createdTaskId = id.trim();
+		createdPayload = payload;
+		creationStatus = mapTaskStatus(payload?.status || "queued");
+		creationProgress = clampProgress(
+			typeof payload?.progress === "number"
+				? payload.progress
+				: typeof payload?.progress_pct === "number"
+					? payload.progress_pct * 100
+					: undefined,
+		);
+		break;
+	}
+
+	if (!createdTaskId) {
+		const attemptedReadable = attemptedEndpoints.map((e) =>
+			`${e.status ?? "error"} ${e.url}`,
+		);
+		throw new AppError(lastError?.message || "sora2api 调用失败", {
+			status: lastError?.status ?? 502,
 			code: "sora2api_request_failed",
-			details: { message: error?.message ?? String(error) },
+			details: {
+				upstreamStatus: lastError?.status ?? null,
+				upstreamData: lastError?.data ?? null,
+				endpointTried: lastError?.endpoint ?? null,
+				attemptedEndpoints,
+				attemptedEndpointsText: attemptedReadable,
+				requestBody: body,
+			},
 		});
 	}
-
-	if (res.status < 200 || res.status >= 300) {
-		const msg =
-			(data &&
-				(data.error?.message ||
-					data.message ||
-					data.error)) ||
-			`sora2api 调用失败: ${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
-			code: "sora2api_request_failed",
-			details: { upstreamStatus: res.status, upstreamData: data ?? null },
-		});
-	}
-
-	const id =
-		typeof data?.id === "string" && data.id.trim()
-			? data.id.trim()
-			: null;
-	if (!id) {
-		throw new AppError("sora2api 未返回任务 ID", {
-			status: 502,
-			code: "sora2api_task_id_missing",
-		});
-	}
-
-	const status = mapTaskStatus(data.status || "queued");
-	const progress = clampProgress(
-		typeof data.progress === "number"
-			? data.progress
-			: typeof data.progress_pct === "number"
-				? data.progress_pct * 100
-				: undefined,
-	);
 
 	return TaskResultSchema.parse({
-		id,
+		id: createdTaskId,
 		kind: "text_to_video",
-			status,
-			taskId: id,
-			assets: [],
-			raw: {
+		status: creationStatus,
+		taskId: createdTaskId,
+		assets: [],
+		raw: {
 			provider: "sora2api",
 			model,
-			taskId: id,
-			status,
-			progress: progress ?? null,
+			taskId: createdTaskId,
+			status: creationStatus,
+			progress: creationProgress ?? null,
+			response: createdPayload,
 		},
 	});
 }
@@ -877,6 +1045,8 @@ export async function fetchSora2ApiTaskResult(
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const isGrsaiBase =
+		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 sora2api API Key", {
@@ -885,156 +1055,230 @@ export async function fetchSora2ApiTaskResult(
 		});
 	}
 
-	let res: Response;
+	const endpoints: Array<{
+		url: string;
+		method: "GET" | "POST";
+		body?: any;
+	}> = isGrsaiBase
+		? [
+				{
+					url: `${baseUrl}/v1/draw/result`,
+					method: "POST",
+					body: JSON.stringify({ id: taskId.trim() }),
+				},
+				{
+					url: `${baseUrl}/v1/video/tasks/${encodeURIComponent(
+						taskId.trim(),
+					)}`,
+					method: "GET",
+				},
+			]
+		: [
+				{
+					url: `${baseUrl}/v1/video/tasks/${encodeURIComponent(
+						taskId.trim(),
+					)}`,
+					method: "GET",
+				},
+			];
+
+	let lastError: {
+		status: number;
+		data: any;
+		message: string;
+	} | null = null;
 	let data: any = null;
-	try {
-		res = await fetch(
-			`${baseUrl}/v1/video/tasks/${encodeURIComponent(taskId.trim())}`,
-			{
-				method: "GET",
+
+	for (const endpoint of endpoints) {
+		let res: Response;
+		data = null;
+		try {
+			res = await fetch(endpoint.url, {
+				method: endpoint.method,
 				headers: {
 					Authorization: `Bearer ${apiKey}`,
+					...(endpoint.method === "POST"
+						? { "Content-Type": "application/json" }
+						: {}),
 				},
-			},
-		);
-		try {
-			data = await res.json();
-		} catch {
-			data = null;
-		}
-	} catch (error: any) {
-		throw new AppError("sora2api 任务查询失败", {
-			status: 502,
-			code: "sora2api_result_failed",
-			details: { message: error?.message ?? String(error) },
-		});
-	}
-
-	if (res.status < 200 || res.status >= 300) {
-		const msg =
-			(data &&
-				(data.error?.message ||
-					data.message ||
-					data.error)) ||
-			`sora2api 任务查询失败: ${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
-			code: "sora2api_result_failed",
-			details: { upstreamStatus: res.status, upstreamData: data ?? null },
-		});
-	}
-
-	const status = mapTaskStatus(data.status);
-	const progress = clampProgress(
-		typeof data.progress === "number"
-			? data.progress
-			: typeof data.progress_pct === "number"
-				? data.progress_pct * 100
-				: undefined,
-	);
-
-	let assetPayload: any = undefined;
-	let promptForAsset: string | null =
-		typeof promptFromClient === "string" &&
-		promptFromClient.trim()
-			? promptFromClient.trim()
-			: null;
-
-	if (status === "succeeded") {
-		const directVideo =
-			(typeof data.video_url === "string" && data.video_url.trim()) ||
-			(typeof data.videoUrl === "string" && data.videoUrl.trim()) ||
-			null;
-		let videoUrl: string | null = directVideo;
-
-		if (!videoUrl && typeof data.content === "string") {
-			const match = data.content.match(
-				/<video[^>]+src=['"]([^'"]+)['"][^>]*>/i,
-			);
-			if (match && match[1] && match[1].trim()) {
-				videoUrl = match[1].trim();
+				body: endpoint.body,
+			});
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
 			}
-		}
-
-		if (!videoUrl && typeof data.content === "string") {
-			const urls = new Set<string>();
-			const regex = /!\[[^\]]*]\(([^)]+)\)/g;
-			let m: RegExpExecArray | null;
-			// eslint-disable-next-line no-cond-assign
-			while ((m = regex.exec(data.content)) !== null) {
-				const url = (m[1] || "").trim();
-				if (url) urls.add(url);
-			}
-			const images = Array.from(urls);
-			if (images.length) {
-				assetPayload = {
-					type: "image",
-					url: images[0],
-					thumbnailUrl: null,
-				};
-			}
-		} else if (videoUrl) {
-			const thumbnail =
-				(typeof data.thumbnail_url === "string" &&
-					data.thumbnail_url.trim()) ||
-				(typeof data.thumbnailUrl === "string" &&
-					data.thumbnailUrl.trim()) ||
-				null;
-			assetPayload = {
-				type: "video",
-				url: videoUrl,
-				thumbnailUrl: thumbnail,
+		} catch (error: any) {
+			lastError = {
+				status: 502,
+				data: null,
+				message: error?.message ?? String(error),
+				endpoint: endpoint.url,
 			};
-			const upstreamPrompt =
-				(typeof data.prompt === "string" && data.prompt.trim()) ||
-				(data.input &&
-					typeof (data.input as any).prompt === "string" &&
-					(data.input as any).prompt.trim()) ||
-				"";
-			if (upstreamPrompt) {
-				promptForAsset = upstreamPrompt;
+			continue;
+		}
+
+		if (res.status < 200 || res.status >= 300) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					(data &&
+						(data.error?.message ||
+							data.message ||
+							data.error)) ||
+					`sora2api 任务查询失败: ${res.status}`,
+				endpoint: endpoint.url,
+			};
+			continue;
+		}
+
+		const payload = extractVeoResultPayload(data) ?? data ?? {};
+		const status = mapTaskStatus(payload.status || data?.status);
+		const progress = clampProgress(
+			typeof payload.progress === "number"
+				? payload.progress
+				: typeof payload.progress_pct === "number"
+					? payload.progress_pct * 100
+					: undefined,
+		);
+
+		let assetPayload: any = undefined;
+		let promptForAsset: string | null =
+			typeof promptFromClient === "string" &&
+			promptFromClient.trim()
+				? promptFromClient.trim()
+				: null;
+
+		if (status === "succeeded") {
+			// 优先从 results 数组解析视频
+			const resultEntry =
+				Array.isArray(payload.results) && payload.results.length
+					? payload.results[0]
+					: null;
+			const resultUrl =
+				(typeof resultEntry?.url === "string" &&
+					resultEntry.url.trim()) ||
+				null;
+			const resultThumb =
+				(typeof resultEntry?.thumbnailUrl === "string" &&
+					resultEntry.thumbnailUrl.trim()) ||
+				(typeof resultEntry?.thumbnail_url === "string" &&
+					resultEntry.thumbnail_url.trim()) ||
+				null;
+
+			const directVideo =
+				(typeof payload.video_url === "string" &&
+					payload.video_url.trim()) ||
+				(typeof payload.videoUrl === "string" &&
+					payload.videoUrl.trim()) ||
+				resultUrl ||
+				null;
+			let videoUrl: string | null = directVideo;
+
+			if (!videoUrl && typeof payload.content === "string") {
+				const match = payload.content.match(
+					/<video[^>]+src=['"]([^'"]+)['"][^>]*>/i,
+				);
+				if (match && match[1] && match[1].trim()) {
+					videoUrl = match[1].trim();
+				}
+			}
+
+			if (!videoUrl && typeof payload.content === "string") {
+				const urls = new Set<string>();
+				const regex = /!\[[^\]]*]\(([^)]+)\)/g;
+				let m: RegExpExecArray | null;
+				// eslint-disable-next-line no-cond-assign
+				while ((m = regex.exec(payload.content)) !== null) {
+					const url = (m[1] || "").trim();
+					if (url) urls.add(url);
+				}
+				const images = Array.from(urls);
+				if (images.length) {
+					assetPayload = {
+						type: "image",
+						url: images[0],
+						thumbnailUrl: null,
+					};
+				}
+			} else if (videoUrl) {
+				const thumbnail =
+					(typeof payload.thumbnail_url === "string" &&
+						payload.thumbnail_url.trim()) ||
+					(typeof payload.thumbnailUrl === "string" &&
+						payload.thumbnailUrl.trim()) ||
+					resultThumb ||
+					null;
+				assetPayload = {
+					type: "video",
+					url: videoUrl,
+					thumbnailUrl: thumbnail,
+				};
+				const upstreamPrompt =
+					(typeof payload.prompt === "string" &&
+						payload.prompt.trim()) ||
+					(payload.input &&
+						typeof (payload.input as any).prompt === "string" &&
+						(payload.input as any).prompt.trim()) ||
+					"";
+				if (upstreamPrompt) {
+					promptForAsset = upstreamPrompt;
+				}
 			}
 		}
-	}
 
-	if (assetPayload) {
-		const asset = TaskAssetSchema.parse(assetPayload);
+		if (assetPayload) {
+			const asset = TaskAssetSchema.parse(assetPayload);
 
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets: [asset],
-			meta: {
-				taskKind: "text_to_video",
-				prompt: promptForAsset,
-				vendor: "sora2api",
-				modelKey:
-					typeof data.model === "string" ? data.model : undefined,
-				taskId: taskId ?? null,
-			},
-		});
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt: promptForAsset,
+					vendor: "sora2api",
+					modelKey:
+						typeof payload.model === "string"
+							? payload.model
+							: undefined,
+					taskId: taskId ?? null,
+				},
+			});
+
+			return TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "succeeded",
+				assets: hostedAssets,
+				raw: {
+					provider: "sora2api",
+					response: payload,
+				},
+			});
+		}
 
 		return TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
-			status: "succeeded",
-			assets: hostedAssets,
+			status,
+			assets: [],
 			raw: {
 				provider: "sora2api",
-				response: data,
+				response: payload,
+				progress,
 			},
 		});
 	}
 
-	return TaskResultSchema.parse({
-		id: taskId,
-		kind: "text_to_video",
-		status,
-		assets: [],
-		raw: {
-			provider: "sora2api",
-			response: data,
-			progress,
+	throw new AppError(lastError?.message || "sora2api 任务查询失败", {
+		status: lastError?.status ?? 502,
+		code: "sora2api_result_failed",
+		details: {
+			upstreamStatus: lastError?.status ?? null,
+			upstreamData: lastError?.data ?? null,
+			endpointTried: lastError?.endpoint ?? null,
 		},
 	});
 }

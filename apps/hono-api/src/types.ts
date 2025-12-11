@@ -7,6 +7,7 @@ export type WorkerEnv = Env & {
 	JWT_SECRET: string;
 	GITHUB_CLIENT_ID?: string;
 	GITHUB_CLIENT_SECRET?: string;
+	LOGIN_URL?: string;
 	SORA_UNWATERMARK_ENDPOINT?: string;
 	// Sora2API 号池服务的基础地址（例如 http://localhost:8000 或内部网关域名）
 	SORA2API_BASE_URL?: string;
