@@ -15,9 +15,10 @@ import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
 import { ShowcaseSection } from '../components/ShowcaseSection'
+import { useAuth } from '../auth/store'
 
 type MediaFilter = 'all' | 'image' | 'video'
-
+const VITE_WEBCUT_URL = import.meta.env.VITE_WEBCUT_URL
 function getActiveAssetIdFromLocation(): string | null {
   if (typeof window === 'undefined') return null
   try {
@@ -57,7 +58,7 @@ function formatDate(ts: string): string {
 }
 
 function resolveWebcutUrl(): string | null {
-  const raw = (import.meta as any).env?.VITE_WEBCUT_URL
+  const raw = VITE_WEBCUT_URL
   if (typeof raw !== 'string') return null
   const trimmed = raw.trim()
   return trimmed ? trimmed : null
@@ -197,7 +198,21 @@ function TapshowFullPageInner(): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
-  const webcutUrl = React.useMemo(() => resolveWebcutUrl(), [])
+  const token = useAuth((s) => s.token)
+  const webcutUrl = React.useMemo(() => {
+    const base = resolveWebcutUrl()
+    if (!base) return null
+    if (!token) return base
+    try {
+      const url = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined)
+      url.searchParams.set('tap_token', token)
+      return url.toString()
+    } catch {
+      const [path, hash] = base.split('#')
+      const sep = path.includes('?') ? '&' : '?'
+      return `${path}${sep}tap_token=${encodeURIComponent(token)}${hash ? `#${hash}` : ''}`
+    }
+  }, [token])
 
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
   const [loading, setLoading] = React.useState(false)

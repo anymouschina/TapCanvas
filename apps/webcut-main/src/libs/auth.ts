@@ -15,6 +15,41 @@ export function getAuthToken(): string | null {
 	return readCookie(TOKEN_COOKIE);
 }
 
+export function persistAuthToken(token: string) {
+	if (!token) return;
+	try {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(TOKEN_COOKIE, token);
+		}
+		document.cookie = `${TOKEN_COOKIE}=${encodeURIComponent(token)}; path=/; max-age=${30 * 24 * 60 * 60}; samesite=lax`;
+	} catch {
+		// ignore storage errors
+	}
+}
+
+export function bootstrapAuthFromUrl(paramKey = "tap_token"): void {
+	if (typeof window === "undefined") return;
+	let nextUrl: string | null = null;
+	try {
+		const url = new URL(window.location.href);
+		const token = url.searchParams.get(paramKey);
+		if (token) {
+			persistAuthToken(token);
+			url.searchParams.delete(paramKey);
+			nextUrl = url.toString();
+		}
+	} catch {
+		// ignore parse errors
+	}
+	if (nextUrl && nextUrl !== window.location.href) {
+		try {
+			window.history.replaceState({}, document.title, nextUrl);
+		} catch {
+			window.location.replace(nextUrl);
+		}
+	}
+}
+
 /**
  * fetch 带上 tap_token（Cookie / Authorization header），并默认允许跨域携带凭证。
  */

@@ -28,7 +28,7 @@
 		"JWT_SECRET": "change-me",
 		"GITHUB_CLIENT_ID": "YOUR_GITHUB_CLIENT_ID",
 		"GITHUB_CLIENT_SECRET": "YOUR_GITHUB_CLIENT_SECRET",
-		"LOGIN_URL": "https://tapcanvas.com",
+		"LOGIN_URL": "https://tapcanvas.beqlee.icu",
 
 		"R2_ACCOUNT_ID": "YOUR_R2_ACCOUNT_ID",
 		"R2_ACCESS_KEY_ID": "YOUR_R2_ACCESS_KEY_ID",
