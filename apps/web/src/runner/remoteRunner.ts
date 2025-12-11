@@ -880,7 +880,8 @@ async function runVideoTask(ctx: RunnerContext) {
         : '16:9'
     const videoModelValue = (data as any)?.videoModel as string | undefined
     const videoModelVendor = ((data as any)?.videoModelVendor as string | undefined) || null
-    const fallbackVideoVendor = videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora'
+    const fallbackVideoVendor =
+      videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora2api'
     const videoVendor = videoModelVendor || fallbackVideoVendor
     let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
     if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
