@@ -325,6 +325,7 @@ body,
 .tapshow-fullpage-root {
   min-height: 100vh;
   padding: 16px 0 32px;
+  color: var(--mantine-color-text, #edf2ff);
 }
 
 .tapshow-logo-pill {
@@ -378,6 +379,17 @@ body,
   transition: transform 140ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
 
+:root[data-mantine-color-scheme="light"] .tapshow-card {
+  background:
+    radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.12), transparent 55%),
+    radial-gradient(circle at 100% 0, rgba(129, 140, 248, 0.1), transparent 55%),
+    #f7f9ff;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  box-shadow:
+    0 18px 40px rgba(15, 23, 42, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
 .tapshow-card:hover {
   transform: translateY(-4px) scale(1.01);
   border-color: rgba(96, 165, 250, 0.85);
@@ -419,6 +431,12 @@ body,
   padding: 8px 9px;
   background: linear-gradient(to bottom, rgba(15, 23, 42, 0.65), transparent 35%, transparent);
   pointer-events: none;
+  color: #e5edff;
+}
+
+:root[data-mantine-color-scheme="light"] .tapshow-card-overlay {
+  background: linear-gradient(to bottom, rgba(15, 23, 42, 0.75), transparent 40%, transparent);
+  color: #f9fbff;
 }
 
 .tapshow-card-overlay > * {
