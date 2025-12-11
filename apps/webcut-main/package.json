@@ -22,13 +22,17 @@
   "scripts": {
     "docs": "docsify serve docs",
     "dev": "vite",
+    "dev:app": "vite --config vite.app.config.ts",
     "build": "npm run build:esm && npm run build:webcomponents && npm run build:webcomponents_bundle",
+    "build:app": "vite build --config vite.app.config.ts",
     "build:esm": "vite build",
     "build:webcomponents": "BUILD_TYPE=webcomponents vite build",
     "build:webcomponents_bundle": "BUILD_TYPE=webcomponents_bundle vite build",
     "tsc": "vue-tsc --noEmit",
     "preversion": "standard-version && exit 0",
-    "release": "standard-version"
+    "release": "standard-version",
+    "dev:worker": "wrangler dev --port 8790",
+    "deploy": "wrangler deploy"
   },
   "keywords": [
     "video",

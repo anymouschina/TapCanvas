@@ -38,6 +38,10 @@ export default defineConfig(({ mode }) => ({
   define: buildType.endsWith('_bundle') ? {
     'process.env.NODE_ENV': JSON.stringify(mode),
   } : undefined,
+  server: {
+    host: true,
+    port: 5174,
+  },
   build: {
     lib: {
       entry: buildType.startsWith('webcomponents') ? resolve(__dirname, 'src/webcomponents.ts') : resolve(__dirname, 'src/index.ts'),
@@ -60,4 +64,3 @@ export default defineConfig(({ mode }) => ({
     },
   },
 }));
-

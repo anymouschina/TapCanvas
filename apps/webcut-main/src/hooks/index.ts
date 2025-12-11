@@ -17,6 +17,7 @@ import { readFile, updateProjectState, writeFile } from '../db';
 import { PerformanceMark, mark } from '../libs/performance';
 import { aspectRatioMap } from '../constants';
 import { animationPresets } from '../constants/animation';
+import { authFetch } from '../libs/auth';
 
 let context: WebCutContext | null | undefined = null;
 export function useWebCutContext(providedContext?: () => Partial<WebCutContext> | undefined | null) {
@@ -501,7 +502,7 @@ export function useWebCutPlayer() {
                     clip = new MP4Clip(file.stream(), options);
                 }
                 else {
-                    const res = await fetch(source);
+                    const res = await authFetch(source);
                     url = source;
                     clip = new MP4Clip(res.body!, options);
                 }
@@ -534,7 +535,7 @@ export function useWebCutPlayer() {
                     clip = new AudioClip(file.stream(), options);
                 }
                 else {
-                    const res = await fetch(source);
+                    const res = await authFetch(source);
                     url = source;
                     clip = new AudioClip(res.body!, options);
                 }
@@ -564,7 +565,7 @@ export function useWebCutPlayer() {
                     clip = new ImgClip(file.stream());
                 }
                 else {
-                    const res = await fetch(source);
+                    const res = await authFetch(source);
                     url = source;
                     clip = new ImgClip(res.body!);
                 }
