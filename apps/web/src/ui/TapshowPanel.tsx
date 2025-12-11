@@ -15,6 +15,8 @@ import {
   Center,
   Badge,
   Tooltip,
+  SegmentedControl,
+  useMantineColorScheme,
 } from '@mantine/core'
 import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
@@ -39,19 +41,28 @@ export default function TapshowPanel(): JSX.Element | null {
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const openPreview = useUIStore((s) => s.openPreview)
   const addNode = useRFStore((s) => s.addNode)
+  const { colorScheme } = useMantineColorScheme()
+  const isDark = colorScheme === 'dark'
 
   const mounted = active === 'tapshow'
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
+  const [hasAnyAssets, setHasAnyAssets] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
+  const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('all')
+  const [visibleCount, setVisibleCount] = React.useState(10)
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   const reloadAssets = React.useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listPublicAssets(48)
-      setAssets(data || [])
+      const data = await listPublicAssets(48, mediaFilter)
+      const safeData = data || []
+      setAssets(safeData)
+      if (safeData.length > 0) {
+        setHasAnyAssets(true)
+      }
     } catch (err: any) {
       console.error(err)
       toast(err?.message || '加载资产失败', 'error')
@@ -59,7 +70,7 @@ export default function TapshowPanel(): JSX.Element | null {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mediaFilter])
 
   React.useEffect(() => {
     if (!mounted) return
@@ -67,6 +78,29 @@ export default function TapshowPanel(): JSX.Element | null {
   }, [mounted, reloadAssets])
 
   const hostedAssets = assets
+  const filteredAssets = React.useMemo(() => {
+    if (mediaFilter === 'all') return hostedAssets
+    return hostedAssets.filter((asset) => asset.type === mediaFilter)
+  }, [hostedAssets, mediaFilter])
+  const visibleAssets = React.useMemo(
+    () => filteredAssets.slice(0, Math.max(10, visibleCount)),
+    [filteredAssets, visibleCount],
+  )
+
+  React.useEffect(() => {
+    // 重置可见数量，避免切换过滤后停在列表末尾
+    setVisibleCount(10)
+  }, [mediaFilter, assets])
+
+  const handleScroll: React.UIEventHandler<HTMLDivElement> = (event) => {
+    const el = event.currentTarget
+    const threshold = 80
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - threshold) {
+      if (visibleCount < filteredAssets.length) {
+        setVisibleCount((prev) => Math.min(prev + 10, filteredAssets.length))
+      }
+    }
+  }
 
   const handleCopy = async (text: string) => {
     try {
@@ -138,7 +172,7 @@ export default function TapshowPanel(): JSX.Element | null {
                 </Group>
               </Group>
 
-              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
                 {loading && !hostedAssets.length ? (
                   <Center py="md">
                     <Group gap="xs">
@@ -150,14 +184,39 @@ export default function TapshowPanel(): JSX.Element | null {
                   </Center>
                 ) : (
                   <>
-                    {!hostedAssets.length && !loading && (
+                    {!hasAnyAssets && !loading && (
                       <Text size="xs" c="dimmed">
                         暂无公开作品。使用支持图片 / 视频生成的节点并启用 OSS 托管后，作品会自动出现在这里。
                       </Text>
                     )}
-                    {hostedAssets.length > 0 && (
+                    {hasAnyAssets && (
+                      <Group justify="space-between" align="center" mb="xs">
+                        <Text size="sm" c="dimmed">
+                          TapShow 公开作品（默认显示全部，可切换视频 / 图片）
+                        </Text>
+                        <SegmentedControl
+                          size="sm"
+                          radius="xl"
+                          variant="filled"
+                          color={isDark ? 'blue' : 'dark'}
+                          value={mediaFilter}
+                          onChange={(v) => setMediaFilter(v as any)}
+                          data={[
+                            { value: 'video', label: '视频' },
+                            { value: 'image', label: '图片' },
+                            { value: 'all', label: '全部' },
+                          ]}
+                        />
+                      </Group>
+                    )}
+                    {hasAnyAssets && !loading && filteredAssets.length === 0 && (
+                      <Text size="xs" c="dimmed">
+                        当前筛选下暂无作品。
+                      </Text>
+                    )}
+                    {visibleAssets.length > 0 && (
                       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-                        {hostedAssets.map((asset) => {
+                        {visibleAssets.map((asset) => {
                           const isVideo = asset.type === 'video'
                           const cover = asset.thumbnailUrl || asset.url
                           const label = asset.name || (isVideo ? '视频资产' : '图片资产')

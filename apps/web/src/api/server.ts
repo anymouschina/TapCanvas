@@ -1259,10 +1259,16 @@ export type PublicAssetDto = {
   projectName?: string | null
 }
 
-export async function listPublicAssets(limit?: number): Promise<PublicAssetDto[]> {
+export async function listPublicAssets(
+  limit?: number,
+  type?: 'image' | 'video' | 'all',
+): Promise<PublicAssetDto[]> {
   const qs = new URLSearchParams()
   if (typeof limit === 'number' && !Number.isNaN(limit)) {
     qs.set('limit', String(limit))
+  }
+  if (type && type !== 'all') {
+    qs.set('type', type)
   }
   const query = qs.toString()
   const url = query ? `${API_BASE}/assets/public?${query}` : `${API_BASE}/assets/public`
@@ -1392,11 +1398,18 @@ export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto>
   return r.json()
 }
 
-export async function fetchSora2ApiTaskResult(taskId: string): Promise<TaskResultDto> {
+export async function fetchSora2ApiTaskResult(
+  taskId: string,
+  prompt?: string | null,
+): Promise<TaskResultDto> {
   const r = await fetch(`${API_BASE}/tasks/sora2api/result`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ taskId }),
+    body: JSON.stringify(
+      typeof prompt === 'string' && prompt.trim()
+        ? { taskId, prompt }
+        : { taskId },
+    ),
   }))
   if (!r.ok) {
     let msg = `fetch sora2api result failed: ${r.status}`

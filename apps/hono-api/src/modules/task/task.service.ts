@@ -865,6 +865,7 @@ export async function fetchSora2ApiTaskResult(
 	c: AppContext,
 	userId: string,
 	taskId: string,
+	promptFromClient?: string | null,
 ) {
 	if (!taskId || !taskId.trim()) {
 		throw new AppError("taskId is required", {
@@ -932,7 +933,11 @@ export async function fetchSora2ApiTaskResult(
 	);
 
 	let assetPayload: any = undefined;
-	let promptForAsset: string | null = null;
+	let promptForAsset: string | null =
+		typeof promptFromClient === "string" &&
+		promptFromClient.trim()
+			? promptFromClient.trim()
+			: null;
 
 	if (status === "succeeded") {
 		const directVideo =
@@ -979,13 +984,14 @@ export async function fetchSora2ApiTaskResult(
 				url: videoUrl,
 				thumbnailUrl: thumbnail,
 			};
-			if (typeof data.prompt === "string") {
-				promptForAsset = data.prompt;
-			} else if (
-				data.input &&
-				typeof (data.input as any).prompt === "string"
-			) {
-				promptForAsset = (data.input as any).prompt;
+			const upstreamPrompt =
+				(typeof data.prompt === "string" && data.prompt.trim()) ||
+				(data.input &&
+					typeof (data.input as any).prompt === "string" &&
+					(data.input as any).prompt.trim()) ||
+				"";
+			if (upstreamPrompt) {
+				promptForAsset = upstreamPrompt;
 			}
 		}
 	}
