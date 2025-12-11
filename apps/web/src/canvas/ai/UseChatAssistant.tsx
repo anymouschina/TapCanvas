@@ -313,41 +313,6 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     }
   }, [])
 
-  // 从服务端加载历史会话列表与首个会话的消息
-  useEffect(() => {
-    let canceled = false
-    const loadSessions = async () => {
-      try {
-        const serverSessions = await listServerChatSessions().catch(() => [])
-        if (canceled || !serverSessions.length) return
-        const mapped: AssistantSession[] = serverSessions.map((item, index) => ({
-          id: item.id,
-          title: item.title || `会话 ${index + 1}`,
-          messages: [],
-        }))
-        setSessions(mapped)
-        const first = mapped[0]
-        if (!first) return
-        setActiveSessionId(first.id)
-        const history = await getServerChatHistory(first.id).catch(() => null)
-        if (canceled || !history) return
-        const uiMessages = history.messages.map((m) => toUiMessageFromHistory(m))
-        setSessions(prev =>
-          prev.map(session =>
-            session.id === first.id ? { ...session, messages: uiMessages } : session
-          )
-        )
-        setMessages(uiMessages)
-      } catch {
-        // ignore loading errors for assistant history
-      }
-    }
-    void loadSessions()
-    return () => {
-      canceled = true
-    }
-  }, [apiRoot, setMessages])
-
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
       const preferred = assistantModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
@@ -469,6 +434,41 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     }
     return Boolean(part.toolName && part.toolCallId)
   }
+
+  // 从服务端加载历史会话列表与首个会话的消息
+  useEffect(() => {
+    let canceled = false
+    const loadSessions = async () => {
+      try {
+        const serverSessions = await listServerChatSessions().catch(() => [])
+        if (canceled || !serverSessions.length) return
+        const mapped: AssistantSession[] = serverSessions.map((item, index) => ({
+          id: item.id,
+          title: item.title || `会话 ${index + 1}`,
+          messages: [],
+        }))
+        setSessions(mapped)
+        const first = mapped[0]
+        if (!first) return
+        setActiveSessionId(first.id)
+        const history = await getServerChatHistory(first.id).catch(() => null)
+        if (canceled || !history) return
+        const uiMessages = history.messages.map((m) => toUiMessageFromHistory(m))
+        setSessions(prev =>
+          prev.map(session =>
+            session.id === first.id ? { ...session, messages: uiMessages } : session
+          )
+        )
+        setMessages(uiMessages)
+      } catch {
+        // ignore loading errors for assistant history
+      }
+    }
+    void loadSessions()
+    return () => {
+      canceled = true
+    }
+  }, [apiRoot, setMessages])
 
   // 每当当前会话的消息变化时，写回 sessions 中当前会话的快照
   useEffect(() => {
