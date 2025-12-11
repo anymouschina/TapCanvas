@@ -24,6 +24,7 @@ import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
 import { toast } from './toast'
 import { useRFStore } from '../canvas/store'
+import { useAuth } from '../auth/store'
 
 function formatDate(ts: string) {
   const date = new Date(ts)
@@ -41,6 +42,7 @@ export default function TapshowPanel(): JSX.Element | null {
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const openPreview = useUIStore((s) => s.openPreview)
   const addNode = useRFStore((s) => s.addNode)
+  const token = useAuth((s) => s.token)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
@@ -54,8 +56,19 @@ export default function TapshowPanel(): JSX.Element | null {
 
   const webcutUrl = React.useMemo(() => {
     const raw = (import.meta as any).env?.VITE_WEBCUT_URL
-    return typeof raw === 'string' && raw.trim() ? raw.trim() : null
-  }, [])
+    const base = typeof raw === 'string' && raw.trim() ? raw.trim() : null
+    if (!base) return null
+    if (!token) return base
+    try {
+      const url = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined)
+      url.searchParams.set('tap_token', token)
+      return url.toString()
+    } catch {
+      const [path, hash] = base.split('#')
+      const sep = path.includes('?') ? '&' : '?'
+      return `${path}${sep}tap_token=${encodeURIComponent(token)}${hash ? `#${hash}` : ''}`
+    }
+  }, [token])
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 

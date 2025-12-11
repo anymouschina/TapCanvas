@@ -5,7 +5,7 @@ import { source } from 'fods';
 import { useSource } from 'fods-vue';
 import { getFileMd5 } from '../libs/file';
 import { authFetch } from '../libs/auth';
-
+const VITE_API_BASE = import.meta.env.VITE_API_BASE;
 const getProjectData = source((projectId: string) => getProject(projectId));
 const getFiles = source<{ id: string; type: string; name: string; size: number, time: number }[], []>(async () => {
     const allFiles = await getAllFiles();
@@ -26,8 +26,7 @@ const remoteAssets = ref<RemoteAsset[]>([]);
 const remoteAssetsLoading = ref(false);
 
 function resolveApiBase(): string | null {
-    const envBase = (import.meta as any)?.env?.VITE_API_BASE;
-    console.log(envBase,'envBase',import.meta)
+    const envBase = VITE_API_BASE;
     if (typeof envBase === 'string' && envBase.trim()) {
         return envBase.replace(/\/+$/, '');
     }
@@ -80,6 +79,17 @@ async function fetchRemoteAssets() {
     try {
         const res = await authFetch(`${API_BASE}/assets`);
         if (!res.ok) {
+            if (res.status === 401 && typeof window !== 'undefined') {
+                try {
+                    const redirect = encodeURIComponent(window.location.href);
+                    const loginUrl = `${API_BASE.replace(/\/+$/, '')}/auth/session?redirect=${redirect}`;
+                    window.location.href = loginUrl;
+                    return;
+                }
+                catch {
+                    // ignore redirect errors
+                }
+            }
             throw new Error(`list assets failed: ${res.status}`);
         }
         const json = await res.json().catch(() => []);
