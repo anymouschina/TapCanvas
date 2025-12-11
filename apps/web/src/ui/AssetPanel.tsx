@@ -106,9 +106,10 @@ export default function AssetPanel(): JSX.Element | null {
   const mounted = active === 'assets'
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
   const [tab, setTab] = React.useState<'generated' | 'workflow'>('generated')
-  const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('all')
+  const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('video')
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
+  const [visibleGenerationCount, setVisibleGenerationCount] = React.useState(10)
   const [generatedThumbs, setGeneratedThumbs] = React.useState<Record<string, string | null>>({})
   const thumbStatusRef = React.useRef<Record<string, 'pending' | 'running' | 'done'>>({})
   const activeThumbJobsRef = React.useRef(0)
@@ -149,8 +150,17 @@ export default function AssetPanel(): JSX.Element | null {
     if (mediaFilter === 'all') return generationAssets
     return generationAssets.filter((a) => getGenerationData(a).type === mediaFilter)
   }, [generationAssets, mediaFilter])
+  const visibleGenerationAssets = React.useMemo(
+    () => filteredGenerationAssets.slice(0, Math.max(10, visibleGenerationCount)),
+    [filteredGenerationAssets, visibleGenerationCount],
+  )
 
   const MAX_THUMB_JOBS = 2
+
+  React.useEffect(() => {
+    // 重置生成内容的可见数量，避免切换过滤或重新加载后还停留在末尾
+    setVisibleGenerationCount(10)
+  }, [generationAssets, mediaFilter])
 
   const runNextThumbJob = React.useCallback(() => {
     if (activeThumbJobsRef.current >= MAX_THUMB_JOBS) return
@@ -377,6 +387,16 @@ export default function AssetPanel(): JSX.Element | null {
   if (!mounted) return null
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+  const handleScroll: React.UIEventHandler<HTMLDivElement> = (event) => {
+    if (tab !== 'generated') return
+    const el = event.currentTarget
+    const threshold = 80
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - threshold) {
+      if (visibleGenerationCount < filteredGenerationAssets.length) {
+        setVisibleGenerationCount((prev) => Math.min(prev + 10, filteredGenerationAssets.length))
+      }
+    }
+  }
 
   const renderGenerationCard = (asset: ServerAssetDto) => {
     const data = getGenerationData(asset)
@@ -590,7 +610,7 @@ export default function AssetPanel(): JSX.Element | null {
                   </Button>
                 </Group>
               </Group>
-              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
                 <Tabs value={tab} onChange={(v) => setTab((v as any) || 'generated')}>
                   <Tabs.List>
                     <Tabs.Tab value="generated">生成内容</Tabs.Tab>
@@ -600,19 +620,19 @@ export default function AssetPanel(): JSX.Element | null {
                     <Stack gap="sm">
                       <Group justify="space-between" align="center">
                         <Text size="sm" c="dimmed">
-                          已自动保存的生成结果（图片 / 视频）
+                          已自动保存的生成结果（默认显示视频，可切换图片）
                         </Text>
                         <SegmentedControl
-                          size="xs"
+                          size="sm"
                           radius="xl"
                           variant="filled"
                           color={isDark ? 'blue' : 'dark'}
                           value={mediaFilter}
                           onChange={(v) => setMediaFilter(v as any)}
                           data={[
-                            { value: 'all', label: '全部' },
-                            { value: 'image', label: '图片' },
                             { value: 'video', label: '视频' },
+                            { value: 'image', label: '图片' },
+                            { value: 'all', label: '全部' },
                           ]}
                         />
                       </Group>
@@ -631,7 +651,7 @@ export default function AssetPanel(): JSX.Element | null {
                         </Text>
                       ) : (
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-                          {filteredGenerationAssets.map((asset) => renderGenerationCard(asset))}
+                          {visibleGenerationAssets.map((asset) => renderGenerationCard(asset))}
                         </SimpleGrid>
                       )}
                     </Stack>

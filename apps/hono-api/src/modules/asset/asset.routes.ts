@@ -113,6 +113,10 @@ assetRouter.get("/public", async (c) => {
 			? Number(limitParam)
 			: undefined;
 
+	const typeParam = (c.req.query("type") || "").toLowerCase();
+	const requestedType =
+		typeParam === "image" || typeParam === "video" ? typeParam : null;
+
 	const rawBase =
 		typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
 			? ((c.env as any).R2_PUBLIC_BASE_URL as string)
@@ -175,7 +179,10 @@ assetRouter.get("/public", async (c) => {
 				projectName: row.project_name,
 			});
 		})
-		.filter((v): v is ReturnType<typeof PublicAssetSchema.parse> => !!v);
+		.filter((v): v is ReturnType<typeof PublicAssetSchema.parse> => !!v)
+		.filter((item) =>
+			requestedType ? item.type === requestedType : true,
+		);
 
 	return c.json(items);
 });

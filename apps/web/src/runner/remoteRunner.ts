@@ -738,7 +738,7 @@ async function runSora2ApiVideoTask(
       await sleep(pollIntervalMs)
       let snapshot: TaskResultDto
       try {
-        snapshot = await fetchSora2ApiTaskResult(taskId)
+        snapshot = await fetchSora2ApiTaskResult(taskId, prompt)
       } catch (err: any) {
         const msg = err?.message || '查询 Sora2API 任务进度失败'
         appendLog(id, `[${nowLabel()}] error: ${msg}`)

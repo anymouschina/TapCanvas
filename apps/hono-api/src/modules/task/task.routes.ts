@@ -189,6 +189,11 @@ taskRouter.post("/sora2api/result", async (c) => {
 			400,
 		);
 	}
-	const result = await fetchSora2ApiTaskResult(c, userId, parsed.data.taskId);
+	const result = await fetchSora2ApiTaskResult(
+		c,
+		userId,
+		parsed.data.taskId,
+		parsed.data.prompt ?? null,
+	);
 	return c.json(TaskResultSchema.parse(result));
 });
