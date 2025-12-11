@@ -1652,6 +1652,10 @@ async function runGenericTask(ctx: RunnerContext) {
       typeof (data as any)?.aspect === 'string' && (data as any)?.aspect.trim()
         ? (data as any).aspect.trim()
         : 'auto'
+    const imageSizeSetting =
+      typeof (data as any)?.imageSize === 'string' && (data as any)?.imageSize.trim()
+        ? (data as any).imageSize.trim()
+        : undefined
 
     const allImageAssets: { url: string }[] = []
     const allTexts: string[] = []
@@ -1698,7 +1702,14 @@ async function runGenericTask(ctx: RunnerContext) {
           nodeKind: kind,
           nodeId: id,
           modelKey: selectedModel,
-          ...(isImageTask ? { aspectRatio } : {}),
+          ...(isImageTask
+            ? {
+                aspectRatio,
+                ...(selectedModel === 'nano-banana-pro' && imageSizeSetting
+                  ? { imageSize: imageSizeSetting }
+                  : {}),
+              }
+            : {}),
           ...(wantsImageEdit ? { referenceImages, ...(maskUrl ? { maskUrl } : {}) } : {}),
           ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
         },
