@@ -1,0 +1,17 @@
+name = "webcut-main"
+main = "worker.ts"
+compatibility_date = "2024-12-11"
+workers_dev = true
+
+# 静态站点构建产物目录（由 pnpm run build:app 生成）
+assets = { directory = "./dist-app" }
+
+[build]
+command = "pnpm run build:app"
+
+[vars]
+# 主站 API 基地址，按需替换为你的生产域名
+VITE_API_BASE = "https://webcut.beqlee.icu"
+
+# 部署到自定义域时，请在 Cloudflare 路由里添加：
+# routes = ["webcut.tapcanvas.com/*"]
