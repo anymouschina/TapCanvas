@@ -24,6 +24,8 @@ import {
   unwatermarkSoraVideo,
   type ProjectDto,
   type ProxyConfigDto,
+  uploadSora2ApiCharacter,
+  fetchSora2ApiCharacterResult,
 } from './api/server'
 import { useAuth } from './auth/store'
 import { getCurrentLanguage, setLanguage, $, $t } from './canvas/i18n'
@@ -55,6 +57,8 @@ function CanvasApp(): JSX.Element {
   const closeSubflow = useUIStore(s => s.closeSubflow)
   const libraryFlowId = useUIStore(s => s.libraryFlowId)
   const closeLibraryFlow = useUIStore(s => s.closeLibraryFlow)
+  const characterCreatorRequest = useUIStore(s => s.characterCreatorRequest)
+  const clearCharacterCreatorRequest = useUIStore(s => s.clearCharacterCreatorRequest)
   const [refresh, setRefresh] = React.useState(0)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const { currentFlow, isDirty } = useUIStore()
@@ -272,6 +276,121 @@ function CanvasApp(): JSX.Element {
     setUnwatermarkUrl('')
     setUnwatermarkOpen(true)
   }, [])
+
+  // 角色创建（Sora2API / grsai）
+  React.useEffect(() => {
+    if (!characterCreatorRequest?.timestamp) return
+    const payload = characterCreatorRequest.payload
+    if (!payload) {
+      clearCharacterCreatorRequest()
+      return
+    }
+    const vendor = (payload.videoVendor || '').toLowerCase()
+    const isSora2Api = vendor === 'sora2api' || vendor === 'grsai'
+    if (!isSora2Api) {
+      toast('当前只支持 Sora2API / grsai 角色创建', 'error')
+      clearCharacterCreatorRequest()
+      return
+    }
+    const timestamps = payload.clipRange
+      ? `${Math.max(0, payload.clipRange.start).toFixed(2)},${Math.max(
+          payload.clipRange.start,
+          payload.clipRange.end,
+        ).toFixed(2)}`
+      : '0,3'
+    const videoUrl =
+      (typeof payload.videoUrl === 'string' && payload.videoUrl.trim()) ||
+      null
+    if (!videoUrl) {
+      toast('缺少视频 URL，无法创建角色', 'error')
+      clearCharacterCreatorRequest()
+      return
+    }
+    let disposed = false
+    const run = async () => {
+      try {
+        notifications.show({
+          id: 'character-create',
+          title: '提交角色创建',
+          message: '正在调用 Sora2API 创建角色…',
+          loading: true,
+        })
+        const created = await uploadSora2ApiCharacter({
+          url: videoUrl,
+          timestamps,
+          webHook: '-1',
+          shutProgress: false,
+        })
+        if (disposed) return
+        const taskId = created?.id || created?.taskId || null
+        if (!taskId) {
+          throw new Error('上游未返回任务 ID')
+        }
+        notifications.update({
+          id: 'character-create',
+          title: '已创建角色任务',
+          message: `任务 ID：${taskId}，开始轮询结果…`,
+          loading: true,
+        })
+        let attempts = 0
+        let done = false
+        while (!done && attempts < 40 && !disposed) {
+          attempts += 1
+          await new Promise((r) => setTimeout(r, 2000))
+          try {
+            const res = await fetchSora2ApiCharacterResult(taskId)
+            const status = (res?.status || '').toLowerCase()
+            if (status !== 'running') {
+              done = true
+              const characterId =
+                res?.characterId ||
+                (Array.isArray(res?.results) && res.results[0]?.character_id) ||
+                res?.raw?.results?.[0]?.character_id
+              const msg = characterId
+                ? `创建成功，角色 ID：${characterId}`
+                : '创建完成'
+              notifications.update({
+                id: 'character-create',
+                title: '角色创建完成',
+                message: msg,
+                loading: false,
+                color: characterId ? 'teal' : 'yellow',
+              })
+              return
+            }
+          } catch (err: any) {
+            if (attempts > 3) {
+              throw err
+            }
+          }
+        }
+        if (!disposed) {
+          notifications.update({
+            id: 'character-create',
+            title: '角色创建超时',
+            message: '请稍后在角色列表查看结果',
+            loading: false,
+            color: 'yellow',
+          })
+        }
+      } catch (err: any) {
+        if (disposed) return
+        notifications.update({
+          id: 'character-create',
+          title: '创建角色失败',
+          message: err?.message || '未知错误',
+          loading: false,
+          color: 'red',
+        })
+      } finally {
+        if (!disposed) clearCharacterCreatorRequest()
+      }
+    }
+    run().catch(() => {})
+    return () => {
+      disposed = true
+    }
+  }, [characterCreatorRequest, clearCharacterCreatorRequest])
 
   const handleRunUnwatermark = React.useCallback(async () => {
     const rawUrl = unwatermarkUrl.trim()

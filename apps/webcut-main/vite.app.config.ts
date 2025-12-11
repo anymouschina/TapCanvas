@@ -10,6 +10,8 @@ export default defineConfig({
 			"@": resolve(__dirname, "src"),
 		},
 	},
+	// 让 Vite 从当前包目录读取 .env（非仓库根）
+	envDir: __dirname,
 	build: {
 		// 将产物输出到仓库根目录下的 dist，方便与根 wrangler.toml 的 assets 目录对齐
 		outDir: resolve(__dirname, "../../dist"),

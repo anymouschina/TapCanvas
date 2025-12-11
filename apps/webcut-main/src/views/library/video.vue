@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, computed } from 'vue';
+import { ref, nextTick, computed, watch } from 'vue';
 import {
   NButton,
   NIcon,
@@ -19,10 +19,11 @@ import { PerformanceMark, mark } from '../../libs/performance';
 const t = useT();
 
 const { push } = useWebCutPlayer();
-const { projectFiles, files, addNewFile, removeFile } = useWebCutLibrary();
+const { projectFiles, files, addNewFile, removeFile, remoteAssets, remoteAssetsLoading, refreshRemoteAssets } = useWebCutLibrary();
 const { fileUrl } = useWebCutLocalFile();
 const { push: pushHistory } = useWebCutHistory();
 
+const remoteVideoList = computed(() => remoteAssets.value.filter((file) => file.type === 'video'));
 const allVideoList = computed(() => {
   const items = files.value.filter((file) => file.type.startsWith('video/')).sort((a, b) => (b.time || 0) - (a.time || 0));
   return items;
@@ -32,7 +33,15 @@ const projectVideoList = computed(() => {
   return items;
 });
 
-const actionType = ref<'import' | 'this' | 'all'>('this');
+const actionType = ref<'import' | 'this' | 'all' | 'assets'>('assets');
+
+watch(actionType, (val) => {
+  if (val === 'assets') {
+    refreshRemoteAssets();
+  }
+}, { immediate: true });
+
+const videoSrc = (file: any) => file.url || fileUrl(file.id);
 
 // 右键菜单相关状态
 const showDropdown = ref(false);
@@ -97,7 +106,8 @@ async function handleAdd(material: any) {
   try {
     mark(PerformanceMark.PushVideoStart);
     const { id } = material;
-    await push('video', `file:${id}`, { autoFitRect: 'contain' });
+    const source = material.url || `file:${id}`;
+    await push('video', source, { autoFitRect: 'contain' });
     mark(PerformanceMark.PushVideoEnd);
     await pushHistory();
   }
@@ -113,6 +123,7 @@ async function handleAdd(material: any) {
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'this' }" @click="actionType = 'this'">{{ t('当前') }}</div>
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'import' }" @click="actionType = 'import'">{{ t('导入') }}</div>
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'all' }" @click="actionType = 'all'">{{ t('全部') }}</div>
+      <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'assets' }" @click="actionType = 'assets'">{{ t('资产') }}</div>
     </aside>
 
     <!-- 右侧素材列表 -->
@@ -133,7 +144,7 @@ async function handleAdd(material: any) {
         <div class="webcut-material-list">
           <div v-for="material in projectVideoList" :key="material.id" class="webcut-material-item" @contextmenu.stop="handleContextMenu($event, material)">
             <div class="webcut-material-preview">
-              <video :src="fileUrl(material.id)" v-if="fileUrl(material.id)" class="webcut-material-video" @click="handleClickVideo" @mouseleave="onLeaveVideo"></video>
+              <video :src="videoSrc(material)" v-if="videoSrc(material)" class="webcut-material-video" @click="handleClickVideo" @mouseleave="onLeaveVideo"></video>
               <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(material)">
                 <template #icon>
                   <n-icon>
@@ -156,7 +167,7 @@ async function handleAdd(material: any) {
         <div class="webcut-material-list">
           <div v-for="material in allVideoList" :key="material.id" class="webcut-material-item">
             <div class="webcut-material-preview">
-              <video :src="fileUrl(material.id)" v-if="fileUrl(material.id)" class="webcut-material-video" @click="handleClickVideo"></video>
+              <video :src="videoSrc(material)" v-if="videoSrc(material)" class="webcut-material-video" @click="handleClickVideo"></video>
               <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(material)">
                 <template #icon>
                   <n-icon>
@@ -171,6 +182,32 @@ async function handleAdd(material: any) {
           </div>
           <div v-if="allVideoList.length === 0" class="webcut-empty-materials">
             {{ t('暂无素材，请先导入素材') }}
+          </div>
+        </div>
+      </scroll-box>
+
+      <scroll-box class="webcut-material-container" v-if="actionType === 'assets'">
+        <div class="webcut-material-list">
+          <div v-for="material in remoteVideoList" :key="material.id" class="webcut-material-item">
+            <div class="webcut-material-preview">
+              <video :src="videoSrc(material)" v-if="videoSrc(material)" class="webcut-material-video" preload="metadata" @click="handleClickVideo" @mouseleave="onLeaveVideo" :poster="material.thumbnailUrl || undefined"></video>
+              <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(material)">
+                <template #icon>
+                  <n-icon>
+                    <Add />
+                  </n-icon>
+                </template>
+              </n-button>
+            </div>
+            <div class="webcut-material-title">
+              {{ material.name }}
+            </div>
+          </div>
+          <div v-if="remoteAssetsLoading" class="webcut-empty-materials">
+            {{ t('加载中...') }}
+          </div>
+          <div v-else-if="remoteVideoList.length === 0" class="webcut-empty-materials">
+            {{ t('暂无资产，请先生成或上传') }}
           </div>
         </div>
       </scroll-box>

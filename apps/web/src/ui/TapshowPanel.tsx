@@ -18,7 +18,7 @@ import {
   SegmentedControl,
   useMantineColorScheme,
 } from '@mantine/core'
-import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus, IconExternalLink } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
@@ -51,6 +51,11 @@ export default function TapshowPanel(): JSX.Element | null {
   const [refreshing, setRefreshing] = React.useState(false)
   const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('all')
   const [visibleCount, setVisibleCount] = React.useState(10)
+
+  const webcutUrl = React.useMemo(() => {
+    const raw = (import.meta as any).env?.VITE_WEBCUT_URL
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+  }, [])
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
@@ -175,6 +180,20 @@ export default function TapshowPanel(): JSX.Element | null {
                       <IconPlayerPlay size={16} />
                     </ActionIcon>
                   </Tooltip>
+                  {webcutUrl && (
+                    <Tooltip label="打开 WebCut" withArrow>
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        component="a"
+                        href={webcutUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <IconExternalLink size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
                   <Tooltip label="刷新" withArrow>
                     <ActionIcon
                       size="sm"

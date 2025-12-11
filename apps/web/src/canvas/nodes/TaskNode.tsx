@@ -99,6 +99,15 @@ type CharacterCard = {
   endFrame?: { time: number; url: string }
   clipRange?: { start: number; end: number }
 }
+
+function normalizeClipRange(val: any): { start: number; end: number } | null {
+  if (!val || typeof val !== 'object') return null
+  const start = Number((val as any)?.start)
+  const end = Number((val as any)?.end)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  if (end <= start) return null
+  return { start, end }
+}
 type Data = {
   label: string
   kind?: string
@@ -309,6 +318,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openSubflow = useUIStore(s => s.openSubflow)
   const openParamFor = useUIStore(s => s.openParamFor)
   const setActivePanel = useUIStore(s => s.setActivePanel)
+  const requestCharacterCreator = useUIStore(s => s.requestCharacterCreator)
+  const openVideoTrimModal = useUIStore(s => s.openVideoTrimModal)
   const edgeRoute = useUIStore(s => s.edgeRoute)
   const openCharacterCreatorModal = useUIStore(s => s.openCharacterCreatorModal)
   const runSelected = useRFStore(s => s.runSelected)
@@ -591,14 +602,23 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       title?: string;
       duration?: number;
       createdAt?: string;
+      clipRange?: { start: number; end: number };
     }[] | undefined
-    if (raw && Array.isArray(raw) && raw.length > 0) return raw
-    const single = videoUrl ? {
-      url: videoUrl,
-      thumbnailUrl: videoThumbnailUrl,
-      title: videoTitle,
-      duration: (data as any)?.videoDuration
-    } : null
+    if (raw && Array.isArray(raw) && raw.length > 0) {
+      return raw.map((item) => ({
+        ...item,
+        clipRange: normalizeClipRange(item?.clipRange),
+      }))
+    }
+    const single = videoUrl
+      ? {
+          url: videoUrl,
+          thumbnailUrl: videoThumbnailUrl,
+          title: videoTitle,
+          duration: (data as any)?.videoDuration,
+          clipRange: normalizeClipRange((data as any)?.clipRange),
+        }
+      : null
     return single ? [single] : []
   }, [data, videoUrl, videoThumbnailUrl, videoTitle])
 
@@ -615,6 +635,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     setVideoPrimaryIndex((prev) => (prev === clamped ? prev : clamped))
   }, [persistedVideoPrimaryIndex, videoResults.length])
   const hasPrimaryVideo = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
+  const videoClipRange = React.useMemo(() => {
+    const fromResult = normalizeClipRange((videoResults[videoPrimaryIndex] as any)?.clipRange)
+    if (fromResult) return fromResult
+    return normalizeClipRange((data as any)?.clipRange)
+  }, [data, videoPrimaryIndex, videoResults])
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
   const frameSampleUrlsRef = React.useRef<string[]>([])
   const frameSampleUploadsRef = React.useRef<Map<string, string>>(new Map())
@@ -1448,6 +1473,19 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const handleOpenCharacterCreatorModal = React.useCallback(
     (card: CharacterCard) => {
+      if (resolvedVideoVendor === 'sora2api' || resolvedVideoVendor === 'grsai') {
+        requestCharacterCreator({
+          source: 'character-card',
+          name: card.name,
+          summary: card.summary,
+          tags: card.tags,
+          clipRange: card.clipRange,
+          videoVendor: resolvedVideoVendor,
+          soraTokenId: selectedCharacterTokenId || null,
+        })
+        toast('已提交角色创建任务', 'info')
+        return
+      }
       openCharacterCreatorModal({
         source: 'character-card',
         name: card.name,
@@ -1459,7 +1497,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       })
       setActivePanel('assets')
     },
-    [openCharacterCreatorModal, resolvedVideoVendor, selectedCharacterTokenId, setActivePanel],
+    [openCharacterCreatorModal, requestCharacterCreator, resolvedVideoVendor, selectedCharacterTokenId, setActivePanel, toast],
   )
 
   const handleOpenCharacterCreatorFromVideo = React.useCallback(() => {
@@ -1485,6 +1523,36 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       frames: [],
     }
     const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
+    if (resolvedVideoVendor === 'sora2api' || resolvedVideoVendor === 'grsai') {
+      const defaultRange =
+        videoClipRange ||
+        {
+          start: 0,
+          end: Math.min(3, activeVideoDuration || 3),
+        }
+      openVideoTrimModal({
+        videoUrl: primaryUrl,
+        originalDuration: activeVideoDuration || 10,
+        thumbnails: [],
+        defaultRange,
+        onConfirm: async (range) => {
+          requestCharacterCreator({
+            source: 'video-node',
+            name: quickCard.name,
+            summary: quickCard.summary,
+            tags: quickCard.tags,
+            videoVendor: resolvedVideoVendor,
+            soraTokenId: effectiveTokenId,
+            videoTokenId: videoTokenId || effectiveTokenId,
+            videoUrl: primaryUrl,
+            videoTitle: displayTitle,
+            clipRange: range,
+          })
+          toast('已提交角色创建任务', 'info')
+        },
+      })
+      return
+    }
     openCharacterCreatorModal({
       source: 'video-node',
       name: quickCard.name,
@@ -1511,7 +1579,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     selectedCharacterTokenId,
     characterTokens,
     resolvedVideoVendor,
-    setActivePanel,
+    videoClipRange,
+    requestCharacterCreator,
     toast,
   ])
 

@@ -56,6 +56,13 @@ function formatDate(ts: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
 }
 
+function resolveWebcutUrl(): string | null {
+  const raw = (import.meta as any).env?.VITE_WEBCUT_URL
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed ? trimmed : null
+}
+
 type TapshowCardProps = {
   asset: PublicAssetDto
   onPreview: (asset: PublicAssetDto) => void
@@ -190,6 +197,7 @@ function TapshowFullPageInner(): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
+  const webcutUrl = React.useMemo(() => resolveWebcutUrl(), [])
 
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
   const [loading, setLoading] = React.useState(false)
@@ -375,6 +383,19 @@ function TapshowFullPageInner(): JSX.Element {
               >
                 返回 TapCanvas
               </Button>
+              {webcutUrl && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconExternalLink size={14} />}
+                  component="a"
+                  href={webcutUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  打开 WebCut
+                </Button>
+              )}
               <ActionIcon
                 size="sm"
                 variant="subtle"

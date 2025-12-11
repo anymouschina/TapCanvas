@@ -1430,18 +1430,15 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                     border: '1px solid rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(14px)'
                   },
-                  option: {
+                  option: (_, params) => ({
                     borderRadius: 12,
                     color: '#eaf0ff',
-                    '&[data-hovered]': {
-                      backgroundColor: 'rgba(79,126,255,0.25)',
-                      color: '#f9fbff'
-                    },
-                    '&[data-selected]': {
-                      backgroundColor: 'rgba(79,126,255,0.4)',
-                      color: '#f9fbff'
-                    }
-                  }
+                    backgroundColor: params.selected
+                      ? 'rgba(79,126,255,0.4)'
+                      : params.hovered
+                        ? 'rgba(79,126,255,0.25)'
+                        : undefined,
+                  })
                 }}
               />
             </Group>

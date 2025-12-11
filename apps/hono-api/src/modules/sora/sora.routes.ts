@@ -24,6 +24,9 @@ import {
 	listSoraPendingVideos,
 	listSoraPublishedVideos,
 	publishSoraVideo,
+	uploadCharacterViaSora2Api,
+	createCharacterFromPidViaSora2Api,
+	fetchSora2ApiCharacterResult,
 	searchSoraMentions,
 	setCameoPublic,
 	unwatermarkVideo,
@@ -227,6 +230,64 @@ soraRouter.post("/characters/upload", async (c) => {
 		file,
 		range: [start, end],
 	});
+	return c.json(result);
+});
+
+soraRouter.post("/sora2api/characters/upload", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const url = typeof body.url === "string" ? body.url.trim() : "";
+	if (!url) return c.json({ error: "url is required" }, 400);
+	const timestamps =
+		typeof body.timestamps === "string" && body.timestamps.trim()
+			? body.timestamps.trim()
+			: undefined;
+	const webHook =
+		typeof body.webHook === "string" && body.webHook.trim()
+			? body.webHook.trim()
+			: undefined;
+	const shutProgress = body.shutProgress === true;
+	const result = await uploadCharacterViaSora2Api(c, userId, {
+		url,
+		timestamps,
+		webHook,
+		shutProgress,
+	});
+	return c.json(result);
+});
+
+soraRouter.post("/sora2api/characters/create", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const pid = typeof body.pid === "string" ? body.pid.trim() : "";
+	if (!pid) return c.json({ error: "pid is required" }, 400);
+	const timestamps =
+		typeof body.timestamps === "string" && body.timestamps.trim()
+			? body.timestamps.trim()
+			: undefined;
+	const webHook =
+		typeof body.webHook === "string" && body.webHook.trim()
+			? body.webHook.trim()
+			: undefined;
+	const shutProgress = body.shutProgress === true;
+	const result = await createCharacterFromPidViaSora2Api(c, userId, {
+		pid,
+		timestamps,
+		webHook,
+		shutProgress,
+	});
+	return c.json(result);
+});
+
+soraRouter.post("/sora2api/characters/result", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
+	if (!taskId) return c.json({ error: "taskId is required" }, 400);
+	const result = await fetchSora2ApiCharacterResult(c, userId, taskId);
 	return c.json(result);
 });
 

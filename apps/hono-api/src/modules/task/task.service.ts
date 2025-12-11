@@ -153,7 +153,7 @@ async function resolveProxyForVendor(
 	return preferred;
 }
 
-async function resolveVendorContext(
+export async function resolveVendorContext(
 	c: AppContext,
 	userId: string,
 	vendor: string,
@@ -162,6 +162,7 @@ async function resolveVendorContext(
 
 	// 1) Try user-level proxy config (proxy_providers + enabled_vendors)
 	const proxy = await resolveProxyForVendor(c, userId, v);
+	const hasUserProxy = !!(proxy && proxy.enabled === 1);
 
 	if (proxy && proxy.enabled === 1) {
 		const baseUrl = normalizeBaseUrl(proxy.base_url);
@@ -194,6 +195,13 @@ async function resolveVendorContext(
 		envAny.SORA2API_API_KEY.trim()
 			? (envAny.SORA2API_API_KEY as string).trim()
 			: "";
+	const resolveEnvSora2Base = () =>
+		(typeof envAny.SORA2API_BASE_URL === "string" &&
+			envAny.SORA2API_BASE_URL) ||
+		(typeof envAny.SORA2API_BASE === "string" && envAny.SORA2API_BASE) ||
+		"http://localhost:8000";
+	let userConfigured = hasUserProxy;
+	let preferEnvSora2Base = false;
 
 	if (requiresApiKeyForVendor(v)) {
 		let token: TokenRow | null = null;
@@ -225,20 +233,23 @@ async function resolveVendorContext(
 
 			if (token && typeof token.secret_token === "string") {
 				apiKey = token.secret_token.trim();
+				userConfigured = true;
 			}
 		}
 
-		// 2.3 对于 sora2api，允许使用 Env 级别的号池 API Key
-		if (!apiKey && envSora2ApiKey) {
+		// 2.3 对于 sora2api，只有当用户没有任何 Token/Proxy 配置时才允许使用 Env 级别兜底
+		if (!apiKey && envSora2ApiKey && !userConfigured) {
 			apiKey = envSora2ApiKey;
+			preferEnvSora2Base = true;
 		}
 
 		// 2.4 仍未拿到，则从任意用户的共享 Token 中为该 vendor 选择一个（全局共享池）
-		if (!apiKey) {
+		if (!apiKey && !userConfigured) {
 			const shared = await findSharedTokenForVendor(c, v);
 			if (shared && typeof shared.token.secret_token === "string") {
 				apiKey = shared.token.secret_token.trim();
 				sharedTokenProvider = shared.provider;
+				userConfigured = true;
 			}
 		}
 
@@ -257,14 +268,8 @@ async function resolveVendorContext(
 
 	// 2.6 provider 仍不存在时，对于 sora2api 允许完全依赖 Env 级别配置；其他 vendor 报错
 	if (!provider) {
-		if (v === "sora2api" && envSora2ApiKey) {
-			const rawBase =
-				(typeof envAny.SORA2API_BASE_URL === "string" &&
-					envAny.SORA2API_BASE_URL) ||
-				(typeof envAny.SORA2API_BASE === "string" &&
-					envAny.SORA2API_BASE) ||
-				"http://localhost:8000";
-			const baseUrl = normalizeBaseUrl(rawBase);
+		if (v === "sora2api" && envSora2ApiKey && !userConfigured) {
+			const baseUrl = normalizeBaseUrl(resolveEnvSora2Base());
 			if (!baseUrl) {
 				throw new AppError(`No base URL configured for vendor ${v}`, {
 					status: 400,
@@ -282,22 +287,16 @@ async function resolveVendorContext(
 
 	// 2.7 解析 baseUrl：优先 Provider.base_url，其次 shared_base_url，全局默认
 	let baseUrl = normalizeBaseUrl(
-		provider.base_url ||
-			(await resolveSharedBaseUrl(c, v)) ||
-			"",
+		preferEnvSora2Base
+			? ""
+			: provider.base_url || (await resolveSharedBaseUrl(c, v)) || "",
 	);
 
 	if (!baseUrl) {
 		if (v === "veo") {
 			baseUrl = normalizeBaseUrl("https://api.grsai.com");
 		} else if (v === "sora2api") {
-			const rawBase =
-				(typeof envAny.SORA2API_BASE_URL === "string" &&
-					envAny.SORA2API_BASE_URL) ||
-				(typeof envAny.SORA2API_BASE === "string" &&
-					envAny.SORA2API_BASE) ||
-				"http://localhost:8000";
-			baseUrl = normalizeBaseUrl(rawBase);
+			baseUrl = normalizeBaseUrl(resolveEnvSora2Base());
 		}
 	}
 

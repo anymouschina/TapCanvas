@@ -1,0 +1,3 @@
+/* Dev fallback stylesheet so Vite can resolve `webcut/*/style.css` imports
+   before build outputs (esm/webcomponents) exist. Component SFC styles
+   still load normally during development. */
