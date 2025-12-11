@@ -73,6 +73,26 @@ type ChatProvider = "openai" | "anthropic" | "google";
 
 type ChatRole = "system" | "user" | "assistant";
 
+type ChatSessionRow = {
+	id: string;
+	user_id: string;
+	session_id: string;
+	title: string | null;
+	model: string | null;
+	provider: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+type ChatMessageRow = {
+	id: string;
+	session_id: string;
+	role: string;
+	content: string | null;
+	raw: string | null;
+	created_at: string;
+};
+
 type ChatMessageDto = {
 	role: ChatRole;
 	content?: string;
@@ -948,8 +968,8 @@ async function resolveVendorContextForChat(
 ): Promise<VendorContext> {
 	const v = vendor.toLowerCase();
 
+	// 1) User-level proxy config (proxy_providers + enabled_vendors)
 	const proxy = await resolveProxyForVendor(c, userId, v);
-
 	if (proxy && proxy.enabled === 1) {
 		const baseUrl = normalizeBaseUrl(proxy.base_url);
 		const apiKey = (proxy.api_key || "").trim();
@@ -962,6 +982,7 @@ async function resolveVendorContextForChat(
 		return { baseUrl, apiKey };
 	}
 
+	// 2) model_providers + model_tokens（含跨用户共享 Token）
 	const providersRes = await c.env.DB.prepare(
 		`SELECT * FROM model_providers WHERE owner_id = ? AND vendor = ? ORDER BY created_at ASC`,
 	)
@@ -969,57 +990,76 @@ async function resolveVendorContextForChat(
 		.all<ProviderRow>();
 	const providers = providersRes.results || [];
 
-	if (!providers.length) {
+	let provider: ProviderRow | null = providers[0] ?? null;
+	let sharedTokenProvider: ProviderRow | null = null;
+	let apiKey = "";
+
+	if (requiresApiKeyForVendorChat(v)) {
+		let token: TokenRow | null = null;
+
+		// 2.1 当前用户自己的 Token 优先
+		if (provider) {
+			const ownedRows = await c.env.DB.prepare(
+				`SELECT * FROM model_tokens
+         WHERE provider_id = ? AND user_id = ? AND enabled = 1
+         ORDER BY created_at ASC LIMIT 1`,
+			)
+				.bind(provider.id, userId)
+				.all<TokenRow>();
+			token = (ownedRows.results || [])[0] ?? null;
+
+			// 2.2 该 Provider 下的共享 Token（任意用户）
+			if (!token) {
+				const nowIso = new Date().toISOString();
+				const sharedRows = await c.env.DB.prepare(
+					`SELECT * FROM model_tokens
+           WHERE provider_id = ? AND shared = 1 AND enabled = 1
+             AND (shared_disabled_until IS NULL OR shared_disabled_until < ?)
+           ORDER BY updated_at ASC LIMIT 1`,
+				)
+					.bind(provider.id, nowIso)
+					.all<TokenRow>();
+				token = (sharedRows.results || [])[0] ?? null;
+			}
+
+			if (token && typeof token.secret_token === "string") {
+				apiKey = token.secret_token.trim();
+			}
+		}
+
+		// 2.3 仍未拿到，则从任意用户的共享 Token 中为该 vendor 选择一个（全局共享池）
+		if (!apiKey) {
+			const shared = await findSharedTokenForVendorChat(c, v);
+			if (shared && typeof shared.token.secret_token === "string") {
+				apiKey = shared.token.secret_token.trim();
+				sharedTokenProvider = shared.provider;
+			}
+		}
+
+		if (!apiKey) {
+			throw new AppError(`No API key configured for vendor ${v}`, {
+				status: 400,
+				code: "api_key_missing",
+			});
+		}
+	}
+
+	// 2.4 若用户自己没有 Provider，但通过共享 Token 找到了 Provider，则使用该 Provider
+	if (!provider && sharedTokenProvider) {
+		provider = sharedTokenProvider;
+	}
+
+	if (!provider) {
 		throw new AppError(`No provider configured for vendor ${v}`, {
 			status: 400,
 			code: "provider_not_configured",
 		});
 	}
 
-	const provider = providers[0];
-
-	const ownedRows = await c.env.DB.prepare(
-		`SELECT * FROM model_tokens
-     WHERE provider_id = ? AND user_id = ? AND enabled = 1
-     ORDER BY created_at ASC LIMIT 1`,
-	)
-		.bind(provider.id, userId)
-		.all<TokenRow>();
-	let token: TokenRow | null = (ownedRows.results || [])[0] ?? null;
-
-	if (!token) {
-		const nowIso = new Date().toISOString();
-		const sharedRows = await c.env.DB.prepare(
-			`SELECT * FROM model_tokens
-       WHERE provider_id = ? AND shared = 1 AND enabled = 1
-         AND (shared_disabled_until IS NULL OR shared_disabled_until < ?)
-       ORDER BY updated_at ASC LIMIT 1`,
-		)
-			.bind(provider.id, nowIso)
-			.all<TokenRow>();
-		token = (sharedRows.results || [])[0] ?? null;
-	}
-
-	const apiKey = (token?.secret_token || "").trim();
-	if (!apiKey) {
-		throw new AppError(`No API key configured for vendor ${v}`, {
-			status: 400,
-			code: "api_key_missing",
-		});
-	}
-
+	// 2.5 解析 baseUrl：优先 Provider.base_url，其次 shared_base_url
 	const baseUrl = normalizeBaseUrl(
 		provider.base_url ||
-			(await (async () => {
-				const row = await c.env.DB.prepare(
-					`SELECT base_url FROM model_providers
-           WHERE vendor = ? AND shared_base_url = 1 AND base_url IS NOT NULL
-           ORDER BY updated_at DESC LIMIT 1`,
-				)
-					.bind(v)
-					.first<{ base_url: string | null }>();
-				return row?.base_url ?? null;
-			})()) ||
+			(await resolveSharedBaseUrlForChat(c, v)) ||
 			"",
 	);
 
@@ -1031,6 +1071,387 @@ async function resolveVendorContextForChat(
 	}
 
 	return { baseUrl, apiKey };
+}
+
+type SharedTokenWithProviderChat = {
+	token: TokenRow;
+	provider: ProviderRow;
+};
+
+async function resolveSharedBaseUrlForChat(
+	c: AppContext,
+	vendor: string,
+): Promise<string | null> {
+	const row = await c.env.DB.prepare(
+		`SELECT base_url FROM model_providers
+     WHERE vendor = ? AND shared_base_url = 1 AND base_url IS NOT NULL
+     ORDER BY updated_at DESC LIMIT 1`,
+	)
+		.bind(vendor)
+		.first<{ base_url: string | null }>();
+	return row?.base_url ?? null;
+}
+
+async function findSharedTokenForVendorChat(
+	c: AppContext,
+	vendor: string,
+): Promise<SharedTokenWithProviderChat | null> {
+	const nowIso = new Date().toISOString();
+	const row = await c.env.DB.prepare(
+		`SELECT
+       t.id,
+       t.provider_id,
+       t.label,
+       t.secret_token,
+       t.user_agent,
+       t.user_id,
+       t.enabled,
+       t.shared,
+       t.shared_failure_count,
+       t.shared_last_failure_at,
+       t.shared_disabled_until,
+       t.created_at,
+       t.updated_at,
+       p.id   AS p_id,
+       p.name AS p_name,
+       p.vendor AS p_vendor,
+       p.base_url AS p_base_url,
+       p.shared_base_url AS p_shared_base_url,
+       p.owner_id AS p_owner_id,
+       p.created_at AS p_created_at,
+       p.updated_at AS p_updated_at
+     FROM model_tokens t
+     JOIN model_providers p ON p.id = t.provider_id
+     WHERE t.shared = 1
+       AND t.enabled = 1
+       AND p.vendor = ?
+       AND (t.shared_disabled_until IS NULL OR t.shared_disabled_until < ?)
+     ORDER BY t.updated_at ASC
+     LIMIT 1`,
+	)
+		.bind(vendor, nowIso)
+		.first<any>();
+
+	if (!row) return null;
+
+	const token: TokenRow = {
+		id: row.id,
+		provider_id: row.provider_id,
+		label: row.label,
+		secret_token: row.secret_token,
+		user_agent: row.user_agent,
+		user_id: row.user_id,
+		enabled: row.enabled,
+		shared: row.shared,
+		shared_failure_count: row.shared_failure_count,
+		shared_last_failure_at: row.shared_last_failure_at,
+		shared_disabled_until: row.shared_disabled_until,
+		created_at: row.created_at,
+		updated_at: row.updated_at,
+	};
+
+	const provider: ProviderRow = {
+		id: row.p_id,
+		name: row.p_name,
+		vendor: row.p_vendor,
+		base_url: row.p_base_url,
+		shared_base_url: row.p_shared_base_url,
+		owner_id: row.p_owner_id,
+		created_at: row.p_created_at,
+		updated_at: row.p_updated_at,
+	};
+
+	return { token, provider };
+}
+
+function requiresApiKeyForVendorChat(vendor: string): boolean {
+	const v = vendor.toLowerCase();
+	return v === "openai" || v === "anthropic" || v === "gemini";
+}
+
+async function persistChatHistoryFromClientMessages(
+	c: AppContext,
+	sessionId: string,
+	messages: any[],
+) {
+	const nowIso = new Date().toISOString();
+	try {
+		const items = Array.isArray(messages)
+			? (messages as ChatMessageDto[])
+			: [];
+
+		// 先清空该会话已有记录，再用当前快照重建，保证顺序与内容一致。
+		await c.env.DB.prepare(
+			`DELETE FROM chat_messages WHERE session_id = ?`,
+		)
+			.bind(sessionId)
+			.run();
+
+		for (const msg of items) {
+			if (!msg || typeof msg.role !== "string") continue;
+			const role = (msg.role || "user") as ChatRole;
+			let content = "";
+			if (typeof (msg as any).content === "string") {
+				content = (msg as any).content;
+			} else if (Array.isArray((msg as any).parts)) {
+				const parts = (msg as any).parts as any[];
+				const texts: string[] = [];
+				for (const part of parts) {
+					if (part && typeof part.text === "string") {
+						texts.push(part.text);
+					}
+				}
+				content = texts.join("");
+			}
+			const raw = JSON.stringify(msg);
+			const id = crypto.randomUUID();
+
+			await c.env.DB.prepare(
+				`INSERT INTO chat_messages
+       (id, session_id, role, content, raw, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+			)
+				.bind(
+					id,
+					sessionId,
+					role,
+					content.trim() || null,
+					raw,
+					nowIso,
+				)
+				.run();
+		}
+	} catch (err) {
+		console.warn("[ai/chat] persist chat history failed", {
+			sessionId,
+			error:
+				err && typeof err === "object" && "message" in err
+					? (err as any).message
+					: String(err),
+		});
+	}
+}
+
+export async function listChatSessions(
+	c: AppContext,
+	userId: string,
+) {
+	const rows = await c.env.DB.prepare(
+		`SELECT
+       s.id,
+       s.session_id,
+       s.title,
+       s.model,
+       s.provider,
+       s.created_at,
+       s.updated_at,
+       (
+         SELECT m.content
+         FROM chat_messages m
+         WHERE m.session_id = s.id
+         ORDER BY m.created_at DESC
+         LIMIT 1
+       ) AS last_content
+     FROM chat_sessions s
+     WHERE s.user_id = ?
+     ORDER BY s.updated_at DESC
+     LIMIT 50`,
+	)
+		.bind(userId)
+		.all<ChatSessionRow & { last_content: string | null }>();
+
+	const sessions = (rows.results || []).map((row, index) => ({
+		id: row.session_id,
+		title: row.title || `会话 ${index + 1}`,
+		model: row.model || null,
+		provider: row.provider || null,
+		lastMessage: row.last_content || null,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	}));
+
+	return { sessions };
+}
+
+export async function getChatHistory(
+	c: AppContext,
+	userId: string,
+	sessionKey: string,
+) {
+	const trimmed = (sessionKey || "").trim();
+	if (!trimmed) {
+		throw new AppError("sessionId is required", {
+			status: 400,
+			code: "session_id_required",
+		});
+	}
+
+	const session = await c.env.DB.prepare(
+		`SELECT * FROM chat_sessions
+     WHERE user_id = ? AND session_id = ?
+     LIMIT 1`,
+	)
+		.bind(userId, trimmed)
+		.first<ChatSessionRow>();
+
+	if (!session) {
+		return {
+			session: null,
+			messages: [],
+		};
+	}
+
+	const rows = await c.env.DB.prepare(
+		`SELECT * FROM chat_messages
+     WHERE session_id = ?
+     ORDER BY created_at ASC`,
+	)
+		.bind(session.id)
+		.all<ChatMessageRow>();
+
+	const messages = (rows.results || []).map((row) => {
+		let payload: any = null;
+		if (row.raw) {
+			try {
+				payload = JSON.parse(row.raw);
+			} catch {
+				payload = null;
+			}
+		}
+
+		const role =
+			(typeof payload?.role === "string"
+				? payload.role
+				: row.role || "user") as ChatRole;
+		const content =
+			typeof payload?.content === "string"
+				? payload.content
+				: row.content || null;
+		const parts = Array.isArray(payload?.parts)
+			? (payload.parts as any[])
+			: undefined;
+		const metadata =
+			payload && typeof payload.metadata === "object"
+				? (payload.metadata as Record<string, any>)
+				: undefined;
+
+		return {
+			id: row.id,
+			role,
+			content,
+			parts,
+			metadata,
+			createdAt: row.created_at,
+		};
+	});
+
+	return {
+		session: {
+			id: session.session_id,
+			title: session.title || null,
+			model: session.model || null,
+			provider: session.provider || null,
+			createdAt: session.created_at,
+			updatedAt: session.updated_at,
+		},
+		messages,
+	};
+}
+
+export async function updateChatSessionTitle(
+	c: AppContext,
+	userId: string,
+	sessionKey: string,
+	titleRaw: string,
+) {
+	const key = (sessionKey || "").trim();
+	if (!key) {
+		throw new AppError("sessionId is required", {
+			status: 400,
+			code: "session_id_required",
+		});
+	}
+	const title = (titleRaw || "").trim();
+	if (!title) {
+		throw new AppError("title is required", {
+			status: 400,
+			code: "title_required",
+		});
+	}
+
+	const session = await c.env.DB.prepare(
+		`SELECT * FROM chat_sessions
+     WHERE user_id = ? AND session_id = ?
+     LIMIT 1`,
+	)
+		.bind(userId, key)
+		.first<ChatSessionRow>();
+
+	if (!session) {
+		throw new AppError("Chat session not found", {
+			status: 404,
+			code: "session_not_found",
+		});
+	}
+
+	const nowIso = new Date().toISOString();
+	await c.env.DB.prepare(
+		`UPDATE chat_sessions
+     SET title = ?, updated_at = ?
+     WHERE id = ?`,
+	)
+		.bind(title, nowIso, session.id)
+		.run();
+
+	return {
+		id: session.session_id,
+		title,
+		model: session.model || null,
+		provider: session.provider || null,
+		lastMessage: null as string | null,
+		createdAt: session.created_at,
+		updatedAt: nowIso,
+	};
+}
+
+export async function deleteChatSession(
+	c: AppContext,
+	userId: string,
+	sessionKey: string,
+) {
+	const key = (sessionKey || "").trim();
+	if (!key) {
+		throw new AppError("sessionId is required", {
+			status: 400,
+			code: "session_id_required",
+		});
+	}
+
+	const session = await c.env.DB.prepare(
+		`SELECT * FROM chat_sessions
+     WHERE user_id = ? AND session_id = ?
+     LIMIT 1`,
+	)
+		.bind(userId, key)
+		.first<ChatSessionRow>();
+
+	if (!session) {
+		// 幂等删除：会话不存在时直接返回成功
+		return { success: true };
+	}
+
+	await c.env.DB.prepare(
+		`DELETE FROM chat_messages WHERE session_id = ?`,
+	)
+		.bind(session.id)
+		.run();
+	await c.env.DB.prepare(
+		`DELETE FROM chat_sessions WHERE id = ?`,
+	)
+		.bind(session.id)
+		.run();
+
+	return { success: true };
 }
 
 export async function handleChatStream(
@@ -1087,6 +1508,7 @@ export async function handleChatStream(
 
 	// --- Minimal chat session persistence: chat_sessions (no messages yet) ---
 	const nowIso = new Date().toISOString();
+	let sessionDbId: string | null = null;
 	const sessionIdRaw =
 		(typeof input.sessionId === "string" && input.sessionId.trim()) ||
 		null;
@@ -1100,6 +1522,7 @@ export async function handleChatStream(
 			.first<{ id: string }>();
 
 		if (existing?.id) {
+			sessionDbId = existing.id;
 			await c.env.DB.prepare(
 				`UPDATE chat_sessions
          SET model = ?, provider = ?, updated_at = ?
@@ -1109,6 +1532,7 @@ export async function handleChatStream(
 				.run();
 		} else {
 			const id = crypto.randomUUID();
+			sessionDbId = id;
 			await c.env.DB.prepare(
 				`INSERT INTO chat_sessions
          (id, user_id, session_id, title, model, provider, created_at, updated_at)
@@ -1171,6 +1595,22 @@ export async function handleChatStream(
 
 	// 在主对话流开始前触发一次轻量级智能事件，用于驱动前端的思考过程与计划面板。
 	emitSimpleIntelligentEvents(c, userId, input, lastUserText);
+
+	// 异步将当前会话的完整消息快照写入 chat_messages，
+	// 供后续「重新打开会话」时从后端恢复上下文。
+	if (sessionDbId && Array.isArray(input.messages) && input.messages.length) {
+		const sessionIdForLog = sessionDbId;
+		const snapshot = input.messages as any[];
+		// 不阻塞主请求，使用 Workers 的后台任务能力
+		// eslint-disable-next-line @typescript-eslint/no-floating-promises
+		(c.executionCtx as any)?.waitUntil?.(
+			persistChatHistoryFromClientMessages(
+				c,
+				sessionIdForLog,
+				snapshot,
+			),
+		);
+	}
 
 	const uiMessages = normalizeMessagesForModel(input.messages);
 	// Convert cleaned UIMessage[] → ModelMessage[] as required by streamText

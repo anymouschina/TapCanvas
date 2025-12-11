@@ -109,6 +109,37 @@ export type PromptSampleInput = {
   keywords?: string[]
 }
 
+export type ChatSessionSummaryDto = {
+  id: string
+  title: string | null
+  model: string | null
+  provider: string | null
+  lastMessage?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ChatHistoryMessageDto = {
+  id: string
+  role: string
+  content?: string | null
+  parts?: any[] | null
+  metadata?: Record<string, any> | null
+  createdAt: string
+}
+
+export type ChatHistoryDto = {
+  session: {
+    id: string
+    title: string | null
+    model: string | null
+    provider: string | null
+    createdAt: string
+    updatedAt: string
+  } | null
+  messages: ChatHistoryMessageDto[]
+}
+
 export async function fetchPromptSamples(params?: { query?: string; nodeKind?: string; source?: 'official' | 'custom' | 'all' }): Promise<{ samples: PromptSampleDto[] }> {
   const qs = new URLSearchParams()
   if (params?.query) qs.set('q', params.query)
@@ -139,6 +170,111 @@ export async function createPromptSample(payload: PromptSampleInput): Promise<Pr
   }))
   if (!r.ok) throw new Error(`create prompt sample failed: ${r.status}`)
   return r.json()
+}
+
+export async function listChatSessions(): Promise<ChatSessionSummaryDto[]> {
+  const r = await fetch(`${API_BASE}/ai/chat/sessions`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `list chat sessions failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const sessions: any[] = Array.isArray(body?.sessions) ? body.sessions : []
+  return sessions.map((s, index) => ({
+    id: String(s.id ?? `session-${index}`),
+    title: typeof s.title === 'string' && s.title.trim() ? s.title.trim() : null,
+    model: typeof s.model === 'string' ? s.model : null,
+    provider: typeof s.provider === 'string' ? s.provider : null,
+    lastMessage: typeof s.lastMessage === 'string' ? s.lastMessage : null,
+    createdAt: String(s.createdAt ?? s.created_at ?? ''),
+    updatedAt: String(s.updatedAt ?? s.updated_at ?? ''),
+  }))
+}
+
+export async function getChatHistory(sessionId: string): Promise<ChatHistoryDto> {
+  const qs = new URLSearchParams()
+  qs.set('sessionId', sessionId)
+  const r = await fetch(`${API_BASE}/ai/chat/history?${qs.toString()}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get chat history failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const sessionRaw = body?.session || null
+  const messagesRaw: any[] = Array.isArray(body?.messages) ? body.messages : []
+  const session = sessionRaw
+    ? {
+        id: String(sessionRaw.id),
+        title: typeof sessionRaw.title === 'string' ? sessionRaw.title : null,
+        model: typeof sessionRaw.model === 'string' ? sessionRaw.model : null,
+        provider: typeof sessionRaw.provider === 'string' ? sessionRaw.provider : null,
+        createdAt: String(sessionRaw.createdAt ?? sessionRaw.created_at ?? ''),
+        updatedAt: String(sessionRaw.updatedAt ?? sessionRaw.updated_at ?? ''),
+      }
+    : null
+  const messages: ChatHistoryMessageDto[] = messagesRaw.map((row) => ({
+    id: String(row.id),
+    role: typeof row.role === 'string' ? row.role : 'user',
+    content: typeof row.content === 'string' ? row.content : row.content ?? null,
+    parts: Array.isArray(row.parts) ? row.parts : null,
+    metadata: row && typeof row.metadata === 'object' ? row.metadata : null,
+    createdAt: String(row.createdAt ?? row.created_at ?? ''),
+  }))
+  return { session, messages }
+}
+
+export async function renameChatSession(sessionId: string, title: string): Promise<ChatSessionSummaryDto> {
+  const payload = { title }
+  const r = await fetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `rename chat session failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    id: String(body.id ?? sessionId),
+    title: typeof body.title === 'string' ? body.title : null,
+    model: typeof body.model === 'string' ? body.model : null,
+    provider: typeof body.provider === 'string' ? body.provider : null,
+    lastMessage: typeof body.lastMessage === 'string' ? body.lastMessage : null,
+    createdAt: String(body.createdAt ?? body.created_at ?? ''),
+    updatedAt: String(body.updatedAt ?? body.updated_at ?? ''),
+  }
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
+    method: 'DELETE',
+  }))
+  if (!r.ok) {
+    let body: any = null
+    try {
+      body = await r.json()
+    } catch {
+      body = null
+    }
+    const msg = (body && (body.message || body.error)) || `delete chat session failed: ${r.status}`
+    throw new Error(msg)
+  }
 }
 
 export async function deletePromptSample(id: string): Promise<void> {

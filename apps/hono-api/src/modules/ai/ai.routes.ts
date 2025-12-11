@@ -21,7 +21,13 @@ import {
 	listPromptSamples,
 	parsePromptSample,
 } from "./ai.service";
-import { handleChatStream } from "./ai.chat";
+import {
+	handleChatStream,
+	listChatSessions,
+	getChatHistory,
+	updateChatSessionTitle,
+	deleteChatSession,
+} from "./ai.chat";
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -76,6 +82,53 @@ aiRouter.post("/chat/stream", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	return handleChatStream(c, userId);
+});
+
+aiRouter.get("/chat/sessions", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const result = await listChatSessions(c, userId);
+	return c.json(result);
+});
+
+aiRouter.get("/chat/history", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const sessionId = (c.req.query("sessionId") || "").trim();
+	if (!sessionId) {
+		return c.json(
+			{ error: "sessionId is required", code: "session_id_required" },
+			400,
+		);
+	}
+	const result = await getChatHistory(c, userId, sessionId);
+	return c.json(result);
+});
+
+aiRouter.patch("/chat/sessions/:sessionId", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const sessionId = c.req.param("sessionId") || "";
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const title =
+		typeof (body as any).title === "string"
+			? ((body as any).title as string)
+			: "";
+	const result = await updateChatSessionTitle(
+		c,
+		userId,
+		sessionId,
+		title,
+	);
+	return c.json(result);
+});
+
+aiRouter.delete("/chat/sessions/:sessionId", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const sessionId = c.req.param("sessionId") || "";
+	const result = await deleteChatSession(c, userId, sessionId);
+	return c.json(result);
 });
 
 // ---- Tool events SSE + tool result reporting ----

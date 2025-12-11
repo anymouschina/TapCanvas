@@ -1830,6 +1830,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       />
     )
 
+  function refreshCharacters() {
+    if (!selectedCharacterTokenId) return
+    fetchCharacters()
+  }
+
   const characterContentProps = isCharacterNode
     ? {
       characterPrimaryImage,
@@ -2408,10 +2413,6 @@ const rewritePromptWithCharacters = React.useCallback(
     },
     [selectedCharacterTokenId],
   )
-  const refreshCharacters = React.useCallback(() => {
-    if (!selectedCharacterTokenId) return
-    fetchCharacters()
-  }, [fetchCharacters, selectedCharacterTokenId])
   const loadMoreCharacters = React.useCallback(() => {
     if (!selectedCharacterTokenId || !characterCursor) return
     fetchCharacters({ cursor: characterCursor, append: true })

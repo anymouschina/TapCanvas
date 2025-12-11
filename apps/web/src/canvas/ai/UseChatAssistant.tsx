@@ -10,7 +10,16 @@ import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
 import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
-import { runTaskByVendor, type TaskResultDto, listAvailableModels } from '../../api/server'
+import {
+  runTaskByVendor,
+  type TaskResultDto,
+  listAvailableModels,
+  listChatSessions as listServerChatSessions,
+  getChatHistory as getServerChatHistory,
+  renameChatSession as renameServerChatSession,
+  deleteChatSession as deleteServerChatSession,
+  type ChatHistoryMessageDto,
+} from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
@@ -304,6 +313,41 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     }
   }, [])
 
+  // 从服务端加载历史会话列表与首个会话的消息
+  useEffect(() => {
+    let canceled = false
+    const loadSessions = async () => {
+      try {
+        const serverSessions = await listServerChatSessions().catch(() => [])
+        if (canceled || !serverSessions.length) return
+        const mapped: AssistantSession[] = serverSessions.map((item, index) => ({
+          id: item.id,
+          title: item.title || `会话 ${index + 1}`,
+          messages: [],
+        }))
+        setSessions(mapped)
+        const first = mapped[0]
+        if (!first) return
+        setActiveSessionId(first.id)
+        const history = await getServerChatHistory(first.id).catch(() => null)
+        if (canceled || !history) return
+        const uiMessages = history.messages.map((m) => toUiMessageFromHistory(m))
+        setSessions(prev =>
+          prev.map(session =>
+            session.id === first.id ? { ...session, messages: uiMessages } : session
+          )
+        )
+        setMessages(uiMessages)
+      } catch {
+        // ignore loading errors for assistant history
+      }
+    }
+    void loadSessions()
+    return () => {
+      canceled = true
+    }
+  }, [apiRoot, setMessages])
+
   useEffect(() => {
     if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
       const preferred = assistantModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
@@ -395,6 +439,20 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
       return part.type.slice('tool-'.length)
     }
     return undefined
+  }
+
+  const toUiMessageFromHistory = (msg: ChatHistoryMessageDto): UIMessage => {
+    const baseParts = Array.isArray(msg.parts) && msg.parts.length
+      ? msg.parts
+      : msg.content
+        ? [{ type: 'text', text: msg.content }]
+        : []
+    return {
+      id: msg.id || nanoid(),
+      role: (msg.role as any) || 'user',
+      parts: baseParts,
+      metadata: msg.metadata || {},
+    } as UIMessage
   }
 
   const isToolCallPart = (part: any) => {
@@ -1033,20 +1091,86 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     setIsThinking(false)
   }, [sessions.length, setMessages])
 
+  const handleRenameSession = useCallback(async (sessionId: string) => {
+    const target = sessions.find(session => session.id === sessionId)
+    const currentTitle = target?.title || ''
+    const next = window.prompt('重命名会话', currentTitle)
+    if (next == null) return
+    const trimmed = next.trim()
+    if (!trimmed) return
+    try {
+      const updated = await renameServerChatSession(sessionId, trimmed)
+      setSessions(prev =>
+        prev.map(session =>
+          session.id === sessionId ? { ...session, title: updated.title || trimmed } : session
+        )
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '重命名失败'
+      toast(message, 'error')
+    }
+  }, [sessions])
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    const target = sessions.find(session => session.id === sessionId)
+    const label = target?.title || '当前会话'
+    if (!window.confirm(`确定要删除「${label}」吗？此操作不可恢复。`)) return
+    try {
+      await deleteServerChatSession(sessionId)
+      setSessions(prev => prev.filter(session => session.id !== sessionId))
+      if (activeSessionId === sessionId) {
+        const next = sessions.find(session => session.id !== sessionId)
+        if (next) {
+          setActiveSessionId(next.id)
+          setMessages(next.messages)
+        } else {
+          const fresh = createEmptyAssistantSession('会话 1')
+          setActiveSessionId(fresh.id)
+          setSessions([fresh])
+          setMessages([])
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '删除会话失败'
+      toast(message, 'error')
+    }
+  }, [sessions, activeSessionId, setMessages])
+
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
     const target = sessions.find(session => session.id === sessionId)
-    if (target) {
+    if (target && target.messages.length) {
       setMessages(target.messages)
-    } else {
-      setMessages([])
+      setInput('')
+      setImagePromptAttachments([])
+      setActivePromptAttachmentId(null)
+      setThinkingEvents([])
+      setPlanUpdate(null)
+      setIsThinking(false)
+      return
     }
-    setInput('')
-    setImagePromptAttachments([])
-    setActivePromptAttachmentId(null)
-    setThinkingEvents([])
-    setPlanUpdate(null)
-    setIsThinking(false)
+    // 若本地没有该会话的消息，则从服务端拉取历史记录
+    void (async () => {
+      try {
+        const history = await getServerChatHistory(sessionId)
+        const uiMessages = history.messages.map(m => toUiMessageFromHistory(m))
+        setSessions(prev =>
+          prev.map(session =>
+            session.id === sessionId ? { ...session, messages: uiMessages } : session
+          )
+        )
+        setMessages(uiMessages)
+      } catch {
+        setMessages([])
+      } finally {
+        setInput('')
+        setImagePromptAttachments([])
+        setActivePromptAttachmentId(null)
+        setThinkingEvents([])
+        setPlanUpdate(null)
+        setIsThinking(false)
+      }
+    })()
   }, [sessions, setMessages])
 
 
@@ -1348,7 +1472,8 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                           background: session.id === activeSessionId ? 'rgba(88,112,255,0.22)' : 'transparent',
                           border: session.id === activeSessionId ? '1px solid rgba(129,140,248,0.7)' : '1px solid transparent',
                           display: 'flex',
-                          alignItems: 'center'
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
                         }}
                       >
                         <Text
@@ -1358,6 +1483,30 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                         >
                           {session.title || `会话 ${index + 1}`}
                         </Text>
+                        <Group gap={4}>
+                          <ActionIcon
+                            size="xs"
+                            variant="subtle"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleRenameSession(session.id)
+                            }}
+                            styles={{ root: { background: 'transparent', border: 'none', color: '#c7d2fe' } }}
+                          >
+                            <IconBulb size={12} />
+                          </ActionIcon>
+                          <ActionIcon
+                            size="xs"
+                            variant="subtle"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleDeleteSession(session.id)
+                            }}
+                            styles={{ root: { background: 'transparent', border: 'none', color: '#fca5a5' } }}
+                          >
+                            <IconX size={12} />
+                          </ActionIcon>
+                        </Group>
                       </Box>
                     ))}
                   </Stack>
