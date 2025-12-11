@@ -203,15 +203,9 @@ function TapshowFullPageInner(): JSX.Element {
     const base = resolveWebcutUrl()
     if (!base) return null
     if (!token) return base
-    try {
-      const url = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined)
-      url.searchParams.set('tap_token', token)
-      return url.toString()
-    } catch {
-      const [path, hash] = base.split('#')
-      const sep = path.includes('?') ? '&' : '?'
-      return `${path}${sep}tap_token=${encodeURIComponent(token)}${hash ? `#${hash}` : ''}`
-    }
+    const url = new URL(base)
+    url.searchParams.set('tap_token', token)
+    return url.toString()
   }, [token])
 
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
