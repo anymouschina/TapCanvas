@@ -21,7 +21,7 @@ export function CharacterCreatorModal(): JSX.Element | null {
   const [selectedTokenId, setSelectedTokenId] = React.useState<string | null>(null)
 
   const videoVendor = (payload?.videoVendor || '').toLowerCase()
-  const allowTokenless = videoVendor === 'sora2api'
+  const allowTokenless = videoVendor === 'sora2api' || videoVendor === 'grsai'
 
   React.useEffect(() => {
     if (!open) return

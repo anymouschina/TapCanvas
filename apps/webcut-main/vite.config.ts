@@ -8,12 +8,22 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgPath = resolve(__dirname, 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+const resolvePath = (...paths: string[]) => resolve(__dirname, ...paths);
+const preferExisting = (primary: string, fallback: string) => fs.existsSync(primary) ? primary : fallback;
 const allDependencies = [
   ...Object.keys(pkg.dependencies || {}),
   ...Object.keys(pkg.devDependencies || {}),
   ...Object.keys(pkg.peerDependencies || {}),
   ...Object.keys(pkg.optionalDependencies || {}),
 ];
+const fallbackStyle = resolvePath('dev/style-fallback.css');
+const localAliases = {
+  'webcut/webcomponents/style.css': preferExisting(resolvePath('webcomponents/style.css'), fallbackStyle),
+  'webcut/esm/style.css': preferExisting(resolvePath('esm/style.css'), fallbackStyle),
+  'webcut/webcomponents': preferExisting(resolvePath('webcomponents/index.js'), resolvePath('src/webcomponents.ts')),
+  'webcut/esm': preferExisting(resolvePath('esm/index.js'), resolvePath('src/index.ts')),
+  webcut: preferExisting(resolvePath('esm/index.js'), resolvePath('src')),
+};
 
 // 根据环境变量选择构建配置
 // webcomponents | esm | webcomponents_bundle
@@ -38,6 +48,11 @@ export default defineConfig(({ mode }) => ({
   define: buildType.endsWith('_bundle') ? {
     'process.env.NODE_ENV': JSON.stringify(mode),
   } : undefined,
+  resolve: {
+    alias: localAliases,
+  },
+  // 让 Vite 从当前包目录读取 .env（非仓库根）
+  envDir: __dirname,
   server: {
     host: true,
     port: 5174,

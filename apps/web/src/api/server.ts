@@ -1446,3 +1446,72 @@ export async function unwatermarkSoraVideo(url: string): Promise<{ downloadUrl: 
   }
   return r.json()
 }
+
+// --- Sora2API / grsai character helpers ---
+
+export async function uploadSora2ApiCharacter(input: {
+  url: string
+  timestamps?: string
+  webHook?: string
+  shutProgress?: boolean
+}) {
+  const r = await fetch(`${API_BASE}/sora/sora2api/characters/upload`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+  if (!r.ok) {
+    let msg = `upload sora2api character failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
+export async function createSora2ApiCharacterFromPid(input: {
+  pid: string
+  timestamps?: string
+  webHook?: string
+  shutProgress?: boolean
+}) {
+  const r = await fetch(`${API_BASE}/sora/sora2api/characters/create`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+  if (!r.ok) {
+    let msg = `create sora2api character failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
+export async function fetchSora2ApiCharacterResult(taskId: string) {
+  const r = await fetch(`${API_BASE}/sora/sora2api/characters/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId }),
+  }))
+  if (!r.ok) {
+    let msg = `fetch sora2api character result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}

@@ -1,6 +1,13 @@
 import type { AppContext, WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
 import { SoraVideoDraftResponseSchema } from "./sora.schemas";
+import { resolveVendorContext } from "../task/task.service";
+
+function normalizeBaseUrl(raw: string | null | undefined): string {
+	const val = (raw || "").trim();
+	if (!val) return "";
+	return val.replace(/\/+$/, "");
+}
 
 type SoraToken = {
 	id: string;
@@ -1635,5 +1642,282 @@ export async function publishSoraVideo(
 		message: postId
 			? "Video published successfully"
 			: "Publish succeeded but no postId returned",
+	};
+}
+
+// ---------- Sora2API / GRSAI Character helpers ----------
+
+type Sora2ApiCharacterPayload = {
+	id: string;
+	progress?: number | null;
+	status?: string | null;
+	results?: Array<{ character_id?: string | null }>;
+	error?: string | null;
+	failure_reason?: string | null;
+	msg?: string | null;
+};
+
+function mapSora2ApiStatus(status?: string | null): "running" | "succeeded" | "failed" {
+	const normalized = (status || "").toLowerCase();
+	if (normalized === "succeeded") return "succeeded";
+	if (normalized === "failed") return "failed";
+	return "running";
+}
+
+function clampCharacterProgress(value?: number | null): number | undefined {
+	if (typeof value !== "number" || Number.isNaN(value)) return undefined;
+	return Math.max(0, Math.min(100, value));
+}
+
+async function callSora2ApiWithFallbacks(
+	c: AppContext,
+	userId: string,
+	endpoints: string[],
+	body: Record<string, any>,
+): Promise<{
+	id: string;
+	payload: any;
+	status: "running" | "succeeded" | "failed";
+	progress?: number;
+	endpoint: string;
+}> {
+	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const apiKey = ctx.apiKey.trim();
+	if (!apiKey) {
+		throw new AppError("未配置 sora2api API Key", {
+			status: 400,
+			code: "sora2api_api_key_missing",
+		});
+	}
+
+	let lastError: any = null;
+	for (const endpoint of endpoints) {
+		let res: Response;
+		let data: any = null;
+		try {
+			res = await fetch(endpoint, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			});
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (error: any) {
+			lastError = {
+				status: 502,
+				data: null,
+				message: error?.message ?? String(error),
+				endpoint,
+			};
+			continue;
+		}
+
+		if (res.status < 200 || res.status >= 300) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					(data &&
+						(data.error?.message ||
+							data.message ||
+							data.error)) ||
+					`sora2api 请求失败: ${res.status}`,
+				endpoint,
+			};
+			continue;
+		}
+
+		const payload =
+			typeof data?.code === "number" && data.code === 0 && data.data
+				? data.data
+				: data;
+		if (typeof data?.code === "number" && data.code !== 0) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					data?.msg ||
+					data?.message ||
+					data?.error ||
+					`sora2api 请求失败: code ${data.code}`,
+				endpoint,
+			};
+			continue;
+		}
+
+		const id =
+			(typeof payload?.id === "string" && payload.id.trim()) ||
+			(typeof payload?.taskId === "string" && payload.taskId.trim()) ||
+			null;
+		if (!id) {
+			lastError = {
+				status: res.status,
+				data,
+				message: "sora2api 未返回任务 ID",
+				endpoint,
+			};
+			continue;
+		}
+
+		const status = mapSora2ApiStatus(payload.status || data?.status);
+		const progress = clampCharacterProgress(
+			typeof payload?.progress === "number"
+				? payload.progress
+				: typeof payload?.progress_pct === "number"
+					? payload.progress_pct * 100
+					: undefined,
+		);
+
+		return {
+			id: id.trim(),
+			payload,
+			status,
+			progress,
+			endpoint,
+		};
+	}
+
+	throw new AppError(lastError?.message || "sora2api 调用失败", {
+		status: lastError?.status ?? 502,
+		code: "sora2api_request_failed",
+		details: {
+			upstreamStatus: lastError?.status ?? null,
+			upstreamData: lastError?.data ?? null,
+			endpointTried: lastError?.endpoint ?? null,
+		},
+	});
+}
+
+export async function uploadCharacterViaSora2Api(
+	c: AppContext,
+	userId: string,
+	input: { url: string; timestamps?: string; webHook?: string; shutProgress?: boolean },
+) {
+	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const body = {
+		url: input.url,
+		timestamps: input.timestamps || "0,3",
+		webHook: typeof input.webHook === "string" ? input.webHook : "-1",
+		shutProgress: input.shutProgress === true,
+	};
+	const endpoints = [
+		`${baseUrl}/v1/video/sora-upload-character`,
+		`${baseUrl}/client/v1/video/sora-upload-character`,
+		`${baseUrl}/client/video/sora-upload-character`,
+	];
+	return callSora2ApiWithFallbacks(c, userId, endpoints, body);
+}
+
+export async function createCharacterFromPidViaSora2Api(
+	c: AppContext,
+	userId: string,
+	input: { pid: string; timestamps?: string; webHook?: string; shutProgress?: boolean },
+) {
+	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const body = {
+		pid: input.pid,
+		timestamps: input.timestamps || "0,3",
+		webHook: typeof input.webHook === "string" ? input.webHook : "-1",
+		shutProgress: input.shutProgress === true,
+	};
+	const endpoints = [
+		`${baseUrl}/v1/video/sora-create-character`,
+		`${baseUrl}/client/v1/video/sora-create-character`,
+		`${baseUrl}/client/video/sora-create-character`,
+	];
+	return callSora2ApiWithFallbacks(c, userId, endpoints, body);
+}
+
+export async function fetchSora2ApiCharacterResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+) {
+	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const apiKey = ctx.apiKey.trim();
+	if (!apiKey) {
+		throw new AppError("未配置 sora2api API Key", {
+			status: 400,
+			code: "sora2api_api_key_missing",
+		});
+	}
+
+	const endpoint = `${baseUrl}/v1/draw/result`;
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetch(endpoint, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${apiKey}`,
+			},
+			body: JSON.stringify({ id: taskId }),
+		});
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("sora2api 结果查询失败", {
+			status: 502,
+			code: "sora2api_result_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	if (res.status < 200 || res.status >= 300) {
+		const msg =
+			(data &&
+				(data.error?.message ||
+					data.message ||
+					data.error)) ||
+			`sora2api 任务查询失败: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora2api_result_failed",
+			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+		});
+	}
+
+	const payload: Sora2ApiCharacterPayload =
+		typeof data?.code === "number" && data.code === 0 && data.data
+			? data.data
+			: data;
+
+	const status = mapSora2ApiStatus(payload.status);
+	const progress = clampCharacterProgress(
+		typeof payload.progress === "number"
+			? payload.progress
+			: typeof (payload as any).progress_pct === "number"
+				? (payload as any).progress_pct * 100
+				: undefined,
+	);
+	const firstResult =
+		Array.isArray(payload.results) && payload.results.length
+			? payload.results[0]
+			: null;
+	const characterId =
+		(typeof firstResult?.character_id === "string" &&
+			firstResult.character_id.trim()) ||
+		null;
+
+	return {
+		id: payload.id,
+		status,
+		progress,
+		characterId,
+		raw: payload,
 	};
 }

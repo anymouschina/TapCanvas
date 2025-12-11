@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, computed } from 'vue';
+import { ref, nextTick, computed, watch } from 'vue';
 import {
   NButton,
   NIcon,
@@ -18,10 +18,11 @@ import { useWebCutHistory } from '../../hooks/history';
 const t = useT();
 
 const { push } = useWebCutPlayer();
-const { projectFiles, files, addNewFile, removeFile } = useWebCutLibrary();
+const { projectFiles, files, addNewFile, removeFile, remoteAssets, remoteAssetsLoading, refreshRemoteAssets } = useWebCutLibrary();
 const { fileUrl } = useWebCutLocalFile();
 const { push: pushHistory } = useWebCutHistory();
 
+const remoteImageList = computed(() => remoteAssets.value.filter((item) => item.type === 'image'));
 const allImageList = computed(() => {
   const items = files.value.filter((file) => file.type.startsWith('image/')).sort((a, b) => (b.time || 0) - (a.time || 0));
   return items;
@@ -33,7 +34,15 @@ const projectImageList = computed(() => {
 
 
 
-const actionType = ref<'import' | 'this' | 'all'>('this');
+const actionType = ref<'import' | 'this' | 'all' | 'assets'>('assets');
+
+watch(actionType, (val) => {
+  if (val === 'assets') {
+    refreshRemoteAssets();
+  }
+}, { immediate: true });
+
+const imageSrc = (file: any) => file.url || fileUrl(file.id);
 
 // 右键菜单相关状态
 const showDropdown = ref(false);
@@ -82,8 +91,8 @@ function onClickoutside() {
 
 async function handleAdd(material: any) {
   try {
-    const { id } = material;
-    await push('image', `file:${id}`, { autoFitRect: 'contain' });
+    const source = material.url || `file:${material.id}`;
+    await push('image', source, { autoFitRect: 'contain' });
     await pushHistory();
   }
   catch (e) {
@@ -98,6 +107,7 @@ async function handleAdd(material: any) {
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'this' }" @click="actionType = 'this'">{{ t('当前') }}</div>
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'import' }" @click="actionType = 'import'">{{ t('导入') }}</div>
       <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'all' }" @click="actionType = 'all'">{{ t('全部') }}</div>
+      <div class="webcut-material-panel-aside-btn" :class="{ 'webcut-material-panel-aside-btn--active': actionType === 'assets' }" @click="actionType = 'assets'">{{ t('资产') }}</div>
     </aside>
 
     <!-- 右侧素材列表 -->
@@ -119,7 +129,7 @@ async function handleAdd(material: any) {
           <div v-for="file in projectImageList" :key="file.id" class="webcut-material-item"
             @contextmenu.stop="handleContextMenu($event, file)">
             <div class="webcut-material-preview">
-              <img :src="fileUrl(file.id)" class="webcut-material-image" />
+              <img :src="imageSrc(file)" class="webcut-material-image" />
               <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(file)">
                 <template #icon>
                   <n-icon>
@@ -142,7 +152,7 @@ async function handleAdd(material: any) {
         <div class="webcut-material-list">
           <div v-for="file in allImageList" :key="file.id" class="webcut-material-item">
             <div class="webcut-material-preview">
-              <img :src="fileUrl(file.id)" class="webcut-material-image" />
+              <img :src="imageSrc(file)" class="webcut-material-image" />
               <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(file)">
                 <template #icon>
                   <n-icon>
@@ -157,6 +167,32 @@ async function handleAdd(material: any) {
           </div>
           <div v-if="allImageList.length === 0" class="webcut-empty-materials">
             {{ t('暂无素材，请先导入素材') }}
+          </div>
+        </div>
+      </scroll-box>
+
+      <scroll-box class="webcut-material-container" v-if="actionType === 'assets'">
+        <div class="webcut-material-list">
+          <div v-for="file in remoteImageList" :key="file.id" class="webcut-material-item">
+            <div class="webcut-material-preview">
+              <img :src="imageSrc(file)" class="webcut-material-image" />
+              <n-button class="webcut-add-button" size="tiny" type="primary" circle @click="handleAdd(file)">
+                <template #icon>
+                  <n-icon>
+                    <Add />
+                  </n-icon>
+                </template>
+              </n-button>
+            </div>
+            <div class="webcut-material-title">
+              {{ file.name }}
+            </div>
+          </div>
+          <div v-if="remoteAssetsLoading" class="webcut-empty-materials">
+            {{ t('加载中...') }}
+          </div>
+          <div v-else-if="remoteImageList.length === 0" class="webcut-empty-materials">
+            {{ t('暂无资产，请先生成或上传') }}
           </div>
         </div>
       </scroll-box>
