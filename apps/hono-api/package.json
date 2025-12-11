@@ -6,7 +6,8 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev --port 8788",
     "start": "wrangler dev --remote",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "db:update:remote": "wrangler d1 execute tapcanvas --file=./schema.sql --remote"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.45",

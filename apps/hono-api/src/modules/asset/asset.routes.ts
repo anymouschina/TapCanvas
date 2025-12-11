@@ -17,9 +17,7 @@ import {
 
 export const assetRouter = new Hono<AppEnv>();
 
-assetRouter.use("*", authMiddleware);
-
-assetRouter.get("/", async (c) => {
+assetRouter.get("/", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const rows = await listAssetsForUser(c.env.DB, userId);
@@ -37,7 +35,7 @@ assetRouter.get("/", async (c) => {
 	return c.json(payload);
 });
 
-assetRouter.post("/", async (c) => {
+assetRouter.post("/", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
@@ -62,7 +60,7 @@ assetRouter.post("/", async (c) => {
 	return c.json(payload);
 });
 
-assetRouter.put("/:id", async (c) => {
+assetRouter.put("/:id", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
@@ -94,7 +92,7 @@ assetRouter.put("/:id", async (c) => {
 	return c.json(payload);
 });
 
-assetRouter.delete("/:id", async (c) => {
+assetRouter.delete("/:id", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
@@ -104,9 +102,6 @@ assetRouter.delete("/:id", async (c) => {
 
 // Public TapShow feed: all OSS-hosted image/video assets
 assetRouter.get("/public", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-
 	const limitParam = c.req.query("limit");
 	const limit =
 		typeof limitParam === "string" && limitParam
@@ -188,7 +183,7 @@ assetRouter.get("/public", async (c) => {
 });
 
 // Proxy image: /assets/proxy-image?url=...
-assetRouter.get("/proxy-image", async (c) => {
+assetRouter.get("/proxy-image", authMiddleware, async (c) => {
 	const raw = (c.req.query("url") || "").trim();
 	if (!raw) {
 		return c.json({ message: "url is required" }, 400);

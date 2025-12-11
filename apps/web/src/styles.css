@@ -321,3 +321,110 @@ body,
 [data-connecting-active="true"] .tc-handle-layer .tc-handle.react-flow__handle-bottom {
   transform: translate(-50%, 10px) !important;
 }
+
+.tapshow-fullpage-root {
+  min-height: 100vh;
+  padding: 16px 0 32px;
+}
+
+.tapshow-logo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.55);
+}
+
+.tapshow-logo-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, #38bdf8, #1d4ed8);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.9);
+}
+
+.tapshow-fullpage-title {
+  letter-spacing: -0.03em;
+}
+
+.tapshow-title-gradient {
+  background: linear-gradient(120deg, #38bdf8, #6366f1, #a855f7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tapshow-grid {
+  margin-top: 8px;
+}
+
+.tapshow-card {
+  position: relative;
+  border-radius: 18px;
+  padding: 10px 10px 12px;
+  background:
+    radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.12), transparent 55%),
+    radial-gradient(circle at 100% 0, rgba(129, 140, 248, 0.12), transparent 55%),
+    rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.9),
+    0 0 0 1px rgba(15, 23, 42, 0.8);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.tapshow-card:hover {
+  transform: translateY(-4px) scale(1.01);
+  border-color: rgba(96, 165, 250, 0.85);
+  box-shadow:
+    0 26px 60px rgba(15, 23, 42, 0.95),
+    0 0 32px rgba(56, 189, 248, 0.45);
+}
+
+.tapshow-card-media {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.tapshow-card-image,
+.tapshow-card-video {
+  display: block;
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 14px;
+}
+
+.tapshow-card-placeholder {
+  width: 100%;
+  height: 220px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 30% 20%, rgba(56, 189, 248, 0.3), transparent 55%),
+    radial-gradient(circle at 70% 90%, rgba(129, 140, 248, 0.25), transparent 55%),
+    rgba(15, 23, 42, 0.98);
+}
+
+.tapshow-card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 8px 9px;
+  background: linear-gradient(to bottom, rgba(15, 23, 42, 0.65), transparent 35%, transparent);
+  pointer-events: none;
+}
+
+.tapshow-card-overlay > * {
+  pointer-events: auto;
+}
+
+.tapshow-card-title {
+  font-weight: 600;
+}

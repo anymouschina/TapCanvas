@@ -43,11 +43,12 @@ import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
+import TapshowFullPage from './ui/TapshowFullPage'
 import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
 
-export default function App(): JSX.Element {
+function CanvasApp(): JSX.Element {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const addNode = useRFStore((s) => s.addNode)
   const subflowNodeId = useUIStore(s => s.subflowNodeId)
@@ -769,4 +770,17 @@ export default function App(): JSX.Element {
       {libraryFlowId && (<LibraryEditor flowId={libraryFlowId} onClose={closeLibraryFlow} />)}
     </AppShell>
   )
+}
+
+function isTapshowRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  const path = window.location.pathname || ''
+  return path === '/tapshow' || path.startsWith('/tapshow/')
+}
+
+export default function App(): JSX.Element {
+  if (isTapshowRoute()) {
+    return <TapshowFullPage />
+  }
+  return <CanvasApp />
 }
