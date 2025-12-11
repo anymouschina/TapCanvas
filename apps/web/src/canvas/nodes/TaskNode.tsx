@@ -246,6 +246,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     hasModelSelect,
     hasSampleCount,
     hasAspect,
+    hasImageSize,
     hasOrientation,
     hasDuration,
     hasTextResults,
@@ -325,7 +326,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       setPrompt(rawPrompt)
     }
   }, [rawPrompt])
-  const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || '16:9')
+  const [aspect, setAspect] = React.useState<string>((data as any)?.aspect || 'auto')
+  const [imageSize, setImageSize] = React.useState<string>((data as any)?.imageSize || '1K')
   const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
   const [storyboardScenes, setStoryboardScenes] = React.useState<StoryboardScene[]>(() =>
@@ -436,21 +438,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [rawShowSystemPrompt, showSystemPrompt])
 
   React.useEffect(() => {
-    const previous = typeof rawSystemPrompt === 'string' ? rawSystemPrompt : ''
-    if ((previous || '') !== (systemPrompt || '')) {
-      updateNodeData(id, { systemPrompt })
-    }
-  }, [rawSystemPrompt, systemPrompt, id, updateNodeData])
-
-  React.useEffect(() => {
-    if (typeof rawShowSystemPrompt === 'boolean') {
-      if (rawShowSystemPrompt !== showSystemPrompt) {
-        updateNodeData(id, { showSystemPrompt })
+    if (typeof rawSystemPrompt !== 'string' || !rawSystemPrompt.trim()) {
+      if (systemPrompt && systemPrompt.trim()) {
+        updateNodeData(id, { systemPrompt })
       }
-      return
     }
-    updateNodeData(id, { showSystemPrompt })
-  }, [rawShowSystemPrompt, showSystemPrompt, id, updateNodeData])
+  }, [id, updateNodeData])
 
   const handleSystemPromptChange = React.useCallback(
     (next: string) => {
@@ -1732,6 +1725,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const buildFeaturePatch = React.useCallback((nextPrompt: string) => {
     const patch: any = { prompt: nextPrompt }
     if (hasAspect) patch.aspect = aspect
+    if (hasImageSize) patch.imageSize = imageSize
     if (hasImageResults) {
       patch.imageModel = imageModel
       patch.imageModelVendor = findVendorForModel(imageModel)
@@ -1748,8 +1742,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     return patch
   }, [
     aspect,
+    imageSize,
     findVendorForModel,
     hasAspect,
+    hasImageSize,
     hasDuration,
     hasImageResults,
     hasOrientation,
@@ -2946,6 +2942,12 @@ const rewritePromptWithCharacters = React.useCallback(
               onAspectChange={(value) => {
                 setAspect(value)
                 updateNodeData(id, { aspect: value })
+              }}
+              showImageSizeMenu={hasImageSize}
+              imageSize={imageSize}
+              onImageSizeChange={(value) => {
+                setImageSize(value)
+                updateNodeData(id, { imageSize: value })
               }}
               showOrientationMenu={showOrientationMenu}
               orientation={orientation}

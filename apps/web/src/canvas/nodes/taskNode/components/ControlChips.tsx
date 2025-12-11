@@ -16,6 +16,9 @@ type ControlChipsProps = {
   onDurationChange: (value: number) => void
   showResolutionMenu: boolean
   onAspectChange: (value: string) => void
+  showImageSizeMenu: boolean
+  imageSize: string
+  onImageSizeChange: (value: string) => void
   showOrientationMenu: boolean
   orientation: 'portrait' | 'landscape'
   onOrientationChange: (value: 'portrait' | 'landscape') => void
@@ -42,6 +45,9 @@ export function ControlChips({
   onDurationChange,
   showResolutionMenu,
   onAspectChange,
+  showImageSizeMenu,
+  imageSize,
+  onImageSizeChange,
   showOrientationMenu,
   orientation,
   onOrientationChange,
@@ -123,8 +129,31 @@ export function ControlChips({
             </Button>
           </Menu.Target>
           <Menu.Dropdown>
-            {['16:9', '1:1', '9:16'].map((value) => (
+            {['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'].map((value) => (
               <Menu.Item key={value} onClick={() => onAspectChange(value)}>
+                {value}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      )}
+      {showImageSizeMenu && (
+        <Menu withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target>
+            <Button
+              type="button"
+              variant="transparent"
+              radius={0}
+              size="compact-sm"
+              style={summaryChipStyles}
+              title="图像尺寸"
+            >
+              <span style={controlValueStyle}>{imageSize}</span>
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {['1K', '2K', '4K'].map((value) => (
+              <Menu.Item key={value} onClick={() => onImageSizeChange(value)}>
                 {value}
               </Menu.Item>
             ))}

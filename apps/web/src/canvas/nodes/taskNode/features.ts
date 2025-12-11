@@ -11,6 +11,7 @@ export type TaskNodeFeatureFlags = {
   hasModelSelect: boolean
   hasSampleCount: boolean
   hasAspect: boolean
+  hasImageSize: boolean
   hasOrientation: boolean
   hasDuration: boolean
   hasImage: boolean
@@ -41,6 +42,7 @@ export const buildTaskNodeFeatureFlags = (
   const hasModelSelect = featureSet.has('modelSelect')
   const hasSampleCount = featureSet.has('sampleCount')
   const hasAspect = featureSet.has('aspect')
+  const hasImageSize = featureSet.has('imageSize')
   const hasOrientation = featureSet.has('orientation')
   const hasDuration = featureSet.has('duration')
   const hasTextResults = featureSet.has('textResults')
@@ -69,6 +71,7 @@ export const buildTaskNodeFeatureFlags = (
     hasModelSelect,
     hasSampleCount,
     hasAspect,
+    hasImageSize,
     hasOrientation,
     hasDuration,
     hasImage,

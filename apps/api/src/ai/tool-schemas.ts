@@ -204,7 +204,9 @@ export const canvasNodeSpecs = {
       '从长剧情拆解出若干关键 stills 供视频节点引用'
     ],
     notes:
-      '单个 image 节点设计为承载有限数量的高价值垫图；需要大量 stills 时应拆分为多个 image 节点，并用连线表达顺序或依赖。'
+      '单个 image 节点设计为承载有限数量的高价值垫图；需要大量 stills 时应拆分为多个 image 节点，并用连线表达顺序或依赖。' +
+      '节点配置中支持 aspectRatio 与 imageSize：aspectRatio 默认 auto，可选 auto/1:1/16:9/9:16/4:3/3:4/3:2/2:3/5:4/4:5/21:9；' +
+      'imageSize 默认 1K，仅在使用 Nano Banana Pro（nano-banana-pro）时生效，可选 1K/2K/4K，分辨率越高，生成时间越长。'
   },
   textToImage: {
     kind: 'textToImage',
@@ -218,7 +220,8 @@ export const canvasNodeSpecs = {
       '从长剧情拆解出若干关键 stills 供视频节点引用'
     ],
     notes:
-      '同 image 节点，共享提示词与模型策略；区别仅在于显式声明 textToImage kind，便于前端配置。'
+      '同 image 节点，共享提示词与模型策略；区别仅在于显式声明 textToImage kind，便于前端配置。' +
+      '同样支持 aspectRatio 与 imageSize 字段，其含义与取值范围与 image 节点保持一致。'
   },
   composeVideo: {
     kind: 'composeVideo',
