@@ -24,26 +24,7 @@ type RemoteAsset = {
 
 const remoteAssets = ref<RemoteAsset[]>([]);
 const remoteAssetsLoading = ref(false);
-
-function resolveApiBase(): string | null {
-    const envBase = VITE_API_BASE;
-    if (typeof envBase === 'string' && envBase.trim()) {
-        return envBase.replace(/\/+$/, '');
-    }
-    if (typeof window !== 'undefined') {
-        const globalBase = (window as any).__TAPCANVAS_API_BASE__;
-        if (typeof globalBase === 'string' && globalBase.trim()) {
-            return (globalBase as string).replace(/\/+$/, '');
-        }
-        const origin = window.location?.origin;
-        if (origin) {
-            return `${origin.replace(/\/+$/, '')}/api`;
-        }
-    }
-    return null;
-}
-
-const API_BASE = resolveApiBase();
+const API_BASE = VITE_API_BASE;
 
 function normalizeRemoteAsset(raw: any): RemoteAsset | null {
     if (!raw || typeof raw !== 'object') return null;
