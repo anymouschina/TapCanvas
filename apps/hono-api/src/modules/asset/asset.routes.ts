@@ -20,7 +20,14 @@ export const assetRouter = new Hono<AppEnv>();
 assetRouter.get("/", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const rows = await listAssetsForUser(c.env.DB, userId);
+	const limitParam = c.req.query("limit");
+	const limit =
+		typeof limitParam === "string" && limitParam
+			? Number(limitParam)
+			: undefined;
+	const cursor = c.req.query("cursor") || null;
+
+	const rows = await listAssetsForUser(c.env.DB, userId, { limit, cursor });
 	const payload = rows.map((row) =>
 		ServerAssetSchema.parse({
 			id: row.id,
@@ -32,7 +39,8 @@ assetRouter.get("/", authMiddleware, async (c) => {
 			projectId: row.project_id,
 		}),
 	);
-	return c.json(payload);
+	const nextCursor = rows.length ? rows[rows.length - 1].created_at : null;
+	return c.json({ items: payload, cursor: nextCursor });
 });
 
 assetRouter.post("/", authMiddleware, async (c) => {

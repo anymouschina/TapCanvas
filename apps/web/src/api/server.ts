@@ -1225,8 +1225,12 @@ export type ServerAssetDto = {
   projectId?: string | null
 }
 
-export async function listServerAssets(): Promise<ServerAssetDto[]> {
-  const r = await fetch(`${API_BASE}/assets`, withAuth())
+export async function listServerAssets(input?: { limit?: number; cursor?: string | null }): Promise<{ items: ServerAssetDto[]; cursor: string | null }> {
+  const qs = new URLSearchParams()
+  if (input?.limit) qs.set('limit', String(input.limit))
+  if (input?.cursor) qs.set('cursor', input.cursor)
+  const url = qs.toString() ? `${API_BASE}/assets?${qs.toString()}` : `${API_BASE}/assets`
+  const r = await fetch(url, withAuth())
   if (!r.ok) throw new Error(`list assets failed: ${r.status}`)
   return r.json()
 }

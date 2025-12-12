@@ -12,6 +12,13 @@ export const ServerAssetSchema = z.object({
 
 export type ServerAssetDto = z.infer<typeof ServerAssetSchema>;
 
+export const ServerAssetListSchema = z.object({
+	items: z.array(ServerAssetSchema),
+	cursor: z.string().nullable(),
+});
+
+export type ServerAssetListDto = z.infer<typeof ServerAssetListSchema>;
+
 export const PublicAssetSchema = z.object({
 	id: z.string(),
 	name: z.string(),
