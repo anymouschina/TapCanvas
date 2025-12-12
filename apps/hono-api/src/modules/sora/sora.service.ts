@@ -10,7 +10,10 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 }
 
 function isGrsaiBaseUrl(url: string): boolean {
-	return url.toLowerCase().includes("grsai");
+	const val = url.toLowerCase();
+	// New Sora2API/GRSAI protocol uses chat/completions for character/image.
+	// Treat sora2api domain as new protocol base as well.
+	return val.includes("grsai") || val.includes("sora2api");
 }
 
 type SoraToken = {

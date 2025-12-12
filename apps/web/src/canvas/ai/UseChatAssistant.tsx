@@ -1400,7 +1400,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
             display: 'flex',
             flexDirection: 'column',
             minHeight: isExpanded ? 420 : 'auto',
-            maxHeight: isExpanded ? 'min(720px, calc(100vh - 200px))' : 260,
+            maxHeight: isExpanded ? 'min(720px, calc(100vh - 200px))' : 96,
             height: isExpanded ? 'min(720px, calc(100vh - 200px))' : 'auto',
             opacity: isExpanded ? 1 : (isHovered ? 0.4 : 0.1),
             transition: 'opacity 150ms ease-out'
@@ -1563,30 +1563,30 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
           </Group>
         </Box>
 
-        <Box
-          style={{ flex: 1, minHeight: 0, display: 'flex' }}
-        > 
+        {isExpanded && (
           <Box
-            sx={{
-              flex: 1,
-              minHeight: 0,
-              background: logBackground,
-              borderRadius: 12,
-              border: logBorder,
-            
-            }}
-            style={{ 
-              flex: 1, 
-              minHeight: 0, 
-              display: 'flex',  
-              position: 'relative',
-              overflow: 'hidden',
-              boxShadow: '0 28px 60px rgba(3,5,15,0.65)',
-              backdropFilter: 'blur(22px)',
-              flexDirection: 'column' 
-            }}
+            style={{ flex: 1, minHeight: 0, display: 'flex' }}
           >
-            {isExpanded && (
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                background: logBackground,
+                borderRadius: 12,
+                border: logBorder,
+
+              }}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                position: 'relative',
+                overflow: 'hidden',
+                boxShadow: '0 28px 60px rgba(3,5,15,0.65)',
+                backdropFilter: 'blur(22px)',
+                flexDirection: 'column'
+              }}
+            >
               <Box style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
                 <ScrollArea style={{ height: '100%' }} type="auto">
                   <Stack gap="md" style={{ padding: 24, paddingBottom: 16 }}>
@@ -1608,106 +1608,105 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                   </Stack>
                 </ScrollArea>
               </Box>
-            )}
 
-            <input
-              ref={imagePromptInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleImagePromptChange}
-            />
-            <form
-              onSubmit={onSubmit}
-              style={{  position: 'relative', zIndex: 1, flexShrink: 0 }}
-            >
-              <Box
-                style={{
-                  background: inputBackground,
-                  borderRadius: 12,
-                  boxShadow: '0 25px 60px rgba(2,6,20,0.65)',
-                  padding: 12,
-                  border: inputBorder
-                }}
+              <input
+                ref={imagePromptInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleImagePromptChange}
+              />
+              <form
+                onSubmit={onSubmit}
+                style={{ position: 'relative', zIndex: 1, flexShrink: 0 }}
               >
-                <Stack gap="xs">
-                  <Box>
-                    <Textarea
-                      minRows={3}
-                      placeholder="发出灵感或问候，支持粘贴/上传图片…"
-                      value={input}
-                      onChange={(e) => setInput(e.currentTarget.value)}
-                      onPaste={handleTextareaPaste}
-                      onFocus={() => setIsExpanded(true)}
-                      disabled={isLoading}
-                      onKeyDown={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                          e.preventDefault()
-                          onSubmit()
-                        }
-                      }}
-                      styles={{
-                        input: {
-                          background: 'transparent',
-                          borderColor: 'transparent',
-                          color: inputColor,
-                          paddingRight: 24,
-                          paddingBottom: 16,
-                          borderRadius: 8,
-                          boxShadow: 'none'
-                        }
-                      }}
-                    />
-                  </Box>
-                  <Group justify="space-between" align="center" mt="sm">
-                    <Group gap="xs">
-                      <Tooltip label={uploadTooltipLabel}>
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={handleImagePromptButtonClick}
-                          disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
-                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
-                        >
-                          {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="语音输入 · 即将开放">
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={() => handleToolbarAction('语音输入')}
-                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
-                        >
-                          <IconMicrophone size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="灵感表情 · 即将上线">
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={() => handleToolbarAction('灵感表情')}
-                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
-                        >
-                          <IconMoodSmile size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={enableWebSearch ? '已开启联网搜索' : '已关闭联网搜索'}>
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={() => setEnableWebSearch(prev => !prev)}
-                          aria-pressed={enableWebSearch}
-                          styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
-                        >
-                          {enableWebSearch ? <IconWorld size={16} /> : <IconWorldOff size={16} />}
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                    <Button
-                      type="submit"
-                      loading={isLoading}
-                      leftSection={<IconSend size={16} />}
-                      radius="xl"
-                      styles={{
-                        root: {
+                <Box
+                  style={{
+                    background: inputBackground,
+                    borderRadius: 12,
+                    boxShadow: '0 25px 60px rgba(2,6,20,0.65)',
+                    padding: 12,
+                    border: inputBorder
+                  }}
+                >
+                  <Stack gap="xs">
+                    <Box>
+                      <Textarea
+                        minRows={3}
+                        placeholder="发出灵感或问候，支持粘贴/上传图片…"
+                        value={input}
+                        onChange={(e) => setInput(e.currentTarget.value)}
+                        onPaste={handleTextareaPaste}
+                        onFocus={() => setIsExpanded(true)}
+                        disabled={isLoading}
+                        onKeyDown={(e) => {
+                          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                            e.preventDefault()
+                            onSubmit()
+                          }
+                        }}
+                        styles={{
+                          input: {
+                            background: 'transparent',
+                            borderColor: 'transparent',
+                            color: inputColor,
+                            paddingRight: 24,
+                            paddingBottom: 16,
+                            borderRadius: 8,
+                            boxShadow: 'none'
+                          }
+                        }}
+                      />
+                    </Box>
+                    <Group justify="space-between" align="center" mt="sm">
+                      <Group gap="xs">
+                        <Tooltip label={uploadTooltipLabel}>
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={handleImagePromptButtonClick}
+                            disabled={imagePromptLoading || !isGptModel || imagePromptAttachments.length >= MAX_IMAGE_PROMPT_ATTACHMENTS}
+                            styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                          >
+                            {imagePromptLoading ? <Loader size="xs" /> : <IconPhoto size={16} />}
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="语音输入 · 即将开放">
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={() => handleToolbarAction('语音输入')}
+                            styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                          >
+                            <IconMicrophone size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="灵感表情 · 即将上线">
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={() => handleToolbarAction('灵感表情')}
+                            styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                          >
+                            <IconMoodSmile size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={enableWebSearch ? '已开启联网搜索' : '已关闭联网搜索'}>
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={() => setEnableWebSearch(prev => !prev)}
+                            aria-pressed={enableWebSearch}
+                            styles={{ root: { background: toolbarIconBackground, border: toolbarIconBorder, color: '#e4edff', borderRadius: 999 } }}
+                          >
+                            {enableWebSearch ? <IconWorld size={16} /> : <IconWorldOff size={16} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                      <Button
+                        type="submit"
+                        loading={isLoading}
+                        leftSection={<IconSend size={16} />}
+                        radius="xl"
+                        styles={{
+                          root: {
                           background: glowingSendBackground,
                           boxShadow: '0 18px 40px rgba(63,129,255,0.55)',
                           border: 'none',
@@ -1804,6 +1803,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
             </form>
           </Box>
         </Box>
+        )}
         <Modal
           opened={!!activePromptAttachment}
           onClose={() => setActivePromptAttachmentId(null)}

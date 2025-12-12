@@ -85,7 +85,9 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 
 function isGrsaiBaseUrl(url: string): boolean {
 	const val = url.toLowerCase();
-	return val.includes("grsai");
+	// New Sora2API/GRSAI protocol uses chat/completions for image/character.
+	// Treat both grsai and sora2api domains as the new protocol base.
+	return val.includes("grsai") || val.includes("sora2api");
 }
 
 function expandProxyVendorKeys(vendor: string): string[] {
@@ -1195,15 +1197,7 @@ export async function fetchSora2ApiTaskResult(
 			}
 
 			if (!videoUrl && typeof payload.content === "string") {
-				const urls = new Set<string>();
-				const regex = /!\[[^\]]*]\(([^)]+)\)/g;
-				let m: RegExpExecArray | null;
-				// eslint-disable-next-line no-cond-assign
-				while ((m = regex.exec(payload.content)) !== null) {
-					const url = (m[1] || "").trim();
-					if (url) urls.add(url);
-				}
-				const images = Array.from(urls);
+				const images = extractMarkdownImageUrlsFromText(payload.content);
 				if (images.length) {
 					assetPayload = {
 						type: "image",
@@ -1514,6 +1508,43 @@ function safeParseJsonForTask(data: string): any | null {
 	} catch {
 		return null;
 	}
+}
+
+// 解析通用 SSE 文本，提取最后一个 data: JSON payload
+function parseSseJsonPayloadForTask(raw: string): any | null {
+	if (typeof raw !== "string" || !raw.trim()) return null;
+	const normalized = raw.replace(/\r/g, "");
+	const chunks = normalized.split(/\n\n+/);
+	let last: any = null;
+	for (const chunk of chunks) {
+		const trimmedChunk = chunk.trim();
+		if (!trimmedChunk) continue;
+		const lines = trimmedChunk.split("\n");
+		for (const line of lines) {
+			const match = line.match(/^\s*data:\s*(.+)$/i);
+			if (!match) continue;
+			const payload = match[1].trim();
+			if (!payload || payload === "[DONE]") continue;
+			const parsed = safeParseJsonForTask(payload);
+			if (parsed) last = parsed;
+		}
+	}
+	return last;
+}
+
+function extractMarkdownImageUrlsFromText(text: string): string[] {
+	if (typeof text !== "string" || !text.trim()) return [];
+	const urls = new Set<string>();
+	const regex = /!\[[^\]]*]\(([^)]+)\)/g;
+	let match: RegExpExecArray | null;
+	// eslint-disable-next-line no-cond-assign
+	while ((match = regex.exec(text)) !== null) {
+		const raw = (match[1] || "").trim();
+		const first = raw.split(/\s+/)[0] || "";
+		const url = first.replace(/^<(.+)>$/, "$1").trim();
+		if (url) urls.add(url);
+	}
+	return Array.from(urls);
 }
 
 // 解析 Codex / OpenAI Responses SSE 文本，提取最终的 completed response
@@ -2360,6 +2391,192 @@ async function runQwenTextToImageTask(
 	});
 }
 
+// ---- Sora2API 图像（text_to_image / image_edit） ----
+
+function normalizeSora2ApiImageModelKey(modelKey?: string | null): string {
+	const trimmed = (modelKey || "").trim();
+	if (trimmed && /^sora-image/i.test(trimmed)) {
+		return trimmed;
+	}
+	return "sora-image";
+}
+
+async function runSora2ApiImageTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const progressCtx = extractProgressContext(req, "sora2api");
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const apiKey = ctx.apiKey.trim();
+	if (!apiKey) {
+		throw new AppError("未配置 sora2api API Key", {
+			status: 400,
+			code: "sora2api_api_key_missing",
+		});
+	}
+
+	const extras = (req.extras || {}) as Record<string, any>;
+	const model = normalizeSora2ApiImageModelKey(
+		typeof extras.modelKey === "string" ? extras.modelKey : undefined,
+	);
+
+	const promptParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
+		{ type: "text", text: req.prompt },
+	];
+	const referenceImages: string[] = Array.isArray(extras.referenceImages)
+		? extras.referenceImages
+				.map((url: any) =>
+					typeof url === "string" ? url.trim() : "",
+				)
+				.filter((url: string) => url.length > 0)
+		: [];
+	if (referenceImages.length) {
+		// sora2api 兼容 OpenAI chat.completions 的 image_url 内容格式
+		promptParts.push({
+			type: "image_url",
+			image_url: { url: referenceImages[0] },
+		});
+	}
+
+	const body: any = {
+		model,
+		messages: [
+			{
+				role: "user",
+				content: promptParts.length === 1 ? req.prompt : promptParts,
+			},
+		],
+		stream: true,
+	};
+
+	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+	let res: Response;
+	let rawText = "";
+	try {
+		res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "text/event-stream,application/json",
+				Authorization: `Bearer ${apiKey}`,
+			},
+			body: JSON.stringify(body),
+		});
+		rawText = await res.text().catch(() => "");
+	} catch (error: any) {
+		throw new AppError("sora2api 图片请求失败", {
+			status: 502,
+			code: "sora2api_request_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	const ct = (res.headers.get("content-type") || "").toLowerCase();
+	const parsedBody = (() => {
+		if (ct.includes("application/json")) {
+			return safeParseJsonForTask(rawText) || null;
+		}
+		return parseSseJsonPayloadForTask(rawText) || safeParseJsonForTask(rawText);
+	})();
+
+	if (res.status < 200 || res.status >= 300) {
+		const msg =
+			(parsedBody &&
+				(parsedBody.error?.message ||
+					parsedBody.message ||
+					parsedBody.error)) ||
+			`sora2api 图像调用失败: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "sora2api_request_failed",
+			details: { upstreamStatus: res.status, upstreamData: parsedBody ?? rawText },
+		});
+	}
+
+	const payload = parsedBody;
+	const urls = (() => {
+		const collected = new Set<string>();
+		extractBananaImageUrls(payload).forEach((url) => collected.add(url));
+
+		const appendFromText = (value: any) => {
+			if (!value) return;
+			if (typeof value === "string") {
+				extractMarkdownImageUrlsFromText(value).forEach((url) =>
+					collected.add(url),
+				);
+				return;
+			}
+			if (Array.isArray(value)) {
+				value.forEach((part) => {
+					if (!part) return;
+					if (typeof part === "string") {
+						extractMarkdownImageUrlsFromText(part).forEach((url) =>
+							collected.add(url),
+						);
+						return;
+					}
+					if (typeof part === "object" && typeof part.text === "string") {
+						extractMarkdownImageUrlsFromText(part.text).forEach((url) =>
+							collected.add(url),
+						);
+					}
+				});
+			}
+		};
+
+		appendFromText(payload?.content);
+		if (Array.isArray(payload?.choices)) {
+			for (const choice of payload.choices) {
+				appendFromText(choice?.delta?.content);
+				appendFromText(choice?.message?.content);
+				appendFromText(choice?.content);
+			}
+		}
+
+		// Fallback: parse URLs from the raw SSE buffer when payload-only parsing fails.
+		if (collected.size === 0 && typeof rawText === "string" && rawText.trim()) {
+			extractMarkdownImageUrlsFromText(rawText).forEach((url) =>
+				collected.add(url),
+			);
+		}
+
+		return Array.from(collected);
+	})();
+	const assets = urls.map((url) =>
+		TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+	);
+
+	const id =
+		(typeof payload?.id === "string" && payload.id.trim()) ||
+		`sd-img-${Date.now().toString(36)}`;
+	const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+	emitProgress(userId, progressCtx, {
+		status: status === "succeeded" ? "succeeded" : "failed",
+		progress: 100,
+		assets,
+		raw: { response: payload },
+	});
+
+	return TaskResultSchema.parse({
+		id,
+		kind: req.kind,
+		status,
+		assets,
+		raw: {
+			provider: "sora2api",
+			model,
+			response: payload,
+			rawBody: rawText,
+		},
+	});
+}
+
 // ---- Anthropic 文案（仅 chat/prompt_refine） ----
 
 async function runAnthropicTextTask(
@@ -2474,6 +2691,12 @@ export async function runGenericTaskForVendor(
 		if (v === "openai") {
 			if (req.kind === "image_to_prompt") {
 				result = await runOpenAiImageToPromptTask(c, userId, req);
+			} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
+				// OpenAI 文生图在 Worker 侧通过 Gemini Banana / sora2api 代理实现
+				throw new AppError(
+					"OpenAI 目前仅支持 chat/prompt_refine/image_to_prompt",
+					{ status: 400, code: "unsupported_task_kind" },
+				);
 			} else if (
 				req.kind === "chat" ||
 				req.kind === "prompt_refine"
@@ -2515,6 +2738,15 @@ export async function runGenericTaskForVendor(
 						status: 400,
 						code: "unsupported_task_kind",
 					},
+				);
+			}
+		} else if (v === "sora2api") {
+			if (req.kind === "text_to_image" || req.kind === "image_edit") {
+				result = await runSora2ApiImageTask(c, userId, req);
+			} else {
+				throw new AppError(
+					"sora2api 目前仅在 Worker 中支持 text_to_image/image_edit 或 text_to_video",
+					{ status: 400, code: "unsupported_task_kind" },
 				);
 			}
 		} else if (v === "anthropic") {
