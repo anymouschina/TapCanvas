@@ -243,7 +243,7 @@ TapCanvas 主要通过 taskNode 承载不同 kind：
 - text / storyboard：历史兼容 kind，不要新建；如画布中已有，可按现有数据更新或建议迁移。
 
 ## 模型与关键字段
-- 图片节点用 config.imageModel 选择模型（如 nano-banana-fast / nano-banana-pro / qwen-image-plus / sora-image / gemini-2.5-flash-image）；不设置则用默认。
+- 图片节点用 config.imageModel 选择模型（如 nano-banana-fast / nano-banana-pro / qwen-image-plus / sora-image / sora-image-landscape / sora-image-portrait / gemini-2.5-flash-image）；不设置则用默认。
 - 视频节点用 config.videoModel 选择模型（sora-2 / veo3.1-fast / veo3.1-pro）。单镜头最长 10 秒。
 - prompt 是主要提示词字段；系统会自动与 videoPrompt 保持同步。
 - negativePrompt / keywords 可选，用于抑制不想要的元素。

@@ -31,7 +31,9 @@ export const IMAGE_MODELS: ModelOption[] = [
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
   { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
   { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
-  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'openai' },
+  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'sora2api' },
+  { value: 'sora-image-landscape', label: 'Sora Image Landscape', vendor: 'sora2api' },
+  { value: 'sora-image-portrait', label: 'Sora Image Portrait', vendor: 'sora2api' },
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
@@ -100,6 +102,8 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'qwen-image-plus': 'openai', // 假设使用OpenAI
   'gemini-2.5-flash-image': 'google',
   'sora-image': 'openai',
+  'sora-image-landscape': 'openai',
+  'sora-image-portrait': 'openai',
   'nano-banana': 'google',
   'nano-banana-fast': 'google',
   'nano-banana-pro': 'google',
@@ -108,7 +112,14 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'veo3.1-fast': 'google',
 }
 
-const IMAGE_EDIT_MODELS = new Set(['nano-banana', DEFAULT_IMAGE_MODEL_VALUE, 'nano-banana-pro'])
+const IMAGE_EDIT_MODELS = new Set([
+  'nano-banana',
+  DEFAULT_IMAGE_MODEL_VALUE,
+  'nano-banana-pro',
+  'sora-image',
+  'sora-image-landscape',
+  'sora-image-portrait',
+])
 
 const normalizeModelId = (value: string | undefined | null): string => {
   if (!value) return ''

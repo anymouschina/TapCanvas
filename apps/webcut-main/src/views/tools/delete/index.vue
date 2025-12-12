@@ -26,12 +26,12 @@ async function handleDelete() {
         return;
     }
 
-    const source = sources.value.get(segment.sourceKey);
-    if (source) {
-        await pushHistory();
-    }
+    const hasSource = !!sources.value.get(segment.sourceKey);
 
     deleteSegment({ segment, rail });
+    if (hasSource) {
+        await pushHistory();
+    }
 }
 </script>
 

@@ -71,16 +71,20 @@ taskRouter.post("/", async (c) => {
 		}
 		result = await runVeoVideoTask(c, userId, req);
 	} else if (vendor === "sora2api") {
-		if (req.kind !== "text_to_video") {
+		if (req.kind === "text_to_video") {
+			result = await runSora2ApiVideoTask(c, userId, req);
+		} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
+			// sora2api image tasks are handled by generic runner (chat/completions proxy)
+			result = await runGenericTaskForVendor(c, userId, vendor, req);
+		} else {
 			return c.json(
 				{
-					error: "sora2api only supports text_to_video tasks",
+					error: "sora2api only supports text_to_video/text_to_image/image_edit tasks",
 					code: "invalid_task_kind",
 				},
 				400,
 			);
 		}
-		result = await runSora2ApiVideoTask(c, userId, req);
 	} else {
 		result = await runGenericTaskForVendor(c, userId, vendor, req);
 	}
