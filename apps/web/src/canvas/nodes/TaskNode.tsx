@@ -877,7 +877,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         extras: {
           systemPrompt:
             '你是一个严谨的镜头角色判定助手。只输出 JSON，键使用英文，内容使用中文，避免幻觉，不确定则 same="unknown".',
-          modelKey: 'gpt-5.1',
+          modelKey: 'gpt-5.2',
           persistAssets: persistJudge,
         },
       })
@@ -1002,7 +1002,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
                 imageUrl: remoteUrl,
                 systemPrompt:
                   '你是视频角色识别助手。限定用简洁中文，只描述人物的外观特征与动作，不要写镜头或背景。',
-                modelKey: 'gpt-5.1',
+                modelKey: 'gpt-5.2',
                 nodeId: id,
               },
             })
@@ -1045,7 +1045,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         extras: {
           systemPrompt:
             '只输出 JSON，键使用英文，值使用中文，不要加入解释。严格聚类，无法判断时 characters 返回空数组。',
-          modelKey: 'gpt-5.1',
+          modelKey: 'gpt-5.2',
         },
       })
       const rawText = extractTextFromTaskResult(cardsTask)

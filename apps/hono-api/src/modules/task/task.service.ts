@@ -190,16 +190,19 @@ export async function resolveVendorContext(
 
 	const envAny = c.env as any;
 	const envSora2ApiKey =
-		v === "sora2api" &&
+		(v === "sora2api" || v === "grsai") &&
 		typeof envAny.SORA2API_API_KEY === "string" &&
 		envAny.SORA2API_API_KEY.trim()
 			? (envAny.SORA2API_API_KEY as string).trim()
 			: "";
 	const resolveEnvSora2Base = () =>
-		(typeof envAny.SORA2API_BASE_URL === "string" &&
-			envAny.SORA2API_BASE_URL) ||
+		(typeof envAny.SORA2API_BASE_URL === "string" && envAny.SORA2API_BASE_URL) ||
 		(typeof envAny.SORA2API_BASE === "string" && envAny.SORA2API_BASE) ||
 		"http://localhost:8000";
+	const envSora2Base = normalizeBaseUrl(resolveEnvSora2Base());
+	const envSora2BaseIsLocal =
+		!!envSora2Base &&
+		/^(https?:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(envSora2Base);
 	let userConfigured = hasUserProxy;
 	let preferEnvSora2Base = false;
 
@@ -237,7 +240,7 @@ export async function resolveVendorContext(
 			}
 		}
 
-		// 2.3 对于 sora2api，只有当用户没有任何 Token/Proxy 配置时才允许使用 Env 级别兜底
+		// 2.3 对于 sora2api/grsai，只有当用户没有任何 Token/Proxy 配置时才允许使用 Env 级别兜底
 		if (!apiKey && envSora2ApiKey && !userConfigured) {
 			apiKey = envSora2ApiKey;
 			preferEnvSora2Base = true;
@@ -266,9 +269,9 @@ export async function resolveVendorContext(
 		provider = sharedTokenProvider;
 	}
 
-	// 2.6 provider 仍不存在时，对于 sora2api 允许完全依赖 Env 级别配置；其他 vendor 报错
+	// 2.6 provider 仍不存在时，对于 sora2api/grsai 允许完全依赖 Env 级别配置；其他 vendor 报错
 	if (!provider) {
-		if (v === "sora2api" && envSora2ApiKey && !userConfigured) {
+		if ((v === "sora2api" || v === "grsai") && envSora2ApiKey && !userConfigured) {
 			const baseUrl = normalizeBaseUrl(resolveEnvSora2Base());
 			if (!baseUrl) {
 				throw new AppError(`No base URL configured for vendor ${v}`, {
@@ -295,9 +298,15 @@ export async function resolveVendorContext(
 	if (!baseUrl) {
 		if (v === "veo") {
 			baseUrl = normalizeBaseUrl("https://api.grsai.com");
-		} else if (v === "sora2api") {
-			baseUrl = normalizeBaseUrl(resolveEnvSora2Base());
+		} else if (v === "sora2api" || v === "grsai") {
+			baseUrl = envSora2Base;
 		}
+	}
+
+	// Dev-friendly override: when SORA2API_BASE_URL points to localhost,
+	// prefer it over a non-local provider/proxy base to avoid self-recursion.
+	if (v === "sora2api" && envSora2BaseIsLocal && envSora2Base && envSora2Base !== baseUrl) {
+		baseUrl = envSora2Base;
 	}
 
 	if (!baseUrl) {
@@ -409,7 +418,8 @@ function requiresApiKeyForVendor(vendor: string): boolean {
 		v === "anthropic" ||
 		v === "openai" ||
 		v === "veo" ||
-		v === "sora2api"
+		v === "sora2api" ||
+		v === "grsai"
 	);
 }
 
@@ -1642,7 +1652,7 @@ async function runOpenAiTextTask(
 
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
-		"gpt-5.1-codex";
+		"gpt-5.2";
 
 	const extras = (req.extras || {}) as Record<string, any>;
 
@@ -1735,7 +1745,7 @@ async function runOpenAiImageToPromptTask(
 
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
-		"gpt-5.1-codex";
+		"gpt-5.2";
 
 	const userPrompt =
 		req.prompt?.trim() ||

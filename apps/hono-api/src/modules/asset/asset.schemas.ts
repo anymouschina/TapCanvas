@@ -18,6 +18,7 @@ export const PublicAssetSchema = z.object({
 	type: z.enum(["image", "video"]),
 	url: z.string(),
 	thumbnailUrl: z.string().nullable().optional(),
+	duration: z.number().nullable().optional(),
 	prompt: z.string().nullable().optional(),
 	vendor: z.string().nullable().optional(),
 	modelKey: z.string().nullable().optional(),

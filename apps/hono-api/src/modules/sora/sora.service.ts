@@ -9,6 +9,10 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	return val.replace(/\/+$/, "");
 }
 
+function isGrsaiBaseUrl(url: string): boolean {
+	return url.toLowerCase().includes("grsai");
+}
+
 type SoraToken = {
 	id: string;
 	label: string;
@@ -1674,6 +1678,7 @@ async function callSora2ApiWithFallbacks(
 	userId: string,
 	endpoints: string[],
 	body: Record<string, any>,
+	vendor: "sora2api" | "grsai" = "sora2api",
 ): Promise<{
 	id: string;
 	payload: any;
@@ -1681,18 +1686,27 @@ async function callSora2ApiWithFallbacks(
 	progress?: number;
 	endpoint: string;
 }> {
-	const ctx = await resolveVendorContext(c, userId, "sora2api");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const ctx = await resolveVendorContext(c, userId, vendor);
+	const baseUrl =
+		normalizeBaseUrl(ctx.baseUrl) ||
+		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 sora2api API Key", {
+		throw new AppError(`未配置 ${vendor} API Key`, {
 			status: 400,
 			code: "sora2api_api_key_missing",
 		});
 	}
 
+	const normalizeEndpoint = (endpoint: string) => {
+		if (!endpoint) return endpoint;
+		if (endpoint.startsWith("http")) return endpoint;
+		return `${baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+	};
+
 	let lastError: any = null;
-	for (const endpoint of endpoints) {
+	for (const rawEndpoint of endpoints) {
+		const endpoint = normalizeEndpoint(rawEndpoint);
 		let res: Response;
 		let data: any = null;
 		try {
@@ -1700,14 +1714,24 @@ async function callSora2ApiWithFallbacks(
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
+					Accept: "text/event-stream,application/json",
 					Authorization: `Bearer ${apiKey}`,
 				},
 				body: JSON.stringify(body),
 			});
-			try {
-				data = await res.json();
-			} catch {
-				data = null;
+			const ct = (res.headers.get("content-type") || "").toLowerCase();
+			if (ct.includes("application/json")) {
+				try {
+					data = await res.json();
+				} catch {
+					data = null;
+				}
+			} else {
+				try {
+					data = await res.text();
+				} catch {
+					data = null;
+				}
 			}
 		} catch (error: any) {
 			lastError = {
@@ -1734,10 +1758,34 @@ async function callSora2ApiWithFallbacks(
 			continue;
 		}
 
-		const payload =
-			typeof data?.code === "number" && data.code === 0 && data.data
+		const payload = (() => {
+			if (typeof data === "string") {
+				const lines = data.split(/\r?\n/).filter(Boolean);
+				for (let i = lines.length - 1; i >= 0; i -= 1) {
+					const line = lines[i];
+					const match = line.match(/^data:\s*(\{.*\})\s*$/);
+					if (!match) continue;
+					try {
+						return JSON.parse(match[1]);
+					} catch {
+						continue;
+					}
+				}
+				return null;
+			}
+			return typeof data?.code === "number" && data.code === 0 && data.data
 				? data.data
 				: data;
+		})();
+		if (!payload) {
+			lastError = {
+				status: res.status,
+				data,
+				message: "sora2api 未返回有效 payload",
+				endpoint,
+			};
+			continue;
+		}
 		if (typeof data?.code === "number" && data.code !== 0) {
 			lastError = {
 				status: res.status,
@@ -1757,6 +1805,22 @@ async function callSora2ApiWithFallbacks(
 			(typeof payload?.taskId === "string" && payload.taskId.trim()) ||
 			null;
 		if (!id) {
+			// grsai chat/completions character-only flow may return character_id directly
+			const directCharacterId =
+				(typeof payload?.character_id === "string" && payload.character_id.trim()) ||
+				(Array.isArray(payload?.results) && payload.results[0]?.character_id
+					? String(payload.results[0].character_id).trim()
+					: null) ||
+				null;
+			if (directCharacterId) {
+				return {
+					id: directCharacterId,
+					payload,
+					status: "succeeded",
+					progress: 100,
+					endpoint,
+				};
+			}
 			lastError = {
 				status: res.status,
 				data,
@@ -1795,46 +1859,73 @@ async function callSora2ApiWithFallbacks(
 	});
 }
 
+
 export async function uploadCharacterViaSora2Api(
 	c: AppContext,
 	userId: string,
-	input: { url: string; timestamps?: string; webHook?: string; shutProgress?: boolean },
+	input: { url: string; timestamps?: string; webHook?: string; shutProgress?: boolean; vendor?: "sora2api" | "grsai" },
 ) {
-	const ctx = await resolveVendorContext(c, userId, "sora2api");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const vendor = input.vendor === "grsai" ? "grsai" : "sora2api";
+	const ctx = await resolveVendorContext(c, userId, vendor);
+	const baseUrl =
+		normalizeBaseUrl(ctx.baseUrl) ||
+		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
+	const isGrsaiBase = isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const body = {
 		url: input.url,
 		timestamps: input.timestamps || "0,3",
 		webHook: typeof input.webHook === "string" ? input.webHook : "-1",
 		shutProgress: input.shutProgress === true,
 	};
+	if (isGrsaiBase) {
+		// grsai/Sora2API new protocol: character creation is triggered via /v1/chat/completions (stream=true, empty prompt)
+		const model = "sora-video-landscape-10s";
+		const completionBody = {
+			model,
+			stream: true,
+			messages: [{ role: "user", content: "" }],
+			video: input.url,
+			...(input.timestamps ? { timestamps: input.timestamps } : {}),
+		};
+		const endpoints = ["/v1/chat/completions"];
+		return callSora2ApiWithFallbacks(c, userId, endpoints, completionBody, vendor);
+	}
 	const endpoints = [
-		`${baseUrl}/v1/video/sora-upload-character`,
-		`${baseUrl}/client/v1/video/sora-upload-character`,
-		`${baseUrl}/client/video/sora-upload-character`,
+		"/v1/video/sora-upload-character",
+		"/client/v1/video/sora-upload-character",
+		"/client/video/sora-upload-character",
 	];
-	return callSora2ApiWithFallbacks(c, userId, endpoints, body);
+	return callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
 }
+
 
 export async function createCharacterFromPidViaSora2Api(
 	c: AppContext,
 	userId: string,
-	input: { pid: string; timestamps?: string; webHook?: string; shutProgress?: boolean },
+	input: { pid: string; timestamps?: string; webHook?: string; shutProgress?: boolean; vendor?: "sora2api" | "grsai" },
 ) {
-	const ctx = await resolveVendorContext(c, userId, "sora2api");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const vendor = input.vendor === "grsai" ? "grsai" : "sora2api";
 	const body = {
 		pid: input.pid,
 		timestamps: input.timestamps || "0,3",
 		webHook: typeof input.webHook === "string" ? input.webHook : "-1",
 		shutProgress: input.shutProgress === true,
 	};
-	const endpoints = [
-		`${baseUrl}/v1/video/sora-create-character`,
-		`${baseUrl}/client/v1/video/sora-create-character`,
-		`${baseUrl}/client/video/sora-create-character`,
-	];
-	return callSora2ApiWithFallbacks(c, userId, endpoints, body);
+	const endpoints = vendor === "grsai"
+		? [
+				"/v1/video/sora-create-character",
+				"/client/v1/video/sora-create-character",
+				"/client/video/sora-create-character",
+				"/v1/video/characters/create",
+				"/client/v1/video/characters/create",
+				"/client/video/characters/create",
+			]
+		: [
+				"/v1/video/sora-create-character",
+				"/client/v1/video/sora-create-character",
+				"/client/video/sora-create-character",
+			];
+	return callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
 }
 
 export async function fetchSora2ApiCharacterResult(

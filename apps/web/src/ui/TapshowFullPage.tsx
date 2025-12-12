@@ -1,24 +1,41 @@
 import React from 'react'
-import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, SegmentedControl, SimpleGrid, Stack, Text, Title, useMantineColorScheme } from '@mantine/core'
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Center,
+  Container,
+  Group,
+  Loader,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+  useMantineColorScheme,
+} from '@mantine/core'
 import {
   IconArrowLeft,
   IconClock,
   IconExternalLink,
-  IconPhoto,
+  IconFilter,
   IconPlayerPlay,
+  IconPhoto,
   IconRefresh,
-  IconSparkles,
+  IconSortDescending,
   IconUser,
 } from '@tabler/icons-react'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
 import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
-import { ShowcaseSection } from '../components/ShowcaseSection'
-import { useAuth } from '../auth/store'
 
 type MediaFilter = 'all' | 'image' | 'video'
-const VITE_WEBCUT_URL = import.meta.env.VITE_WEBCUT_URL
+type SortKey = 'createdAt' | 'duration'
+type SortOrder = 'desc' | 'asc'
+
 function getActiveAssetIdFromLocation(): string | null {
   if (typeof window === 'undefined') return null
   try {
@@ -52,25 +69,23 @@ function formatDate(ts: string): string {
   const yyyy = date.getFullYear()
   const mm = String(date.getMonth() + 1).padStart(2, '0')
   const dd = String(date.getDate()).padStart(2, '0')
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mi = String(date.getMinutes()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
+  return `${yyyy}-${mm}-${dd}`
 }
 
-function resolveWebcutUrl(): string | null {
-  const raw = VITE_WEBCUT_URL
-  if (typeof raw !== 'string') return null
-  const trimmed = raw.trim()
-  return trimmed ? trimmed : null
+function formatDuration(seconds?: number | null): string | null {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null
+  const s = Math.round(seconds)
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return m > 0 ? `${m}m ${r}s` : `${r}s`
 }
 
 type TapshowCardProps = {
   asset: PublicAssetDto
   onPreview: (asset: PublicAssetDto) => void
-  style?: React.CSSProperties
 }
 
-function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
+function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
   const isVideo = asset.type === 'video'
   const cover = asset.thumbnailUrl || asset.url
   const label = asset.name || (isVideo ? '视频作品' : '图片作品')
@@ -78,11 +93,11 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
     asset.prompt && asset.prompt.trim().length > 0
       ? asset.prompt.trim()
       : asset.projectName || asset.ownerName || asset.ownerLogin || ''
+  const durationText = formatDuration(asset.duration)
 
   return (
     <Box
       className="tapshow-card"
-      style={style}
       onClick={() => {
         onPreview(asset)
       }}
@@ -107,8 +122,7 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
             }}
             onMouseLeave={(e) => {
               try {
-                const el = e.currentTarget
-                el.pause()
+                e.currentTarget.pause()
               } catch {
                 // ignore
               }
@@ -119,6 +133,7 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
         ) : (
           <div className="tapshow-card-placeholder" />
         )}
+
         <div className="tapshow-card-overlay">
           <Group gap={8}>
             <Badge
@@ -133,6 +148,11 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
             {asset.modelKey && (
               <Badge size="xs" radius="xl" variant="outline" color="gray">
                 {asset.modelKey}
+              </Badge>
+            )}
+            {durationText && (
+              <Badge size="xs" radius="xl" variant="filled" color="dark">
+                {durationText}
               </Badge>
             )}
           </Group>
@@ -155,12 +175,11 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
           </ActionIcon>
         </div>
       </div>
+
       <Stack gap={6} mt={10}>
-        <Group justify="space-between" align="center">
-          <Text size="sm" fw={600} className="tapshow-card-title" lineClamp={1}>
-            {label}
-          </Text>
-        </Group>
+        <Text size="sm" fw={600} className="tapshow-card-title" lineClamp={1}>
+          {label}
+        </Text>
         {subtitle && (
           <Text size="xs" c="dimmed" lineClamp={2}>
             {subtitle}
@@ -175,11 +194,6 @@ function TapshowCard({ asset, onPreview, style }: TapshowCardProps) {
                   {asset.ownerName || asset.ownerLogin}
                 </Text>
               </Group>
-            )}
-            {asset.projectName && (
-              <Badge size="xs" radius="xl" variant="light" color="gray">
-                {asset.projectName}
-              </Badge>
             )}
           </Group>
           <Group gap={4}>
@@ -198,30 +212,21 @@ function TapshowFullPageInner(): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
-  const token = useAuth((s) => s.token)
-  const webcutUrl = React.useMemo(() => {
-    const base = resolveWebcutUrl()
-    if (!base) return null
-    if (!token) return base
-    const url = new URL(base)
-    url.searchParams.set('tap_token', token)
-    return url.toString()
-  }, [token])
 
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
   const [hasLoadedOnce, setHasLoadedOnce] = React.useState(false)
   const [mediaFilter, setMediaFilter] = React.useState<MediaFilter>('all')
-  const [visibleCount, setVisibleCount] = React.useState(24)
+  const [sortKey, setSortKey] = React.useState<SortKey>('createdAt')
+  const [sortOrder, setSortOrder] = React.useState<SortOrder>('desc')
+  const [visibleCount, setVisibleCount] = React.useState(30)
   const [pendingAssetId, setPendingAssetId] = React.useState<string | null>(() => getActiveAssetIdFromLocation())
   const loadMoreRef = React.useRef<HTMLDivElement | null>(null)
 
   const reloadAssets = React.useCallback(
     async (opts?: { silent?: boolean }) => {
-      if (!opts?.silent) {
-        setLoading(true)
-      }
+      if (!opts?.silent) setLoading(true)
       setRefreshing(true)
       try {
         const data = await listPublicAssets(120, mediaFilter)
@@ -243,45 +248,47 @@ function TapshowFullPageInner(): JSX.Element {
   }, [reloadAssets])
 
   React.useEffect(() => {
-    setVisibleCount(24)
-  }, [mediaFilter, assets.length])
+    setVisibleCount(30)
+  }, [mediaFilter, sortKey, sortOrder, assets.length])
 
   const sortedAssets = React.useMemo(() => {
     const list = [...assets]
+    const dir = sortOrder === 'asc' ? 1 : -1
     list.sort((a, b) => {
+      if (sortKey === 'duration') {
+        const da = typeof a.duration === 'number' ? a.duration : null
+        const db = typeof b.duration === 'number' ? b.duration : null
+        if (da == null && db == null) return 0
+        if (da == null) return 1
+        if (db == null) return -1
+        return (da - db) * dir
+      }
       const ta = new Date(a.createdAt).getTime()
       const tb = new Date(b.createdAt).getTime()
-      return Number.isNaN(tb) || Number.isNaN(ta) ? 0 : tb - ta
+      if (Number.isNaN(ta) || Number.isNaN(tb)) return 0
+      return (ta - tb) * dir
     })
     return list
-  }, [assets])
+  }, [assets, sortKey, sortOrder])
 
   const filteredAssets = React.useMemo(() => {
     if (mediaFilter === 'all') return sortedAssets
     return sortedAssets.filter((asset) => asset.type === mediaFilter)
   }, [sortedAssets, mediaFilter])
 
-  const featuredAssets = React.useMemo(() => filteredAssets.slice(0, 8), [filteredAssets])
-  const secondaryAssets = React.useMemo(() => filteredAssets.slice(8, 16), [filteredAssets])
-  const gridAssets = React.useMemo(() => filteredAssets.slice(16), [filteredAssets])
-
-  const visibleGridAssets = React.useMemo(
-    () => gridAssets.slice(0, Math.max(visibleCount, 24)),
-    [gridAssets, visibleCount],
+  const visibleAssets = React.useMemo(
+    () => filteredAssets.slice(0, Math.max(visibleCount, 30)),
+    [filteredAssets, visibleCount],
   )
 
-  const hasMore = visibleGridAssets.length < gridAssets.length
+  const hasMore = visibleAssets.length < filteredAssets.length
 
   const handlePreview = React.useCallback(
     (asset: PublicAssetDto, opts?: { preserveUrl?: boolean }) => {
       if (!asset.url) return
       const isVideo = asset.type === 'video'
       const label = asset.name || (isVideo ? '视频作品' : '图片作品')
-      openPreview({
-        url: asset.url,
-        kind: isVideo ? 'video' : 'image',
-        name: label,
-      })
+      openPreview({ url: asset.url, kind: isVideo ? 'video' : 'image', name: label })
       if (!opts?.preserveUrl) {
         const next = buildTapshowUrl(asset.id)
         if (next && typeof window !== 'undefined') {
@@ -296,7 +303,6 @@ function TapshowFullPageInner(): JSX.Element {
     if (!pendingAssetId || !sortedAssets.length) return
     const asset = sortedAssets.find((a) => a.id === pendingAssetId)
     if (!asset) return
-    // 初次从 URL 打开时，保持当前 URL，仅触发预览
     handlePreview(asset, { preserveUrl: true })
     const canonical = buildTapshowUrl(asset.id)
     if (canonical && typeof window !== 'undefined') {
@@ -322,36 +328,28 @@ function TapshowFullPageInner(): JSX.Element {
         }
       },
     )
-    return () => {
-      unsub()
-    }
+    return () => unsub()
   }, [])
 
   React.useEffect(() => {
-    if (!hasMore) return
-    if (typeof IntersectionObserver === 'undefined') return
+    if (!hasMore || typeof IntersectionObserver === 'undefined') return
     const el = loadMoreRef.current
     if (!el) return
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0]
         if (!entry.isIntersecting) return
-        setVisibleCount((count) => {
-          const next = Math.min(count + 24, gridAssets.length)
-          return next
-        })
+        setVisibleCount((count) => Math.min(count + 30, filteredAssets.length))
       },
       { root: null, rootMargin: '0px 0px 240px 0px', threshold: 0.1 },
     )
     observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [hasMore, gridAssets.length])
+    return () => observer.disconnect()
+  }, [hasMore, filteredAssets.length])
 
   const background = isDark
-    ? 'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18), transparent 60%), radial-gradient(circle at 100% 0%, rgba(37,99,235,0.22), transparent 60%), radial-gradient(circle at 0% 100%, rgba(168,85,247,0.18), transparent 55%), linear-gradient(180deg, #020617 0%, #020617 40%, #020617 100%)'
-    : 'radial-gradient(circle at 0% 0%, rgba(59,130,246,0.16), transparent 60%), radial-gradient(circle at 100% 0%, rgba(59,130,246,0.1), transparent 60%), radial-gradient(circle at 0% 100%, rgba(56,189,248,0.1), transparent 55%), linear-gradient(180deg, #eef2ff 0%, #e5edff 40%, #e5edff 100%)'
+    ? 'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.14), transparent 60%), radial-gradient(circle at 100% 0%, rgba(37,99,235,0.18), transparent 60%), radial-gradient(circle at 0% 100%, rgba(168,85,247,0.12), transparent 55%), linear-gradient(180deg, #020617 0%, #020617 100%)'
+    : 'radial-gradient(circle at 0% 0%, rgba(59,130,246,0.12), transparent 60%), radial-gradient(circle at 100% 0%, rgba(59,130,246,0.08), transparent 60%), radial-gradient(circle at 0% 100%, rgba(56,189,248,0.08), transparent 55%), linear-gradient(180deg, #eef2ff 0%, #e9efff 100%)'
 
   return (
     <div className="tapshow-fullpage-root" style={{ background }}>
@@ -361,88 +359,84 @@ function TapshowFullPageInner(): JSX.Element {
         <Box pt="md" pb="sm">
           <Group justify="space-between" align="center" mb="md">
             <Group gap={10} align="center">
-              <Box className="tapshow-logo-pill">
-                <span className="tapshow-logo-dot" />
-                <Text size="xs" fw={600} span>
-                  TapShow
-                </Text>
-              </Box>
-              <Badge
-                size="xs"
-                radius="xl"
-                variant="light"
-                color={isDark ? 'gray' : 'dark'}
-                leftSection={<IconSparkles size={12} />}
-              >
-                AI 作品实时廊
-              </Badge>
-            </Group>
-            <Group gap="xs">
               <Button
                 size="xs"
                 variant="subtle"
                 leftSection={<IconArrowLeft size={14} />}
                 onClick={() => {
-                  try {
+                  if (typeof window !== 'undefined') {
                     window.location.href = '/'
-                  } catch {
-                    // ignore
                   }
                 }}
               >
                 返回 TapCanvas
               </Button>
-              {webcutUrl && (
-                <Button
-                  size="xs"
-                  variant="light"
-                  leftSection={<IconExternalLink size={14} />}
-                  component="a"
-                  href={webcutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            </Group>
+            <Group gap={6}>
+              <Tooltip label="刷新" withArrow>
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  aria-label="刷新 TapShow 作品"
+                  onClick={() => {
+                    if (!loading && !refreshing) reloadAssets()
+                  }}
+                  loading={refreshing || loading}
                 >
-                  打开 WebCut
-                </Button>
-              )}
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                aria-label="刷新 TapShow 作品"
-                onClick={() => {
-                  if (!loading && !refreshing) {
-                    reloadAssets()
-                  }
-                }}
-                loading={refreshing || loading}
-              >
-                <IconRefresh size={14} />
-              </ActionIcon>
+                  <IconRefresh size={14} />
+                </ActionIcon>
+              </Tooltip>
             </Group>
           </Group>
+
           <Stack gap={6} mb="lg">
             <Title order={2} className="tapshow-fullpage-title">
-              面向 2C 的 <span className="tapshow-title-gradient">TapShow 作品展厅</span>
+              TapShow 作品展
             </Title>
-            <Text size="sm" c="dimmed" maw={520}>
-              将 TapCanvas 中生成的图片与视频，通过 TapShow 以更具科技感和展示力的方式呈现给团队、客户或社区。
+            <Text size="sm" c="dimmed" maw={620}>
+              展示社区里用户公开的图片与视频作品。后续会支持按时长、热度等条件筛选排序。
             </Text>
           </Stack>
-          <Group justify="space-between" align="center" mb="md">
+
+          <Group justify="space-between" align="center" mb="md" wrap="wrap" gap={8}>
+            <Group gap={8} wrap="wrap">
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={mediaFilter}
+                onChange={(v) => setMediaFilter(v as MediaFilter)}
+                data={[
+                  { value: 'all', label: '全部' },
+                  { value: 'video', label: '视频' },
+                  { value: 'image', label: '图片' },
+                ]}
+              />
+
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={sortKey}
+                onChange={(v) => setSortKey(v as SortKey)}
+                data={[
+                  { value: 'createdAt', label: '按时间' },
+                  { value: 'duration', label: '按时长' },
+                ]}
+              />
+
+              <ActionIcon
+                size="sm"
+                radius="xl"
+                variant="light"
+                aria-label="切换排序方向"
+                onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+              >
+                {sortOrder === 'desc' ? <IconSortDescending size={14} /> : <IconFilter size={14} />}
+              </ActionIcon>
+            </Group>
+
             <Text size="xs" c="dimmed">
-              实时从 TapCanvas 云端加载最新公开作品，按时间倒序展示。
+              共 {filteredAssets.length} 个公开作品
             </Text>
-            <SegmentedControl
-              size="xs"
-              radius="xl"
-              value={mediaFilter}
-              onChange={(v) => setMediaFilter(v as MediaFilter)}
-              data={[
-                { value: 'all', label: '全部作品' },
-                { value: 'video', label: '仅视频' },
-                { value: 'image', label: '仅图片' },
-              ]}
-            />
           </Group>
         </Box>
 
@@ -452,7 +446,7 @@ function TapshowFullPageInner(): JSX.Element {
               <Stack gap={8} align="center">
                 <Loader size="sm" />
                 <Text size="sm" c="dimmed">
-                  正在为你唤起 TapShow 作品…
+                  正在加载作品…
                 </Text>
               </Stack>
             </Center>
@@ -460,79 +454,37 @@ function TapshowFullPageInner(): JSX.Element {
             <Center mih={260}>
               <Stack gap={6} align="center">
                 <Text size="sm" fw={500}>
-                  暂无 TapShow 公开作品
+                  暂无公开作品
                 </Text>
                 <Text size="xs" c="dimmed" ta="center" maw={420}>
-                  在 TapCanvas 中启用 OSS 托管并公开图片 / 视频后，这里会自动出现你的作品列表，适合作为 Demo 或分享页。
+                  公开上传到 OSS 的图片 / 视频会自动出现在这里。
                 </Text>
               </Stack>
             </Center>
           ) : (
-            <>
-              {featuredAssets.length > 0 && (
-                <ShowcaseSection
-                  title="编辑精选"
-                  subtitle="从最新公开作品中自动挑选，适合作为封面轮播或分享页首屏。"
-                >
-                  {featuredAssets.map((asset) => (
-                    <TapshowCard
-                      key={asset.id}
-                      asset={asset}
-                      onPreview={handlePreview}
-                      style={{ minWidth: 280, maxWidth: 320, flex: '0 0 280px' }}
-                    />
-                  ))}
-                </ShowcaseSection>
-              )}
+            <SimpleGrid
+              cols={{ base: 1, sm: 2, md: 3, lg: 4 }}
+              spacing={{ base: 'md', md: 'lg' }}
+              className="tapshow-grid"
+            >
+              {visibleAssets.map((asset) => (
+                <TapshowCard key={asset.id} asset={asset} onPreview={handlePreview} />
+              ))}
+            </SimpleGrid>
+          )}
 
-              {secondaryAssets.length > 0 && (
-                <ShowcaseSection title="推荐频道" subtitle="按时间与作品类型混排，轻松浏览不同风格的创作。">
-                  {secondaryAssets.map((asset) => (
-                    <TapshowCard
-                      key={asset.id}
-                      asset={asset}
-                      onPreview={handlePreview}
-                      style={{ minWidth: 240, maxWidth: 280, flex: '0 0 240px' }}
-                    />
-                  ))}
-                </ShowcaseSection>
-              )}
-
-              {gridAssets.length > 0 && (
-                <Stack gap="xs">
-                  <Group justify="space-between" align="center">
-                    <Text size="sm" fw={500}>
-                      全部作品
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      共 {gridAssets.length} 个公开作品
-                    </Text>
-                  </Group>
-                  <SimpleGrid
-                    cols={{ base: 1, sm: 2, md: 3 }}
-                    spacing={{ base: 'md', md: 'lg' }}
-                    className="tapshow-grid"
-                  >
-                    {visibleGridAssets.map((asset) => (
-                      <TapshowCard key={asset.id} asset={asset} onPreview={handlePreview} />
-                    ))}
-                  </SimpleGrid>
-                </Stack>
-              )}
-              {hasMore && (
-                <Center mt="lg" ref={loadMoreRef}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() => {
-                      setVisibleCount((count) => Math.min(count + 24, gridAssets.length))
-                    }}
-                  >
-                    加载更多作品
-                  </Button>
-                </Center>
-              )}
-            </>
+          {hasMore && (
+            <Center mt="lg" ref={loadMoreRef}>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => {
+                  setVisibleCount((count) => Math.min(count + 30, filteredAssets.length))
+                }}
+              >
+                加载更多
+              </Button>
+            </Center>
           )}
         </Box>
       </Container>
@@ -543,3 +495,4 @@ function TapshowFullPageInner(): JSX.Element {
 export default function TapshowFullPage(): JSX.Element {
   return <TapshowFullPageInner />
 }
+

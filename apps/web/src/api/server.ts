@@ -1254,6 +1254,7 @@ export type PublicAssetDto = {
   type: 'image' | 'video'
   url: string
   thumbnailUrl?: string | null
+  duration?: number | null
   prompt?: string | null
   vendor?: string | null
   modelKey?: string | null
@@ -1454,6 +1455,7 @@ export async function uploadSora2ApiCharacter(input: {
   timestamps?: string
   webHook?: string
   shutProgress?: boolean
+  vendor?: 'sora2api' | 'grsai'
 }) {
   const r = await fetch(`${API_BASE}/sora/sora2api/characters/upload`, withAuth({
     method: 'POST',

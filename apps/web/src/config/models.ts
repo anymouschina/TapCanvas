@@ -10,6 +10,7 @@ export interface ModelOption {
 }
 
 export const TEXT_MODELS: ModelOption[] = [
+  { value: 'gpt-5.2', label: 'GPT-5.2', vendor: 'openai' },
   { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', vendor: 'openai' },
   { value: 'glm-4.6', label: 'GLM-4.6 (Claude兼容)', vendor: 'anthropic' },
   { value: 'glm-4.5', label: 'GLM-4.5', vendor: 'anthropic' },
@@ -85,6 +86,7 @@ export function getDefaultModel(kind?: NodeKind): string {
 export type AIProvider = 'openai' | 'anthropic' | 'google'
 
 export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
+  'gpt-5.2': 'openai',
   'gpt-5.1-codex': 'openai',
   'glm-4.6': 'anthropic',
   'glm-4.5': 'anthropic',

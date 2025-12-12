@@ -1455,7 +1455,7 @@ const handleCloseProxyModal = () => {
                       </Button>
                     </Group>
                     <Text size="xs" c="dimmed" mb={2}>
-                      配置 OpenAI 或 right.codes Codex API Key，支持 GPT-4o / GPT-5.1 等模型，可自定义 Base URL。
+                      配置 OpenAI 或 right.codes Codex API Key，支持 GPT-4o / GPT-5.2 等模型，可自定义 Base URL。
                     </Text>
                     <Text size="xs" c="dimmed">
                       已配置密钥：{openaiTokens.length}
