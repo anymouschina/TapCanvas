@@ -3,7 +3,7 @@ import { MP4Clip, AudioClip, OffscreenSprite, Combinator, ImgClip } from "@webav
 import { base64ToFile, blobToBase64DataURL, fileToBase64DataURL } from './file';
 import { WebCutHighlightOfText } from "../types";
 import { blobToFile } from "./file";
-import { authFetch } from "./auth";
+import { maybeAuthFetch } from "./auth";
 // @ts-ignore
 import toWav from 'audiobuffer-to-wav';
 import { PerformanceMark, mark } from './performance';
@@ -351,7 +351,7 @@ export async function measureImageSize(source: File | string) {
         img.src = source;
     }
     else {
-        const res = await authFetch(source);
+        const res = await maybeAuthFetch(source);
         img.src = await blobToBase64DataURL(await res.blob());
     }
     await new Promise((resolve) => {

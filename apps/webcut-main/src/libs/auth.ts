@@ -68,3 +68,57 @@ export function authFetch(
 		headers,
 	});
 }
+
+/**
+ * 智能选择是否携带鉴权信息：
+ * - 同源 / API_BASE（需要鉴权） => authFetch
+ * - 其他跨域公共资源（如 R2 公有桶） => fetch(credentials: omit)
+ */
+export function maybeAuthFetch(
+	input: RequestInfo | URL,
+	init: RequestInit = {},
+): Promise<Response> {
+	const urlStr =
+		typeof input === "string"
+			? input
+			: input instanceof URL
+				? input.toString()
+				: (input as Request).url;
+
+	// 相对路径默认走鉴权 fetch
+	if (!/^https?:\/\//i.test(urlStr)) {
+		return authFetch(input, init);
+	}
+
+	try {
+		const parsed = new URL(
+			urlStr,
+			typeof window !== "undefined" ? window.location.href : undefined,
+		);
+		const currentOrigin =
+			typeof window !== "undefined" ? window.location.origin : parsed.origin;
+
+		const apiBase =
+			(import.meta.env.VITE_API_BASE as string | undefined) ||
+			"https://hono-api.beqlee.icu";
+		let apiOrigin = "";
+		try {
+			apiOrigin = new URL(apiBase).origin;
+		} catch {
+			apiOrigin = "";
+		}
+
+		if (parsed.origin === currentOrigin || (apiOrigin && parsed.origin === apiOrigin)) {
+			return authFetch(input, init);
+		}
+	} catch {
+		// URL 解析失败时回退到鉴权 fetch
+		return authFetch(input, init);
+	}
+
+	// 跨域公共资源默认不带凭证，避免 "*" + include 的 CORS 冲突
+	return fetch(input, {
+		...init,
+		credentials: init.credentials ?? "omit",
+	});
+}
