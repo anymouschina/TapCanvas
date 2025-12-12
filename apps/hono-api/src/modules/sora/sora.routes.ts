@@ -239,6 +239,8 @@ soraRouter.post("/sora2api/characters/upload", async (c) => {
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const url = typeof body.url === "string" ? body.url.trim() : "";
 	if (!url) return c.json({ error: "url is required" }, 400);
+	const vendorRaw = typeof body.vendor === "string" ? body.vendor.trim() : "";
+	const vendor = vendorRaw.toLowerCase() === "grsai" ? "grsai" : "sora2api";
 	const timestamps =
 		typeof body.timestamps === "string" && body.timestamps.trim()
 			? body.timestamps.trim()
@@ -253,7 +255,11 @@ soraRouter.post("/sora2api/characters/upload", async (c) => {
 		timestamps,
 		webHook,
 		shutProgress,
+		vendor,
 	});
+	if (vendor === "grsai") {
+		(result as any).vendor = "grsai";
+	}
 	return c.json(result);
 });
 

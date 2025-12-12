@@ -315,12 +315,13 @@ function CanvasApp(): JSX.Element {
           message: '正在调用 Sora2API 创建角色…',
           loading: true,
         })
-        const created = await uploadSora2ApiCharacter({
-          url: videoUrl,
-          timestamps,
-          webHook: '-1',
-          shutProgress: false,
-        })
+    const created = await uploadSora2ApiCharacter({
+      url: videoUrl,
+      timestamps,
+      webHook: '-1',
+      shutProgress: false,
+      vendor: vendor === 'grsai' ? 'grsai' : 'sora2api',
+    })
         if (disposed) return
         const taskId = created?.id || created?.taskId || null
         if (!taskId) {
@@ -329,9 +330,27 @@ function CanvasApp(): JSX.Element {
         notifications.update({
           id: 'character-create',
           title: '已创建角色任务',
-          message: `任务 ID：${taskId}，开始轮询结果…`,
-          loading: true,
+          message: vendor === 'grsai' ? '上游已返回创建结果' : `任务 ID：${taskId}，开始轮询结果…`,
+          loading: vendor !== 'grsai',
         })
+
+        if (vendor === 'grsai') {
+          const characterId =
+            created?.character_id ||
+            created?.characterId ||
+            (Array.isArray(created?.results) && (created as any).results[0]?.character_id) ||
+            taskId
+          const msg = characterId ? `创建成功，角色 ID：${characterId}` : '创建完成'
+          notifications.update({
+            id: 'character-create',
+            title: '角色创建完成',
+            message: msg,
+            loading: false,
+            color: characterId ? 'teal' : 'yellow',
+          })
+          return
+        }
+
         let attempts = 0
         let done = false
         while (!done && attempts < 40 && !disposed) {

@@ -133,13 +133,21 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
     return () => window.removeEventListener('keydown', onKey)
   }, [opened, onClose, playing, currentTime, trimStart, trimEnd])
 
+  const getTimelineWidth = () => {
+    if (timelineWidth > 0) return timelineWidth
+    const el = timelineRef.current
+    const measured = el ? el.getBoundingClientRect().width : 0
+    return measured > 0 ? measured : 0
+  }
   const timeToX = (time: number) => {
-    if (!timelineWidth || !originalDuration) return 0
-    return (time / originalDuration) * timelineWidth
+    const width = getTimelineWidth()
+    if (!width || !originalDuration) return 0
+    return (time / originalDuration) * width
   }
   const xToTime = (x: number) => {
-    if (!timelineWidth || !originalDuration) return 0
-    const ratio = Math.min(1, Math.max(0, x / timelineWidth))
+    const width = getTimelineWidth()
+    if (!width || !originalDuration) return 0
+    const ratio = Math.min(1, Math.max(0, x / width))
     return ratio * originalDuration
   }
 

@@ -152,6 +152,14 @@ assetRouter.get("/public", async (c) => {
 				typeof data.thumbnailUrl === "string"
 					? data.thumbnailUrl
 					: null;
+			const duration =
+				typeof data.duration === "number" && Number.isFinite(data.duration)
+					? data.duration
+					: typeof data.durationSeconds === "number" && Number.isFinite(data.durationSeconds)
+						? data.durationSeconds
+						: typeof data.videoDurationSeconds === "number" && Number.isFinite(data.videoDurationSeconds)
+							? data.videoDurationSeconds
+							: null;
 			const prompt =
 				typeof data.prompt === "string" ? data.prompt : null;
 			const vendor =
@@ -165,6 +173,7 @@ assetRouter.get("/public", async (c) => {
 				type,
 				url,
 				thumbnailUrl,
+				duration,
 				prompt,
 				vendor,
 				modelKey,

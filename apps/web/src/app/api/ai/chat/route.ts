@@ -27,7 +27,7 @@ const normalizeOpenAIBaseUrl = (input?: string | null): string | undefined => {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { messages, model = 'gpt-5.1', apiKey, system, tools, baseUrl } = body
+    const { messages, model = 'gpt-5.2', apiKey, system, tools, baseUrl } = body
 
     const providerFromModel = getModelProvider(model)
     const lower = String(model || '').toLowerCase()

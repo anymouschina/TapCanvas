@@ -108,6 +108,13 @@ export function subscribeToolEvents({ url, token, onEvent, onOpen, onError }: Su
 }
 
 const TOOL_NAME_TO_EVENT: Record<string, string> = {
+  canvas_node_operation: 'canvas_node.operation',
+  canvas_layout_apply: 'canvas.layout.apply',
+  canvas_optimization_analyze: 'canvas.optimization.analyze',
+  canvas_view_navigate: 'canvas.view.navigate',
+  canvas_connection_operation: 'canvas.connection.operation',
+  project_operation: 'project.operation',
+  // legacy dotted tool names
   'canvas.node.operation': 'canvas_node.operation',
   'canvas.layout.apply': 'canvas_layout.apply',
   'canvas.optimization.analyze': 'canvas_optimization.analyze',

@@ -31,8 +31,9 @@ interface UseChatAssistantProps {
   intelligentMode?: boolean
 }
 
-const OPENAI_DEFAULT_MODEL = 'gpt-5.1'
+const OPENAI_DEFAULT_MODEL = 'gpt-5.2'
 const ASSISTANT_MODEL_PRESETS: ModelOption[] = [
+  { value: 'gpt-5.2', label: 'GPT-5.2' },
   { value: 'gpt-5.1', label: 'GPT-5.1' },
   { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
 ]
@@ -234,6 +235,12 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
   const nodes = useRFStore(state => state.nodes)
   const edges = useRFStore(state => state.edges)
   const [model, setModel] = useState(() => OPENAI_DEFAULT_MODEL || getDefaultModel('text'))
+  const userSelectedModelRef = useRef(false)
+  const handleModelChange = (value: string | null) => {
+    if (!value) return
+    userSelectedModelRef.current = true
+    setModel(value)
+  }
   const textModelOptions = useModelOptions('text')
   const [codexModels, setCodexModels] = useState<ModelOption[]>([])
   const fallbackAssistantOptions = useMemo(() => buildAssistantBaseOptions(textModelOptions), [textModelOptions])
@@ -315,7 +322,16 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
   }, [])
 
   useEffect(() => {
-    if (assistantModelOptions.length && !assistantModelOptions.find(option => option.value === model)) {
+    if (!assistantModelOptions.length) return
+
+    const hasDefault = assistantModelOptions.some(option => option.value === OPENAI_DEFAULT_MODEL)
+
+    if (!userSelectedModelRef.current && hasDefault && model !== OPENAI_DEFAULT_MODEL) {
+      setModel(OPENAI_DEFAULT_MODEL)
+      return
+    }
+
+    if (!assistantModelOptions.find(option => option.value === model)) {
       const preferred = assistantModelOptions.find(option => option.value === OPENAI_DEFAULT_MODEL)
       setModel(preferred ? preferred.value : assistantModelOptions[0].value)
     }
@@ -347,6 +363,9 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     sessionId: activeSessionId || undefined,
   }), [model, canvasContext, provider, intelligentMode, enableWebSearch, activeSessionId])
 
+  const bodyRef = useRef(body)
+  bodyRef.current = body
+
   const chatId = useMemo(() => 'canvas-assistant', [])
 
   const chatTransport = useMemo(() => new DefaultChatTransport({
@@ -368,18 +387,19 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
           return part
         })
       }))
+      const currentBody = bodyRef.current
       return {
         headers: {
           'Content-Type': 'application/json',
           ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {})
         },
         body: {
-          ...body,
+          ...currentBody,
           messages: serializedMessages,
         }
       }
     }
-  }), [apiRoot, body, model, intelligentMode])
+  }), [apiRoot])
 
   const parseJsonIfNeeded = (value: any) => {
     if (typeof value === 'string') {
@@ -609,6 +629,13 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     formatAll: '整理画布',
     getNodes: '查看节点',
     findNodes: '查找节点',
+    canvas_node_operation: '节点操作',
+    canvas_connection_operation: '连接操作',
+    canvas_layout_apply: '布局调整',
+    canvas_optimization_analyze: '画布优化',
+    canvas_view_navigate: '视图定位',
+    project_operation: '项目操作',
+    // legacy dotted tool names
     'canvas.node.operation': '节点操作',
     'canvas.connection.operation': '连接操作',
     'canvas.layout.apply': '布局调整',
@@ -680,11 +707,11 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     return LAYOUT_LABELS[normalized] || layout
   }
   const getBaseToolLabel = (toolName: string, payload: Record<string, any>) => {
-    if (toolName === 'canvas.node.operation') {
+    if (toolName === 'canvas_node_operation' || toolName === 'canvas.node.operation') {
       const action = typeof payload.action === 'string' ? payload.action : ''
       return NODE_OPERATION_ACTION_LABELS[action] || TOOL_LABELS[toolName] || '画布操作'
     }
-    if (toolName === 'canvas.connection.operation') {
+    if (toolName === 'canvas_connection_operation' || toolName === 'canvas.connection.operation') {
       const action = typeof payload.action === 'string' ? payload.action : ''
       return CONNECTION_ACTION_LABELS[action] || TOOL_LABELS[toolName] || '连接操作'
     }
@@ -695,11 +722,11 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     const payload = input && typeof input === 'object' ? input : {}
     const baseLabel = getBaseToolLabel(normalizedTool, payload)
     let detail = ''
-    if (normalizedTool === 'createNode' || normalizedTool === 'updateNode' || normalizedTool === 'deleteNode' || normalizedTool === 'runNode' || normalizedTool === 'canvas.node.operation') {
+    if (normalizedTool === 'createNode' || normalizedTool === 'updateNode' || normalizedTool === 'deleteNode' || normalizedTool === 'runNode' || normalizedTool === 'canvas_node_operation' || normalizedTool === 'canvas.node.operation') {
       detail = describeNodeSelection(payload)
-    } else if (normalizedTool === 'connectNodes' || normalizedTool === 'disconnectNodes' || normalizedTool === 'canvas.connection.operation') {
+    } else if (normalizedTool === 'connectNodes' || normalizedTool === 'disconnectNodes' || normalizedTool === 'canvas_connection_operation' || normalizedTool === 'canvas.connection.operation') {
       detail = describeConnection(payload)
-    } else if (normalizedTool === 'autoLayout' || normalizedTool === 'canvas.layout.apply') {
+    } else if (normalizedTool === 'autoLayout' || normalizedTool === 'canvas_layout_apply' || normalizedTool === 'canvas.layout.apply') {
       detail = describeLayout(payload)
       if (detail) {
         detail = `应用${detail}`
@@ -709,7 +736,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
       detail = concurrency ? `并发 ${concurrency}` : '全局执行'
     } else if (normalizedTool === 'formatAll') {
       detail = '整理当前画布'
-    } else if (normalizedTool === 'project.operation') {
+    } else if (normalizedTool === 'project_operation' || normalizedTool === 'project.operation') {
       detail = typeof payload.action === 'string' ? payload.action : ''
     } else if (!normalizedTool && payload) {
       detail = describeNodeSelection(payload)
@@ -901,7 +928,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     ;(msg.parts || []).forEach((part: any) => {
       if (!part || part.type !== 'tool-result') return
       const toolName = resolveToolName(part) || part.tool
-      if (toolName !== 'runNode' && toolName !== 'canvas.node.operation') return
+      if (toolName !== 'runNode' && toolName !== 'canvas_node_operation' && toolName !== 'canvas.node.operation') return
       const output = part.output
       if (!output || typeof output !== 'object') return
 
@@ -1408,7 +1435,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
               <Select
                 size="xs"
                 value={model}
-                onChange={(value) => value && setModel(value)}
+                onChange={handleModelChange}
                 data={assistantModelOptions.map(option => ({ value: option.value, label: option.label }))}
                 aria-label="选择模型"
                 w={170}
