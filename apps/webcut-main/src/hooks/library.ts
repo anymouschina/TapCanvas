@@ -24,7 +24,7 @@ type RemoteAsset = {
 
 const remoteAssets = ref<RemoteAsset[]>([]);
 const remoteAssetsLoading = ref(false);
-const API_BASE = VITE_API_BASE;
+const API_BASE = VITE_API_BASE || 'https://hono-api.beqlee.icu';
 
 function normalizeRemoteAsset(raw: any): RemoteAsset | null {
     if (!raw || typeof raw !== 'object') return null;
@@ -53,7 +53,7 @@ function normalizeRemoteAsset(raw: any): RemoteAsset | null {
 }
 
 async function fetchRemoteAssets() {
-    if (!API_BASE || remoteAssetsLoading.value) {
+    if (remoteAssetsLoading.value) {
         return;
     }
     remoteAssetsLoading.value = true;
