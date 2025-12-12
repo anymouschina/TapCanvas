@@ -758,6 +758,16 @@ function CanvasApp(): JSX.Element {
             >
               Sora 视频去水印
             </Button>
+            <Button
+              size="xs"
+              variant="subtle"
+              component="a"
+              href="https://webcut.beqlee.icu/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              在线剪辑
+            </Button>
             <ActionIcon
               variant="subtle"
               aria-label={colorScheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
