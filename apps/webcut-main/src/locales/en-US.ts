@@ -41,6 +41,11 @@ export default {
   // Tools
   '撤销': 'Undo',
   '重做': 'Redo',
+  '历史记录': 'History',
+  '选择历史记录': 'Select History',
+  '保存进度': 'Save Progress',
+  '已保存当前进度': 'Progress saved',
+  '保存失败': 'Save failed',
 
   // Tooltips
   '清除选中': 'Clear Selection',

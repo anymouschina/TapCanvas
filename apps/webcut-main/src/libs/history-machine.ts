@@ -1,5 +1,5 @@
 import { WebCutProjectHistoryData, WebCutProjectHistoryState } from '../types';
-import { pushProjectHistory, getProjectHistory, clearProjectHistory, moveProjectHistoryTo, getProjectState } from '../db';
+import { pushProjectHistory, getProjectHistory, clearProjectHistory, moveProjectHistoryTo, getProjectState, updateProjectState } from '../db';
 import { aspectRatioMap } from '../constants';
 
 // 历史记录管理器类
@@ -93,6 +93,24 @@ export class HistoryMachine {
         const historyId = await pushProjectHistory(this.projectId, state);
         await this.updateCurrent(historyId);
         return historyId!;
+    }
+
+    // 跳转到指定历史记录
+    async jumpTo(historyId: string): Promise<WebCutProjectHistoryData['state'] | null> {
+        await this.ready();
+        if (!historyId) {
+            return null;
+        }
+
+        const history = await this.getHistoryList();
+        const target = history.find(item => item.id === historyId);
+        if (!target) {
+            return null;
+        }
+
+        await updateProjectState(this.projectId, { historyAt: historyId });
+        await this.updateCurrent(historyId);
+        return target.state;
     }
 
     // 撤销操作
