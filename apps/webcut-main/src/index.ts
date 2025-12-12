@@ -29,6 +29,8 @@ import WebCutSplitKeepLeftTool from './views/tools/split-keep-left/index.vue';
 import WebCutSplitKeepRightTool from './views/tools/split-keep-right/index.vue';
 import WebCutFlipHorizontalTool from './views/tools/flip-h/index.vue';
 import WebCutConcatTool from './views/tools/concat/index.vue';
+import WebCutHistoryListTool from './views/tools/history-list/index.vue';
+import WebCutSaveProgressTool from './views/tools/save-progress/index.vue';
 // 面板 - 编辑器右侧
 import WebCutPanel from './views/panel/index.vue'; // 集成所有面板
 import WebCutTextPanel from './views/panel/text/index.vue';
@@ -68,6 +70,8 @@ export {
     WebCutSplitKeepRightTool,
     WebCutFlipHorizontalTool,
     WebCutConcatTool,
+    WebCutHistoryListTool,
+    WebCutSaveProgressTool,
     WebCutEditor,
     WebCutSelectAspectRatio,
     WebCutTimeClock,

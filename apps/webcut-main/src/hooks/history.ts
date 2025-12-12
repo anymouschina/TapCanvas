@@ -18,6 +18,18 @@ export function useWebCutHistory() {
         historyMachines.set(projectId.value, historyMachine);
     }
 
+    // 历史记录列表与当前指针
+    const historyList = ref<Awaited<ReturnType<HistoryMachine['getHistoryList']>>>([]);
+    const currentHistoryId = ref<string | null>(null);
+
+    async function refreshHistoryList() {
+        await historyMachine.ready();
+        historyList.value = await historyMachine.getHistoryList();
+        currentHistoryId.value = await historyMachine.getCurrentHistoryId();
+        canUndo.value = historyMachine.canUndo();
+        canRedo.value = historyMachine.canRedo();
+    }
+
     // 是否有项目状态可以恢复
     const dataToRecover = ref<Awaited<ReturnType<HistoryMachine['init']>> | null>(null);
 
@@ -34,6 +46,8 @@ export function useWebCutHistory() {
                 updateByAspectRatio(aspectRatio);
             }
         }
+
+        await refreshHistoryList();
     });
 
     // 将source转换为source meta便于存储
@@ -301,6 +315,7 @@ export function useWebCutHistory() {
             canRecover.value = false;
             canUndo.value = historyMachine.canUndo();
             canRedo.value = historyMachine.canRedo();
+            currentHistoryId.value = await historyMachine.getCurrentHistoryId();
         } finally {
             loading.value = false;
         }
@@ -315,6 +330,7 @@ export function useWebCutHistory() {
                 return;
             }
             await recoverHistory(state);
+            await refreshHistoryList();
         } finally {
             loading.value = false;
         }
@@ -329,6 +345,7 @@ export function useWebCutHistory() {
                 return;
             }
             await recoverHistory(state);
+            await refreshHistoryList();
         } finally {
             loading.value = false;
         }
@@ -337,8 +354,7 @@ export function useWebCutHistory() {
     // 清除历史记录
     async function clear() {
         await historyMachine.clear();
-        canUndo.value = historyMachine.canUndo();
-        canRedo.value = historyMachine.canRedo();
+        await refreshHistoryList();
         canRecover.value = false;
         dataToRecover.value = null;
     }
@@ -358,14 +374,34 @@ export function useWebCutHistory() {
             sourcesData[key] = meta;
         }
         await historyMachine.push({ rails: railsData, sources: sourcesData });
-        canUndo.value = historyMachine.canUndo();
-        canRedo.value = historyMachine.canRedo();
+        await refreshHistoryList();
         canRecover.value = false;
         dataToRecover.value = null;
     }
 
+    // 保存当前进度（手动创建一个历史记录）
+    async function saveProgress() {
+        await push();
+    }
+
+    // 跳转到指定历史记录
+    async function jumpTo(historyId: string) {
+        loading.value = true;
+        try {
+            const state = await historyMachine.jumpTo(historyId);
+            if (!state) {
+                return;
+            }
+            await recoverHistory(state);
+            await refreshHistoryList();
+        } finally {
+            loading.value = false;
+        }
+    }
+
     return {
         push,
+        saveProgress,
         undo,
         redo,
         clear,
@@ -373,5 +409,9 @@ export function useWebCutHistory() {
         canRedo,
         canRecover,
         recover,
+        historyList,
+        currentHistoryId,
+        refreshHistoryList,
+        jumpTo,
     };
 }

@@ -10,6 +10,8 @@ import Concat from '../../tools/concat/index.vue';
 import Undo from '../../tools/undo/index.vue';
 import Redo from '../../tools/redo/index.vue';
 import HistoryRecover from '../../tools/history-recover/index.vue';
+import HistoryList from '../../tools/history-list/index.vue';
+import SaveProgress from '../../tools/save-progress/index.vue';
 import { DividerTall16Regular } from '@vicons/fluent';
 import Loading from '../../loading/index.vue';
 import { NIcon } from 'naive-ui';
@@ -28,6 +30,8 @@ const props = defineProps<{
             <Loading size="1.2em"></Loading>
         </div>
         <div class="webcut-manager-tools-bar-right">
+            <SaveProgress />
+            <HistoryList />
             <HistoryRecover />
             <Undo></Undo>
             <Redo></Redo>
