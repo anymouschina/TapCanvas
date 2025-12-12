@@ -41,12 +41,29 @@ export async function findGeneratedAssetBySourceUrl(
 export async function listAssetsForUser(
 	db: D1Database,
 	userId: string,
+	params?: { limit?: number; cursor?: string | null },
 ): Promise<AssetRow[]> {
-	return queryAll<AssetRow>(
-		db,
-		`SELECT * FROM assets WHERE owner_id = ? ORDER BY created_at DESC`,
-		[userId],
-	);
+	const rawLimit = params?.limit;
+	const normalizedLimit =
+		typeof rawLimit === "number" && !Number.isNaN(rawLimit) ? rawLimit : 10;
+	// 每次最多返回 10 条
+	const limit = Math.max(1, Math.min(normalizedLimit, 10));
+	const cursor = params?.cursor ? String(params.cursor) : null;
+
+	const args: any[] = [userId];
+	let sql = `SELECT * FROM assets WHERE owner_id = ?`;
+	if (cursor) {
+		sql += ` AND created_at < ?`;
+		args.push(cursor);
+	}
+	// newest first
+	sql += ` ORDER BY created_at DESC`;
+	if (limit) {
+		sql += ` LIMIT ?`;
+		args.push(limit);
+	}
+
+	return queryAll<AssetRow>(db, sql, args);
 }
 
 export async function getAssetByIdForUser(

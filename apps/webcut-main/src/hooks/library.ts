@@ -24,6 +24,9 @@ type RemoteAsset = {
 
 const remoteAssets = ref<RemoteAsset[]>([]);
 const remoteAssetsLoading = ref(false);
+const remoteAssetsCursor = ref<string | null>(null);
+const remoteAssetsHasMore = ref(true);
+const REMOTE_PAGE_SIZE = 10;
 const API_BASE = VITE_API_BASE || 'https://hono-api.beqlee.icu';
 
 function normalizeRemoteAsset(raw: any): RemoteAsset | null {
@@ -52,13 +55,22 @@ function normalizeRemoteAsset(raw: any): RemoteAsset | null {
     };
 }
 
-async function fetchRemoteAssets() {
+async function fetchRemoteAssets(reset = false) {
     if (remoteAssetsLoading.value) {
+        return;
+    }
+    if (!remoteAssetsHasMore.value && !reset) {
         return;
     }
     remoteAssetsLoading.value = true;
     try {
-        const res = await authFetch(`${API_BASE}/assets`);
+        const qs = new URLSearchParams();
+        qs.set('limit', String(REMOTE_PAGE_SIZE));
+        if (!reset && remoteAssetsCursor.value) {
+            qs.set('cursor', remoteAssetsCursor.value);
+        }
+        const url = `${API_BASE}/assets?${qs.toString()}`;
+        const res = await authFetch(url);
         if (!res.ok) {
             if (res.status === 401 && typeof window !== 'undefined') {
                 try {
@@ -73,16 +85,26 @@ async function fetchRemoteAssets() {
             }
             throw new Error(`list assets failed: ${res.status}`);
         }
-        const json = await res.json().catch(() => []);
-        const normalized = Array.isArray(json)
-            ? json.map(normalizeRemoteAsset).filter((v): v is RemoteAsset => !!v)
-            : [];
-        // 按时间排序，时间为空的靠后
+        const json = await res.json().catch(() => ({ items: [], cursor: null }));
+        const itemsRaw = Array.isArray(json?.items) ? json.items : [];
+        const normalized = itemsRaw.map(normalizeRemoteAsset).filter((v): v is RemoteAsset => !!v);
         normalized.sort((a, b) => (b.time || 0) - (a.time || 0));
-        remoteAssets.value = normalized;
+
+        if (reset) {
+            remoteAssets.value = normalized;
+        } else {
+            const existingIds = new Set(remoteAssets.value.map(a => a.id));
+            const merged = [...remoteAssets.value, ...normalized.filter(a => !existingIds.has(a.id))];
+            merged.sort((a, b) => (b.time || 0) - (a.time || 0));
+            remoteAssets.value = merged;
+        }
+
+        remoteAssetsCursor.value = json?.cursor ?? null;
+        remoteAssetsHasMore.value = Boolean(remoteAssetsCursor.value);
     }
     catch (err) {
         console.error('[webcut] fetch remote assets failed', err);
+        remoteAssetsHasMore.value = false;
     }
     finally {
         remoteAssetsLoading.value = false;
@@ -108,7 +130,7 @@ export function useWebCutLibrary() {
     }, { immediate: true });
 
     onMounted(() => {
-        fetchRemoteAssets().catch(() => {});
+        fetchRemoteAssets(true).catch(() => {});
     });
 
     async function addNewFile(file: File) {
@@ -149,6 +171,8 @@ export function useWebCutLibrary() {
         removeFile,
         remoteAssets,
         remoteAssetsLoading,
-        refreshRemoteAssets: fetchRemoteAssets,
+        remoteAssetsHasMore,
+        loadMoreRemoteAssets: () => fetchRemoteAssets(false),
+        refreshRemoteAssets: () => fetchRemoteAssets(true),
     };
 }

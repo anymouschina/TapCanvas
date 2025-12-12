@@ -142,4 +142,7 @@ export default {
   '当前有动画，调整可能不能直接看到效果，请播放片段查看': 'Current animation may not show direct effect, please play the segment to check',
   '滤镜': 'Filter',
   '恢复正在编辑的数据': 'Restore editing data',
+  '加载中...': 'Loading...',
+  '暂无资产，请先生成或上传': 'No assets yet. Generate or upload first.',
+  '没有更多资产了': 'No more assets',
 };

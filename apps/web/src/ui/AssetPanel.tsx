@@ -105,6 +105,8 @@ export default function AssetPanel(): JSX.Element | null {
   const addNode = useRFStore((s) => s.addNode)
   const mounted = active === 'assets'
   const [assets, setAssets] = React.useState<ServerAssetDto[]>([])
+  const [assetCursor, setAssetCursor] = React.useState<string | null>(null)
+  const [hasMoreAssets, setHasMoreAssets] = React.useState(true)
   const [tab, setTab] = React.useState<'generated' | 'workflow'>('generated')
   const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('video')
   const [loading, setLoading] = React.useState(false)
@@ -114,24 +116,58 @@ export default function AssetPanel(): JSX.Element | null {
   const thumbStatusRef = React.useRef<Record<string, 'pending' | 'running' | 'done'>>({})
   const activeThumbJobsRef = React.useRef(0)
 
+  const PAGE_SIZE = 10
+
   const reloadAssets = React.useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listServerAssets()
-      setAssets(data || [])
+      const data = await listServerAssets({ limit: PAGE_SIZE })
+      setAssets(data.items || [])
+      setAssetCursor(data.cursor ?? null)
+      setHasMoreAssets(Boolean(data.cursor))
     } catch (err: any) {
       console.error(err)
       toast(err?.message || '加载资产失败', 'error')
       setAssets([])
+      setAssetCursor(null)
+      setHasMoreAssets(false)
     } finally {
       setLoading(false)
     }
   }, [])
 
+  const loadMoreAssets = React.useCallback(async () => {
+    if (!hasMoreAssets || loading) return
+    try {
+      const data = await listServerAssets({ limit: PAGE_SIZE, cursor: assetCursor })
+      setAssets((prev) => [...prev, ...(data.items || [])])
+      setAssetCursor(data.cursor ?? null)
+      setHasMoreAssets(Boolean(data.cursor))
+    } catch (err) {
+      console.error(err)
+      setHasMoreAssets(false)
+    }
+  }, [assetCursor, hasMoreAssets, loading])
+
   React.useEffect(() => {
     if (!mounted) return
     reloadAssets().catch(() => {})
   }, [mounted, reloadAssets])
+
+  // 当内容不足以滚动时，自动预取更多页
+  React.useEffect(() => {
+    if (!mounted) return
+    if (!hasMoreAssets || loading) return
+    // defer to allow layout
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector('[data-ux-panel] div[style*="overflowY"]') as HTMLDivElement | null
+      if (!el) return
+      if (el.scrollHeight <= el.clientHeight + 40) {
+        loadMoreAssets().catch(() => {})
+      }
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [mounted, assets.length, hasMoreAssets, loading, tab, mediaFilter, loadMoreAssets])
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
@@ -158,9 +194,9 @@ export default function AssetPanel(): JSX.Element | null {
   const MAX_THUMB_JOBS = 2
 
   React.useEffect(() => {
-    // 重置生成内容的可见数量，避免切换过滤或重新加载后还停留在末尾
+    // 重置生成内容的可见数量，避免切换过滤后还停留在末尾
     setVisibleGenerationCount(10)
-  }, [generationAssets, mediaFilter])
+  }, [mediaFilter])
 
   const runNextThumbJob = React.useCallback(() => {
     if (activeThumbJobsRef.current >= MAX_THUMB_JOBS) return
@@ -388,12 +424,17 @@ export default function AssetPanel(): JSX.Element | null {
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
   const handleScroll: React.UIEventHandler<HTMLDivElement> = (event) => {
-    if (tab !== 'generated') return
     const el = event.currentTarget
     const threshold = 80
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - threshold) {
-      if (visibleGenerationCount < filteredGenerationAssets.length) {
-        setVisibleGenerationCount((prev) => Math.min(prev + 10, filteredGenerationAssets.length))
+      if (tab === 'generated') {
+        if (visibleGenerationCount < filteredGenerationAssets.length) {
+          setVisibleGenerationCount((prev) => Math.min(prev + 10, filteredGenerationAssets.length))
+          return
+        }
+      }
+      if (hasMoreAssets) {
+        loadMoreAssets().catch(() => {})
       }
     }
   }

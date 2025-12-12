@@ -19,7 +19,7 @@ import { PerformanceMark, mark } from '../../libs/performance';
 const t = useT();
 
 const { push } = useWebCutPlayer();
-const { projectFiles, files, addNewFile, removeFile, remoteAssets, remoteAssetsLoading, refreshRemoteAssets } = useWebCutLibrary();
+const { projectFiles, files, addNewFile, removeFile, remoteAssets, remoteAssetsLoading, remoteAssetsHasMore, loadMoreRemoteAssets, refreshRemoteAssets } = useWebCutLibrary();
 const { fileUrl } = useWebCutLocalFile();
 const { push: pushHistory } = useWebCutHistory();
 
@@ -35,10 +35,45 @@ const projectVideoList = computed(() => {
 
 const actionType = ref<'import' | 'this' | 'all' | 'assets'>('assets');
 
+const assetsScroller = ref<any>(null);
+
 watch(actionType, (val) => {
   if (val === 'assets') {
     refreshRemoteAssets();
   }
+}, { immediate: true });
+
+function handleAssetsScroll(offset: { top: number }) {
+  if (actionType.value !== 'assets') return;
+  if (!assetsScroller.value) return;
+  const { height } = assetsScroller.value.getScrollContainerSize() || {};
+  const { height: contentHeight } = assetsScroller.value.getScrollContentSize() || {};
+  if (!height || !contentHeight) return;
+  const threshold = 120;
+  if (offset.top + height >= contentHeight - threshold) {
+    if (remoteAssetsHasMore.value && !remoteAssetsLoading.value) {
+      loadMoreRemoteAssets();
+    }
+  }
+}
+
+async function maybePrefetchMoreAssets() {
+  if (actionType.value !== 'assets') return;
+  if (!assetsScroller.value) return;
+  if (!remoteAssetsHasMore.value || remoteAssetsLoading.value) return;
+
+  const { height } = assetsScroller.value.getScrollContainerSize() || {};
+  const { height: contentHeight } = assetsScroller.value.getScrollContentSize() || {};
+  if (!height || !contentHeight) return;
+  // 当内容不够滚动时，自动继续拉取下一页
+  if (contentHeight <= height + 40) {
+    await loadMoreRemoteAssets();
+  }
+}
+
+watch([actionType, remoteAssets, remoteAssetsHasMore, remoteAssetsLoading], async () => {
+  await nextTick();
+  await maybePrefetchMoreAssets();
 }, { immediate: true });
 
 const videoSrc = (file: any) => file.url || fileUrl(file.id);
@@ -186,7 +221,7 @@ async function handleAdd(material: any) {
         </div>
       </scroll-box>
 
-      <scroll-box class="webcut-material-container" v-if="actionType === 'assets'">
+      <scroll-box ref="assetsScroller" class="webcut-material-container" v-if="actionType === 'assets'" @scroll="handleAssetsScroll">
         <div class="webcut-material-list">
           <div v-for="material in remoteVideoList" :key="material.id" class="webcut-material-item">
             <div class="webcut-material-preview">
@@ -208,6 +243,9 @@ async function handleAdd(material: any) {
           </div>
           <div v-else-if="remoteVideoList.length === 0" class="webcut-empty-materials">
             {{ t('暂无资产，请先生成或上传') }}
+          </div>
+          <div v-else-if="!remoteAssetsHasMore" class="webcut-empty-materials">
+            {{ t('没有更多资产了') }}
           </div>
         </div>
       </scroll-box>
