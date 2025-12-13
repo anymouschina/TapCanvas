@@ -620,10 +620,11 @@ async function runSora2ApiVideoTask(
     durationSeconds: number
     orientation: 'portrait' | 'landscape'
     remixTargetId?: string | null
+    referenceImageUrl?: string | null
   },
 ) {
   const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
-  const { prompt, durationSeconds, orientation } = options
+  const { prompt, durationSeconds, orientation, referenceImageUrl } = options
   const remixTargetId =
     typeof options.remixTargetId === 'string' && options.remixTargetId.trim()
       ? options.remixTargetId.trim()
@@ -682,6 +683,7 @@ async function runSora2ApiVideoTask(
           durationSeconds,
           orientation,
           ...(remixTargetId ? { remixTargetId } : {}),
+          ...(referenceImageUrl ? { url: referenceImageUrl } : {}),
           persistAssets: persist,
         },
       })
@@ -1070,6 +1072,7 @@ async function runVideoTask(ctx: RunnerContext) {
         durationSeconds: videoDurationSeconds,
         orientation,
         remixTargetId,
+        referenceImageUrl: autoReferenceImages[0] || null,
       })
       return
     }
