@@ -1786,6 +1786,17 @@ async function callSora2ApiWithFallbacks(
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) ||
 		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
+	const baseLooksLocal =
+		/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(baseUrl);
+	if (baseLooksLocal && !ctx.baseUrl && !ctx.viaProxyVendor) {
+		throw new AppError(
+			`未配置 ${vendor} Base URL，请在环境变量 SORA2API_BASE_URL（或 Proxy Provider）中设置可访问的上游地址`,
+			{
+				status: 400,
+				code: "sora2api_base_url_missing",
+			},
+		);
+	}
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError(`未配置 ${vendor} API Key`, {
@@ -1956,6 +1967,10 @@ async function callSora2ApiWithFallbacks(
 			upstreamStatus: lastError?.status ?? null,
 			upstreamData: lastError?.data ?? null,
 			endpointTried: lastError?.endpoint ?? null,
+			endpointsRequested: endpoints.map((e) => normalizeEndpoint(e)),
+			baseUrl,
+			vendor,
+			requestBody: body,
 		},
 	});
 }
@@ -1971,6 +1986,17 @@ export async function uploadCharacterViaSora2Api(
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) ||
 		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
+	const baseLooksLocal =
+		/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(baseUrl);
+	if (baseLooksLocal && !ctx.baseUrl && !ctx.viaProxyVendor) {
+		throw new AppError(
+			`未配置 ${vendor} Base URL，请在环境变量 SORA2API_BASE_URL（或 Proxy Provider）中设置可访问的上游地址`,
+			{
+				status: 400,
+				code: "sora2api_base_url_missing",
+			},
+		);
+	}
 	const isGrsaiBase = isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const body = {
 		url: input.url,
