@@ -55,7 +55,7 @@ function nowLabel() {
 
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
 const SORA_POLL_TIMEOUT_MS = 300_000
-const MAX_VIDEO_DURATION_SECONDS = 10
+const MAX_VIDEO_DURATION_SECONDS = 15
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage', 'mosaic'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -981,7 +981,8 @@ async function runVideoTask(ctx: RunnerContext) {
     if (isStoryboard && storyboardTotalDuration > 0) {
       videoDurationSeconds = Math.min(videoDurationSeconds, storyboardTotalDuration)
     }
-    videoDurationSeconds = Math.max(2, Math.min(videoDurationSeconds, MAX_VIDEO_DURATION_SECONDS))
+    const maxDurationSeconds = isStoryboard ? STORYBOARD_MAX_TOTAL_DURATION : MAX_VIDEO_DURATION_SECONDS
+    videoDurationSeconds = Math.max(2, Math.min(videoDurationSeconds, maxDurationSeconds))
     const nFrames = Math.round(Math.max(videoDurationSeconds, 1) * 30)
     const getCurrentVideoTokenId = () =>
       (ctx.getState().nodes.find((n: Node) => n.id === id)?.data as any)
