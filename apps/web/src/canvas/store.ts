@@ -94,29 +94,40 @@ function upgradeVideoKind(node: Node): Node {
 function getRemixTargetIdFromNode(node?: Node) {
   const data = node?.data as any
   if (!data) return null
-  const model = String(data.videoModel || '').toLowerCase()
-  const normalized = model.replace('_', '-')
-  if (normalized && !['sora-2', 'sy-8', 'sy_8'].includes(model) && !['sora-2', 'sy-8', 'sy_8'].includes(normalized)) return null
-  const candidates = [
-    data.remixTargetId,                 // 节点显式设置（最高优先级）
-    data.videoPostId,                   // s_ 开头的 postId（首选）
-    data.videoDraftId,                  // 草稿 ID
-    data.videoTaskId,                   // task_ 开头的任务 ID
-    data.soraVideoTask?.generation_id,  // gen_ 开头的生成 ID
-    data.soraVideoTask?.id,
-  ]
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue
-    const trimmed = candidate.trim()
-    if (!trimmed) continue
+  const kind = String(data.kind || '').toLowerCase()
+  const isVideoKind = kind === 'composevideo' || kind === 'video' || kind === 'storyboard'
+  if (!isVideoKind) return null
+
+  const sanitize = (val: any) => {
+    if (typeof val !== 'string') return null
+    const trimmed = val.trim()
+    if (!trimmed) return null
     const lower = trimmed.toLowerCase()
-    const looksLikeSoraId =
-      trimmed.startsWith('s_') ||
-      trimmed.startsWith('gen_') ||
-      trimmed.startsWith('task_') ||
-      trimmed.startsWith('p/')
-    if (!looksLikeSoraId) continue
-    return trimmed
+    if (lower.startsWith('s_') || lower.startsWith('p/')) return trimmed
+    return null
+  }
+
+  const videoResults = Array.isArray(data.videoResults) ? data.videoResults : []
+  const primaryIndex =
+    typeof data.videoPrimaryIndex === 'number' &&
+    data.videoPrimaryIndex >= 0 &&
+    data.videoPrimaryIndex < videoResults.length
+      ? data.videoPrimaryIndex
+      : videoResults.length > 0
+        ? 0
+        : -1
+  const primaryResult = primaryIndex >= 0 ? videoResults[primaryIndex] : null
+
+  const candidates = [
+    sanitize(data.videoPostId),
+    sanitize(primaryResult?.remixTargetId),
+    sanitize(primaryResult?.pid),
+    sanitize(primaryResult?.postId),
+    sanitize(primaryResult?.post_id),
+  ]
+
+  for (const cand of candidates) {
+    if (cand) return cand
   }
   return null
 }
