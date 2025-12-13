@@ -1,6 +1,7 @@
 import { getConfig } from "../../config";
 import type { AppContext } from "../../types";
 import { signJwtHS256 } from "../../jwt";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import type { UserPayload } from "./auth.schemas";
 
 export async function exchangeGithubCode(c: AppContext, code: string) {
@@ -16,7 +17,8 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 		);
 	}
 
-	const tokenResp = await fetch(
+	const tokenResp = await fetchWithHttpDebugLog(
+		c,
 		"https://github.com/login/oauth/access_token",
 		{
 			method: "POST",
@@ -31,6 +33,7 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 				code,
 			}),
 		},
+		{ tag: "github:oauth" },
 	);
 
 	if (!tokenResp.ok) {
@@ -66,13 +69,18 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 		);
 	}
 
-	const userResp = await fetch("https://api.github.com/user", {
-		headers: {
-			Authorization: `Bearer ${accessToken}`,
-			Accept: "application/vnd.github+json",
-			"User-Agent": "TapCanvas/1.0",
+	const userResp = await fetchWithHttpDebugLog(
+		c,
+		"https://api.github.com/user",
+		{
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				Accept: "application/vnd.github+json",
+				"User-Agent": "TapCanvas/1.0",
+			},
 		},
-	});
+		{ tag: "github:user" },
+	);
 
 	if (!userResp.ok) {
 		const text = await userResp.text().catch(() => "");
@@ -101,13 +109,18 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 
 	let primaryEmail: string | undefined;
 	try {
-		const emailResp = await fetch("https://api.github.com/user/emails", {
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				Accept: "application/vnd.github+json",
-				"User-Agent": "TapCanvas/1.0",
+		const emailResp = await fetchWithHttpDebugLog(
+			c,
+			"https://api.github.com/user/emails",
+			{
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+					Accept: "application/vnd.github+json",
+					"User-Agent": "TapCanvas/1.0",
+				},
 			},
-		});
+			{ tag: "github:emails" },
+		);
 		if (emailResp.ok) {
 			const emailData = (await emailResp.json()) as any[];
 			if (Array.isArray(emailData) && emailData.length > 0) {

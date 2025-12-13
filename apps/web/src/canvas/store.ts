@@ -98,6 +98,7 @@ function getRemixTargetIdFromNode(node?: Node) {
   const normalized = model.replace('_', '-')
   if (normalized && !['sora-2', 'sy-8', 'sy_8'].includes(model) && !['sora-2', 'sy-8', 'sy_8'].includes(normalized)) return null
   const candidates = [
+    data.remixTargetId,                 // 节点显式设置（最高优先级）
     data.videoPostId,                   // s_ 开头的 postId（首选）
     data.videoDraftId,                  // 草稿 ID
     data.videoTaskId,                   // task_ 开头的任务 ID

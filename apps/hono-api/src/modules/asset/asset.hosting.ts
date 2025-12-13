@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import {
 	TaskAssetSchema,
 	type TaskAssetDto,
@@ -90,7 +91,9 @@ async function uploadToR2FromUrl(options: {
 
 	let res: Response;
 	try {
-		res = await fetch(sourceUrl);
+		res = await fetchWithHttpDebugLog(c, sourceUrl, undefined, {
+			tag: "asset:fetchSource",
+		});
 	} catch (err: any) {
 		console.warn("[asset-hosting] fetch source failed", err?.message || err);
 		return null;

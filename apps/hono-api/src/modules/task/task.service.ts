@@ -1,5 +1,6 @@
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import type {
 	EndpointRow,
 	ProviderRow,
@@ -524,14 +525,19 @@ export async function runVeoVideoTask(
 	let data: any = null;
 	try {
 		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
-		res = await fetch(`${baseUrl}/v1/video/veo`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl}/v1/video/veo`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
 			},
-			body: JSON.stringify(body),
-		});
+			{ tag: "veo:create" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -620,14 +626,19 @@ export async function fetchVeoTaskResult(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(`${baseUrl}/v1/draw/result`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl}/v1/draw/result`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({ id: taskId.trim() }),
 			},
-			body: JSON.stringify({ id: taskId.trim() }),
-		});
+			{ tag: "veo:result" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -859,7 +870,8 @@ export async function runSora2ApiVideoTask(
 				webHook,
 				shutProgress,
 				size,
-				...(remixTargetId ? { remixTargetId } : {}),
+				// 兼容不同实现：有的服务端使用 remixTargetId，有的使用 pid
+				...(remixTargetId ? { remixTargetId, pid: remixTargetId } : {}),
 				...(characters ? { characters } : {}),
 				...(referenceUrl ? { url: referenceUrl } : {}),
 			}
@@ -874,7 +886,8 @@ export async function runSora2ApiVideoTask(
 				webHook,
 				shutProgress,
 				size,
-				...(remixTargetId ? { remixTargetId } : {}),
+				// 兼容不同实现：有的服务端使用 remixTargetId，有的使用 pid
+				...(remixTargetId ? { remixTargetId, pid: remixTargetId } : {}),
 				...(characters ? { characters } : {}),
 				...(referenceUrl ? { url: referenceUrl } : {}),
 			};
@@ -911,6 +924,7 @@ export async function runSora2ApiVideoTask(
 		data: any;
 		message: string;
 		endpoint?: string;
+		requestBody?: any;
 	} | null = null;
 
 	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
@@ -919,14 +933,19 @@ export async function runSora2ApiVideoTask(
 		let res: Response;
 		let data: any = null;
 		try {
-			res = await fetch(endpoint, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${apiKey}`,
+			res = await fetchWithHttpDebugLog(
+				c,
+				endpoint,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: JSON.stringify(body),
 				},
-				body: JSON.stringify(body),
-			});
+				{ tag: "sora2api:createVideo" },
+			);
 			try {
 				data = await res.json();
 			} catch {
@@ -1097,6 +1116,7 @@ export async function fetchSora2ApiTaskResult(
 		status: number;
 		data: any;
 		message: string;
+		endpoint?: string;
 	} | null = null;
 	let data: any = null;
 
@@ -1104,16 +1124,21 @@ export async function fetchSora2ApiTaskResult(
 		let res: Response;
 		data = null;
 		try {
-			res = await fetch(endpoint.url, {
-				method: endpoint.method,
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					...(endpoint.method === "POST"
-						? { "Content-Type": "application/json" }
-						: {}),
+			res = await fetchWithHttpDebugLog(
+				c,
+				endpoint.url,
+				{
+					method: endpoint.method,
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						...(endpoint.method === "POST"
+							? { "Content-Type": "application/json" }
+							: {}),
+					},
+					body: endpoint.body,
 				},
-				body: endpoint.body,
-			});
+				{ tag: "sora2api:result" },
+			);
 			try {
 				data = await res.json();
 			} catch {
@@ -1145,6 +1170,48 @@ export async function fetchSora2ApiTaskResult(
 		}
 
 		const payload = extractVeoResultPayload(data) ?? data ?? {};
+		// 部分 sora2api 实现会把 pid/postId 放在最外层，而结果在 data 字段里；这里做一次兼容合并，避免前端拿不到 pid 导致 Remix 无法引用。
+		const mergedPayload = (() => {
+			if (!payload || typeof payload !== "object") return payload;
+			if (!data || typeof data !== "object") return payload;
+			// When extractVeoResultPayload unwraps `data`, preserve wrapper-level pid/postId.
+			const wrapper = data as any;
+			const current = payload as any;
+			const existingPid =
+				(typeof current.pid === "string" && current.pid.trim()) ||
+				(typeof current.postId === "string" && current.postId.trim()) ||
+				(typeof current.post_id === "string" && current.post_id.trim()) ||
+				null;
+			const wrapperPid =
+				(typeof wrapper.pid === "string" && wrapper.pid.trim()) ||
+				(typeof wrapper.postId === "string" && wrapper.postId.trim()) ||
+				(typeof wrapper.post_id === "string" && wrapper.post_id.trim()) ||
+				null;
+			const resultEntry =
+				Array.isArray(current.results) && current.results.length
+					? current.results[0]
+					: null;
+			const resultPid =
+				(resultEntry &&
+					typeof resultEntry.pid === "string" &&
+					resultEntry.pid.trim()) ||
+				(resultEntry &&
+					typeof resultEntry.postId === "string" &&
+					resultEntry.postId.trim()) ||
+				(resultEntry &&
+					typeof resultEntry.post_id === "string" &&
+					resultEntry.post_id.trim()) ||
+				null;
+
+			let merged = current;
+			if (!existingPid && wrapperPid) {
+				merged = { ...merged, pid: wrapperPid };
+			}
+			if (!existingPid && !wrapperPid && resultPid) {
+				merged = { ...merged, pid: resultPid };
+			}
+			return merged;
+		})();
 		const status = mapTaskStatus(payload.status || data?.status);
 		const progress = clampProgress(
 			typeof payload.progress === "number"
@@ -1162,6 +1229,16 @@ export async function fetchSora2ApiTaskResult(
 				: null;
 
 		if (status === "succeeded") {
+			const extractVideoUrl = (value: any): string | null => {
+				if (typeof value === "string" && value.trim()) return value.trim();
+				if (!value || typeof value !== "object") return null;
+				const url =
+					typeof (value as any).url === "string" && (value as any).url.trim()
+						? String((value as any).url).trim()
+						: null;
+				return url;
+			};
+
 			// 优先从 results 数组解析视频
 			const resultEntry =
 				Array.isArray(payload.results) && payload.results.length
@@ -1179,10 +1256,8 @@ export async function fetchSora2ApiTaskResult(
 				null;
 
 			const directVideo =
-				(typeof payload.video_url === "string" &&
-					payload.video_url.trim()) ||
-				(typeof payload.videoUrl === "string" &&
-					payload.videoUrl.trim()) ||
+				extractVideoUrl((payload as any).video_url) ||
+				extractVideoUrl((payload as any).videoUrl) ||
 				resultUrl ||
 				null;
 			let videoUrl: string | null = directVideo;
@@ -1257,7 +1332,7 @@ export async function fetchSora2ApiTaskResult(
 				assets: hostedAssets,
 				raw: {
 					provider: "sora2api",
-					response: payload,
+					response: mergedPayload,
 				},
 			});
 		}
@@ -1269,7 +1344,7 @@ export async function fetchSora2ApiTaskResult(
 			assets: [],
 			raw: {
 				provider: "sora2api",
-				response: payload,
+				response: mergedPayload,
 				progress,
 			},
 		});
@@ -1466,13 +1541,16 @@ function pickSystemPrompt(
 }
 
 async function callJsonApi(
+	c: AppContext,
 	url: string,
 	init: RequestInit,
 	errorContext: { provider: string },
 ): Promise<any> {
 	let res: Response;
 	try {
-		res = await fetch(url, init);
+		res = await fetchWithHttpDebugLog(c, url, init, {
+			tag: `${errorContext.provider}:jsonApi`,
+		});
 	} catch (error: any) {
 		throw new AppError(`${errorContext.provider} 请求失败`, {
 			status: 502,
@@ -1608,21 +1686,27 @@ function parseSseResponseForTask(raw: string): any | null {
 
 // 专用于 OpenAI/Codex responses 端点，保留原始文本以便调试和前端展示
 async function callOpenAIResponsesForTask(
+	c: AppContext,
 	url: string,
 	apiKey: string,
 	body: Record<string, any>,
 ): Promise<{ parsed: any; rawBody: string }> {
 	let res: Response;
 	try {
-		res = await fetch(url, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			url,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
 			},
-			body: JSON.stringify(body),
-		});
+			{ tag: "openai:responses" },
+		);
 	} catch (error: any) {
 		throw new AppError("openai 请求失败", {
 			status: 502,
@@ -1713,6 +1797,7 @@ async function runOpenAiTextTask(
 		};
 
 		const { parsed, rawBody } = await callOpenAIResponsesForTask(
+			c,
 			responsesUrl,
 			apiKey,
 			body,
@@ -1815,6 +1900,7 @@ async function runOpenAiImageToPromptTask(
 		};
 
 		const { parsed, rawBody } = await callOpenAIResponsesForTask(
+			c,
 			responsesUrl,
 			apiKey,
 			body,
@@ -1895,6 +1981,7 @@ async function runGeminiTextTask(
 	)}`;
 
 	const data = await callJsonApi(
+		c,
 		url,
 		{
 			method: "POST",
@@ -2176,17 +2263,22 @@ async function runGeminiBananaImageTask(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(endpoint, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: shouldStreamProgress
-					? "text/event-stream,application/json"
-					: "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			endpoint,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: shouldStreamProgress
+						? "text/event-stream,application/json"
+						: "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
 			},
-			body: JSON.stringify(body),
-		});
+			{ tag: "banana:image" },
+		);
 		const ct = (res.headers.get("content-type") || "").toLowerCase();
 		if (ct.includes("application/json")) {
 			try {
@@ -2338,6 +2430,7 @@ async function runQwenTextToImageTask(
 	)}/api/v1/services/aigc/text2image/image-synthesis`;
 
 	const data = await callJsonApi(
+		c,
 		url,
 		{
 			method: "POST",
@@ -2458,15 +2551,20 @@ async function runSora2ApiImageTask(
 	let res: Response;
 	let rawText = "";
 	try {
-		res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "text/event-stream,application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "text/event-stream,application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
 			},
-			body: JSON.stringify(body),
-		});
+			{ tag: "sora2api:chatCompletions" },
+		);
 		rawText = await res.text().catch(() => "");
 	} catch (error: any) {
 		throw new AppError("sora2api 图片请求失败", {
@@ -2628,6 +2726,7 @@ async function runAnthropicTextTask(
 		: `${base.replace(/\/+$/, "")}/messages`;
 
 	const data = await callJsonApi(
+		c,
 		url,
 		{
 			method: "POST",

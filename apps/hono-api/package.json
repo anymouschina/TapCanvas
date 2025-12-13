@@ -5,6 +5,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev --port 8788",
+    "dev:log": "DEBUG_HTTP_LOG=1 wrangler dev --port 8788 2>&1 | tee log.txt",
     "start": "wrangler dev --remote",
     "cf-typegen": "wrangler types",
     "db:update:remote": "wrangler d1 execute tapcanvas --file=./schema.sql --remote"

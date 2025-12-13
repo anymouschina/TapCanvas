@@ -13,6 +13,10 @@ export type WorkerEnv = Env & {
 	SORA2API_BASE_URL?: string;
 	// Sora2API 网关级别的 API Key（可选，作为 vendor 级共享凭证）
 	SORA2API_API_KEY?: string;
+	// Local debug: HTTP request/response logging (stdout; use `pnpm dev:log` to tee into log.txt)
+	DEBUG_HTTP_LOG?: string;
+	DEBUG_HTTP_LOG_UNSAFE?: string;
+	DEBUG_HTTP_LOG_BODY_LIMIT?: string;
 };
 
 export type AppEnv = {
@@ -20,6 +24,7 @@ export type AppEnv = {
 	Variables: {
 		userId?: string;
 		auth?: unknown;
+		requestId?: string;
 	};
 };
 

@@ -7,6 +7,7 @@ import {
 import { createOpenAI, openai } from "@ai-sdk/openai";
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import {
 	ChatStreamRequestSchema,
 	type ChatStreamRequest,
@@ -345,14 +346,19 @@ function resolveToolsForChat(
 					search_lang: locale || "zh-CN",
 				};
 
-				const resp = await fetch(url, {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						"Content-Type": "application/json",
+				const resp = await fetchWithHttpDebugLog(
+					c,
+					url,
+					{
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${apiKey}`,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify(payload),
 					},
-					body: JSON.stringify(payload),
-				});
+					{ tag: "websearch" },
+				);
 
 				if (!resp.ok) {
 					let details = "";

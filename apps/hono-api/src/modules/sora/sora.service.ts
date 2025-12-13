@@ -1,5 +1,6 @@
 import type { AppContext, WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { SoraVideoDraftResponseSchema } from "./sora.schemas";
 import { resolveVendorContext } from "../task/task.service";
 
@@ -172,6 +173,7 @@ function decodeJwtPayload(token: string): any | null {
 }
 
 async function resolveSoraProfileId(
+	c: AppContext,
 	token: SoraToken,
 	baseUrl: string,
 ): Promise<string> {
@@ -191,14 +193,19 @@ async function resolveSoraProfileId(
 
 	if (!profileId) {
 		const sessionUrl = new URL("/api/auth/session", baseUrl).toString();
-		const res = await fetch(sessionUrl, {
+		const res = await fetchWithHttpDebugLog(
+			c,
+			sessionUrl,
+			{
 			method: "GET",
 			headers: {
 				Authorization: `Bearer ${token.secretToken}`,
 				"User-Agent": token.userAgent || "TapCanvas/1.0",
 				Accept: "application/json",
 			},
-		});
+			},
+			{ tag: "sora:session" },
+		);
 		if (res.ok) {
 			try {
 				const data: any = await res.json();
@@ -238,13 +245,18 @@ export async function unwatermarkVideo(c: AppContext, url: string) {
 
 	let res: Response;
 	try {
-		res = await fetch(endpoint, {
+		res = await fetchWithHttpDebugLog(
+			c,
+			endpoint,
+			{
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ url: soraUrl }),
-		});
+			},
+			{ tag: "sora:unwatermark" },
+		);
 	} catch (error: any) {
 		throw new AppError("Failed to call unwatermark endpoint", {
 			status: 502,
@@ -353,7 +365,10 @@ export async function createSoraVideoTask(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(url, {
+		res = await fetchWithHttpDebugLog(
+			c,
+			url,
+			{
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${token.secretToken}`,
@@ -362,7 +377,9 @@ export async function createSoraVideoTask(
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(body),
-		});
+			},
+			{ tag: "sora:createVideo" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -457,14 +474,19 @@ export async function listSoraPendingVideos(c: AppContext, userId: string) {
 	const userAgent = token.userAgent || "TapCanvas/1.0";
 
 	try {
-		const res = await fetch(url, {
+		const res = await fetchWithHttpDebugLog(
+			c,
+			url,
+			{
 			method: "GET",
 			headers: {
 				Authorization: `Bearer ${token.secretToken}`,
 				"User-Agent": userAgent,
 				Accept: "*/*",
 			},
-		});
+			},
+			{ tag: "sora:pending" },
+		);
 
 		let data: any = null;
 		try {
@@ -502,14 +524,19 @@ export async function listSoraDrafts(
 
 	const userAgent = token.userAgent || "TapCanvas/1.0";
 
-	const res = await fetch(url.toString(), {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": userAgent,
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url.toString(),
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": userAgent,
+				Accept: "application/json",
+			},
 		},
-	});
+		{ tag: "sora:drafts" },
+	);
 
 	let data: any = null;
 	try {
@@ -590,14 +617,19 @@ export async function deleteSoraDraft(
 		baseUrl,
 	).toString();
 
-	const res = await fetch(url, {
-		method: "DELETE",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "*/*",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "*/*",
+			},
 		},
-	});
+		{ tag: "sora:deleteDraft" },
+	);
 
 	if (!res.ok) {
 		throw new AppError("Sora delete draft request failed", {
@@ -638,14 +670,19 @@ export async function getSoraVideoDraftByTask(
 		const userAgent = token.userAgent || "TapCanvas/1.0";
 
 		try {
-			const res = await fetch(url.toString(), {
-				method: "GET",
-				headers: {
-					Authorization: `Bearer ${token.secretToken}`,
-					"User-Agent": userAgent,
-					Accept: "application/json",
+			const res = await fetchWithHttpDebugLog(
+				c,
+				url.toString(),
+				{
+					method: "GET",
+					headers: {
+						Authorization: `Bearer ${token.secretToken}`,
+						"User-Agent": userAgent,
+						Accept: "application/json",
+					},
 				},
-			});
+				{ tag: "sora:draftsByTask" },
+			);
 			let data: any = null;
 			try {
 				data = await res.json();
@@ -774,7 +811,7 @@ export async function listSoraCharacters(
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
 	const baseUrl = buildSoraBaseUrl(c.env, token);
-	const profileId = await resolveSoraProfileId(token, baseUrl);
+	const profileId = await resolveSoraProfileId(c, token, baseUrl);
 	const url = new URL(
 		`/backend/project_y/profile/${profileId}/characters`,
 		baseUrl,
@@ -784,14 +821,19 @@ export async function listSoraCharacters(
 		url.searchParams.set("limit", String(input.limit));
 	}
 
-	const res = await fetch(url.toString(), {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url.toString(),
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
 		},
-	});
+		{ tag: "sora:characters" },
+	);
 
 	let data: any = null;
 	try {
@@ -834,14 +876,19 @@ export async function deleteSoraCharacter(
 		baseUrl,
 	).toString();
 
-	const res = await fetch(url, {
-		method: "DELETE",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "*/*",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "*/*",
+			},
 		},
-	});
+		{ tag: "sora:deleteCharacter" },
+	);
 
 	if (!res.ok) {
 		throw new AppError("Sora delete character request failed", {
@@ -883,7 +930,10 @@ export async function updateSoraCharacter(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(url, {
+		res = await fetchWithHttpDebugLog(
+			c,
+			url,
+			{
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${token.secretToken}`,
@@ -892,7 +942,9 @@ export async function updateSoraCharacter(
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(body),
-		});
+			},
+			{ tag: "sora:updateCharacter" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -937,16 +989,21 @@ export async function checkCharacterUsername(
 		baseUrl,
 	).toString();
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "*/*",
-			"Content-Type": "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "*/*",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ username: input.username }),
 		},
-		body: JSON.stringify({ username: input.username }),
-	});
+		{ tag: "sora:usernameCheck" },
+	);
 
 	let data: any = null;
 	try {
@@ -1013,14 +1070,19 @@ export async function searchSoraMentions(
 		url.searchParams.set("limit", String(input.limit));
 	}
 
-	const res = await fetch(url.toString(), {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "*/*",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url.toString(),
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "*/*",
+			},
 		},
-	});
+		{ tag: "sora:searchMentions" },
+	);
 
 	let data: any = null;
 	try {
@@ -1054,14 +1116,19 @@ export async function getCameoStatus(
 		baseUrl,
 	).toString();
 
-	const res = await fetch(url, {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
 		},
-	});
+		{ tag: "sora:cameoStatus" },
+	);
 
 	let data: any = null;
 	try {
@@ -1095,16 +1162,21 @@ export async function setCameoPublic(
 		baseUrl,
 	).toString();
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
-			"Content-Type": "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ visibility: "public" }),
 		},
-		body: JSON.stringify({ visibility: "public" }),
-	});
+		{ tag: "sora:setCameoPublic" },
+	);
 
 	let data: any = null;
 	try {
@@ -1150,16 +1222,21 @@ export async function finalizeCharacter(
 		safety_instruction_set: null,
 	};
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
-			"Content-Type": "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
 		},
-		body: JSON.stringify(body),
-	});
+		{ tag: "sora:finalizeCharacter" },
+	);
 
 	let data: any = null;
 	try {
@@ -1186,6 +1263,7 @@ export async function finalizeCharacter(
 }
 
 async function uploadSoraFile(
+	c: AppContext,
 	token: SoraToken,
 	baseUrl: string,
 	file: File,
@@ -1197,15 +1275,20 @@ async function uploadSoraFile(
 	form.append("file", file, filename);
 	form.append("use_case", useCase);
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
+			body: form,
 		},
-		body: form,
-	});
+		{ tag: "sora:fileUpload" },
+	);
 
 	let data: any = null;
 	try {
@@ -1240,7 +1323,7 @@ export async function uploadProfileAsset(
 ) {
 	const token = await resolveSoraToken(c, userId, input.tokenId);
 	const baseUrl = buildSoraBaseUrl(c.env, token);
-	return uploadSoraFile(token, baseUrl, input.file, "profile");
+	return uploadSoraFile(c, token, baseUrl, input.file, "profile");
 }
 
 export async function uploadSoraImage(
@@ -1292,12 +1375,7 @@ export async function uploadSoraImage(
 		if (!token) return null;
 		const baseUrl = buildSoraBaseUrl(c.env, token);
 		try {
-			return await uploadSoraFile(
-				token,
-				baseUrl,
-				input.file,
-				"profile",
-			);
+			return await uploadSoraFile(c, token, baseUrl, input.file, "profile");
 		} catch (err: any) {
 			const isAppError = err instanceof AppError;
 			const status = isAppError ? err.status : undefined;
@@ -1407,15 +1485,20 @@ export async function uploadCharacterVideo(
 	form.append("file", input.file, filename);
 	form.append("timestamps", `${start},${end}`);
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
+			body: form,
 		},
-		body: form,
-	});
+		{ tag: "sora:uploadCharacterVideo" },
+	);
 
 	let data: any = null;
 	try {
@@ -1456,14 +1539,19 @@ export async function listSoraPublishedVideos(
 	url.searchParams.set("limit", String(limit));
 	url.searchParams.set("cut", "nf2");
 
-	const res = await fetch(url.toString(), {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url.toString(),
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+			},
 		},
-	});
+		{ tag: "sora:publishedVideos" },
+	);
 
 	let data: any = null;
 	try {
@@ -1594,16 +1682,21 @@ export async function publishSoraVideo(
 		post_text: text,
 	};
 
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token.secretToken}`,
-			"User-Agent": token.userAgent || "TapCanvas/1.0",
-			Accept: "application/json",
-			"Content-Type": "application/json",
+	const res = await fetchWithHttpDebugLog(
+		c,
+		url,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token.secretToken}`,
+				"User-Agent": token.userAgent || "TapCanvas/1.0",
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
 		},
-		body: JSON.stringify(body),
-	});
+		{ tag: "sora:publish" },
+	);
 
 	let data: any = null;
 	try {
@@ -1708,20 +1801,25 @@ async function callSora2ApiWithFallbacks(
 	};
 
 	let lastError: any = null;
-	for (const rawEndpoint of endpoints) {
+		for (const rawEndpoint of endpoints) {
 		const endpoint = normalizeEndpoint(rawEndpoint);
 		let res: Response;
 		let data: any = null;
 		try {
-			res = await fetch(endpoint, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Accept: "text/event-stream,application/json",
-					Authorization: `Bearer ${apiKey}`,
+			res = await fetchWithHttpDebugLog(
+				c,
+				endpoint,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream,application/json",
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: JSON.stringify(body),
 				},
-				body: JSON.stringify(body),
-			});
+				{ tag: `${vendor}:call` },
+			);
 			const ct = (res.headers.get("content-type") || "").toLowerCase();
 			if (ct.includes("application/json")) {
 				try {
@@ -1950,14 +2048,19 @@ export async function fetchSora2ApiCharacterResult(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(endpoint, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
+		res = await fetchWithHttpDebugLog(
+			c,
+			endpoint,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({ id: taskId }),
 			},
-			body: JSON.stringify({ id: taskId }),
-		});
+			{ tag: "sora2api:characterResult" },
+		);
 		try {
 			data = await res.json();
 		} catch {

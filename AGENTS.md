@@ -31,6 +31,7 @@
 - Monorepo: `apps/`, `packages/`, `infra/`.
 - Web app: `apps/web` (Vite + React + TypeScript, Mantine UI, React Flow canvas).
   - Canvas and UI: `apps/web/src/canvas`, `apps/web/src/ui`, `apps/web/src/flows`, `apps/web/src/assets`.
+- Backend API: `apps/hono-api` (Cloudflare Workers + Hono).
 - Shared libs: `packages/schemas`, `packages/sdk`, `packages/pieces`.
 - Local orchestration (optional): `infra/` (Docker Compose setup).
 
@@ -38,6 +39,7 @@
 
 - Install deps (workspace): `pnpm -w install`
 - Dev web: `pnpm dev:web` (or `pnpm --filter @tapcanvas/web dev`)
+- Dev api: `pnpm --filter ./apps/hono-api dev` (Wrangler dev)
 - Build all: `pnpm build`
 - Preview web: `pnpm --filter @tapcanvas/web preview`
 - Compose up/down (optional): `pnpm compose:up` / `pnpm compose:down`
@@ -83,10 +85,10 @@
 
 ## AI Tool Schemas (backend)
 
-- Shared tool contracts live in `apps/api/src/ai/tool-schemas.ts`. This file describes what the canvas can actually do (tool names, parameters, and descriptions) from a **frontend capability** perspective, but is only imported on the backend to build LLM tools.
-- Whenever you change or add frontend AI canvas functionality (e.g. new `CanvasService` handlers, new tool names, new node kinds that tools can operate on), you **must** update `apps/api/src/ai/tool-schemas.ts` in the same change so that backend LLM tool schemas stay in sync.
+- Shared tool contracts live in `apps/hono-api/src/modules/ai/tool-schemas.ts`. This file describes what the canvas can actually do (tool names, parameters, and descriptions) from a **frontend capability** perspective, but is only imported on the backend to build LLM tools.
+- Whenever you change or add frontend AI canvas functionality (e.g. new `CanvasService` handlers, new tool names, new node kinds that tools can operate on), you **must** update `apps/hono-api/src/modules/ai/tool-schemas.ts` in the same change so that backend LLM tool schemas stay in sync.
 - Do not declare tools or node types in `canvasToolSchemas` that are not implemented on the frontend. The schemas are not aspirational docs; they must reflect real, callable capabilities.
-- Node type + model feature descriptions live in `canvasNodeSpecs` inside the same file. This object documents what each logical node kind (image/composeVideo/audio/subtitle/character etc.) is for, and which models are recommended / supported for it（例如 Nano Banana / Nano Banana Pro / Sora2 / Veo 3.1 的适用场景与提示词策略）。Model-level prompt tips（如 Banana 的融合/角色锁、Sora2 的镜头/物理/时序指令）也应集中维护在这里或 `apps/api/src/ai/constants.ts` 的 SYSTEM_PROMPT 中，避免分散。
+- Node type + model feature descriptions live in `canvasNodeSpecs` inside the same file. This object documents what each logical node kind (image/composeVideo/audio/subtitle/character etc.) is for, and which models are recommended / supported for it（例如 Nano Banana / Nano Banana Pro / Sora2 / Veo 3.1 的适用场景与提示词策略）。Model-level prompt tips（如 Banana 的融合/角色锁、Sora2 的镜头/物理/时序指令）也应集中维护在这里或 `apps/hono-api/src/modules/ai/constants.ts` 的 SYSTEM_PROMPT 中，避免分散。
 - When you add or change node kinds, or enable new models for an existing kind, update `canvasNodeSpecs` 与相关系统提示（SYSTEM_PROMPT）以匹配真实接入的模型能力（不要列出实际上未接入的模型或特性）。
 
 ## Multi-user Data Isolation

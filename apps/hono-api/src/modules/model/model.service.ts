@@ -1,5 +1,6 @@
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import {
 	getEndpointById,
 	getProxyConfigRow,
@@ -256,9 +257,14 @@ export async function fetchProxyCredits(
 	let res: Response;
 	let data: any = null;
 	try {
-		res = await fetch(url.toString(), {
+		res = await fetchWithHttpDebugLog(
+			c,
+			url.toString(),
+			{
 			method: "GET",
-		});
+			},
+			{ tag: "proxy:getCredits" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -315,9 +321,14 @@ export async function fetchProxyModelStatus(
 	try {
 		const url = new URL(endpoint);
 		url.searchParams.set("model", model);
-		res = await fetch(url.toString(), {
+		res = await fetchWithHttpDebugLog(
+			c,
+			url.toString(),
+			{
 			method: "GET",
-		});
+			},
+			{ tag: "proxy:getModelStatus" },
+		);
 		try {
 			data = await res.json();
 		} catch {
@@ -765,10 +776,15 @@ export async function listAvailableModels(
 				headers["x-api-key"] = context.apiKey;
 				headers["anthropic-version"] = "2023-06-01";
 			}
-			resp = await fetch(url, {
+			resp = await fetchWithHttpDebugLog(
+				c,
+				url,
+				{
 				method: "GET",
 				headers,
-			});
+				},
+				{ tag: `models:${vendorName}` },
+			);
 			try {
 				data = await resp.json();
 			} catch {

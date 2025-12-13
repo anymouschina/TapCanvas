@@ -23,3 +23,11 @@ This is an example project made to be used as a quick start into building OpenAP
 1. Run `wrangler dev` to start a local instance of the API.
 2. Open `http://localhost:8787/` in your browser to see the Swagger interface where you can try the endpoints.
 3. Changes made in the `src/` folder will automatically trigger the server to reload, you only need to refresh the Swagger interface.
+
+### Local HTTP debug logs
+
+- Run `pnpm dev:log` to tee JSON logs into `log.txt` (includes downstream + upstream URL / request body / response).
+- Env flags:
+  - `DEBUG_HTTP_LOG=1` enable logging
+  - `DEBUG_HTTP_LOG_BODY_LIMIT=16384` max bytes captured per body snippet
+  - `DEBUG_HTTP_LOG_UNSAFE=1` disable redaction (use only locally)

@@ -597,12 +597,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   // Video history results (similar to imageResults)
   const videoResults = React.useMemo(() => {
     const raw = (data as any)?.videoResults as {
+      id?: string;
       url: string;
-      thumbnailUrl?: string;
-      title?: string;
+      thumbnailUrl?: string | null;
+      title?: string | null;
       duration?: number;
       createdAt?: string;
       clipRange?: { start: number; end: number };
+      model?: string | null;
+      remixTargetId?: string | null;
     }[] | undefined
     if (raw && Array.isArray(raw) && raw.length > 0) {
       return raw.map((item) => ({
@@ -617,6 +620,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           title: videoTitle,
           duration: (data as any)?.videoDuration,
           clipRange: normalizeClipRange((data as any)?.clipRange),
+          remixTargetId: (data as any)?.remixTargetId || null,
         }
       : null
     return single ? [single] : []
@@ -2418,13 +2422,23 @@ const rewritePromptWithCharacters = React.useCallback(
     const target = videoResults[idx]
     if (!target) return
     setVideoPrimaryIndex(idx)
-    updateNodeData(id, {
+    const shouldUpdateRemixTarget = Object.prototype.hasOwnProperty.call(target, 'remixTargetId')
+    const nextRemixTargetId =
+      typeof target.remixTargetId === 'string' && target.remixTargetId.trim()
+        ? target.remixTargetId.trim()
+        : null
+    const patch: any = {
       videoPrimaryIndex: idx,
       videoUrl: target.url,
       videoThumbnailUrl: target.thumbnailUrl,
       videoTitle: target.title,
       videoDuration: target.duration,
-    })
+    }
+    if (shouldUpdateRemixTarget) {
+      patch.remixTargetId = nextRemixTargetId
+      patch.videoPostId = nextRemixTargetId
+    }
+    updateNodeData(id, patch)
     setVideoExpanded(false)
   }, [id, updateNodeData, videoResults])
   const handleSelectCharacter = React.useCallback(

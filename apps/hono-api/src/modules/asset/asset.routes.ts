@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
+import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import {
 	CreateAssetSchema,
 	PublicAssetSchema,
@@ -216,11 +217,16 @@ assetRouter.get("/proxy-image", authMiddleware, async (c) => {
 	}
 
 	try {
-		const resp = await fetch(target, {
-			headers: {
-				Origin: "https://tapcanvas.local",
+		const resp = await fetchWithHttpDebugLog(
+			c,
+			target,
+			{
+				headers: {
+					Origin: "https://tapcanvas.local",
+				},
 			},
-		});
+			{ tag: "asset:proxy-image" },
+		);
 		const ct = resp.headers.get("content-type") || "application/octet-stream";
 		const buf = await resp.arrayBuffer();
 		return new Response(buf, {

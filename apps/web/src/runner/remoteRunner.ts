@@ -133,6 +133,7 @@ function getRemixTargetIdFromNodeData(data?: any): string | null {
 
   // 优先检查已知的 remix targets
   const knownCandidates = [
+    data.remixTargetId,    // 节点显式设置（最高优先级）
     data.videoPostId,      // s_ 开头的 postId (最高优先级)
     data.videoDraftId,     // draft ID
     data.videoTaskId,      // task_ 开头的 taskId
@@ -624,10 +625,19 @@ async function runTextTask(ctx: RunnerContext) {
 
 async function runSora2ApiVideoTask(
   ctx: RunnerContext,
-  options: { prompt: string; durationSeconds: number; orientation: 'portrait' | 'landscape' },
+  options: {
+    prompt: string
+    durationSeconds: number
+    orientation: 'portrait' | 'landscape'
+    remixTargetId?: string | null
+  },
 ) {
   const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
   const { prompt, durationSeconds, orientation } = options
+  const remixTargetId =
+    typeof options.remixTargetId === 'string' && options.remixTargetId.trim()
+      ? options.remixTargetId.trim()
+      : null
   try {
     const videoModelValue = (data as any)?.videoModel as string | undefined
     const modelKey =
@@ -666,7 +676,10 @@ async function runSora2ApiVideoTask(
       )
     } else {
       setNodeStatus(id, 'running', { progress: 5 })
-      appendLog(id, `[${nowLabel()}] 调用 Sora2API 视频模型…`)
+      appendLog(
+        id,
+        `[${nowLabel()}] 调用 Sora2API 视频模型${remixTargetId ? `（Remix: ${remixTargetId}）` : ''}…`,
+      )
 
       const persist = useUIStore.getState().assetPersistenceEnabled
       const res = await runTaskByVendor('sora2api', {
@@ -677,6 +690,8 @@ async function runSora2ApiVideoTask(
           nodeId: id,
           modelKey,
           durationSeconds,
+          orientation,
+          ...(remixTargetId ? { remixTargetId } : {}),
           persistAssets: persist,
         },
       })
@@ -768,7 +783,59 @@ async function runSora2ApiVideoTask(
       }
 
       // succeeded
-      const asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+      const rawResponse = (snapshot.raw as any)?.response
+      const pickText = (v: any) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+      const extractVideoFromRaw = (): { url: string; thumbnailUrl: string | null } | null => {
+        if (!rawResponse) return null
+        const fromVideoUrlField = rawResponse.video_url
+        const fromVideoUrl =
+          pickText(fromVideoUrlField?.url) ||
+          pickText(fromVideoUrlField) ||
+          pickText(rawResponse.videoUrl?.url) ||
+          pickText(rawResponse.videoUrl) ||
+          null
+        const fromResults = Array.isArray(rawResponse.results) && rawResponse.results.length
+          ? pickText(rawResponse.results[0]?.url) ||
+            pickText(rawResponse.results[0]?.video_url) ||
+            pickText(rawResponse.results[0]?.videoUrl)
+          : null
+        const fromDataResults =
+          rawResponse.data && Array.isArray(rawResponse.data.results) && rawResponse.data.results.length
+            ? pickText(rawResponse.data.results[0]?.url) ||
+              pickText(rawResponse.data.results[0]?.video_url) ||
+              pickText(rawResponse.data.results[0]?.videoUrl)
+            : null
+        let url = fromVideoUrl || fromResults || fromDataResults
+        if (!url) {
+          const content = pickText(rawResponse.content)
+          if (content) {
+            const match = content.match(/<video[^>]+src=['"]([^'"]+)['"][^>]*>/i)
+            if (match && match[1] && match[1].trim()) {
+              url = match[1].trim()
+            }
+          }
+        }
+        if (!url) return null
+        const thumb =
+          pickText(rawResponse.thumbnail_url) ||
+          pickText(rawResponse.thumbnailUrl) ||
+          (Array.isArray(rawResponse.results) && rawResponse.results.length
+            ? pickText(rawResponse.results[0]?.thumbnailUrl) || pickText(rawResponse.results[0]?.thumbnail_url)
+            : null) ||
+          (rawResponse.data && Array.isArray(rawResponse.data.results) && rawResponse.data.results.length
+            ? pickText(rawResponse.data.results[0]?.thumbnailUrl) || pickText(rawResponse.data.results[0]?.thumbnail_url)
+            : null) ||
+          null
+        return { url, thumbnailUrl: thumb }
+      }
+
+      let asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+      if (!asset || !asset.url) {
+        const fallback = extractVideoFromRaw()
+        if (fallback?.url) {
+          asset = { type: 'video', url: fallback.url, thumbnailUrl: fallback.thumbnailUrl }
+        }
+      }
       if (!asset || !asset.url) {
         const msg = 'Sora2API 视频任务执行失败：未返回有效视频地址'
         setNodeStatus(id, 'error', { progress: 0, lastError: msg })
@@ -779,6 +846,23 @@ async function runSora2ApiVideoTask(
       const videoUrl = asset.url
       const thumbnailUrl = asset.thumbnailUrl || null
       const preview = { type: 'video' as const, src: videoUrl }
+      const firstResultEntry =
+        rawResponse && Array.isArray(rawResponse.results) && rawResponse.results.length
+          ? rawResponse.results[0]
+          : rawResponse &&
+              rawResponse.data &&
+              Array.isArray(rawResponse.data.results) &&
+              rawResponse.data.results.length
+            ? rawResponse.data.results[0]
+            : null
+      const pidCandidate =
+        (firstResultEntry && typeof firstResultEntry.pid === 'string' && firstResultEntry.pid.trim()) ||
+        (firstResultEntry && typeof firstResultEntry.postId === 'string' && firstResultEntry.postId.trim()) ||
+        (firstResultEntry && typeof firstResultEntry.post_id === 'string' && firstResultEntry.post_id.trim()) ||
+        (rawResponse && typeof rawResponse.pid === 'string' && rawResponse.pid.trim()) ||
+        (rawResponse && typeof rawResponse.postId === 'string' && rawResponse.postId.trim()) ||
+        (rawResponse && typeof rawResponse.post_id === 'string' && rawResponse.post_id.trim()) ||
+        null
 
       const existingResults = ((data as any)?.videoResults as any[] | undefined) || []
       const newResult = {
@@ -788,6 +872,7 @@ async function runSora2ApiVideoTask(
         title: (data as any)?.videoTitle || null,
         duration: durationSeconds,
         model: modelKey,
+        remixTargetId: pidCandidate,
       }
       const updatedVideoResults = [...existingResults, newResult]
       const nextPrimaryIndex = updatedVideoResults.length - 1
@@ -809,6 +894,8 @@ async function runSora2ApiVideoTask(
         videoModel: modelKey,
         videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
         videoTaskId: taskId,
+        remixTargetId: pidCandidate || (data as any)?.remixTargetId || null,
+        videoPostId: pidCandidate || (data as any)?.videoPostId || null,
       })
       appendLog(id, `[${nowLabel()}] Sora2API 视频生成完成。`)
       if (snapshot.assets && snapshot.assets.length) {
@@ -1008,6 +1095,7 @@ async function runVideoTask(ctx: RunnerContext) {
         prompt: finalPrompt,
         durationSeconds: videoDurationSeconds,
         orientation,
+        remixTargetId,
       })
       return
     }
