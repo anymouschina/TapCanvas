@@ -50,6 +50,20 @@ export function useEdgeVisuals(type?: string | null) {
       boxShadow: isLight ? '0 4px 12px rgba(15,23,42,0.12)' : '0 4px 12px rgba(0,0,0,0.35)',
     }
 
-    return { stroke, edgeStyle, labelStyle, isLight }
+    const directionChipStyle: CSSProperties = {
+      background: `linear-gradient(90deg, ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.7 : 0.65)} 0%, ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.98 : 0.95)} 100%)`,
+      color: isLight ? theme.white : 'rgba(255,255,255,0.95)',
+      border: `1px solid ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.6 : 0.8)}`,
+      boxShadow: isLight ? '0 10px 30px rgba(15,23,42,0.18)' : '0 12px 30px rgba(0,0,0,0.45)',
+      padding: '4px 10px',
+      borderRadius: 14,
+      fontWeight: 700,
+      letterSpacing: 0.2,
+    }
+
+    const startCapColor = rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.95 : 0.9)
+    const endCapColor = rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.85 : 0.8)
+
+    return { stroke, edgeStyle, labelStyle, isLight, directionChipStyle, startCapColor, endCapColor }
   }, [colorScheme, theme, type])
 }
