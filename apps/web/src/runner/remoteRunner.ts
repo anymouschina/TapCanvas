@@ -121,50 +121,40 @@ async function runAnthropicTextTask(modelKey: string | undefined, prompt: string
 
 function getRemixTargetIdFromNodeData(data?: any): string | null {
   if (!data) return null
-  const model = String(data.videoModel || '').toLowerCase()
-  const normalized = model.replace('_', '-')
-  if (
-    normalized &&
-    !SORA_VIDEO_MODEL_WHITELIST.has(model) &&
-    !SORA_VIDEO_MODEL_WHITELIST.has(normalized)
-  ) {
+  const kind = String(data.kind || '').toLowerCase()
+  const isVideoKind = kind === 'composevideo' || kind === 'video' || kind === 'storyboard'
+  if (!isVideoKind) return null
+
+  const sanitize = (val: any) => {
+    if (typeof val !== 'string') return null
+    const trimmed = val.trim()
+    if (!trimmed) return null
+    const lower = trimmed.toLowerCase()
+    // 仅允许 postId / p/ 形态
+    if (lower.startsWith('s_') || lower.startsWith('p/')) return trimmed
     return null
   }
 
-  // 优先检查已知的 remix targets
-  const knownCandidates = [
-    data.remixTargetId,    // 节点显式设置（最高优先级）
-    data.videoPostId,      // s_ 开头的 postId (最高优先级)
-    data.videoDraftId,     // draft ID
-    data.videoTaskId,      // task_ 开头的 taskId
+  const videoResults = Array.isArray(data.videoResults) ? data.videoResults : []
+  const primaryIndex =
+    typeof data.videoPrimaryIndex === 'number' &&
+    data.videoPrimaryIndex >= 0 &&
+    data.videoPrimaryIndex < videoResults.length
+      ? data.videoPrimaryIndex
+      : videoResults.length > 0
+        ? 0
+        : -1
+  const primaryResult = primaryIndex >= 0 ? videoResults[primaryIndex] : null
+
+  const candidates = [
+    sanitize(data.videoPostId),
+    sanitize(primaryResult?.remixTargetId),
+    sanitize(primaryResult?.pid),
+    sanitize(primaryResult?.postId),
+    sanitize(primaryResult?.post_id),
   ]
-  for (const candidate of knownCandidates) {
-    if (typeof candidate !== 'string') continue
-    const trimmed = candidate.trim()
-    if (!trimmed) continue
-    const lower = trimmed.toLowerCase()
-    const looksLikeSoraId =
-      trimmed.startsWith('s_') ||
-      trimmed.startsWith('gen_') ||
-      trimmed.startsWith('task_') ||
-      trimmed.startsWith('p/')
-    if (!looksLikeSoraId) continue
-    return trimmed
-  }
 
-  // 检查生成任务的 generation_id
-  const generationId = data.soraVideoTask?.generation_id
-  if (typeof generationId === 'string' && generationId.trim() && generationId.startsWith('gen_')) {
-    return generationId.trim()
-  }
-
-  // 检查任务本身的 ID
-  const taskId = data.soraVideoTask?.id
-  if (typeof taskId === 'string' && taskId.trim() && taskId.startsWith('gen_')) {
-    return taskId.trim()
-  }
-
-  return null
+  return candidates.find(Boolean) || null
 }
 
 function rewriteSoraVideoResourceUrl(url?: string | null): string | null {
@@ -942,25 +932,8 @@ async function runVideoTask(ctx: RunnerContext) {
       ? serializeStoryboardScenes(storyboardScenesData || [], { title: storyboardTitle, notes: storyboardNotes })
       : prompt
     const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
-    // Remix 目标：
-    // - 优先使用节点数据中合法的 remixTargetId（仅接受 Sora 认可的 ID 形态：s_/gen_/task_）
-    // - 否则从上游节点数据推导（videoPostId/videoDraftId/soraVideoTask.generation_id 等）
-    let remixTargetId = ((data as any)?.remixTargetId as string | undefined) || null
-    if (typeof remixTargetId === 'string') {
-      const trimmed = remixTargetId.trim()
-      const lower = trimmed.toLowerCase()
-      const looksLikeSoraId =
-        trimmed.startsWith('s_') ||
-        trimmed.startsWith('gen_') ||
-        trimmed.startsWith('task_') ||
-        trimmed.startsWith('p/')
-      if (!looksLikeSoraId) {
-        // 忽略形如随机 GUID 的值（例如 draft.id），避免把错误的 ID 传给 Sora
-        remixTargetId = null
-      } else {
-        remixTargetId = trimmed
-      }
-    }
+    // Remix 目标：仅在存在上游视频节点时，使用其 postId
+    let remixTargetId: string | null = null
     const aspectRatioSetting =
       typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
         ? (data as any).aspect.trim()
@@ -1011,7 +984,7 @@ async function runVideoTask(ctx: RunnerContext) {
         referenceImagesForVideo = referenceImagesForVideo.slice(0, 3)
       }
     }
-    if (!remixTargetId && inbound.length) {
+    if (inbound.length) {
       for (const edge of inbound) {
         const src = nodes.find((n: Node) => n.id === edge.source)
         const candidate = getRemixTargetIdFromNodeData(src?.data)
