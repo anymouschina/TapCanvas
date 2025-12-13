@@ -252,6 +252,8 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const startX = timeToX(trimStart)
   const endX = timeToX(trimEnd)
   const playheadX = timeToX(currentTime)
+  const containerWidth = getTimelineWidth()
+  const overlayWidth = Math.max(containerWidth, timelineWidth)
   const contentMaxWidth = 1180
   const contentPadding = '0 16px'
 
@@ -400,7 +402,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 left: 0,
                 top: 0,
                 bottom: 0,
-                width: timelineWidth,
+                width: overlayWidth,
                 display: 'flex',
               }}
             >
@@ -447,7 +449,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                   right: 0,
                   top: 0,
                   bottom: 0,
-                  width: timelineWidth - endX,
+                  width: Math.max(0, overlayWidth - endX),
                   background: 'rgba(15,23,42,.75)',
                 }}
               />
