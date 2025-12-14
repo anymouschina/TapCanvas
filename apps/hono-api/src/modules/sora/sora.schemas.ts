@@ -20,6 +20,7 @@ export const CreateSoraVideoRequestSchema = z.object({
 	remixTargetId: z.string().optional().nullable(),
 	operation: z.string().optional().nullable(),
 	title: z.string().optional().nullable(),
+	model: z.string().optional().nullable(),
 });
 
 // We keep response loosely typed and validate critical fields only
