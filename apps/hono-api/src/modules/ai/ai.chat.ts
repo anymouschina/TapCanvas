@@ -1,4 +1,10 @@
-import { convertToModelMessages, streamText, tool, zodSchema } from "ai";
+import {
+	convertToModelMessages,
+	generateText,
+	streamText,
+	tool,
+	zodSchema,
+} from "ai";
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import {
 	createGoogleGenerativeAI,
@@ -12,7 +18,7 @@ import {
 	ChatStreamRequestSchema,
 	type ChatStreamRequest,
 } from "./ai.schemas";
-import { SYSTEM_PROMPT } from "./constants";
+import { SYSTEM_PROMPT, IMAGE_AGENT_PROMPT } from "./constants";
 import { formatPromptSample, matchPromptSamples } from "./prompt-samples.data";
 import { z } from "zod";
 import { canvasToolSchemas } from "./tool-schemas";
@@ -105,6 +111,38 @@ const WORKER_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
 
 【Worker 扩展规则 · 主动执行】
 - 默认由你主动完成一切当前工具链可以实现的功能：优先自己创建/修改节点、连接边、运行任务和更新配置，而不是让用户去点击界面或手动调用 API；只有在明确超出现有工具能力、涉及高风险/敏感操作需要用户确认，或缺少关键业务决策输入（例如预算上限、账号绑定等）时，才请用户手动执行或补充信息。`;
+
+const IntentSchema = z.object({
+	intent: z.string().min(1),
+	goals: z.array(z.string()).min(1),
+	acceptance: z.array(z.string()).optional(),
+	priority: z.enum(["low", "medium", "high"]).optional(),
+	allowSearch: z.boolean().optional(),
+	notes: z.string().optional(),
+});
+
+const PlanStepSchema = z.object({
+	id: z.string().min(1),
+	name: z.string().min(1),
+	description: z.string().min(1),
+	expectedOutcome: z.string().optional(),
+});
+
+const PlannerOutputSchema = z.object({
+	steps: z.array(PlanStepSchema).min(1),
+	rationale: z.string().optional(),
+});
+
+const QaGuardrailSchema = z.object({
+	acceptance: z.array(z.string()).min(1),
+	checkpoints: z.array(z.string()).optional(),
+	failureHandling: z.array(z.string()).optional(),
+	extras: z.array(z.string()).optional(),
+});
+
+type IntentOutput = z.infer<typeof IntentSchema>;
+type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
+type QaGuardrailOutput = z.infer<typeof QaGuardrailSchema>;
 
 function normalizePart(part: any) {
 	if (!part) return null;
@@ -287,6 +325,7 @@ function resolveToolsForChat(
 	input: ChatStreamRequest,
 	c: AppContext,
 	userId: string,
+	options?: { disableWebSearch?: boolean },
 ): Record<string, any> | undefined {
 	const provided = normalizeProvidedTools((input as any).tools);
 	if (provided) return provided;
@@ -298,7 +337,8 @@ function resolveToolsForChat(
 	};
 
 	// 根据开关决定是否启用 webSearch 工具（与 Nest 版保持一致语义）
-	const shouldEnableWebSearch = input.enableWebSearch !== false;
+	const shouldEnableWebSearch =
+		input.enableWebSearch !== false && options?.disableWebSearch !== true;
 
 	if (!shouldEnableWebSearch) {
 		return baseCanvasTools;
@@ -390,6 +430,29 @@ function resolveToolsForChat(
 						600,
 					),
 				}));
+			},
+		}),
+	};
+
+	const bananaSearchTool = {
+		banana_ai_search: tool({
+			description:
+				"使用 Cloudflare AI Search 检索 Nano Banana 提示词案例，返回最相关片段，用于写图像/编辑提示词。",
+			inputSchema: z.object({
+				query: z.string().min(2, "query 过短"),
+				topK: z.number().int().min(1).max(8).default(4).optional(),
+			}),
+			execute: async (args: { query: string; topK?: number }) => {
+				const binding = (c.env as any)?.AI;
+				if (!binding || typeof binding.autorag !== "function") {
+					throw new Error("AI Search 未配置：缺少 AI binding");
+				}
+				const rag = binding.autorag("square-glade-783b");
+				const res = await rag.aiSearch({
+					query: args.query,
+					topK: args.topK ?? 4,
+				});
+				return res;
 			},
 		}),
 	};
@@ -505,9 +568,11 @@ function resolveToolsForChat(
 		});
 	}
 
+	// 仅暴露 image / composeVideo 相关操作；其他工具保持可见但模型需遵守约束
 	return {
 		...baseCanvasTools,
 		...webSearchTool,
+		...bananaSearchTool,
 		...intelligentTools,
 	};
 }
@@ -891,7 +956,7 @@ function normalizeChatBaseUrl(
 	return normalized;
 }
 
-function buildChatModel(
+export function buildChatModel(
 	provider: ChatProvider,
 	model: string,
 	apiKey: string,
@@ -1198,6 +1263,210 @@ async function findSharedTokenForVendorChat(
 function requiresApiKeyForVendorChat(vendor: string): boolean {
 	const v = vendor.toLowerCase();
 	return v === "openai" || v === "anthropic" || v === "gemini";
+}
+
+function summarizeContextForIntent(context?: any): string {
+	if (!context || typeof context !== "object") return "";
+	const parts: string[] = [];
+	if (Array.isArray(context.nodes)) {
+		parts.push(`nodes=${context.nodes.length}`);
+	}
+	if (Array.isArray(context.edges)) {
+		parts.push(`edges=${context.edges.length}`);
+	}
+	if (Array.isArray(context.characters) && context.characters.length) {
+		parts.push(`characters=${context.characters.length}`);
+	}
+	if (Array.isArray(context.videoBindings) && context.videoBindings.length) {
+		parts.push(`videoBindings=${context.videoBindings.length}`);
+	}
+	if (context.currentRun?.label) {
+		parts.push(`running=${context.currentRun.label}`);
+	}
+	return parts.join(" | ");
+}
+
+function isImageIntent(intent: IntentOutput | null, userText?: string): boolean {
+	if (intent?.intent) {
+		const lower = intent.intent.toLowerCase();
+		if (lower.includes("image") || lower.includes("图") || lower.includes("画")) {
+			return true;
+		}
+	}
+	if (Array.isArray(intent?.goals)) {
+		const joined = intent.goals.join(" ").toLowerCase();
+		if (joined.includes("image") || joined.includes("图") || joined.includes("画")) {
+			return true;
+		}
+	}
+	if (userText) {
+		const lower = userText.toLowerCase();
+		if (
+			lower.includes("image") ||
+			lower.includes("picture") ||
+			lower.includes("photo") ||
+			lower.includes("图")
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function pickRouterModelName(
+	provider: ChatProvider,
+	requestedModel: string,
+): string {
+	// 优先用更强的 gpt-5.2，当 provider 为 openai 时可直接覆盖。
+	if (provider === "openai") return "gpt-5.2";
+	return requestedModel;
+}
+
+export function pickPlannerModelName(
+	provider: ChatProvider,
+	requestedModel: string,
+): string {
+	// 规划也偏好 gpt-5.2（开放场景），否则沿用用户指定模型。
+	if (provider === "openai") return "gpt-5.2";
+	return requestedModel;
+}
+
+function chooseTemperature(intent?: IntentOutput | null): number | undefined {
+	if (!intent?.priority) return undefined;
+	switch (intent.priority) {
+		case "high":
+			return 0.85;
+		case "medium":
+			return 0.7;
+		case "low":
+		default:
+			return 0.5;
+	}
+}
+
+async function inferIntentAndPlan(
+	provider: ChatProvider,
+	modelName: string,
+	apiKey: string,
+	baseUrl: string | null | undefined,
+	lastUserText: string | undefined,
+	context: any,
+) {
+	const userText = lastUserText?.trim() || "（无用户输入）";
+	const ctxSummary = summarizeContextForIntent(context);
+
+	let intent: IntentOutput | null = null;
+	let plan: PlannerOutput | null = null;
+
+	try {
+		const intentModel = buildChatModel(
+			provider,
+			pickRouterModelName(provider, modelName),
+			apiKey,
+			baseUrl || undefined,
+		);
+		const intentPrompt = `你是 TapCanvas 的意图路由器，负责读懂用户要做的事、关键目标和验收条件，并判断是否允许联网搜索。仅输出 JSON，遵循给定 schema，不要多余文本。
+上下文：${ctxSummary || "无"}。`;
+		const intentRes = await generateText({
+			model: intentModel,
+			system: intentPrompt,
+			messages: [
+				{ role: "user", content: userText },
+			],
+			output: zodSchema(IntentSchema),
+		});
+		intent = intentRes.object as IntentOutput;
+	} catch (error) {
+		console.warn("[ai/chat] intent routing failed", {
+			error:
+				error && typeof error === "object" && "message" in error
+					? (error as any).message
+					: String(error),
+		});
+	}
+
+	try {
+		const plannerModel = buildChatModel(
+			provider,
+			pickPlannerModelName(provider, modelName),
+			apiKey,
+			baseUrl || undefined,
+		);
+		const plannerPrompt = `你是 TapCanvas 的 Planner，基于意图输出可执行计划（3-6 步），每步可映射到画布工具调用或思考动作。
+只输出 JSON，遵循 schema。保持动作最小化但能达成目标。`;
+		const plannerMessages = [
+			{
+				role: "system" as const,
+				content: plannerPrompt,
+			},
+			{
+				role: "user" as const,
+				content: `用户意图：${intent ? JSON.stringify(intent) : userText}
+画布摘要：${ctxSummary || "无"}`,
+			},
+		];
+		const planRes = await generateText({
+			model: plannerModel,
+			messages: plannerMessages,
+			output: zodSchema(PlannerOutputSchema),
+		});
+		plan = planRes.object as PlannerOutput;
+	} catch (error) {
+		console.warn("[ai/chat] planner generation failed", {
+			error:
+				error && typeof error === "object" && "message" in error
+					? (error as any).message
+					: String(error),
+		});
+	}
+
+	return { intent, plan };
+}
+
+async function buildQaGuardrails(
+	provider: ChatProvider,
+	modelName: string,
+	apiKey: string,
+	baseUrl: string | null | undefined,
+	intent: IntentOutput | null,
+	plan: PlannerOutput | null,
+) {
+	if (!intent && !plan) return null;
+	try {
+		const qaModel = buildChatModel(
+			provider,
+			pickPlannerModelName(provider, modelName),
+			apiKey,
+			baseUrl || undefined,
+		);
+		const prompt = `你是 TapCanvas 的 QA/验收 Agent，基于意图与计划生成验收要点、检查点和失败处理建议。
+仅输出 JSON，遵循 schema。确保验收与用户目标对齐，可适当提出超额完成建议。`;
+		const messages = [
+			{
+				role: "system" as const,
+				content: prompt,
+			},
+			{
+				role: "user" as const,
+				content: `意图：${intent ? JSON.stringify(intent) : "未知"}
+计划：${plan ? JSON.stringify(plan) : "暂无计划"}`,
+			},
+		];
+		const res = await generateText({
+			model: qaModel,
+			messages,
+			output: zodSchema(QaGuardrailSchema),
+		});
+		return res.object as QaGuardrailOutput;
+	} catch (error) {
+		console.warn("[ai/chat] QA guardrails failed", {
+			error:
+				error && typeof error === "object" && "message" in error
+					? (error as any).message
+					: String(error),
+		});
+		return null;
+	}
 }
 
 async function persistChatHistoryFromClientMessages(
@@ -1615,8 +1884,6 @@ export async function handleChatStream(
 				})()
 			: undefined);
 
-	const toolsValue = resolveToolsForChat(input, c, userId) || undefined;
-
 	if (!Array.isArray(input.messages) || input.messages.length === 0) {
 		throw new AppError("Invalid chat request body: messages is empty", {
 			status: 400,
@@ -1643,6 +1910,102 @@ export async function handleChatStream(
 		);
 	}
 
+	const { intent, plan } = await inferIntentAndPlan(
+		provider,
+		modelName,
+		apiKey,
+		baseUrl,
+		lastUserText,
+		input.context,
+	);
+
+	const planId = `auto_plan_${sessionKey}_${Date.now()}`;
+	const sessionIdForPlan =
+		(typeof input.sessionId === "string" && input.sessionId.trim()) ||
+		sessionKey;
+
+	if (plan?.steps?.length) {
+		const nowIso = new Date().toISOString();
+		publishToolEvent(userId, {
+			type: "tool-result",
+			toolCallId: planId,
+			toolName: "ai.plan.update",
+			output: {
+				planId,
+				sessionId: sessionIdForPlan,
+				explanation:
+					intent?.goals?.join("；") ||
+					intent?.notes ||
+					"自动规划：依据用户输入生成的执行计划。",
+				summary: {
+					strategy: "Planner 自动生成，遇到失败可返工。",
+					estimatedTime: plan.steps.length,
+					estimatedCost: 0,
+				},
+				steps: plan.steps.map((step) => ({
+					id: step.id,
+					name: step.name,
+					description: step.description,
+					status: "pending" as const,
+					reasoning: plan.rationale,
+					acceptance: intent?.acceptance,
+				})),
+				updatedAt: nowIso,
+			},
+		});
+	}
+
+	const intentSummaryParts: string[] = [];
+	if (intent?.intent) intentSummaryParts.push(`意图：${intent.intent}`);
+	if (intent?.goals?.length) {
+		intentSummaryParts.push(`目标：${intent.goals.join("；")}`);
+	}
+	if (intent?.acceptance?.length) {
+		intentSummaryParts.push(`验收：${intent.acceptance.join("；")}`);
+	}
+	if (intent?.priority) {
+		intentSummaryParts.push(`优先级：${intent.priority}`);
+	}
+	if (plan?.steps?.length) {
+		const preview = plan.steps
+			.slice(0, 4)
+			.map((s, i) => `${i + 1}. ${s.name}`)
+			.join("；");
+		intentSummaryParts.push(`规划：${preview}`);
+	}
+
+	const systemPromptBase = composeSystemPromptFromContext(
+		input.context,
+		lastUserText,
+	);
+
+	// 基于意图/计划/验收生成 guardrails（验收/返工提示）
+	const guardrails = await buildQaGuardrails(
+		provider,
+		modelName,
+		apiKey,
+		baseUrl,
+		intent,
+		plan,
+	);
+
+	if (guardrails) {
+		publishToolEvent(userId, {
+			type: "tool-result",
+			toolCallId: `${planId}_qa`,
+			toolName: "ai.qa.guardrails",
+			output: {
+				sessionId: sessionIdForPlan,
+				planId,
+				...guardrails,
+			},
+		});
+	}
+
+	const toolsValue = resolveToolsForChat(input, c, userId, {
+		disableWebSearch: intent?.allowSearch === false,
+	}) || undefined;
+
 	const uiMessages = normalizeMessagesForModel(input.messages);
 	// Convert cleaned UIMessage[] → ModelMessage[] as required by streamText
 	const modelMessages = convertToModelMessages(uiMessages as any, {
@@ -1658,10 +2021,38 @@ export async function handleChatStream(
 				}
 			: undefined;
 
-	const systemPrompt = composeSystemPromptFromContext(
-		input.context,
-		lastUserText,
+	const guardrailParts: string[] = [];
+	if (guardrails?.acceptance?.length) {
+		guardrailParts.push(`验收：${guardrails.acceptance.join("；")}`);
+	}
+	if (guardrails?.checkpoints?.length) {
+		guardrailParts.push(`检查点：${guardrails.checkpoints.join("；")}`);
+	}
+	if (guardrails?.failureHandling?.length) {
+		guardrailParts.push(`失败处理：${guardrails.failureHandling.join("；")}`);
+	}
+	if (guardrails?.extras?.length) {
+		guardrailParts.push(`超额完成建议：${guardrails.extras.join("；")}`);
+	}
+
+	const systemPromptBlocks = [systemPromptBase];
+	if (intentSummaryParts.length > 0) {
+		systemPromptBlocks.push(`【意图/规划快照】${intentSummaryParts.join(" ｜ ")}`);
+	}
+	if (guardrailParts.length > 0) {
+		systemPromptBlocks.push(`【QA 验收】${guardrailParts.join(" ｜ ")}`);
+	}
+	if (isImageIntent(intent, lastUserText)) {
+		systemPromptBlocks.push(`【Image Agent 提示】${IMAGE_AGENT_PROMPT}`);
+	}
+	systemPromptBlocks.push(
+		`【执行/QA 工作流指令】
+- 角色：Planner→Executor→QA→Finalizer，单体扮演多角色。
+- 执行：逐步调用工具完成计划；遇到失败先尝试修复/返工，再继续。
+- QA：对照验收/检查点自检，不满足则继续执行补救，不要提前收尾。
+- Finalize：满足验收后，总结完成度并指出下一步可选动作（若有超额建议且可执行，则执行或说明原因）。`,
 	);
+	const systemPrompt = systemPromptBlocks.join("\n\n");
 
 	const result = await streamText({
 		model: buildChatModel(provider, modelName, apiKey, baseUrl || undefined),
@@ -1669,8 +2060,14 @@ export async function handleChatStream(
 		messages: modelMessages,
 		tools: toolsValue,
 		providerOptions,
+		maxToolRoundtrips:
+			typeof input.maxToolRoundtrips === "number"
+				? input.maxToolRoundtrips
+				: 6,
 		temperature:
-			typeof input.temperature === "number" ? input.temperature : 0.7,
+			typeof input.temperature === "number"
+				? input.temperature
+				: chooseTemperature(intent) ?? 0.7,
 	});
 
 	// Vercel AI SDK v5: emit UI message SSE stream compatible with DefaultChatTransport

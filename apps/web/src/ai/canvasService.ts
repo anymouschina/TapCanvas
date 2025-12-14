@@ -21,6 +21,23 @@ const REMOTE_RUN_KINDS = new Set([
 
 const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage'])
 
+const IMAGE_MODEL_WHITELIST = new Set([
+  'nano-banana',
+  'nano-banana-fast',
+  'nano-banana-pro',
+  'qwen-image-plus',
+  'gemini-2.5-flash-image',
+  'sora-image',
+  'sora-image-landscape',
+  'sora-image-portrait',
+])
+
+const VIDEO_MODEL_WHITELIST = new Set([
+  'sora-2',
+  'veo3.1-fast',
+  'veo3.1-pro',
+])
+
 export class CanvasService {
 
   /**
@@ -38,6 +55,29 @@ export class CanvasService {
       const store = useRFStore.getState()
       const prevIds = new Set(store.nodes.map(node => node.id))
       const { addNode, onConnect } = store
+      const normalizedLabel = (params.label || '').trim()
+      const normalizedType = (params.type || '').trim().toLowerCase()
+
+      // 若已有同名同类节点，直接返回，避免重复创建
+      if (normalizedLabel) {
+        const existing = store.nodes.find(node => {
+          const dataKind = (node.data as any)?.kind
+          const nodeType = (node.data as any)?.type || (node as any).type
+          return (
+            (node.data as any)?.label === normalizedLabel ||
+            node.id === normalizedLabel
+          ) && (
+            (typeof dataKind === 'string' && dataKind.toLowerCase() === normalizedType) ||
+            (typeof nodeType === 'string' && nodeType.toLowerCase() === normalizedType)
+          )
+        })
+        if (existing) {
+          return {
+            success: true,
+            data: { message: '已存在同名节点，复用现有节点', nodeId: existing.id }
+          }
+        }
+      }
 
       // 生成默认位置（如果未提供）
       const position = params.position || CanvasService.generateDefaultPosition()
@@ -129,9 +169,18 @@ export class CanvasService {
     const rawType = (params.type || 'taskNode').trim()
     const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
 
-    // text 节点入口已移除，不再支持通过 AI 创建新的 text 节点
-    if (rawType === 'text') {
-      throw new Error('text 节点已下线，请使用 image/textToImage/composeVideo/character 等节点替代')
+    // 仅允许 image / textToImage / composeVideo / video，其余节点类型关闭
+    const allowedRawTypes = new Set([
+      'image',
+      'texttoimage',
+      'text_to_image',
+      'textToImage',
+      'composevideo',
+      'composeVideo',
+      'video',
+    ])
+    if (!allowedRawTypes.has(rawType.toLowerCase())) {
+      throw new Error('当前仅支持 image/textToImage/composeVideo/video 节点')
     }
 
     let nodeType = rawType
@@ -141,10 +190,6 @@ export class CanvasService {
       image: 'image',
       video: 'composeVideo',
       composeVideo: 'composeVideo',
-      storyboard: 'storyboard',
-      audio: 'tts',
-      subtitle: 'subtitleAlign',
-      character: 'character',
       // 兼容 AI 直接传入内部 kind 名称的情况，例如 type: "textToImage"
       textToImage: 'textToImage',
       text_to_image: 'textToImage',
@@ -168,7 +213,8 @@ export class CanvasService {
     ) {
       mergedConfig.prompt = label.trim()
     }
-    const data = CanvasService.ensurePromptFields(mergedConfig)
+    const dataWithPrompt = CanvasService.ensurePromptFields(mergedConfig, baseData.kind)
+    const data = CanvasService.sanitizeModels(baseData.kind, dataWithPrompt)
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
       ? params.remixFromNodeId.trim()
@@ -781,7 +827,7 @@ export class CanvasService {
     }
   }
 
-  private static ensurePromptFields<T extends Record<string, any>>(data: T): T {
+  private static ensurePromptFields<T extends Record<string, any>>(data: T, kind?: string): T {
     if (!data || typeof data !== 'object') return data
     const prompt =
       typeof (data as any).prompt === 'string' && (data as any).prompt.trim()
@@ -792,13 +838,33 @@ export class CanvasService {
         ? (data as any).videoPrompt
         : undefined
 
+    // 仅在 prompt 为空时用 videoPrompt 填充；不再把 prompt 复制到 videoPrompt
     if (!prompt && videoPrompt) {
       (data as any).prompt = videoPrompt
-    } else if (prompt && !videoPrompt) {
-      (data as any).videoPrompt = prompt
+    }
+    // 非视频节点不保留 videoPrompt
+    if (kind !== 'composeVideo' && 'videoPrompt' in (data as any)) {
+      delete (data as any).videoPrompt
     }
 
     return data
+  }
+
+  private static sanitizeModels(kind: string | undefined, data: Record<string, any>): Record<string, any> {
+    const next = { ...data }
+    if (kind === 'image' || kind === 'textToImage') {
+      const model = typeof next.imageModel === 'string' ? next.imageModel : ''
+      if (!IMAGE_MODEL_WHITELIST.has(model)) {
+        next.imageModel = 'nano-banana-fast'
+      }
+    }
+    if (kind === 'composeVideo') {
+      const model = typeof next.videoModel === 'string' ? next.videoModel : ''
+      if (!VIDEO_MODEL_WHITELIST.has(model)) {
+        next.videoModel = 'sora-2'
+      }
+    }
+    return next
   }
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from 'react'
 import { useRFStore } from '../canvas/store'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { textToImageSchema, composeVideoSchema, ttsSchema, subtitleAlignSchema, defaultsFor } from './forms'
+import { textToImageSchema, composeVideoSchema, subtitleAlignSchema, defaultsFor } from './forms'
 import { TextInput, Textarea, NumberInput, Select, Button, Title, Divider, Text, Group } from '@mantine/core'
 import { listModelProviders, listModelTokens, type ModelTokenDto } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
@@ -26,7 +26,6 @@ export default function NodeInspector(): JSX.Element {
     resolver: zodResolver(
       kind === 'textToImage' ? textToImageSchema :
       (kind === 'composeVideo' || kind === 'storyboard') ? composeVideoSchema :
-      kind === 'tts' ? ttsSchema :
       kind === 'subtitleAlign' ? subtitleAlignSchema :
       textToImageSchema
     ),
@@ -241,21 +240,6 @@ export default function NodeInspector(): JSX.Element {
             error={form.formState.errors.remixTargetId?.message as any}
             mt={8}
           />
-          <Button type="submit" mt={10}>应用</Button>
-        </form>
-      )}
-
-      {kind === 'tts' && (
-        <form onSubmit={form.handleSubmit((values) => useRFStore.getState().updateNodeData(selected.id, values))} style={{ marginTop: 12 }}>
-          <Textarea label="文本" autosize minRows={3} {...form.register('text')} error={form.formState.errors.text?.message as any} />
-          <Group grow mt={8}>
-            <Controller name="voice" control={form.control} render={({ field }) => (
-              <Select label="声音" data={[{value:'female',label:'female'},{value:'male',label:'male'}]} value={field.value} onChange={field.onChange} />
-            )} />
-            <Controller name="speed" control={form.control} render={({ field }) => (
-              <NumberInput label="速度" step={0.1} min={0.5} max={1.5} value={field.value} onChange={(v)=>field.onChange(Number(v))} />
-            )} />
-          </Group>
           <Button type="submit" mt={10}>应用</Button>
         </form>
       )}

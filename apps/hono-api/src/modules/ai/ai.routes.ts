@@ -28,6 +28,7 @@ import {
 	updateChatSessionTitle,
 	deleteChatSession,
 } from "./ai.chat";
+import { runOrchestrator, type OrchestratorRequest } from "./agent.orchestrator";
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -220,4 +221,58 @@ aiRouter.post("/tools/result", async (c) => {
 	publishToolEvent(userId, event);
 
 	return c.json({ success: true });
+});
+
+// ---- Lightweight QA/返工 orchestrator ----
+aiRouter.post("/agent/continue", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	let parsed: OrchestratorRequest;
+	try {
+		parsed = (body || {}) as OrchestratorRequest;
+		// Zod 校验在 runOrchestrator 内部
+	} catch {
+		return c.json({ error: "Invalid request body" }, 400);
+	}
+
+	const model =
+		(typeof (body as any)?.model === "string" && (body as any).model.trim()) ||
+		"gpt-5.2";
+	const providerRaw =
+		(typeof (body as any)?.provider === "string" && (body as any).provider) ||
+		"openai";
+	const provider =
+		providerRaw === "anthropic"
+			? "anthropic"
+			: providerRaw === "google"
+				? "google"
+				: "openai";
+
+	const apiKey =
+		(typeof (body as any)?.apiKey === "string" && (body as any).apiKey.trim()) ||
+		(c.env as any)?.OPENAI_API_KEY ||
+		"";
+	const baseUrl =
+		typeof (body as any)?.baseUrl === "string" ? (body as any).baseUrl : null;
+
+	if (!apiKey) {
+		return c.json({ error: "API key missing" }, 400);
+	}
+
+	try {
+		const result = await runOrchestrator(
+			c,
+			model,
+			provider,
+			apiKey,
+			baseUrl,
+			parsed,
+		);
+		return c.json(result);
+	} catch (error) {
+		console.error("[agent/continue] failed", error);
+		return c.json({ error: "orchestrator_failed" }, 500);
+	}
 });
