@@ -762,6 +762,14 @@ function CanvasApp(): JSX.Element {
               size="xs"
               variant="subtle"
               component="a"
+              href="/tapshow"
+            >
+              TapShow
+            </Button>
+            <Button
+              size="xs"
+              variant="subtle"
+              component="a"
               href="https://webcut.beqlee.icu/"
               target="_blank"
               rel="noopener noreferrer"
