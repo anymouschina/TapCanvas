@@ -320,144 +320,79 @@ export async function createSoraVideoTask(
 		remixTargetId?: string | null;
 		operation?: string | null;
 		title?: string | null;
+		model?: string | null;
 	},
 ) {
-	const token = await resolveSoraToken(c, userId, input.tokenId ?? undefined);
-	if ((token.providerVendor || "").toLowerCase() !== "sora") {
-		throw new AppError("token not found or not a Sora token", {
+	// 新接口：Sora2API /v1/video/sora-video（不再走 /backend/nf/create）
+	const vendor: "sora2api" | "grsai" = "sora2api";
+	const ctxVendor = await resolveVendorContext(c, userId, vendor);
+	const baseUrl =
+		normalizeBaseUrl(ctxVendor.baseUrl) ||
+		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
+	const apiKey = ctxVendor.apiKey?.trim?.() || "";
+	if (!apiKey) {
+		throw new AppError("未配置 Sora2API API Key", {
 			status: 400,
-			code: "invalid_sora_token",
+			code: "sora2api_api_key_missing",
 		});
 	}
 
-	const baseUrl = buildSoraBaseUrl(c.env, token);
-	const url = new URL("/backend/nf/create", baseUrl).toString();
-	const userAgent = token.userAgent || "TapCanvas/1.0";
+	const durationSeconds = (() => {
+		if (typeof input.n_frames === "number" && Number.isFinite(input.n_frames)) {
+			return Math.max(2, Math.min(15, Math.round(input.n_frames / 30)));
+		}
+		return 10;
+	})();
+	const aspectRatio =
+		input.orientation === "portrait"
+			? "9:16"
+			: input.orientation === "square"
+				? "1:1"
+				: "16:9";
+
+	const model = (() => {
+		const raw = (input.model || "").trim();
+		if (raw) return raw;
+		return "sora-2";
+	})();
 
 	const body: any = {
-		kind: "video",
+		model,
 		prompt: input.prompt,
-		title: input.title ?? null,
-		orientation: input.orientation || "portrait",
+		aspectRatio,
+		duration: durationSeconds,
 		size: input.size || "small",
-		n_frames:
-			typeof input.n_frames === "number" ? input.n_frames : 300,
-		inpaint_items: input.inpaintFileId
-			? [{ kind: "file", file_id: input.inpaintFileId }]
-			: [],
-		remix_target_id: input.remixTargetId ?? null,
-		metadata: null,
-		cameo_ids: null,
-		cameo_replacements: null,
-		model: "sy_8",
-		style_id: null,
-		audio_caption: null,
-		audio_transcript: null,
-		video_caption: null,
-		storyboard_id: null,
+		stream: false,
+		webHook: "-1",
+		shutProgress: false,
 	};
-	if (input.operation) {
-		body.operation = input.operation;
+	if (input.imageUrl) {
+		body.url = input.imageUrl;
+	}
+	if (input.remixTargetId) {
+		body.remixTargetId = input.remixTargetId;
 	}
 
-	const nowIso = new Date().toISOString();
+	const endpoints = ["/v1/video/sora-video"];
 
-	let res: Response;
-	let data: any = null;
-	try {
-		res = await fetchWithHttpDebugLog(
-			c,
-			url,
-			{
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${token.secretToken}`,
-				"User-Agent": userAgent,
-				Accept: "*/*",
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(body),
-			},
-			{ tag: "sora:createVideo" },
-		);
-		try {
-			data = await res.json();
-		} catch {
-			data = null;
-		}
-	} catch (error: any) {
-		throw new AppError("Sora video create request failed", {
-			status: 502,
-			code: "sora_create_failed",
-			details: {
-				message: error?.message ?? String(error),
-			},
-		});
-	}
+	const result = await callSora2ApiWithFallbacks(
+		c,
+		userId,
+		endpoints,
+		body,
+		vendor,
+	);
 
-	if (!res.ok) {
-		const upstreamError =
-			data?.error ||
-			(typeof data?.message === "object" ? data.message : null);
-		const msg =
-			(upstreamError && upstreamError.message) ||
-			data?.message ||
-			data?.error ||
-			`Sora video create failed with status ${res.status}`;
-
-		throw new AppError(msg, {
-			status: res.status,
-			code: "sora_create_failed",
-			details: {
-				upstreamStatus: res.status,
-				upstreamData: data ?? null,
-			},
-		});
-	}
-
-	const result: any = data ?? {};
-	// Record basic history if task id exists
-	if (result.id && typeof result.id === "string") {
-		const id = crypto.randomUUID();
-		await c.env.DB.prepare(
-			`INSERT INTO video_generation_histories
-       (id, user_id, node_id, project_id, prompt, parameters, image_url,
-        task_id, generation_id, status, video_url, thumbnail_url,
-        duration, width, height, token_id, provider, model, cost,
-        is_favorite, rating, notes, remix_target_id, created_at, updated_at)
-       VALUES (?, ?, NULL, NULL, ?, ?, NULL,
-        ?, NULL, ?, NULL, NULL,
-        NULL, NULL, NULL, ?, ?, NULL, NULL,
-        0, NULL, NULL, ?, ?, ?)
-      `,
-		)
-			.bind(
-				id,
-				userId,
-				input.prompt,
-				JSON.stringify({
-					orientation: input.orientation,
-					size: input.size,
-					n_frames: input.n_frames,
-					inpaintFileId: input.inpaintFileId,
-					imageUrl: input.imageUrl,
-					remixTargetId: input.remixTargetId,
-				}),
-				result.id,
-				"pending",
-				token.id,
-				"sora",
-				input.remixTargetId ?? null,
-				nowIso,
-				nowIso,
-			)
-			.run();
-	}
-
-	result.__usedTokenId = token.id;
-	result.__switchedFromTokenIds = [];
-	result.__tokenSwitched = false;
-	return result;
+	return {
+		id: result.id,
+		task_id: result.id,
+		model,
+		status: result.status,
+		progress: result.progress,
+		raw: result.payload,
+		__usedTokenId: null,
+		__switchedFromTokenIds: [],
+	};
 }
 
 export async function listSoraPendingVideos(c: AppContext, userId: string) {
@@ -1769,6 +1704,103 @@ function clampCharacterProgress(value?: number | null): number | undefined {
 	return Math.max(0, Math.min(100, value));
 }
 
+function extractProgress(payload: any): number | undefined {
+	if (!payload || typeof payload !== "object") return undefined;
+	const normalize = (val: any) => {
+		if (typeof val !== "number" || Number.isNaN(val)) return undefined;
+		// Some providers return 0-1 for *_pct; auto-scale to percentage.
+		if (val > 0 && val <= 1) return val * 100;
+		return val;
+	};
+	const candidates: Array<number | undefined> = [
+		normalize((payload as any).progress),
+		normalize((payload as any).progress_pct),
+		normalize((payload as any).progressPct),
+		normalize((payload as any).progressPercent),
+		normalize((payload as any).progress_percentage),
+		normalize((payload as any).progressPercentile),
+	];
+	if (Array.isArray((payload as any).results) && (payload as any).results.length) {
+		const first = (payload as any).results[0];
+		candidates.push(
+			normalize(first?.progress),
+			normalize(first?.progress_pct),
+			normalize(first?.progressPct),
+			normalize(first?.progressPercent),
+		);
+	}
+	const val = candidates.find((v) => typeof v === "number" && Number.isFinite(v));
+	return typeof val === "number" ? clampCharacterProgress(val) : undefined;
+}
+
+function extractCharacterId(payload: any): string | null {
+	if (!payload || typeof payload !== "object") return null;
+	const direct =
+		(typeof payload.character_id === "string" && payload.character_id.trim()) ||
+		(typeof payload.characterId === "string" && payload.characterId.trim()) ||
+		null;
+	if (direct) return direct;
+	if (Array.isArray(payload.results) && payload.results.length) {
+		const first = payload.results[0];
+		const nested =
+			(typeof first?.character_id === "string" && first.character_id.trim()) ||
+			(typeof first?.characterId === "string" && first.characterId.trim()) ||
+			null;
+		if (nested) return nested;
+	}
+	return null;
+}
+
+async function readFirstEventStreamJson(res: Response, timeoutMs = 15000): Promise<any> {
+	const body = res.body;
+	if (!body) return null;
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	const timeout = setTimeout(() => {
+		try {
+			reader.cancel();
+		} catch {
+			// ignore
+		}
+	}, timeoutMs);
+	try {
+		// Read until we find a "data:" JSON event or hit timeout/end.
+		// Limit buffer to avoid unbounded growth.
+		while (true) {
+			const { done, value } = await reader.read();
+			if (value) {
+				buffer += decoder.decode(value, { stream: true });
+				if (buffer.length > 64_000) {
+					buffer = buffer.slice(-32_000);
+				}
+				const lines = buffer.split(/\r?\n/).filter(Boolean);
+				for (let i = lines.length - 1; i >= 0; i -= 1) {
+					const line = lines[i];
+					const match = line.match(/^data:\s*(\{.*\})\s*$/);
+					if (!match) continue;
+					try {
+						return JSON.parse(match[1]);
+					} catch {
+						// keep reading
+					}
+				}
+			}
+			if (done) break;
+		}
+	} catch {
+		// ignore stream errors; fallback to null
+	} finally {
+		clearTimeout(timeout);
+		try {
+			reader.cancel();
+		} catch {
+			// ignore
+		}
+	}
+	return null;
+}
+
 async function callSora2ApiWithFallbacks(
 	c: AppContext,
 	userId: string,
@@ -1817,27 +1849,29 @@ async function callSora2ApiWithFallbacks(
 		let res: Response;
 		let data: any = null;
 		try {
-			res = await fetchWithHttpDebugLog(
-				c,
-				endpoint,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Accept: "text/event-stream,application/json",
-						Authorization: `Bearer ${apiKey}`,
+				res = await fetchWithHttpDebugLog(
+					c,
+					endpoint,
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							Accept: "application/json",
+							Authorization: `Bearer ${apiKey}`,
+						},
+						body: JSON.stringify(body),
 					},
-					body: JSON.stringify(body),
-				},
-				{ tag: `${vendor}:call` },
-			);
-			const ct = (res.headers.get("content-type") || "").toLowerCase();
-			if (ct.includes("application/json")) {
-				try {
-					data = await res.json();
-				} catch {
-					data = null;
-				}
+					{ tag: `${vendor}:call` },
+				);
+				const ct = (res.headers.get("content-type") || "").toLowerCase();
+				if (ct.includes("text/event-stream")) {
+					data = await readFirstEventStreamJson(res);
+				} else if (ct.includes("application/json")) {
+					try {
+						data = await res.json();
+					} catch {
+						data = null;
+					}
 			} else {
 				try {
 					data = await res.text();
@@ -1997,32 +2031,28 @@ export async function uploadCharacterViaSora2Api(
 			},
 		);
 	}
-	const isGrsaiBase = isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const body = {
 		url: input.url,
-		timestamps: input.timestamps || "0,3",
+		...(input.timestamps ? { timestamps: input.timestamps } : {}),
 		webHook: typeof input.webHook === "string" ? input.webHook : "-1",
 		shutProgress: input.shutProgress === true,
 	};
-	if (isGrsaiBase) {
-		// grsai/Sora2API new protocol: character creation is triggered via /v1/chat/completions (stream=true, empty prompt)
-		const model = "sora-video-landscape-10s";
-		const completionBody = {
-			model,
-			stream: true,
-			messages: [{ role: "user", content: "" }],
-			video: input.url,
-			...(input.timestamps ? { timestamps: input.timestamps } : {}),
-		};
-		const endpoints = ["/v1/chat/completions"];
-		return callSora2ApiWithFallbacks(c, userId, endpoints, completionBody, vendor);
-	}
+	// Use the non-stream upload endpoints for both sora2api and grsai bases.
 	const endpoints = [
 		"/v1/video/sora-upload-character",
 		"/client/v1/video/sora-upload-character",
 		"/client/video/sora-upload-character",
 	];
-	return callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
+	const result = await callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
+	const characterId = extractCharacterId(result.payload);
+	const status = characterId ? "succeeded" : result.status;
+	const progress = characterId ? 100 : result.progress;
+	return {
+		...result,
+		status,
+		progress,
+		characterId: characterId || null,
+	};
 }
 
 
@@ -2052,7 +2082,16 @@ export async function createCharacterFromPidViaSora2Api(
 				"/client/v1/video/sora-create-character",
 				"/client/video/sora-create-character",
 			];
-	return callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
+	const result = await callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
+	const characterId = extractCharacterId(result.payload);
+	const status = characterId ? "succeeded" : result.status;
+	const progress = characterId ? 100 : result.progress;
+	return {
+		...result,
+		status,
+		progress,
+		characterId: characterId || null,
+	};
 }
 
 export async function fetchSora2ApiCharacterResult(
@@ -2070,7 +2109,8 @@ export async function fetchSora2ApiCharacterResult(
 		});
 	}
 
-	const endpoint = `${baseUrl}/v1/draw/result`;
+	const endpoint = `${baseUrl}/v1/video/tasks/${encodeURIComponent(taskId.trim())}`;
+
 	let res: Response;
 	let data: any = null;
 	try {
@@ -2078,12 +2118,10 @@ export async function fetchSora2ApiCharacterResult(
 			c,
 			endpoint,
 			{
-				method: "POST",
+				method: "GET",
 				headers: {
-					"Content-Type": "application/json",
 					Authorization: `Bearer ${apiKey}`,
 				},
-				body: JSON.stringify({ id: taskId }),
 			},
 			{ tag: "sora2api:characterResult" },
 		);
@@ -2120,26 +2158,15 @@ export async function fetchSora2ApiCharacterResult(
 			: data;
 
 	const status = mapSora2ApiStatus(payload.status);
-	const progress = clampCharacterProgress(
-		typeof payload.progress === "number"
-			? payload.progress
-			: typeof (payload as any).progress_pct === "number"
-				? (payload as any).progress_pct * 100
-				: undefined,
-	);
-	const firstResult =
-		Array.isArray(payload.results) && payload.results.length
-			? payload.results[0]
-			: null;
-	const characterId =
-		(typeof firstResult?.character_id === "string" &&
-			firstResult.character_id.trim()) ||
-		null;
+	const progress = extractProgress(payload);
+	const characterId = extractCharacterId(payload);
+	const finalStatus = characterId ? "succeeded" : status;
+	const finalProgress = characterId ? 100 : progress;
 
 	return {
 		id: payload.id,
-		status,
-		progress,
+		status: finalStatus,
+		progress: finalProgress,
 		characterId,
 		raw: payload,
 	};

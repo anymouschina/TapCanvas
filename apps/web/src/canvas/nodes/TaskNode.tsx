@@ -1223,7 +1223,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const existingModelVendor = (data as any)?.modelVendor
   const existingImageVendor = (data as any)?.imageModelVendor
   const existingVideoVendor = (data as any)?.videoModelVendor
-  const resolvedVideoVendor = existingVideoVendor || findVendorForModel(videoModel)
+  const resolvedVideoVendor = React.useMemo(() => {
+    const normalizedVideoModel = (videoModel || '').toLowerCase()
+    if (normalizedVideoModel.startsWith('sora')) {
+      return 'sora2api'
+    }
+    if (existingVideoVendor) return existingVideoVendor
+    return findVendorForModel(videoModel)
+  }, [existingVideoVendor, findVendorForModel, videoModel])
   const isSoraVideoVendor = resolvedVideoVendor === 'sora' || resolvedVideoVendor === 'sora2api'
   const isSoraVideoNode = isVideoNode && isSoraVideoVendor
   const handlePoseSaved = React.useCallback(
