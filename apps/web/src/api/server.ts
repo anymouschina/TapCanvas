@@ -144,6 +144,36 @@ export type ChatHistoryDto = {
   messages: ChatHistoryMessageDto[]
 }
 
+export type AgentContinueInput = {
+  sessionId: string
+  planId?: string
+  intent?: string
+  goals?: string[]
+  guardrails?: {
+    acceptance?: string[]
+    checkpoints?: string[]
+    extras?: string[]
+    failureHandling?: string[]
+  }
+  toolResult: {
+    sessionId: string
+    toolCallId?: string
+    toolName?: string
+    nodeId?: string
+    nodeKind?: string
+    output?: any
+    errorText?: string
+  }
+  model?: string
+  provider?: string
+}
+
+export type AgentContinueOutput = {
+  reply?: string
+  followUp?: string
+  shouldContinue?: boolean
+}
+
 export async function fetchPromptSamples(params?: { query?: string; nodeKind?: string; source?: 'official' | 'custom' | 'all' }): Promise<{ samples: PromptSampleDto[] }> {
   const qs = new URLSearchParams()
   if (params?.query) qs.set('q', params.query)
@@ -279,6 +309,55 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
     const msg = (body && (body.message || body.error)) || `delete chat session failed: ${r.status}`
     throw new Error(msg)
   }
+}
+
+export type AgentContinueInput = {
+  sessionId: string
+  planId?: string
+  intent?: string
+  goals?: string[]
+  guardrails?: {
+    acceptance?: string[]
+    checkpoints?: string[]
+    extras?: string[]
+    failureHandling?: string[]
+  }
+  toolResult: {
+    sessionId: string
+    toolCallId?: string
+    toolName?: string
+    nodeId?: string
+    nodeKind?: string
+    output?: any
+    errorText?: string
+  }
+  model?: string
+  provider?: string
+}
+
+export type AgentContinueOutput = {
+  reply?: string
+  followUp?: string
+  shouldContinue?: boolean
+}
+
+export async function agentContinue(payload: AgentContinueInput): Promise<AgentContinueOutput> {
+  const r = await fetch(`${API_BASE}/ai/agent/continue`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `agent continue failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return body as AgentContinueOutput
 }
 
 export async function deletePromptSample(id: string): Promise<void> {

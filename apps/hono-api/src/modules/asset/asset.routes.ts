@@ -18,6 +18,58 @@ import {
 
 export const assetRouter = new Hono<AppEnv>();
 
+const DEFAULT_THUMB_SIZE = 720;
+const MAX_THUMB_SIZE = 1280;
+const DEFAULT_THUMB_QUALITY = 80;
+
+function clampNumber(value: number | undefined, min: number, max: number): number {
+	if (typeof value !== "number" || Number.isNaN(value)) return min;
+	return Math.max(min, Math.min(max, value));
+}
+
+function getPublicBase(env: AppEnv["Bindings"]): string {
+	const rawBase =
+		typeof (env as any).R2_PUBLIC_BASE_URL === "string"
+			? ((env as any).R2_PUBLIC_BASE_URL as string)
+			: "";
+	return rawBase.trim().replace(/\/+$/, "");
+}
+
+function isHostedUrl(url: string, publicBase: string): boolean {
+	const trimmed = (url || "").trim();
+	if (!trimmed) return false;
+	if (publicBase) {
+		return trimmed.startsWith(`${publicBase}/`);
+	}
+	// Fallback: default R2 key prefix
+	return /^\/?gen\//.test(trimmed);
+}
+
+function buildPublicThumbUrl(options: {
+	requestUrl: string;
+	targetUrl: string;
+	publicBase: string;
+	width?: number;
+	height?: number;
+	quality?: number;
+}): string | null {
+	const { requestUrl, targetUrl, publicBase } = options;
+	const trimmed = (targetUrl || "").trim();
+	if (!trimmed || !isHostedUrl(trimmed, publicBase)) return null;
+	let base: URL;
+	try {
+		base = new URL(requestUrl);
+	} catch {
+		return null;
+	}
+	const thumb = new URL("/assets/public-thumb", base.origin);
+	thumb.searchParams.set("url", trimmed);
+	if (options.width) thumb.searchParams.set("w", String(options.width));
+	if (options.height) thumb.searchParams.set("h", String(options.height));
+	if (options.quality) thumb.searchParams.set("q", String(options.quality));
+	return thumb.toString();
+}
+
 assetRouter.get("/", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
@@ -121,20 +173,8 @@ assetRouter.get("/public", async (c) => {
 	const requestedType =
 		typeParam === "image" || typeParam === "video" ? typeParam : null;
 
-	const rawBase =
-		typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
-			? ((c.env as any).R2_PUBLIC_BASE_URL as string)
-			: "";
-	const publicBase = rawBase.trim().replace(/\/+$/, "");
-	const isHosted = (url: string): boolean => {
-		const trimmed = (url || "").trim();
-		if (!trimmed) return false;
-		if (publicBase) {
-			return trimmed.startsWith(`${publicBase}/`);
-		}
-		// Fallback: default R2 key prefix
-		return /^\/?gen\//.test(trimmed);
-	};
+	const publicBase = getPublicBase(c.env);
+	const isHosted = (url: string): boolean => isHostedUrl(url, publicBase);
 
 	const rows = await listPublicAssets(c.env.DB, { limit });
 	const items = rows
@@ -157,10 +197,23 @@ assetRouter.get("/public", async (c) => {
 				return null;
 			}
 
-			const thumbnailUrl =
+			const thumbnailSource =
 				typeof data.thumbnailUrl === "string"
 					? data.thumbnailUrl
 					: null;
+			const thumbnailUrl =
+				type === "image"
+					? buildPublicThumbUrl({
+							requestUrl: c.req.url,
+							targetUrl: thumbnailSource || url,
+							publicBase,
+							width: DEFAULT_THUMB_SIZE,
+							height: DEFAULT_THUMB_SIZE,
+							quality: DEFAULT_THUMB_QUALITY,
+						})
+					: thumbnailSource && isHosted(thumbnailSource)
+						? thumbnailSource
+						: null;
 			const duration =
 				typeof data.duration === "number" && Number.isFinite(data.duration)
 					? data.duration
@@ -198,6 +251,79 @@ assetRouter.get("/public", async (c) => {
 		);
 
 	return c.json(items);
+});
+
+// CDN-friendly thumbnail proxy with Cloudflare Image Resizing
+assetRouter.get("/public-thumb", async (c) => {
+	const publicBase = getPublicBase(c.env);
+	const raw = (c.req.query("url") || "").trim();
+	if (!raw) {
+		return c.json({ message: "url is required" }, 400);
+	}
+	let target = raw;
+	try {
+		target = decodeURIComponent(raw);
+	} catch {
+		// ignore
+	}
+	if (!isHostedUrl(target, publicBase)) {
+		return c.json({ message: "url is not allowed" }, 400);
+	}
+
+	const parsedW = Number.parseInt(c.req.query("w") || "", 10);
+	const parsedH = Number.parseInt(c.req.query("h") || "", 10);
+	const parsedQ = Number.parseInt(c.req.query("q") || "", 10);
+	const width = Number.isFinite(parsedW)
+		? clampNumber(parsedW, 16, MAX_THUMB_SIZE)
+		: DEFAULT_THUMB_SIZE;
+	const height = Number.isFinite(parsedH)
+		? clampNumber(parsedH, 16, MAX_THUMB_SIZE)
+		: width;
+	const quality = Number.isFinite(parsedQ)
+		? clampNumber(parsedQ, 30, 95)
+		: DEFAULT_THUMB_QUALITY;
+
+	const resizeOptions = {
+		fit: "cover",
+		width,
+		height,
+		quality,
+		format: "auto" as const,
+	};
+
+	try {
+		let res: Response;
+		try {
+			res = await fetch(target, {
+				// Cloudflare Image Resizing happens at the edge; no need to re-upload thumbnails
+				cf: { image: resizeOptions },
+			} as RequestInit);
+		} catch {
+			// 开发环境或不支持 cf:image 时，退化为直接拉取原图
+			res = await fetch(target);
+		}
+		if (!res.ok) {
+			return c.json(
+				{ message: `fetch upstream failed: ${res.status}` },
+				502,
+			);
+		}
+		const headers = new Headers(res.headers);
+		headers.set(
+			"Cache-Control",
+			"public, max-age=604800, stale-while-revalidate=86400",
+		);
+		headers.set("Access-Control-Allow-Origin", "*");
+		return new Response(res.body, {
+			status: res.status,
+			headers,
+		});
+	} catch (err: any) {
+		return c.json(
+			{ message: err?.message || "public thumb proxy failed" },
+			500,
+		);
+	}
 });
 
 // Proxy image: /assets/proxy-image?url=...
