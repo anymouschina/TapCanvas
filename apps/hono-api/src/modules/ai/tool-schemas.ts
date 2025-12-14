@@ -5,14 +5,14 @@ import { z } from "zod";
 export const canvasToolSchemas = {
 		createNode: {
 			description:
-				"创建一个新的画布节点（主要为 taskNode）。type 传逻辑 kind 名称即可：image / textToImage / composeVideo（或 video）/ tts / subtitleAlign / character / subflow 等；text 已下线、storyboard 禁止新建。必要时会自动补全默认标签与位置。",
+				"创建一个新的画布节点（主要为 taskNode）。仅支持 image / textToImage / composeVideo（或 video）；其他类型已禁用。必要时会自动补全默认标签与位置。",
 			inputSchema: z
 				.object({
 					type: z
 						.string()
 						.min(1)
 						.describe(
-							"节点类型/逻辑 kind。常用：image、textToImage、composeVideo（或 video）、tts、subtitleAlign、character、subflow。不要传 text 或 storyboard。",
+							"节点类型/逻辑 kind。仅支持：image、textToImage、composeVideo（或 video）。其他类型已禁用。",
 						),
 					label: z
 						.string()
@@ -104,9 +104,20 @@ export const canvasToolSchemas = {
 		inputSchema: z.object({}).strict(),
 	},
 
-		findNodes: {
+	banana_ai_search: {
+		description:
+			"使用 Cloudflare AI Search 检索 Nano Banana 提示词案例，返回最相关的片段，用于参考生成/编辑提示词。",
+		inputSchema: z
+			.object({
+				query: z.string().min(2, "query 过短"),
+				topK: z.number().int().min(1).max(8).default(4).optional(),
+			})
+			.strict(),
+	},
+
+	findNodes: {
 			description:
-				"根据标签或 kind 查找节点，支持模糊匹配 label。type 参数指节点 kind（如 image、textToImage、composeVideo、tts、subtitleAlign、character）。",
+				"根据标签或 kind 查找节点，支持模糊匹配 label。type 参数指节点 kind（如 image、textToImage、composeVideo）。其他类型已禁用。",
 			inputSchema: z
 				.object({
 					label: z
@@ -116,7 +127,7 @@ export const canvasToolSchemas = {
 					type: z
 						.string()
 						.describe(
-							"可选：节点 kind，例如 image / textToImage / composeVideo / video / tts / subtitleAlign / character。",
+							"可选：节点 kind，例如 image / textToImage / composeVideo / video。其他类型已禁用。",
 						)
 						.optional(),
 				})
@@ -240,6 +251,6 @@ export const canvasToolSchemas = {
 		string,
 		{
 			description: string;
-		inputSchema: ReturnType<typeof z.object>;
-	}
->;
+			inputSchema: ReturnType<typeof z.object>;
+		}
+	>;

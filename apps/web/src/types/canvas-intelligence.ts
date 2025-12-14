@@ -119,6 +119,15 @@ export interface PlanUpdatePayload {
   updatedAt: string
 }
 
+export interface QaGuardrailPayload {
+  sessionId?: string
+  planId?: string
+  acceptance: string[]
+  checkpoints?: string[]
+  failureHandling?: string[]
+  extras?: string[]
+}
+
 export interface IntelligentChatResponse {
   reply: string
   plan: string[]

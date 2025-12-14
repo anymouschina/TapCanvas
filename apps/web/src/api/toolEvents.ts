@@ -1,4 +1,4 @@
-import type { ThinkingEvent, PlanUpdatePayload } from '../types/canvas-intelligence'
+import type { ThinkingEvent, PlanUpdatePayload, QaGuardrailPayload } from '../types/canvas-intelligence'
 import { API_BASE } from './server'
 
 export interface ToolEventMessage {
@@ -149,6 +149,13 @@ export function extractThinkingEvent(event: ToolEventMessage): ThinkingEvent | n
 export function extractPlanUpdate(event: ToolEventMessage): PlanUpdatePayload | null {
   if (event.type === 'tool-result' && event.toolName === 'ai.plan.update' && event.output) {
     return event.output as PlanUpdatePayload
+  }
+  return null
+}
+
+export function extractQaGuardrails(event: ToolEventMessage): QaGuardrailPayload | null {
+  if (event.type === 'tool-result' && event.toolName === 'ai.qa.guardrails' && event.output) {
+    return event.output as QaGuardrailPayload
   }
   return null
 }

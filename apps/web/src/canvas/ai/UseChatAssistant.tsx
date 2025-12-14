@@ -9,7 +9,7 @@ import { useModelOptions } from '../../config/useModelOptions'
 import { useRFStore } from '../store'
 import { getAuthToken } from '../../auth/store'
 import { functionHandlers } from '../../ai/canvasService'
-import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate } from '../../api/toolEvents'
+import { subscribeToolEvents, type ToolEventMessage, extractThinkingEvent, extractPlanUpdate, extractQaGuardrails } from '../../api/toolEvents'
 import {
   runTaskByVendor,
   type TaskResultDto,
@@ -18,11 +18,12 @@ import {
   getChatHistory as getServerChatHistory,
   renameChatSession as renameServerChatSession,
   deleteChatSession as deleteServerChatSession,
+  agentContinue,
   type ChatHistoryMessageDto,
 } from '../../api/server'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
-import type { ThinkingEvent, PlanUpdatePayload } from '../../types/canvas-intelligence'
+import type { ThinkingEvent, PlanUpdatePayload, QaGuardrailPayload } from '../../types/canvas-intelligence'
 import { buildCanvasContext } from '../utils/buildCanvasContext'
 
 interface UseChatAssistantProps {
@@ -288,6 +289,8 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
   )
   const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([])
   const [planUpdate, setPlanUpdate] = useState<PlanUpdatePayload | null>(null)
+  const [qaGuardrails, setQaGuardrails] = useState<QaGuardrailPayload | null>(null)
+  const [lastToolResult, setLastToolResult] = useState<{ toolCallId?: string; toolName?: string; output?: any; errorText?: string } | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [enableWebSearch, setEnableWebSearch] = useState(true)
   const [isExpanded, setIsExpanded] = useState(false)
@@ -356,7 +359,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     context: canvasContext,
     provider,
     clientToolExecution: true, // 始终让前端执行工具，智能模式仍由后端 sidecar 提供
-    maxToolRoundtrips: 4,
+    maxToolRoundtrips: 6,
     intelligentMode,
     enableThinking: true,
     enableWebSearch,
@@ -644,6 +647,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     'project.operation': '项目操作',
     'ai.plan.update': '计划同步',
     'ai.thinking.process': '推理分析',
+    'ai.qa.guardrails': '验收准则',
   }
   const NODE_OPERATION_ACTION_LABELS: Record<string, string> = {
     create: '创建节点',
@@ -760,22 +764,6 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     }
   }, [isLoading, planUpdate])
 
-  const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
-    try {
-      const token = getAuthToken()
-      await fetch(`${apiRoot}/ai/tools/result`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      })
-    } catch (err) {
-      console.warn('[UseChatAssistant] report tool result failed', err)
-    }
-  }, [apiRoot])
-
   const runToolHandler = useCallback(async (call: { toolCallId?: string; toolName?: string; input?: any }) => {
     const toolName = call.toolName
     if (!toolName) {
@@ -801,6 +789,55 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
       return { errorText: err instanceof Error ? err.message : '工具执行失败' }
     }
   }, [])
+
+  const triggerAgentContinue = useCallback(async (toolResult?: { toolCallId?: string; toolName?: string; output?: any; errorText?: string }) => {
+    const latestResult = toolResult || lastToolResult
+    if (!latestResult || !qaGuardrails) return
+    try {
+      const payload = {
+        sessionId: activeSessionId,
+        planId: planUpdate?.planId,
+        intent: undefined,
+        goals: planUpdate?.steps?.map(step => step.name).filter(Boolean),
+        guardrails: qaGuardrails,
+        toolResult: {
+          sessionId: activeSessionId,
+          toolCallId: latestResult.toolCallId,
+          toolName: latestResult.toolName,
+          output: latestResult.output,
+          errorText: latestResult.errorText,
+        },
+        model,
+        provider,
+      }
+      const result = await agentContinue(payload)
+      const text = result.reply || result.followUp
+      if (text) {
+        await sendMessage({ text })
+      }
+    } catch (err) {
+      console.warn('[UseChatAssistant] agent continue failed', err)
+    }
+  }, [lastToolResult, qaGuardrails, activeSessionId, planUpdate?.planId, planUpdate?.steps, model, provider, sendMessage])
+
+  const reportToolResult = useCallback(async (payload: { toolCallId: string; toolName: string; output?: any; errorText?: string }) => {
+    try {
+      const token = getAuthToken()
+      await fetch(`${apiRoot}/ai/tools/result`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      })
+      setLastToolResult(payload)
+      // 将最新结果返回 orchestrator（如果有验收准则）
+      void triggerAgentContinue(payload)
+    } catch (err) {
+      console.warn('[UseChatAssistant] report tool result failed', err)
+    }
+  }, [apiRoot, triggerAgentContinue])
 
   const stringifyMessage = (msg: UIMessage) => {
     const describeToolState = (part: any) => {
@@ -1116,6 +1153,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
     setActivePromptAttachmentId(null)
     setThinkingEvents([])
     setPlanUpdate(null)
+    setQaGuardrails(null)
     setIsThinking(false)
   }, [sessions.length, setMessages])
 
@@ -1174,6 +1212,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
       setActivePromptAttachmentId(null)
       setThinkingEvents([])
       setPlanUpdate(null)
+      setQaGuardrails(null)
       setIsThinking(false)
       return
     }
@@ -1196,6 +1235,7 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
         setActivePromptAttachmentId(null)
         setThinkingEvents([])
         setPlanUpdate(null)
+        setQaGuardrails(null)
         setIsThinking(false)
       }
     })()
@@ -1329,6 +1369,11 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
             const done = planPayload.steps.every(step => step.status === 'completed')
             // 计划只要未全部 completed，就保持思考/执行中的 loading 态
             setIsThinking(!done)
+          }
+
+          const guardrailsPayload = extractQaGuardrails(event)
+          if (guardrailsPayload) {
+            setQaGuardrails(guardrailsPayload)
           }
         }
       }
@@ -1594,6 +1639,149 @@ export function UseChatAssistant({ intelligentMode = true }: UseChatAssistantPro
                       <Text size="sm" c="rgba(255,255,255,0.55)" ta="center">
                         向 Aurora 打个「晚上好」的招呼，或描述你想生成的分镜与氛围。
                       </Text>
+                    )}
+
+                    {planUpdate && (
+                      <Paper
+                        shadow="sm"
+                        p="md"
+                        radius="md"
+                        style={{
+                          background: 'linear-gradient(135deg, rgba(64,80,160,0.35), rgba(18,26,48,0.65))',
+                          border: '1px solid rgba(129,140,248,0.35)',
+                        }}
+                      >
+                        <Group gap={8} mb={6}>
+                          <Badge radius="sm" variant="light" color="indigo">执行计划</Badge>
+                          {planUpdate.planId && (
+                            <Badge radius="sm" variant="outline" color="gray" tt="none">
+                              {planUpdate.planId}
+                            </Badge>
+                          )}
+                          {planUpdate.summary?.estimatedTime != null && (
+                            <Badge radius="sm" variant="outline" color="blue" tt="none">
+                              ETA {planUpdate.summary.estimatedTime}
+                            </Badge>
+                          )}
+                        </Group>
+                        {planUpdate.explanation && (
+                          <Text size="sm" c="rgba(233,237,255,0.9)" mb={8}>
+                            {planUpdate.explanation}
+                          </Text>
+                        )}
+                        <Stack gap={6}>
+                          {planUpdate.steps.map((step) => {
+                            const status = step.status
+                            const statusColor =
+                              status === 'completed'
+                                ? 'green'
+                                : status === 'in_progress'
+                                  ? 'yellow'
+                                  : status === 'failed'
+                                    ? 'red'
+                                    : 'gray'
+                            const statusLabel =
+                              status === 'completed'
+                                ? '完成'
+                                : status === 'in_progress'
+                                  ? '进行中'
+                                  : status === 'failed'
+                                    ? '失败'
+                                    : '待处理'
+                            return (
+                              <Paper
+                                key={step.id}
+                                p="sm"
+                                radius="md"
+                                withBorder
+                                style={{
+                                  background: 'rgba(255,255,255,0.02)',
+                                  borderColor: 'rgba(255,255,255,0.05)',
+                                }}
+                              >
+                                <Group justify="space-between" align="center" mb={4}>
+                                  <Group gap={8} align="center">
+                                    <Badge radius="sm" size="xs" variant="filled" color={statusColor}>
+                                      {statusLabel}
+                                    </Badge>
+                                    <Text size="sm" fw={600} c="#eef2ff" lineClamp={1}>
+                                      {step.name}
+                                    </Text>
+                                  </Group>
+                                  {step.acceptance?.length ? (
+                                    <Tooltip label={step.acceptance.join('；')}>
+                                      <Badge radius="sm" size="xs" variant="outline" color="gray">验收</Badge>
+                                    </Tooltip>
+                                  ) : null}
+                                </Group>
+                                <Text size="sm" c="rgba(231,235,255,0.8)">
+                                  {step.description}
+                                </Text>
+                                {step.reasoning && (
+                                  <Text size="xs" c="rgba(204,212,255,0.75)" mt={4}>
+                                    {step.reasoning}
+                                  </Text>
+                                )}
+                              </Paper>
+                            )
+                          })}
+                        </Stack>
+                      </Paper>
+                    )}
+
+                    {qaGuardrails && (
+                      <Paper
+                        shadow="sm"
+                        p="md"
+                        radius="md"
+                        style={{
+                          background: 'linear-gradient(135deg, rgba(69,88,172,0.3), rgba(24,32,64,0.6))',
+                          border: '1px solid rgba(129,140,248,0.35)',
+                        }}
+                      >
+                        <Group gap={8} mb={6}>
+                          <Badge radius="sm" variant="light" color="indigo">验收</Badge>
+                          {qaGuardrails.planId && (
+                            <Badge radius="sm" variant="outline" color="gray" tt="none">
+                              {qaGuardrails.planId}
+                            </Badge>
+                          )}
+                        </Group>
+                        <Stack gap={8}>
+                          {qaGuardrails.acceptance?.length ? (
+                            <Stack gap={4}>
+                              <Text size="xs" c="rgba(255,255,255,0.75)">验收标准</Text>
+                              {qaGuardrails.acceptance.map((item, idx) => (
+                                <Text key={idx} size="sm" c="#e5e7ff">· {item}</Text>
+                              ))}
+                            </Stack>
+                          ) : null}
+                          {qaGuardrails.checkpoints?.length ? (
+                            <Stack gap={4}>
+                              <Text size="xs" c="rgba(255,255,255,0.65)">检查点</Text>
+                              {qaGuardrails.checkpoints.map((item, idx) => (
+                                <Text key={idx} size="sm" c="rgba(229,231,255,0.8)">· {item}</Text>
+                              ))}
+                            </Stack>
+                          ) : null}
+                          {qaGuardrails.extras?.length ? (
+                            <Stack gap={4}>
+                              <Text size="xs" c="rgba(255,255,255,0.65)">超额建议</Text>
+                              {qaGuardrails.extras.map((item, idx) => (
+                                <Text key={idx} size="sm" c="rgba(195,224,255,0.9)">· {item}</Text>
+                              ))}
+                            </Stack>
+                          ) : null}
+                          {qaGuardrails.failureHandling?.length ? (
+                            <Stack gap={4}>
+                              <Text size="xs" c="rgba(255,255,255,0.6)">失败处理</Text>
+                              {qaGuardrails.failureHandling.map((item, idx) => (
+                                <Text key={idx} size="sm" c="rgba(255,205,205,0.8)">· {item}</Text>
+                              ))}
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Paper>
                     )}
 
                     {messages.map(renderMessageBubble)}
