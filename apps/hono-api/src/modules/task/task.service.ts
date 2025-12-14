@@ -893,24 +893,28 @@ export async function runSora2ApiVideoTask(
 			};
 
 	const creationEndpoints = (() => {
-		if (!isGrsaiBase) return [`${baseUrl}/v1/video/tasks`];
-		// Try the grsai-compatible endpoints (avoid non-v1 /video/sora-video)
-		const candidates = [
+		// sora2api 创建任务应优先走 /v1/video/sora-video；当后端不是 grsai/sora2api 域时，仍尝试该路径，再回退 /v1/video/tasks。
+		const soraVideoCandidates = [
 			`${baseUrl}/v1/video/sora-video`,
-			`${baseUrl}/v1/video/sora`,
-			`${baseUrl}/v1/video/tasks`,
 			`${baseUrl}/client/v1/video/sora-video`,
 			`${baseUrl}/client/v1/video/sora`,
 			`${baseUrl}/client/video/sora-video`,
 			`${baseUrl}/client/video/sora`,
 		];
-		// Deduplicate while preserving order
+		const legacyTasks = [`${baseUrl}/v1/video/tasks`];
 		const seen = new Set<string>();
-		return candidates.filter((url) => {
-			if (seen.has(url)) return false;
-			seen.add(url);
-			return true;
-		});
+		const dedupe = (arr: string[]) =>
+			arr.filter((url) => {
+				if (seen.has(url)) return false;
+				seen.add(url);
+				return true;
+			});
+
+		if (isGrsaiBase) {
+			return dedupe(soraVideoCandidates);
+		}
+
+		return dedupe([...soraVideoCandidates, ...legacyTasks]);
 	})();
 
 	let createdTaskId: string | null = null;
@@ -948,6 +952,7 @@ export async function runSora2ApiVideoTask(
 			);
 			try {
 				data = await res.json();
+				console.log(data,'datadatadata',JSON.stringify(body),endpoint)
 			} catch {
 				data = null;
 			}

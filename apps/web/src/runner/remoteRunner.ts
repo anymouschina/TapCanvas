@@ -223,58 +223,46 @@ function collectReferenceImages(state: any, targetId: string): string[] {
   const edges = Array.isArray(state.edges) ? state.edges : []
   const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
   const inbound = edges.filter((e: any) => e.target === targetId)
-  const collected: string[] = []
-  for (const edge of inbound) {
+  if (!inbound.length) return []
+
+  // 仅使用最近的上游图片节点，避免拿当前节点的图片作为参考
+  const upstreamImageEdge = [...inbound].reverse().find((edge) => {
     const src = nodes.find((n: Node) => n.id === edge.source)
-    if (!src) continue
-    const data: any = src.data || {}
-    const kind: string | undefined = data.kind
-    if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
-    const results = Array.isArray(data.imageResults) ? data.imageResults : []
-    const primaryIndex =
-      typeof data.imagePrimaryIndex === 'number' && data.imagePrimaryIndex >= 0
-        ? data.imagePrimaryIndex
-        : 0
-    const primaryFromResults =
-      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
-        ? results[primaryIndex].url.trim()
-        : ''
-    const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
-    const primary = primaryFromResults || primaryFallback
-    if (primary) collected.push(primary)
-  }
-  const targetNode = nodes.find((n: Node) => n.id === targetId)
-  if (targetNode) {
-    const tdata: any = targetNode.data || {}
-    const targetKind: string | undefined = tdata.kind
+    const kind: string | undefined = (src?.data as any)?.kind
+    return Boolean(kind && IMAGE_NODE_KINDS.has(kind))
+  })
+  if (!upstreamImageEdge) return []
 
-    // 当 image 节点没有上游图片时，使用自身图片作为参考图
-    if ((!inbound.length || !collected.length) && targetKind && IMAGE_NODE_KINDS.has(targetKind)) {
-      const selfResults = Array.isArray(tdata.imageResults) ? tdata.imageResults : []
-      const selfPrimaryIndex =
-        typeof tdata.imagePrimaryIndex === 'number' && tdata.imagePrimaryIndex >= 0
-          ? tdata.imagePrimaryIndex
-          : 0
-      const selfPrimaryFromResults =
-        selfResults[selfPrimaryIndex] && typeof selfResults[selfPrimaryIndex].url === 'string'
-          ? selfResults[selfPrimaryIndex].url.trim()
-          : ''
-      const selfPrimaryFallback = typeof tdata.imageUrl === 'string' ? tdata.imageUrl.trim() : ''
-      const selfPrimary = selfPrimaryFromResults || selfPrimaryFallback
-      if (selfPrimary) {
-        collected.push(selfPrimary)
-      }
-    }
+  const src = nodes.find((n: Node) => n.id === upstreamImageEdge.source)
+  const data: any = src?.data || {}
+  const kind: string | undefined = data.kind
+  if (!kind || !IMAGE_NODE_KINDS.has(kind)) return []
 
-    const poseRefs = Array.isArray(tdata.poseReferenceImages) ? tdata.poseReferenceImages : []
-    if (poseRefs.length) {
-      poseRefs.forEach((url: any) => {
-        if (typeof url === 'string' && url.trim()) collected.push(url.trim())
-      })
-    } else if (typeof tdata.poseStickmanUrl === 'string' && tdata.poseStickmanUrl.trim()) {
-      collected.push(tdata.poseStickmanUrl.trim())
-    }
+  const collected: string[] = []
+  const results = Array.isArray(data.imageResults) ? data.imageResults : []
+  const primaryIndex =
+    typeof data.imagePrimaryIndex === 'number' &&
+    data.imagePrimaryIndex >= 0 &&
+    data.imagePrimaryIndex < results.length
+      ? data.imagePrimaryIndex
+      : 0
+  const primaryFromResults =
+    results[primaryIndex] && typeof results[primaryIndex].url === 'string'
+      ? results[primaryIndex].url.trim()
+      : ''
+  const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
+  const primary = primaryFromResults || primaryFallback
+  if (primary) collected.push(primary)
+
+  const poseRefs = Array.isArray(data.poseReferenceImages) ? data.poseReferenceImages : []
+  if (poseRefs.length) {
+    poseRefs.forEach((url: any) => {
+      if (typeof url === 'string' && url.trim()) collected.push(url.trim())
+    })
+  } else if (typeof data.poseStickmanUrl === 'string' && data.poseStickmanUrl.trim()) {
+    collected.push(data.poseStickmanUrl.trim())
   }
+
   return Array.from(new Set(collected))
 }
 
@@ -631,15 +619,7 @@ async function runSora2ApiVideoTask(
       : null
   try {
     const videoModelValue = (data as any)?.videoModel as string | undefined
-    const modelKey =
-      videoModelValue ||
-      (orientation === 'portrait'
-        ? durationSeconds <= 10
-          ? 'sora-video-portrait-10s'
-          : 'sora-video-portrait-15s'
-        : durationSeconds <= 10
-          ? 'sora-video-landscape-10s'
-          : 'sora-video-landscape-15s')
+    const modelKey = (videoModelValue || '').trim() || 'sora-2'
     const existingTaskId = (data as any)?.videoTaskId as string | undefined
     const existingStatus = (data as any)?.status as NodeStatusValue | undefined
     const canResumeExisting =
@@ -941,7 +921,11 @@ async function runVideoTask(ctx: RunnerContext) {
         ? (data as any).aspect.trim()
         : '16:9'
     const videoModelValue = (data as any)?.videoModel as string | undefined
-    const videoModelVendor = ((data as any)?.videoModelVendor as string | undefined) || null
+    const videoModelVendorRaw = ((data as any)?.videoModelVendor as string | undefined) || null
+    const videoModelVendor =
+      videoModelVendorRaw && videoModelVendorRaw.toLowerCase() === 'sora'
+        ? 'sora2api'
+        : videoModelVendorRaw
     const fallbackVideoVendor =
       videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora2api'
     const videoVendor = videoModelVendor || fallbackVideoVendor
