@@ -25,3 +25,9 @@ artifacts/
 orchestration
 # sora2api
 wrangler.jsonc
+.venv
+
+# Python
+__pycache__/
+*.pyc
+.pycache/
