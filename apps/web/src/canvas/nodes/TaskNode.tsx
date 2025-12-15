@@ -55,6 +55,7 @@ import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
+import { normalizeOrientation, type Orientation } from '../../utils/orientation'
 import { usePoseEditor } from './taskNode/PoseEditor'
 import { ImageResultModal } from './taskNode/ImageResultModal'
 import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
@@ -946,9 +947,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
     return isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 10
   })
-  const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>(
-    (data as any)?.orientation || 'landscape'
+  const [orientation, setOrientation] = React.useState<Orientation>(() =>
+    normalizeOrientation((data as any)?.orientation),
   )
+  const orientationRef = React.useRef<Orientation>(orientation)
+  React.useEffect(() => {
+    const normalized = normalizeOrientation((data as any)?.orientation)
+    setOrientation((prev) => (prev === normalized ? prev : normalized))
+    orientationRef.current = normalized
+  }, [(data as any)?.orientation])
   const [veoReferenceImages, setVeoReferenceImages] = React.useState<string[]>(() =>
     normalizeVeoReferenceUrls((data as any)?.veoReferenceImages),
   )
@@ -1815,7 +1822,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.videoModel = videoModel
       patch.videoModelVendor = findVendorForModel(videoModel)
       if (hasDuration) patch.videoDurationSeconds = videoDuration
-      if (hasOrientation) patch.orientation = orientation
+      if (hasOrientation) patch.orientation = orientationRef.current
       if (upstreamSoraFileId) patch.inpaintFileId = upstreamSoraFileId
     }
     patch.modelVendor = findVendorForModel(modelKey)
@@ -1839,6 +1846,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     videoModel,
     isComposerNode,
     upstreamSoraFileId,
+    orientationRef,
   ])
 
   const runNode = () => {
@@ -3042,8 +3050,10 @@ const rewritePromptWithCharacters = React.useCallback(
               showOrientationMenu={showOrientationMenu}
               orientation={orientation}
               onOrientationChange={(value) => {
-                setOrientation(value)
-                updateNodeData(id, { orientation: value })
+                const normalized = normalizeOrientation(value)
+                orientationRef.current = normalized
+                setOrientation(normalized)
+                updateNodeData(id, { orientation: normalized })
               }}
               sampleOptions={SAMPLE_OPTIONS}
               sampleCount={sampleCount}
