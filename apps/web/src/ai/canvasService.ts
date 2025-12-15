@@ -3,6 +3,7 @@ import { useRFStore } from '../canvas/store'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeRemote } from '../runner/remoteRunner'
 import { FunctionResult } from './types'
+import { normalizeOrientation } from '../utils/orientation'
 
 /**
  * Canvas操作服务层
@@ -203,6 +204,10 @@ export class CanvasService {
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
     const { remixFromNodeId: configRemixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
     const mergedConfig: Record<string, any> = { ...baseData, ...restConfig }
+    const mergedKind = typeof mergedConfig.kind === 'string' ? mergedConfig.kind : baseData.kind
+    if (mergedKind === 'composeVideo' || mergedKind === 'storyboard' || mergedKind === 'video') {
+      mergedConfig.orientation = normalizeOrientation((mergedConfig as any).orientation)
+    }
 
     // 如果是图像类节点且未显式提供 prompt，默认使用标签作为初始提示词，方便前端和 AI 回显
     if (

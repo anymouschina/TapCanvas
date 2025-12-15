@@ -15,6 +15,7 @@ import { toast } from '../ui/toast'
 import { notifyAssetRefresh } from '../ui/assetEvents'
 import { isAnthropicModel } from '../config/modelSource'
 import { getDefaultModel, isImageEditModel } from '../config/models'
+import { normalizeOrientation, type Orientation } from '../utils/orientation'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -913,7 +914,7 @@ async function runVideoTask(ctx: RunnerContext) {
     const effectivePrompt = isStoryboard
       ? serializeStoryboardScenes(storyboardScenesData || [], { title: storyboardTitle, notes: storyboardNotes })
       : prompt
-    const orientation: 'portrait' | 'landscape' = ((data as any)?.orientation as 'portrait' | 'landscape') || 'landscape'
+    const orientation: Orientation = normalizeOrientation((data as any)?.orientation)
     // Remix 目标：仅在存在上游视频节点时，使用其 postId
     let remixTargetId: string | null = null
     const aspectRatioSetting =
