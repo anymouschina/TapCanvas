@@ -1,152 +1,34 @@
-# TapCanvas Docker 配置指南
+# TapCanvas Docker
 
-## 概述
+完整 Docker 文档已迁移至：`docs/docker.md`
 
-本项目提供了两种 Docker Compose 配置来支持 TapCanvas 的运行：
+本文件仅补充本次更新重点：「沉浸式创作（小T）」与旧版「AI 助手」的变化说明。
 
-1. **docker-compose.yml** - 完整版配置（包含所有可选服务）
-2. **docker-compose.minimal.yml** - 最小化配置（仅包含必需服务）
+## 沉浸式创作（小T）怎么用
 
-## 服务说明
+沉浸式创作是一个“在画布里对话 → 自动创建/连接节点 → 直接生成图/视频”的入口（替代旧版 AI 助手）。
 
-### 必需服务
+1) 启动服务
 
-- **PostgreSQL (pgvector)**: 主数据库，带向量扩展支持
-- **Redis**: 用于 Bull 队列和缓存
+- 仅 Web + API：
+  - `docker compose up -d`
+- 需要使用「沉浸式创作（小T）」：额外启动 `langgraph` profile
+  - `docker compose --profile langgraph up -d`
 
-### 可选服务
+2) 配置前端环境变量（如需）
 
-- **Adminer**: 数据库管理界面 (端口 8080)
-- **Redis Commander**: Redis 管理界面 (端口 8081)
+确保 `apps/web/.env` 中包含（示例见 `apps/web/.env.example`）：
 
-## 快速开始
+- `VITE_API_BASE="http://localhost:8788"`
+- `VITE_LANGGRAPH_API_URL="http://localhost:8123"`（Docker langgraph profile 默认）
 
-### 1. 最小化配置（推荐开发使用）
+3) 打开入口并开始创作
 
-```bash
-# 启动基础服务
-docker-compose -f docker-compose.minimal.yml up -d
+- 打开 `http://localhost:5173`
+- 左侧悬浮栏点击「沉浸式创作（小T）」图标
+- 选择一个内置流程（角色创建 / 直接生图 / 衍生品）或输入一句话需求，点“发送”
+- 系统会在画布内自动创建节点并运行；需要查看步骤时展开「执行过程」即可追溯每一步
 
-# 查看服务状态
-docker-compose -f docker-compose.minimal.yml ps
+## 旧版 AI 助手（已废弃）
 
-# 停止服务
-docker-compose -f docker-compose.minimal.yml down
-```
-
-### 2. 完整配置（生产环境或完整功能）
-
-```bash
-# 启动所有服务
-docker-compose up -d
-
-# 查看服务状态
-docker-compose ps
-
-# 停止服务
-docker-compose down
-```
-
-## 环境配置
-
-1. 复制环境配置文件：
-```bash
-cp .env.docker .env
-```
-
-2. 根据需要修改 `.env` 文件中的配置项，特别是：
-   - API 密钥
-   - 数据库连接字符串
-   - 应用相关配置
-
-## 服务访问
-
-启动服务后，可以通过以下地址访问各个服务：
-
-- **主应用**: http://localhost:3001 (API)
-- **前端应用**: http://localhost:5173 (Web)
-- **Adminer**: http://localhost:8080 (数据库管理)
-- **Redis Commander**: http://localhost:8081 (Redis 管理)
-
-## 数据库初始化
-
-首次启动后，需要运行数据库迁移：
-
-```bash
-# 进入 API 目录
-cd apps/api
-
-# 生成 Prisma 客户端
-pnpm prisma:generate
-
-# 运行数据库迁移
-pnpm prisma:migrate
-```
-
-## 开发工作流
-
-1. 启动 Docker 服务：
-```bash
-docker-compose -f docker-compose.minimal.yml up -d
-```
-
-2. 启动应用服务：
-```bash
-# API 服务
-pnpm dev:api
-
-# Web 服务
-pnpm dev:web
-```
-
-## 故障排除
-
-### 数据库连接问题
-
-确保 PostgreSQL 容器正常运行：
-```bash
-docker-compose -f docker-compose.minimal.yml logs db
-```
-
-### Redis 连接问题
-
-检查 Redis 容器状态：
-```bash
-docker-compose -f docker-compose.minimal.yml logs redis
-```
-
-### 端口冲突
-
-如果遇到端口冲突，可以修改 `docker-compose.yml` 中的端口映射：
-```yaml
-ports:
-  - "5433:5432"  # 将 PostgreSQL 映射到 5433 端口
-```
-
-## 生产部署注意事项
-
-1. **安全性**：
-   - 修改默认密码
-   - 使用强密钥
-   - 启用 HTTPS
-
-2. **性能优化**：
-   - 配置适当的资源限制
-   - 使用持久化存储
-   - 配置日志轮转
-
-3. **备份**：
-   - 定期备份数据库
-   - 备份 Redis 数据（如需要）
-   - 备份应用配置
-
-## 扩展服务
-
-如需添加额外服务，可以：
-
-1. 修改 `docker-compose.yml`
-2. 添加新的服务定义
-3. 更新网络配置
-4. 重启服务
-
-更多详细信息请参考各服务的官方文档。
+旧版“AI 助手”入口已废弃，推荐统一使用「沉浸式创作（小T）」在画布内完成需求 → 生成 → 迭代的闭环。

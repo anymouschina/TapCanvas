@@ -29,6 +29,7 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 ### ✨ 最新能力速览
 
 - **全新暗夜设计语言**：UI 基于 Mantine 与 React Flow 重新梳理，顶部信息条、右侧面板与 Storyboard/资产面板能够在同一画布内无刷新切换，聚焦模式和组管理让复杂节点也能在统一视觉体系下保持清晰。
+- **LangGraph 沉浸式创作（小T）**：项目级连续对话与“意图驱动”的画布操作——你只要描述想做什么，它会自动拆解步骤、创建/连接节点并执行，适合从一句话一路长出世界观、角色与分镜。
 - **Nano Banana 三档模型**：默认图像节点已经接入 Nano Banana / Fast / Pro 模型，并默认使用 Nano Banana Pro，可通过同一个表单拖拽提示词、参考图或整段剧情，直接生成分镜垫图、角色定妆照与高质量文生图/图生图结果。
 - **Sora 2 + Veo 3.1 双引擎**：视频节点即插即用 Sora 2 与 Veo3.1 Fast/Pro，支持 Remix、参考第一帧/最后一帧、复用 Storyboard 片段，让多镜头视频在画布内一气呵成。
 - **图生图链路**：图像节点支持上传参考图、抽帧、资产拖拽，任何生成的图片都可以作为下一次调用的输入，实现文本→图像→图像（图生图）→视频的完整闭环。
@@ -65,6 +66,24 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 ![功能预览](assets/feature.jpg)
 
 TapCanvas 的可视化画布界面展示了强大的 AI 创作工作流能力：从文本提示词开始，通过智能连接生成图像和视频内容，实现完整的创意到作品的转化过程。
+
+### ✍️ LangGraph 沉浸式创作（Immersive Creation / 小T）
+
+![LangGraph 沉浸式创作](assets/2025-12-16.jpg)
+
+- **项目级连续创作**：同一项目内保持上下文（世界观/角色/风格），适合“写着写着就长出一部片”的过程。
+- **对画布直接提需求**：把“我要做什么”说清楚，小T 会自动拆解并调用画布工具创建/连接节点、运行生成；需要时可展开查看“执行过程”。
+
+一个 3 分钟上手示例（可以直接复制这段话给小T）：
+
+```txt
+我想做一个 15 秒的“赛博武侠”短片预告：
+1) 先在画布里创建「角色设定主视觉」image 节点：主角是戴斗笠的女侠，披风边缘有霓虹电路纹理，武器是一把折叠光刃。
+2) 基于同一角色做一张九宫格分镜图（image 节点），每格写清楚镜头类型/动作/情绪/环境（雨夜、潮湿街巷、霓虹反光）。
+3) 最后生成 15s 视频（composeVideo），参考九宫格第一格做第一帧，要求角色一致、节奏紧凑、镜头运动有电影感。
+```
+
+> 提示：沉浸式创作依赖 LangGraph Assistant 服务；本地开发可在 `apps/hono-api/wrangler.jsonc` 配置 `LANGGRAPH_ASSISTANT_URL`，并参考 `apps/ai-fullstack` 启动 LangGraph 后端。
 
 ### 🤖 自动角色引用（Auto Role Mentions）
 
@@ -112,31 +131,6 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 - **多帧串联至视频**：任意图像节点输出都能直接连接 Sora 2 或 Veo 3.1 节点，形成「文生图 → 图生图 → 图生视频」链路；Veo 节点额外支持第一帧、最后一帧和多张参考图配置，确保构图与角色在每一镜保持一致。
 - **素材资产流转**：资产面板、模板面板、AI 助手回传结果都可以拖到画布，快速创建含参考图的新节点，实现跨项目的图生图复现。
 
-## 📅 更新日志
-
-- **2025-11-29**： README 补充近期设计与模型更新，突出 Nano Banana / Sora 2 / Veo 3.1 支持、图生图链路与 grsai 中转适配。
-  - 画布视觉与信息架构描述升级，强调暗夜主题、聚焦模式与工作流工具栏。
-  - 模型能力表新增 Nano Banana 家族与 Veo 3.1 Fast/Pro，方便理解最新覆盖范围。
-  - 新增图生图工作流说明，介绍参考图上传、帧抽取与二次创作方法。
-  - 文档中加入 grsai 代理配置说明，覆盖 API Key、Host、积分/健康检查面板等能力。
-- **2025-11-28**：新增「节点类型-序号」自动命名规则，并在登录入口补充「游客模式体验」。现在通过画布面板、右键菜单、资产/模板面板或 AI 助手创建 Task 节点时，会根据节点 kind 自动生成诸如 `图像-1`、`文生视频-2` 的标签；重复类型顺序递增，引用资产或模板时可保留原名。此外，未绑定 GitHub 的用户可直接点击游客模式按钮快速体验，所有数据保存在本地浏览器，便于演示和测试。
-- **2025-11-27**：发布「反推提示词」与「AI 助手图片理解」更新，并补充最新截图。
-  - Task 节点图片卡片新增【反推提示词】按钮，自动把当前图片传给 GPT、生成纯英文 Prompt 并写回输入框，支持远程 Sora 链接与本地资产。界面示例：![反推提示词示例](assets/2025-11-27.pic.jpg)
-  - 暗夜 AI 助手在选择 GPT 模型时允许直接上传图片，模型输出会写回输入框，可继续让助手润色或触发其他工具。界面示例：![AI 助手图片提示词](assets/2025-11-27-ai.pic.jpg)
-- **2025-11-24**：添加最新 Storyboard 使用截图（`assets/2025-11-24-storyboard*.jpg`），展示镜头列表、Scene 编辑浮层与生成后的视频结果，帮助团队快速理解 25s 多镜头能力。
-- **2025-11-24**：提示词支持“自动用角色卡 username 替换人物名称”。当同一工作流存在角色节点时，视频/文本节点可一键替换全部 `@` 引用，并将结果同步给 Sora 提示词（支持 Gemini / GLM 模型）。效果示例：![2025-11-24-auto-role-username](assets/2025-11-24-auto-role-username.jpg)
-- **2025-11-23**：完成「AI 助手触发 → 客户端执行画布工具 → 结果回传并继续对话」的闭环。现在暗夜助手会订阅 `/ai/tool-events`，自动创建/连接节点，并把执行结果通过 `/ai/tools/result` 回推服务端。配套交互示例见下图：
-  - 智能节点生成示例：![2025-11-23-ai](assets/2025-11-23-ai.jpg)
-  - 功能亮点：
-    - 后端 SSE 推送 `tool-call`，前端自动解析 `tool-input-available` 后再执行，确保节点参数完整；
-    - `CanvasService` 按类型映射出真正支持的节点（如 `video` → `composeVideo`），画布实时刷新；
-    - `UseChatAssistant` 在 tool-result 回传后会继续发起下一轮 `/ai/chat/stream`，让 LLM 得知工具状态并给出反馈。
-- **2025-11-21**：新增一组最新功能配图，覆盖资产/草稿/已发布作品与角色创建流程，文件位于 `assets/2025-11-21-*.jpg`（含 AI 概览、草稿列表、角色面板与角色创建）。
-  - 资产与草稿：![2025-11-21-drafts](assets/2025-11-21-drafts.jpg)
-  - 角色列表：![2025-11-21-role](assets/2025-11-21-role.jpg)
-  - 角色创建：![2025-11-21-role-create](assets/2025-11-21-role-create.jpg)
-  - AI 概览：![2025-11-21-ai](assets/2025-11-21-ai.jpg)
-
 ## ⚙️ 使用前配置模型
 
 **重要：在使用 TapCanvas 之前，务必先配置 AI 模型！**
@@ -182,103 +176,81 @@ Sora 2 新增的故事板模式，把整个短片拆成一格格镜头，每格�
 
 ## 🚀 快速运行
 
-### 方法一：Docker 运行（推荐）
+### 本地开发（推荐）
 
-使用 Docker 可以快速启动所有依赖服务，无需手动配置数据库和缓存。
-
-```bash
-# 1. 启动基础服务（PostgreSQL + Redis）
-docker-compose -f docker-compose.minimal.yml up -d
-
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件，填入你的 API 密钥
-
-# 3. 安装依赖
-pnpm install
-
-# 4. 启动开发服务器
-pnpm dev:web    # 前端服务 (http://localhost:5173)
-pnpm dev:api    # API 服务 (http://localhost:3001)
-```
-
-**管理界面访问：**
-
-- 数据库管理：http://localhost:8080 (Adminer)
-- Redis 管理：http://localhost:8081 (Redis Commander)
-
-### 方法二：本地运行
-
-如果你已经本地安装了 PostgreSQL 和 Redis。
+> 新架构后端为 **Cloudflare Workers + Hono（OpenAPI）**，默认使用 **D1 local**（无需 PostgreSQL/Redis/Prisma 作为必需组件）。
 
 ```bash
-# 1. 确保本地服务运行
-# PostgreSQL (端口 5432)
-# Redis (端口 6379)
+# 1) 安装依赖
+pnpm -w install
 
-# 2. 配置数据库连接
-# 创建数据库 tapCanvas
-# 修改 apps/api/.env 中的 DATABASE_URL
+# 2) 配置环境（见下方“环境配置”）
+cp apps/web/.env.example apps/web/.env
+cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 
-# 3. 安装依赖
-pnpm install
+# 3) 初始化本地 D1（可选，但推荐）
+pnpm --filter cloudflare-workers-openapi db:update:local
 
-# 4. 数据库迁移
-cd apps/api
-pnpm prisma:generate
-pnpm prisma:migrate
-
-# 5. 启动开发服务器
-pnpm dev:web    # 前端服务
-pnpm dev:api    # API 服务
+# 4) 启动（建议开两个终端）
+pnpm dev:web
+pnpm dev:api
 ```
+
+### Docker 一键启动（推荐给新手 / 跨平台）
+
+根目录提供两套 compose：
+
+- `docker-compose.yml`：Web + API，并内置可选 LangGraph profile
+- `docker-compose.minimal.yml`：仅 Web + API（更轻量）
+
+```bash
+# Web + API
+docker compose up -d
+
+# 可选：开启沉浸式创作（小T / LangGraph）
+docker compose --profile langgraph up -d
+```
+
+更多细节见 `docs/docker.md`（或根目录 `DOCKER.md`）。
 
 ### 环境配置
 
-项目使用 `.env.example` 作为配置模板。请按以下步骤配置：
+当前仓库主要由两部分组成：
 
 ```bash
-# 1. 复制主配置模板
-cp .env.example .env
+# 1) Web（Vite）环境变量
+cp apps/web/.env.example apps/web/.env
 
-# 2. 编辑 .env 文件，填入真实的 API 密钥
-# 必需配置项：
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/tapCanvas?schema=public"
-GITHUB_CLIENT_ID="your_github_client_id"
-GITHUB_CLIENT_SECRET="your_github_client_secret"
-JWT_SECRET="your-strong-jwt-secret"
-HF_TOKEN="your_huggingface_token"
-SILICONFLOW_API_KEY="your_siliconflow_api_key"
-SORA_API_KEY="your_sora_api_key"
+# 2) API（Workers）Wrangler 配置（JSONC，支持注释）
+cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 
-# 3. API 服务将自动读取项目根目录的 .env 文件
-# 如需 API 专用配置，可创建 apps/api/.env.local 文件
+# 3) 根目录 `.env.example` 仅用于本地脚本/工具（可选）
+# cp .env.example .env
 ```
 
 **重要提示：**
 
 - ⚠️ **不要将真实的 `.env` 文件提交到 Git** (已配置在 `.gitignore` 中)
 - 🔑 所有 API 密钥都需要在对应平台注册获取
-- 📝 项目提供两个 `.env.example` 模板：根目录和 `apps/api/` 目录
+- 📝 环境模板：`apps/web/.env.example`、`apps/hono-api/wrangler.example.jsonc`（根目录 `.env.example` 为可选）
 - ✅ 项目已配置 `.gitignore` 只忽略 `.env` 文件，但保留 `.env.example` 模板
 - 🔒 确保 API 密钥安全，只在本地 `.env` 文件中填写真实密钥
-- 📁 **API 配置统一管理**：推荐在项目根目录配置 `.env`，API 服务会自动读取
-- 🔐 **已移除敏感文件**：原 `apps/api/.env` 文件（含真实密钥）已从项目中移除
+- 🔐 `apps/hono-api/wrangler.jsonc` 已在 `.gitignore` 中忽略，避免把密钥提交到仓库
+- ✍️ 沉浸式创作（小T）需要额外配置 `VITE_LANGGRAPH_API_URL`（见 `apps/web/.env.example`，Docker profile 默认 `http://localhost:8123`）
 
 **获取 API 密钥：**
 
 1. **GitHub OAuth**: https://github.com/settings/applications/new
-2. **Hugging Face**: https://huggingface.co/settings/tokens
-3. **Silicon Flow**: https://siliconflow.cn
-4. **Sora API**: 需要联系获取访问权限
+2. **LLM Providers**: OpenAI / Anthropic / Gemini（按你启用的 provider 配置）
+3. **Sora2API**: 按你的号池/网关部署说明配置
 
 ### 验证运行
 
 启动成功后，访问以下地址验证：
 
 - **前端应用**：http://localhost:5173
-- **API 服务**：http://localhost:3001
-- **API 文档**：http://localhost:3001/api (如果有 Swagger)
+- **API 服务**：http://localhost:8788
+- **API 文档**：http://localhost:8788/
 
 如果看到 TapCanvas 的界面，说明运行成功！
 
@@ -585,6 +557,7 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 ### 🔥 优先开发
 
 - **Sora 2 完整接入**：实现完整的 Sora 2 模型集成和 API 调用  ✅
+- **LangGraph 沉浸式创作（小T）**：项目级连续对话 + 自动创建/连接节点并执行  ✅
 - **Sora 2 去水印功能**：提供智能水印移除和视频清理功能
 - **视频拼接**：支持多段视频无缝拼接和过渡效果
 - **视频剪辑**：添加视频裁剪、分割、合并基础编辑功能
@@ -781,22 +754,23 @@ curl -X POST "https://your-worker-name.your-subdomain.workers.dev" \
 - **React Flow**：强大的节点编辑器，支持复杂的可视化工作流
 - **Mantine**：优雅的 UI 组件库
 - **Zustand**：轻量级状态管理
+- **Framer Motion**：关键交互与动效
 - **自定义国际化系统**：支持中英文界面切换，完整本地化支持
 - **Vite**：快速的构建工具
 
 ### 后端集成
 
-- **NestJS + Bull 队列**：高性能工作流编排和任务管理
-- **第三方 AI API**：
-  - OpenAI Sora 2（视频生成）
-  - Gemini 2.5（文本生成）
-  - Qwen Image Plus（图像生成）
+- **Cloudflare Workers + Hono**：轻量后端 API（含 SSE 进度流、OpenAPI 3.1 文档）
+- **chanfana**：从代码生成 OpenAPI schema + 参数校验
+- **任务执行（/tasks）**：统一的 vendor/task-kind 调度（Veo/Sora2API/OpenAI/Gemini/Qwen/Anthropic 等）
+- **Sora 能力（/sora）**：草稿/角色/发布/去水印等（按当前接入能力）
+- **LangGraph Assistant（可选）**：沉浸式创作（小T）的“长链路规划 + 工具调用”后端（Docker profile 内置）
 
 ### 数据存储
 
-- **本地存储**：浏览器 localStorage 用于模板和缓存
-- **云端存储**：S3/OSS 用于生成的媒体文件
-- **项目数据**：支持云端同步和备份
+- **D1**：项目、工作流、模型配置、资产元数据等（Workers 侧）
+- **R2（可选）**：生成结果的托管（URL 仍可使用源地址；开启后会写入资产记录）
+- **本地存储**：浏览器 localStorage 用于 UI 偏好/缓存等
 
 ## 📖 使用指南
 
@@ -860,7 +834,8 @@ TapCanvas/
 │   │   └── src/
 │   │       ├── canvas/   # 核心画布系统（包含i18n国际化）
 │   │       └── ui/       # UI 组件
-│   └── api/              # API 服务
+│   ├── hono-api/         # Cloudflare Workers API（Hono）
+│   └── webcut-main/      # WebCut（可选）
 ├── packages/
 │   ├── cli/              # 命令行工具
 │   └── sdk/              # SDK 包
@@ -868,10 +843,10 @@ TapCanvas/
 
 ### 添加新的 AI 模型
 
-1. 在 `apps/api/src/task/adapters` 中创建新的适配器
-2. 定义输入输出接口
-3. 实现模型调用逻辑
-4. 在前端添加对应的节点类型
+1. Worker 侧实现：`apps/hono-api/src/modules/task/task.service.ts`（调用、规范化结果、错误码）
+2. 路由挂载/校验：`apps/hono-api/src/modules/task/task.routes.ts`
+3. 如需模型配置 UI：补齐 `apps/web/src/ui/ModelPanel.tsx` / `apps/web/src/config/useModelOptions.ts`
+4. 如涉及新节点 kind：同步更新 `apps/web/src/canvas/nodes/taskNodeSchema.ts` + `apps/web/src/canvas/nodes/TaskNode.tsx`
 
 ### 自定义节点
 
@@ -943,6 +918,31 @@ const { currentLanguage, setLanguage, isEn, isZh } = useI18n()
 3. **使用 $t() 处理带参数的文本**，使用 $() 处理简单文本
 4. **在添加新功能时同步添加对应的英文翻译**
 5. **测试两种语言下的界面布局**，确保文本长度变化不影响美观
+
+## 📅 更新日志
+
+- **2025-11-29**：README 补充近期设计与模型更新，突出 Nano Banana / Sora 2 / Veo 3.1 支持、图生图链路与 grsai 中转适配。
+  - 画布视觉与信息架构描述升级，强调暗夜主题、聚焦模式与工作流工具栏。
+  - 模型能力表新增 Nano Banana 家族与 Veo 3.1 Fast/Pro，方便理解最新覆盖范围。
+  - 新增图生图工作流说明，介绍参考图上传、帧抽取与二次创作方法。
+  - 文档中加入 grsai 代理配置说明，覆盖 API Key、Host、积分/健康检查面板等能力。
+- **2025-11-28**：新增「节点类型-序号」自动命名规则，并在登录入口补充「游客模式体验」。现在通过画布面板、右键菜单、资产/模板面板或 AI 助手创建 Task 节点时，会根据节点 kind 自动生成诸如 `图像-1`、`文生视频-2` 的标签；重复类型顺序递增，引用资产或模板时可保留原名。此外，未绑定 GitHub 的用户可直接点击游客模式按钮快速体验，所有数据保存在本地浏览器，便于演示和测试。
+- **2025-11-27**：发布「反推提示词」与「AI 助手图片理解」更新，并补充最新截图。
+  - Task 节点图片卡片新增【反推提示词】按钮，自动把当前图片传给 GPT、生成纯英文 Prompt 并写回输入框，支持远程 Sora 链接与本地资产。界面示例：![反推提示词示例](assets/2025-11-27.pic.jpg)
+  - 暗夜 AI 助手在选择 GPT 模型时允许直接上传图片，模型输出会写回输入框，可继续让助手润色或触发其他工具。界面示例：![AI 助手图片提示词](assets/2025-11-27-ai.pic.jpg)
+- **2025-11-24**：添加最新 Storyboard 使用截图（`assets/2025-11-24-storyboard*.jpg`），展示镜头列表、Scene 编辑浮层与生成后的视频结果，帮助团队快速理解 25s 多镜头能力。
+- **2025-11-24**：提示词支持“自动用角色卡 username 替换人物名称”。当同一工作流存在角色节点时，视频/文本节点可一键替换全部 `@` 引用，并将结果同步给 Sora 提示词（支持 Gemini / GLM 模型）。效果示例：![2025-11-24-auto-role-username](assets/2025-11-24-auto-role-username.jpg)
+- **2025-11-23**：完成「AI 助手触发 → 客户端执行画布工具 → 结果回传并继续对话」的闭环。现在暗夜助手会订阅 `/ai/tool-events`，自动创建/连接节点，并把执行结果通过 `/ai/tools/result` 回推服务端。配套交互示例见下图：
+  - 智能节点生成示例：![2025-11-23-ai](assets/2025-11-23-ai.jpg)
+  - 功能亮点：
+    - 后端 SSE 推送 `tool-call`，前端自动解析 `tool-input-available` 后再执行，确保节点参数完整；
+    - `CanvasService` 按类型映射出真正支持的节点（如 `video` → `composeVideo`），画布实时刷新；
+    - `UseChatAssistant` 在 tool-result 回传后会继续发起下一轮 `/ai/chat/stream`，让 LLM 得知工具状态并给出反馈。
+- **2025-11-21**：新增一组最新功能配图，覆盖资产/草稿/已发布作品与角色创建流程，文件位于 `assets/2025-11-21-*.jpg`（含 AI 概览、草稿列表、角色面板与角色创建）。
+  - 资产与草稿：![2025-11-21-drafts](assets/2025-11-21-drafts.jpg)
+  - 角色列表：![2025-11-21-role](assets/2025-11-21-role.jpg)
+  - 角色创建：![2025-11-21-role-create](assets/2025-11-21-role-create.jpg)
+  - AI 概览：![2025-11-21-ai](assets/2025-11-21-ai.jpg)
 
 ## 🤝 贡献指南
 

@@ -46,6 +46,7 @@ import HistoryPanel from './ui/HistoryPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 import TapshowFullPage from './ui/TapshowFullPage'
+import ShareFullPage from './ui/ShareFullPage'
 import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
@@ -59,6 +60,7 @@ function CanvasApp(): JSX.Element {
   const closeLibraryFlow = useUIStore(s => s.closeLibraryFlow)
   const characterCreatorRequest = useUIStore(s => s.characterCreatorRequest)
   const clearCharacterCreatorRequest = useUIStore(s => s.clearCharacterCreatorRequest)
+  const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const [refresh, setRefresh] = React.useState(0)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const { currentFlow, isDirty } = useUIStore()
@@ -629,15 +631,18 @@ function CanvasApp(): JSX.Element {
     }
   }, [saving, currentFlow, currentProject, isGrsaiProxyActive, fetchGrsaiCredits])
 
+  const headerHeight = langGraphChatOpen ? 0 : 56
+
   return (
     <AppShell
       data-compact={'false'}
-      header={{ height: 56 }}
+      header={{ height: headerHeight }}
       padding={0}
       styles={{
-        main: { paddingTop: 56, paddingLeft: 0, paddingRight: 0, background: 'var(--mantine-color-body)' }
+        main: { paddingTop: headerHeight, paddingLeft: 0, paddingRight: 0, background: 'var(--mantine-color-body)' }
       }}
     >
+      {!langGraphChatOpen && (
       <AppShell.Header>
         <Group justify="space-between" p="sm">
           <Group>
@@ -801,11 +806,12 @@ function CanvasApp(): JSX.Element {
           </Group>
         </Group>
       </AppShell.Header>
+      )}
 
       {/* 移除左侧固定栏，改为悬浮灵动岛样式 */}
 
       <AppShell.Main>
-        <Box style={{ height: 'calc(100vh - 56px)', width: '100vw' }} onClick={(e)=>{
+        <Box style={{ height: `calc(100vh - ${headerHeight}px)`, width: '100vw' }} onClick={(e)=>{
           const el = e.target as HTMLElement
           if (!el.closest('[data-ux-floating]') && !el.closest('[data-ux-panel]')) {
             setActivePanel(null)
@@ -934,9 +940,18 @@ function isTapshowRoute(): boolean {
   return path === '/tapshow' || path.startsWith('/tapshow/')
 }
 
+function isShareRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  const path = window.location.pathname || ''
+  return path === '/share' || path.startsWith('/share/')
+}
+
 export default function App(): JSX.Element {
   if (isTapshowRoute()) {
     return <TapshowFullPage />
+  }
+  if (isShareRoute()) {
+    return <ShareFullPage />
   }
   return <CanvasApp />
 }

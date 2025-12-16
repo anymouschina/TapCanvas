@@ -3,7 +3,7 @@ node_modules/
 .pnpm-store/
 dist/
 .turbo/
-
+dist-local
 # Env / local (忽略真实环境文件，保留 .env.example)
 .env
 .env.local
@@ -17,7 +17,7 @@ packages/**/.env
 packages/**/.env.local
 packages/**/.env.development
 packages/**/.env.production
-
+.npm-cache
 # OS / misc
 .DS_Store
 *.log
@@ -31,3 +31,5 @@ wrangler.jsonc
 __pycache__/
 *.pyc
 .pycache/
+.buildx
+

@@ -8,6 +8,7 @@ import '@mantine/notifications/styles.css'
 import './dark.css'
 import './light.css'
 import { installAuth401Interceptor } from './auth/fetch401Interceptor'
+import { LangGraphChatOverlay } from './ai/langgraph-chat/LangGraphChatOverlay'
 
 const COLOR_SCHEME_STORAGE_KEY = 'tapcanvas-color-scheme'
 const DEFAULT_COLOR_SCHEME: MantineColorScheme = 'dark'
@@ -55,6 +56,7 @@ root.render(
       <DynamicThemeProvider>
         <Notifications position="top-right" zIndex={2000} />
         <App />
+        <LangGraphChatOverlay />
       </DynamicThemeProvider>
     </MantineProvider>
   </React.StrictMode>

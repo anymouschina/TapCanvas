@@ -23,8 +23,14 @@ type StoredKeyInput = {
 	taskId?: string;
 };
 
+function normalizeVendorKey(vendor?: string): string {
+	const v = (vendor || "").trim().toLowerCase();
+	if (v === "google") return "gemini";
+	return v;
+}
+
 function makeStoredKey(input: StoredKeyInput): string {
-	const vendor = (input.vendor || "").trim();
+	const vendor = normalizeVendorKey(input.vendor);
 	const nodeId = (input.nodeId || "").trim();
 	const taskId = (input.taskId || "").trim();
 	return [
@@ -121,7 +127,7 @@ export function getPendingTaskSnapshots(
 ): TaskProgressSnapshotDto[] {
 	const store = latestByUser.get(userId);
 	if (!store) return [];
-	const targetVendor = (vendor || "").trim().toLowerCase();
+	const targetVendor = normalizeVendorKey(vendor);
 	const result: TaskProgressSnapshotDto[] = [];
 	for (const snapshot of store.values()) {
 		if (!snapshot) continue;
@@ -133,7 +139,7 @@ export function getPendingTaskSnapshots(
 		}
 		if (
 			targetVendor &&
-			(snapshot.vendor || "").toLowerCase() !== targetVendor
+			normalizeVendorKey(snapshot.vendor) !== targetVendor
 		) {
 			continue;
 		}
@@ -141,4 +147,3 @@ export function getPendingTaskSnapshots(
 	}
 	return result;
 }
-

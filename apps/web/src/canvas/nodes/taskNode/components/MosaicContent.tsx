@@ -22,7 +22,8 @@ export function MosaicContent({
   return (
     <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
       {imageResults.length ? (
-        <div style={{ position: 'relative', width: '100%' }}>
+        <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ position: 'relative', maxWidth: 300, maxHeight: 300, width: 'fit-content' }}>
           <div
             style={{
               position: 'relative',
@@ -30,15 +31,25 @@ export function MosaicContent({
               overflow: 'hidden',
               boxShadow: '0 18px 36px rgba(0, 0, 0, 0.35)',
               background: 'rgba(0,0,0,0.12)',
+              display: 'inline-block',
+              maxWidth: 300,
+              maxHeight: 300,
             }}
           >
             <img
               src={imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''}
               alt="拼图结果"
-              style={{ width: '100%', display: 'block', objectFit: 'cover' }}
+              style={{
+                width: 'auto',
+                height: 'auto',
+                display: 'block',
+                maxWidth: 300,
+                maxHeight: 300,
+                objectFit: 'contain',
+              }}
             />
           </div>
-          <Group gap={6} mt={6} justify="flex-end">
+          <Group gap={6} mt={6} justify="flex-end" style={{ width: '100%' }}>
             <Button size="xs" variant="light" onClick={onOpenModal}>
               重新拼图
             </Button>
@@ -46,6 +57,7 @@ export function MosaicContent({
               保存当前选择
             </Button>
           </Group>
+          </div>
         </div>
       ) : (
         <Paper

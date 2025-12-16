@@ -30,23 +30,44 @@
 		"GITHUB_CLIENT_SECRET": "YOUR_GITHUB_CLIENT_SECRET",
 		"LOGIN_URL": "https://tapcanvas.beqlee.icu",
 
-		"R2_ACCOUNT_ID": "YOUR_R2_ACCOUNT_ID",
-		"R2_ACCESS_KEY_ID": "YOUR_R2_ACCESS_KEY_ID",
-		"R2_SECRET_ACCESS_KEY": "YOUR_R2_SECRET_ACCESS_KEY",
-		"R2_BUCKET": "tapcanvas",
+		// 公开访问 OSS / R2 的基础 URL（用于生成资源外链）
 		"R2_PUBLIC_BASE_URL": "https://oss.example.com",
-		"R2_PROXY_VIDEOS_BASE": "https://videos.example.com",
-		"R2_PROXY_SORA_BASE": "https://sora2.example.com",
+
+		// 本地 / 开发环境可通过 ASSET_HOSTING_DISABLED=1 关闭上传
+		"ASSET_HOSTING_DISABLED": "0",
 
 		// 自建 Sora2API 号池网关（与 Nest SORA2API_BASE_URL 保持一致）
 		"SORA2API_BASE_URL": "http://your_sora2api",
 		// Sora2API 网关级 API Key（可选，作为 vendor 级共享凭证；若配置，则在未设置 model_providers/model_tokens 时也能使用号池）
 		"SORA2API_API_KEY": "YOUR_SORA2API_API_KEY",
 
-		"WEB_SEARCH_API_KEY": "YOUR_WEB_SEARCH_API_KEY",
-		"WEB_SEARCH_BASE_URL": "https://your-web-search-endpoint.example.com"
+		// 可选：Sora 去水印服务（默认 https://sorai.me/get-sora-link）
+		"SORA_UNWATERMARK_ENDPOINT": "",
+
+		// 可选：LangGraph Assistant base URL（例如 http://127.0.0.1:9011）
+		"LANGGRAPH_ASSISTANT_URL": "",
+
+		// 可选：本地调试 HTTP 日志（`pnpm dev:log`）
+		"DEBUG_HTTP_LOG": "0",
+		"DEBUG_HTTP_LOG_UNSAFE": "0",
+		"DEBUG_HTTP_LOG_BODY_LIMIT": "4096"
 	},
 	"observability": {
 		"enabled": true
 	}
+
+	// -----------------------------------------
+	// Legacy / 未使用（仅作标记）
+	// -----------------------------------------
+	// 下面这些变量当前 `apps/hono-api/src` 未引用；如你有旧分支/外部网关依赖可自行加入：
+	// "vars": {
+	//   "R2_ACCOUNT_ID": "YOUR_R2_ACCOUNT_ID",
+	//   "R2_ACCESS_KEY_ID": "YOUR_R2_ACCESS_KEY_ID",
+	//   "R2_SECRET_ACCESS_KEY": "YOUR_R2_SECRET_ACCESS_KEY",
+	//   "R2_BUCKET": "tapcanvas",
+	//   "R2_PROXY_VIDEOS_BASE": "https://videos.example.com",
+	//   "R2_PROXY_SORA_BASE": "https://sora2.example.com",
+	//   "WEB_SEARCH_API_KEY": "YOUR_WEB_SEARCH_API_KEY",
+	//   "WEB_SEARCH_BASE_URL": "https://your-web-search-endpoint.example.com"
+	// }
 }

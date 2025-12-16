@@ -12,6 +12,7 @@ import {
 } from "./project.repo";
 import type { ProjectDto } from "./project.schemas";
 import { mapFlowRowToDto, listFlowsByProject } from "../flow/flow.repo";
+import { getLangGraphThreadIdForPublicProject } from "../ai/ai.langgraph";
 
 function mapProjectRowToDto(row: any): ProjectDto {
 	return {
@@ -182,6 +183,13 @@ export async function getPublicProjectFlows(c: AppContext, projectId: string) {
 	return flows.map((f) => mapFlowRowToDto(f));
 }
 
+export async function getPublicProjectLangGraphThreadId(
+	c: AppContext,
+	projectId: string,
+): Promise<string | null> {
+	return getLangGraphThreadIdForPublicProject(c, projectId);
+}
+
 export async function deleteProjectForUser(
 	c: AppContext,
 	userId: string,
@@ -222,4 +230,3 @@ export async function deleteProjectForUser(
 
 	await deleteProjectById(c.env.DB, projectId);
 }
-

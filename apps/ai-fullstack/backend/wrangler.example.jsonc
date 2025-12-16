@@ -1,0 +1,44 @@
+/**
+ * Cloudflare Containers + Durable Object deployment for this FastAPI backend.
+ *
+ * - Copy to wrangler.jsonc
+ * - Replace the placeholders
+ * - Use `wrangler secret put ...` for sensitive values (API keys)
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-fullstack-backend",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-12-16",
+
+  "containers": [
+    {
+      "class_name": "AgentBackend",
+      // Either a local Dockerfile path (Wrangler will build it)...
+      // "image": "./Dockerfile",
+      // ...or a prebuilt image you pushed to Cloudflare's managed registry.
+      // Example: "registry.cloudchamber.cfdata.org/ai-fullstack-backend:mirror"
+      "image": "./Dockerfile",
+      "max_instances": 3
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "AGENT_BACKEND", "class_name": "AgentBackend" }]
+  },
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentBackend"] }],
+
+  "vars": {
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
+    "LLM_PROVIDER": "gemini",
+    "SEARCH_PROVIDER": "disabled",
+
+    "QUERY_GENERATOR_MODEL": "gemini-2.0-flash",
+    "ROLE_SELECTOR_MODEL": "gemini-2.0-flash",
+    "REFLECTION_MODEL": "gemini-2.5-flash",
+    "ANSWER_MODEL": "gemini-2.5-pro"
+  },
+
+  "observability": { "enabled": true }
+}

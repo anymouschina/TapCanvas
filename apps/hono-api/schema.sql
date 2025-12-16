@@ -257,6 +257,21 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created_at ON chat_messages(session_id, created_at);
 
+-- LangGraph research assistant thread mapping (one thread per project)
+CREATE TABLE IF NOT EXISTS langgraph_project_threads (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	project_id TEXT NOT NULL,
+	thread_id TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+	FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+	UNIQUE (user_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_langgraph_project_threads_user_project ON langgraph_project_threads(user_id, project_id);
+
 -- Prompt samples (user-defined prompt library)
 CREATE TABLE IF NOT EXISTS prompt_samples (
 	id TEXT PRIMARY KEY,

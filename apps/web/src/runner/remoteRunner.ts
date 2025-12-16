@@ -226,42 +226,53 @@ function collectReferenceImages(state: any, targetId: string): string[] {
   const inbound = edges.filter((e: any) => e.target === targetId)
   if (!inbound.length) return []
 
-  // 仅使用最近的上游图片节点，避免拿当前节点的图片作为参考
-  const upstreamImageEdge = [...inbound].reverse().find((edge) => {
+  // Prefer multiple upstream images (most recent first) for multi-character consistency,
+  // while still avoiding using the current node's own output as reference.
+  const upstreamImageNodes: Node[] = []
+  const seen = new Set<string>()
+  for (const edge of [...inbound].reverse()) {
     const src = nodes.find((n: Node) => n.id === edge.source)
+    if (!src || seen.has(src.id)) continue
     const kind: string | undefined = (src?.data as any)?.kind
-    return Boolean(kind && IMAGE_NODE_KINDS.has(kind))
-  })
-  if (!upstreamImageEdge) return []
-
-  const src = nodes.find((n: Node) => n.id === upstreamImageEdge.source)
-  const data: any = src?.data || {}
-  const kind: string | undefined = data.kind
-  if (!kind || !IMAGE_NODE_KINDS.has(kind)) return []
+    if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
+    seen.add(src.id)
+    upstreamImageNodes.push(src)
+    if (upstreamImageNodes.length >= 3) break
+  }
+  if (!upstreamImageNodes.length) return []
 
   const collected: string[] = []
-  const results = Array.isArray(data.imageResults) ? data.imageResults : []
-  const primaryIndex =
-    typeof data.imagePrimaryIndex === 'number' &&
-    data.imagePrimaryIndex >= 0 &&
-    data.imagePrimaryIndex < results.length
-      ? data.imagePrimaryIndex
-      : 0
-  const primaryFromResults =
-    results[primaryIndex] && typeof results[primaryIndex].url === 'string'
-      ? results[primaryIndex].url.trim()
-      : ''
-  const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
-  const primary = primaryFromResults || primaryFallback
-  if (primary) collected.push(primary)
+  const pushPrimary = (data: any) => {
+    const results = Array.isArray(data.imageResults) ? data.imageResults : []
+    const primaryIndex =
+      typeof data.imagePrimaryIndex === 'number' &&
+      data.imagePrimaryIndex >= 0 &&
+      data.imagePrimaryIndex < results.length
+        ? data.imagePrimaryIndex
+        : 0
+    const primaryFromResults =
+      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
+        ? results[primaryIndex].url.trim()
+        : ''
+    const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    const primary = primaryFromResults || primaryFallback
+    if (primary) collected.push(primary)
+  }
 
-  const poseRefs = Array.isArray(data.poseReferenceImages) ? data.poseReferenceImages : []
+  // 1) primary images from up to 3 upstream image nodes
+  for (const src of upstreamImageNodes) {
+    pushPrimary((src as any)?.data || {})
+  }
+
+  // 2) pose references only from the most recent upstream image node (avoid crowding out primaries)
+  const mostRecentData: any = (upstreamImageNodes[0] as any)?.data || {}
+  const poseRefs = Array.isArray(mostRecentData.poseReferenceImages) ? mostRecentData.poseReferenceImages : []
   if (poseRefs.length) {
     poseRefs.forEach((url: any) => {
       if (typeof url === 'string' && url.trim()) collected.push(url.trim())
     })
-  } else if (typeof data.poseStickmanUrl === 'string' && data.poseStickmanUrl.trim()) {
-    collected.push(data.poseStickmanUrl.trim())
+  } else if (typeof mostRecentData.poseStickmanUrl === 'string' && mostRecentData.poseStickmanUrl.trim()) {
+    collected.push(mostRecentData.poseStickmanUrl.trim())
   }
 
   return Array.from(new Set(collected))
@@ -931,6 +942,18 @@ async function runVideoTask(ctx: RunnerContext) {
       videoModelValue && videoModelValue.toLowerCase().includes('veo') ? 'veo' : 'sora2api'
     const videoVendor = videoModelVendor || fallbackVideoVendor
     let videoDurationSeconds: number = Number((data as any)?.videoDurationSeconds)
+    if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
+      const durationSecondsFallback = Number((data as any)?.durationSeconds)
+      if (!Number.isNaN(durationSecondsFallback) && durationSecondsFallback > 0) {
+        videoDurationSeconds = durationSecondsFallback
+      }
+    }
+    if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
+      const durationFallback = Number((data as any)?.duration)
+      if (!Number.isNaN(durationFallback) && durationFallback > 0) {
+        videoDurationSeconds = durationFallback
+      }
+    }
     if (Number.isNaN(videoDurationSeconds) || videoDurationSeconds <= 0) {
       if (isStoryboard) {
         videoDurationSeconds = storyboardTotalDuration > 0 ? storyboardTotalDuration : 10

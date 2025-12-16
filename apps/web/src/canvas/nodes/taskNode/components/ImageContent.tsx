@@ -110,7 +110,8 @@ export function ImageContent({
           </div>
         </>
       ) : (
-        <div style={{ position: 'relative', width: '100%' }}>
+        <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ position: 'relative', maxWidth: 300, maxHeight: 300, width: 'fit-content' }}>
             {imageResults.length > 1 && (
               <>
                 <div
@@ -150,16 +151,21 @@ export function ImageContent({
               overflow: 'hidden',
               boxShadow: darkCardShadow,
               background: mediaFallbackSurface,
+              display: 'inline-block',
+              maxWidth: 300,
+              maxHeight: 300,
             }}
           >
             <img
               src={primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''}
               alt="主图"
               style={{
-                width: '100%',
+                width: 'auto',
                 height: 'auto',
                 display: 'block',
-                objectFit: 'cover',
+                maxWidth: 300,
+                maxHeight: 300,
+                objectFit: 'contain',
               }}
             />
             {soraFileId && (
@@ -221,6 +227,7 @@ export function ImageContent({
               await onUpload(f)
             }}
           />
+          </div>
         </div>
       )}
       {!imageUrl && upstreamText && (

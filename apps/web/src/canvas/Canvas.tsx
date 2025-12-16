@@ -26,7 +26,6 @@ import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
-import { UseChatAssistant } from './ai/UseChatAssistant'
 import { getQuickStartSampleFlow } from './quickStartSample'
 import { getHandleTypeLabel } from './utils/handleLabels'
 import { isImageEditModel } from '../config/models'
@@ -70,6 +69,7 @@ function CanvasInner(): JSX.Element {
   const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore()
   const focusStack = useUIStore(s => s.focusStack)
   const focusGroupId = focusStack.length ? focusStack[focusStack.length - 1] : null
+  const viewOnly = useUIStore(s => s.viewOnly)
   const edgeRoute = useUIStore(s => s.edgeRoute)
   const enterGroupFocus = useUIStore(s => s.enterGroupFocus)
   const exitGroupFocus = useUIStore(s => s.exitGroupFocus)
@@ -79,8 +79,7 @@ function CanvasInner(): JSX.Element {
   const duplicateNode = useRFStore(s => s.duplicateNode)
   const pasteFromClipboardAt = useRFStore(s => s.pasteFromClipboardAt)
   const importWorkflow = useRFStore(s => s.importWorkflow)
-  const autoLayoutAllDag = useRFStore(s => s.autoLayoutAllDag)
-  const autoLayoutSelectedDag = useRFStore(s => s.autoLayoutSelectedDag)
+  const formatTree = useRFStore(s => s.formatTree)
   const runSelected = useRFStore(s => s.runSelected)
   const cancelNode = useRFStore(s => s.cancelNode)
   const rf = useReactFlow()
@@ -108,6 +107,8 @@ function CanvasInner(): JSX.Element {
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
   const authToken = useAuth(s => s.token)
+  const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
+  const viewOnlyFormattedOnceRef = useRef(false)
 
   const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
     if (!event || !event.nodeId) return
@@ -420,6 +421,10 @@ function CanvasInner(): JSX.Element {
 
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
     evt.preventDefault()
+    if (suppressContextMenuRef.current) {
+      suppressContextMenuRef.current = false
+      return
+    }
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'canvas' })
   }, [])
 
@@ -429,11 +434,19 @@ function CanvasInner(): JSX.Element {
 
   const onNodeContextMenu = useCallback((evt: React.MouseEvent, node: any) => {
     evt.preventDefault()
+    if (suppressContextMenuRef.current) {
+      suppressContextMenuRef.current = false
+      return
+    }
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'node', id: node.id })
   }, [])
 
   const onEdgeContextMenu = useCallback((evt: React.MouseEvent, edge: any) => {
     evt.preventDefault()
+    if (suppressContextMenuRef.current) {
+      suppressContextMenuRef.current = false
+      return
+    }
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'edge', id: edge.id })
   }, [])
 
@@ -503,6 +516,8 @@ function CanvasInner(): JSX.Element {
   const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
   const didConnectRef = useRef(false)
   const tapConnectSourceRef = useRef<{ nodeId: string } | null>(null)
+  const suppressContextMenuRef = useRef(false)
+  const rightDragRef = useRef<{ startX: number; startY: number } | null>(null)
 
   useEffect(() => {
     const hasNode = (id?: string | null) => !!id && nodes.some(n => n.id === id)
@@ -624,13 +639,58 @@ function CanvasInner(): JSX.Element {
   // legacy group match no longer used (compound nodes now)
   const groups = useRFStore(s => s.groups)
   const defaultW = 180, defaultH = 96
+  const normalizeKindForRect = (kind: unknown) => String(kind || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const parseNumericStyle = (v: unknown) => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    if (typeof v === 'string') {
+      const n = Number.parseFloat(v)
+      if (Number.isFinite(n)) return n
+    }
+    return undefined
+  }
+  const getNodeRectSize = (n: any) => {
+    const kind = normalizeKindForRect(n?.data?.kind)
+    const w =
+      (typeof n?.width === 'number' && Number.isFinite(n.width) ? n.width : undefined) ??
+      parseNumericStyle(n?.style?.width) ??
+      defaultW
+    const h =
+      (typeof n?.height === 'number' && Number.isFinite(n.height) ? n.height : undefined) ??
+      parseNumericStyle(n?.style?.height) ??
+      defaultH
+    return { w, h }
+  }
+  const nodeByIdForRect = useMemo(() => new Map(nodes.map(n => [n.id, n] as const)), [nodes])
+  const getNodeAbsPos = useCallback((n: any): { x: number; y: number } => {
+    const visiting = new Set<string>()
+    const resolve = (node: any): { x: number; y: number } => {
+      const id = String(node?.id || '')
+      if (id) {
+        if (visiting.has(id)) return { x: node?.position?.x || 0, y: node?.position?.y || 0 }
+        visiting.add(id)
+      }
+      const base = { x: node?.position?.x || 0, y: node?.position?.y || 0 }
+      const parentId = node?.parentNode as string | undefined
+      if (!parentId) return base
+      const parent = nodeByIdForRect.get(parentId)
+      if (!parent) return base
+      const p = resolve(parent as any)
+      return { x: p.x + base.x, y: p.y + base.y }
+    }
+    return resolve(n)
+  }, [nodeByIdForRect])
   // selection rect in FLOW coordinates
   let groupRectFlow: { x: number; y: number; w: number; h: number } | null = null
   if (showPreGroupOverlay) {
-    const minX = Math.min(...selectedNodes.map(n => n.position.x))
-    const minY = Math.min(...selectedNodes.map(n => n.position.y))
-    const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
-    const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+    const abs = selectedNodes.map(n => {
+      const p = getNodeAbsPos(n as any)
+      const s = getNodeRectSize(n as any)
+      return { x: p.x, y: p.y, w: s.w, h: s.h }
+    })
+    const minX = Math.min(...abs.map(n => n.x))
+    const minY = Math.min(...abs.map(n => n.y))
+    const maxX = Math.max(...abs.map(n => n.x + n.w))
+    const maxY = Math.max(...abs.map(n => n.y + n.h))
     const padding = 8
     groupRectFlow = { x: minX - padding, y: minY - padding, w: (maxX - minX) + padding*2, h: (maxY - minY) + padding*2 }
   }
@@ -703,38 +763,7 @@ function CanvasInner(): JSX.Element {
 
   // 使用多选拖拽（内置），不自定义组拖拽，避免与画布交互冲突
 
-  const layoutGrid = () => {
-    if (selectedNodes.length < 2) return
-    const nodesSorted = [...selectedNodes].sort((a,b)=> (a.position.y-b.position.y) || (a.position.x-b.position.x))
-    const cols = Math.ceil(Math.sqrt(nodesSorted.length))
-    const gapX = 220, gapY = 140
-    const minX = Math.min(...nodesSorted.map(n=>n.position.x))
-    const minY = Math.min(...nodesSorted.map(n=>n.position.y))
-    useRFStore.setState(s => ({
-      nodes: s.nodes.map(n => {
-        const idx = nodesSorted.findIndex(m => m.id === n.id)
-        if (idx === -1) return n
-        const r = Math.floor(idx / cols)
-        const c = idx % cols
-        return { ...n, position: { x: minX + c*gapX, y: minY + r*gapY } }
-      })
-    }))
-  }
-
-  const layoutHorizontal = () => {
-    if (selectedNodes.length < 2) return
-    const nodesSorted = [...selectedNodes].sort((a,b)=> a.position.x - b.position.x)
-    const gapX = 220
-    const minX = Math.min(...nodesSorted.map(n=>n.position.x))
-    const minY = Math.min(...nodesSorted.map(n=>n.position.y))
-    useRFStore.setState(s => ({
-      nodes: s.nodes.map(n => {
-        const idx = nodesSorted.findIndex(m => m.id === n.id)
-        if (idx === -1) return n
-        return { ...n, position: { x: minX + idx*gapX, y: minY } }
-      })
-    }))
-  }
+  // 旧的宫格/水平布局已合并为“格式化”（树形，自上而下，32px 间距）
 
   const handleInsertNodeAt = (
     kind: 'text' | 'image' | 'video',
@@ -901,6 +930,28 @@ function CanvasInner(): JSX.Element {
     minimapDragRef.current = { el, rect, startPos: { x: clickX, y: clickY } }
   }, [])
 
+  // Right-button drag: use as pan gesture and suppress context menu when dragging.
+  useEffect(() => {
+    const threshold = 6
+    const onMove = (ev: MouseEvent) => {
+      if (!rightDragRef.current) return
+      const dx = ev.clientX - rightDragRef.current.startX
+      const dy = ev.clientY - rightDragRef.current.startY
+      if (Math.hypot(dx, dy) >= threshold) {
+        suppressContextMenuRef.current = true
+      }
+    }
+    const onUp = () => {
+      rightDragRef.current = null
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
   useEffect(() => {
     const onMove = (ev: MouseEvent) => {
       if (!minimapDragRef.current) return
@@ -926,6 +977,56 @@ function CanvasInner(): JSX.Element {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [nodes, rf, viewport.zoom])
 
+  // Share/view-only: format the whole graph once after initial load, and avoid selection side effects.
+  useEffect(() => {
+    if (!viewOnly) {
+      viewOnlyFormattedOnceRef.current = false
+      return
+    }
+    if (viewOnlyFormattedOnceRef.current) return
+    if (!nodes.length) return
+    viewOnlyFormattedOnceRef.current = true
+    useRFStore.getState().autoLayoutAllDagVertical()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        rf.fitView?.({ padding: 0.2, duration: 250 })
+      })
+    })
+  }, [nodes.length, rf, viewOnly])
+
+  useEffect(() => {
+    if (!viewOnly) return
+    const anySelected = nodes.some((n: any) => !!n?.selected) || edges.some((e: any) => !!e?.selected)
+    if (!anySelected) return
+    useRFStore.setState((s) => ({
+      nodes: s.nodes.map((n: any) => (n?.selected ? { ...n, selected: false } : n)),
+      edges: s.edges.map((e: any) => (e?.selected ? { ...e, selected: false } : e)),
+    }))
+  }, [edges, nodes, viewOnly])
+
+  // 当研究助手打开时，对当前画布做一次垂直树形布局并聚焦最新节点
+  useEffect(() => {
+    if (viewOnly) return
+    if (!langGraphChatOpen) return
+    const { autoLayoutAllDagVertical } = useRFStore.getState()
+    autoLayoutAllDagVertical()
+    requestAnimationFrame(() => {
+      const { nodes: updatedNodes } = useRFStore.getState()
+      const latest = [...updatedNodes].slice(-1)[0]
+      if (!latest) return
+      const nodeW = ((latest as any).width) || ((latest as any).style?.width) || 220
+      const nodeH = ((latest as any).height) || ((latest as any).style?.height) || 120
+      const centerX = latest.position.x + nodeW / 2
+      const centerY = latest.position.y + nodeH / 2
+      useRFStore.setState(s => ({
+        nodes: s.nodes.map(n => ({ ...n, selected: n.id === latest.id })),
+      }))
+      const z = rf.getViewport?.().zoom || 1
+      rf.setCenter?.(centerX, centerY, { zoom: z, duration: 300 })
+    })
+  }, [langGraphChatOpen, rf, viewOnly])
+
+
   return (
     <div
       style={{ height: '100%', width: '100%', position: 'relative' }}
@@ -933,11 +1034,17 @@ function CanvasInner(): JSX.Element {
       data-connecting-active={connectingType ? 'true' : 'false'}
       data-dragging={dragging ? 'true' : 'false'}
       onMouseMove={(e) => { if (connectingType) setMouse({ x: e.clientX, y: e.clientY }) }}
-      onDrop={onDrop}
-      onDragOver={onDragOver}
-      onClick={handleRootClick}
-      onMouseDown={handleRootMouseDown}
+      onDrop={viewOnly ? undefined : onDrop}
+      onDragOver={viewOnly ? undefined : onDragOver}
+      onClick={viewOnly ? undefined : handleRootClick}
+      onMouseDown={viewOnly ? undefined : (e) => {
+        if (e.button === 2) {
+          rightDragRef.current = { startX: e.clientX, startY: e.clientY }
+        }
+        handleRootMouseDown(e)
+      }}
       onDoubleClick={(e) => {
+        if (viewOnly) return
         // double-click blank to go up one level in focus mode
         const target = e.target as HTMLElement
         if (!target.closest('.react-flow__node') && focusGroupId) {
@@ -946,6 +1053,7 @@ function CanvasInner(): JSX.Element {
         }
       }}
       onKeyDown={(e) => {
+        if (viewOnly) return
         // 处理键盘删除事件 - 检查是否在输入框中
         function isTextInputElement(target: EventTarget | null) {
           if (!(target instanceof HTMLElement)) return false
@@ -970,20 +1078,21 @@ function CanvasInner(): JSX.Element {
       <ReactFlow
         nodes={focusFiltered.nodes}
         edges={viewEdges}
-        onNodesChange={handleNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={handleConnect}
-        onConnectStart={onConnectStart}
-        onConnectEnd={onConnectEnd}
-        onNodeDragStart={onNodeDragStart}
-        onPaneContextMenu={onPaneContextMenu}
-        onPaneClick={onPaneClick}
-        onNodeContextMenu={onNodeContextMenu}
-        onEdgeContextMenu={onEdgeContextMenu}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
-        onNodeClick={onNodeClick}
+        onNodesChange={viewOnly ? undefined : handleNodesChange}
+        onEdgesChange={viewOnly ? undefined : onEdgesChange}
+        onConnect={viewOnly ? undefined : handleConnect}
+        onConnectStart={viewOnly ? undefined : onConnectStart}
+        onConnectEnd={viewOnly ? undefined : onConnectEnd}
+        onNodeDragStart={viewOnly ? undefined : onNodeDragStart}
+        onPaneContextMenu={viewOnly ? undefined : onPaneContextMenu}
+        onPaneClick={viewOnly ? undefined : onPaneClick}
+        onNodeContextMenu={viewOnly ? undefined : onNodeContextMenu}
+        onEdgeContextMenu={viewOnly ? undefined : onEdgeContextMenu}
+        onNodeDrag={viewOnly ? undefined : onNodeDrag}
+        onNodeDragStop={viewOnly ? undefined : onNodeDragStop}
+        onNodeClick={viewOnly ? undefined : onNodeClick}
         onNodeDoubleClick={(_evt, node) => {
+          if (viewOnly) return
           if (node?.type === 'groupNode') {
             useUIStore.getState().enterGroupFocus(node.id)
             setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
@@ -995,15 +1104,20 @@ function CanvasInner(): JSX.Element {
         edgeTypes={edgeTypes}
         fitView
         onInit={onInit}
-        selectionOnDrag
-        panOnDrag={false}
+        selectionOnDrag={!viewOnly}
+        // Edit mode: middle-button and right-button drag pan the canvas; left drag keeps selection box.
+        panOnDrag={viewOnly ? true : ([1, 2] as any)}
         panOnScroll
         zoomOnPinch
         zoomOnScroll
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
+        nodesDraggable={!viewOnly}
+        nodesConnectable={!viewOnly}
+        elementsSelectable={!viewOnly}
         proOptions={{ hideAttribution: true }}
         isValidConnection={(c) => {
+          if (viewOnly) return false
           if (!c.source || !c.target) return false
           if (c.source === c.target) return false
           if (createsCycle({ source: c.source, target: c.target })) { lastReason.current = $('连接会导致环'); return false }
@@ -1023,10 +1137,8 @@ function CanvasInner(): JSX.Element {
         <Controls position="bottom-left" />
         <Background gap={16} size={1} color={backgroundGridColor} />
       </ReactFlow>
-      {/* AI助手面板 - 固定底部居中 */}
-      <UseChatAssistant />
       {/* Focus mode breadcrumb with hierarchy */}
-      {focusGroupId && (
+      {!viewOnly && focusGroupId && (
         <Paper withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>
           <Group gap={8} style={{ flexWrap: 'nowrap' }}>
             {focusStack.map((gid, idx) => {
@@ -1050,7 +1162,7 @@ function CanvasInner(): JSX.Element {
         </Paper>
       )}
       {/* Empty canvas guide */}
-      {nodes.length === 0 && (
+      {!viewOnly && nodes.length === 0 && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
           <Paper withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: emptyGuideBackground, color: emptyGuideTextColor }}>
             <Stack gap={8} style={{ color: emptyGuideTextColor }}>
@@ -1081,7 +1193,7 @@ function CanvasInner(): JSX.Element {
         </div>
       )}
       {/* Group visuals moved to a real group node (compound). Legacy overlays removed. */}
-      {groupRectFlow && (
+      {!viewOnly && groupRectFlow && (
         <>
           {/* Selection outline in screen space to avoid transform artifacts */}
           <div
@@ -1098,13 +1210,10 @@ function CanvasInner(): JSX.Element {
             }}
           />
           <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
-            <Group gap={6} style={{ flexWrap: 'nowrap' }}>
-              <Text size="xs" c="dimmed">新建组</Text>
-              <Divider orientation="vertical" style={{ height: 16 }} />
-              <Button size="xs" variant="subtle" onClick={() => autoLayoutSelectedDag()}>自动布局</Button>
-              {/* pre-group state: no run button */}
-              <Button size="xs" variant="subtle" onClick={layoutGrid}>宫格布局</Button>
-              <Button size="xs" variant="subtle" onClick={layoutHorizontal}>水平布局</Button>
+              <Group gap={6} style={{ flexWrap: 'nowrap' }}>
+                <Text size="xs" c="dimmed">新建组</Text>
+                <Divider orientation="vertical" style={{ height: 16 }} />
+              <Button size="xs" variant="subtle" onClick={() => formatTree()}>{$('格式化')}</Button>
               <Button size="xs" variant="subtle" onClick={async ()=>{
                 const name = prompt('保存为资产名称：')?.trim(); if (!name) return;
                 const sel = nodes.filter(n=>n.selected)
@@ -1162,7 +1271,7 @@ function CanvasInner(): JSX.Element {
                   }
                   input.click()
                 }}>导入工作流 JSON</Button>
-                <Button variant="subtle" onClick={() => { autoLayoutAllDag(); setMenu(null) }}>自动布局（全图）</Button>
+                <Button variant="subtle" onClick={() => { formatTree(); setMenu(null) }}>{$('格式化')}</Button>
                 <Button variant="subtle" onClick={() => { useUIStore.getState().toggleEdgeRoute(); setMenu(null) }}>切换边线（当前：{edgeRoute==='orth'?'正交':'平滑'}）</Button>
                 {focusGroupId && <Button variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
                 {focusGroupId && <Button variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
@@ -1181,9 +1290,7 @@ function CanvasInner(): JSX.Element {
                 return (
                   <>
                     <Button variant="subtle" onClick={async () => { await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds }); setMenu(null) }}>运行该组</Button>
-                    <Button variant="subtle" onClick={() => { useRFStore.getState().autoLayoutForParent(target!.id); setMenu(null) }}>自动布局</Button>
-                    <Button variant="subtle" onClick={() => { useRFStore.getState().layoutGridSelected(); setMenu(null) }}>宫格布局</Button>
-                    <Button variant="subtle" onClick={() => { useRFStore.getState().layoutHorizontalSelected(); setMenu(null) }}>水平布局</Button>
+                    <Button variant="subtle" onClick={() => { useRFStore.getState().autoLayoutForParent(target!.id); setMenu(null) }}>{$('格式化')}</Button>
                     <Button variant="subtle" onClick={() => { enterGroupFocus(target!.id); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>进入组</Button>
                     <Button variant="subtle" onClick={() => { useRFStore.getState().renameSelectedGroup(); setMenu(null) }}>重命名</Button>
                     <Button variant="subtle" color="red" onClick={() => { useRFStore.getState().ungroupGroupNode(target!.id); setMenu(null) }}>解组</Button>

@@ -9,6 +9,8 @@ export type WorkerEnv = Env & {
 	GITHUB_CLIENT_SECRET?: string;
 	LOGIN_URL?: string;
 	SORA_UNWATERMARK_ENDPOINT?: string;
+	// Optional: Python LangGraph assistant base URL (e.g. http://127.0.0.1:9011)
+	LANGGRAPH_ASSISTANT_URL?: string;
 	// Sora2API 号池服务的基础地址（例如 http://localhost:8000 或内部网关域名）
 	SORA2API_BASE_URL?: string;
 	// Sora2API 网关级别的 API Key（可选，作为 vendor 级共享凭证）

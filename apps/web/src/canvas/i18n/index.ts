@@ -267,6 +267,7 @@ const enTranslations = {
   '了解更多': 'Learn More',
   '提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。': 'Tip: Select multiple nodes and press ⌘/Ctrl+G to group, ⌘/Ctrl+Enter to run.',
   '新建组': 'New Group',
+  '格式化': 'Format',
   '宫格布局': 'Grid Layout',
   '水平布局': 'Horizontal Layout',
   '保存为资产名称：': 'Save as asset name:',

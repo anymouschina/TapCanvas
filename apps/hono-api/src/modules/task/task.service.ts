@@ -84,6 +84,13 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	return val.replace(/\/+$/, "");
 }
 
+function normalizeVendorKey(vendor: string): string {
+	const v = (vendor || "").trim().toLowerCase();
+	// Backward/alias compatibility: treat "google" as Gemini.
+	if (v === "google") return "gemini";
+	return v;
+}
+
 function isGrsaiBaseUrl(url: string): boolean {
 	const val = url.toLowerCase();
 	// New Sora2API/GRSAI protocol uses chat/completions for image/character.
@@ -92,7 +99,7 @@ function isGrsaiBaseUrl(url: string): boolean {
 }
 
 function expandProxyVendorKeys(vendor: string): string[] {
-	const v = vendor.toLowerCase();
+	const v = normalizeVendorKey(vendor);
 	const keys = [v];
 	// 兼容历史配置：面板里使用 "sora" 作为代理目标，但任务里使用 "sora2api"
 	if (v === "sora2api") {
@@ -161,7 +168,7 @@ export async function resolveVendorContext(
 	userId: string,
 	vendor: string,
 ): Promise<VendorContext> {
-	const v = vendor.toLowerCase();
+	const v = normalizeVendorKey(vendor);
 
 	// 1) Try user-level proxy config (proxy_providers + enabled_vendors)
 	const proxy = await resolveProxyForVendor(c, userId, v);
@@ -414,7 +421,7 @@ async function findSharedTokenForVendor(
 }
 
 function requiresApiKeyForVendor(vendor: string): boolean {
-	const v = vendor.toLowerCase();
+	const v = normalizeVendorKey(vendor);
 	return (
 		v === "gemini" ||
 		v === "qwen" ||
@@ -829,7 +836,7 @@ export async function runSora2ApiVideoTask(
 				? extras.modelKey.trim()
 				: "sora-2")
 		: normalizeSora2ApiModelKey(
-				typeof extras.modelKey === "string" ? extras.modelKey : ctx.baseUrl,
+				typeof extras.modelKey === "string" ? extras.modelKey : undefined,
 				orientation,
 				durationSeconds,
 			);
@@ -899,12 +906,17 @@ export async function runSora2ApiVideoTask(
 		// sora2api 创建任务应优先走 /v1/video/sora-video；当后端不是 grsai/sora2api 域时，仍尝试该路径，再回退 /v1/video/tasks。
 		const soraVideoCandidates = [
 			`${baseUrl}/v1/video/sora-video`,
+			`${baseUrl}/v1/video/sora`,
 			`${baseUrl}/client/v1/video/sora-video`,
 			`${baseUrl}/client/v1/video/sora`,
 			`${baseUrl}/client/video/sora-video`,
 			`${baseUrl}/client/video/sora`,
 		];
-		const legacyTasks = [`${baseUrl}/v1/video/tasks`];
+		const legacyTasks = [
+			`${baseUrl}/v1/video/tasks`,
+			`${baseUrl}/client/v1/video/tasks`,
+			`${baseUrl}/client/video/tasks`,
+		];
 		const seen = new Set<string>();
 		const dedupe = (arr: string[]) =>
 			arr.filter((url) => {
@@ -955,7 +967,6 @@ export async function runSora2ApiVideoTask(
 			);
 			try {
 				data = await res.json();
-				console.log(data,'datadatadata',JSON.stringify(body),endpoint)
 			} catch {
 				data = null;
 			}
@@ -973,15 +984,18 @@ export async function runSora2ApiVideoTask(
 		}
 
 		if (res.status < 200 || res.status >= 300) {
+			const upstreamMessage =
+				(data &&
+					(data.error?.message || data.message || data.error)) ||
+				`sora2api 调用失败: ${res.status} (${endpoint})`;
+			const notFoundHint =
+				res.status === 404
+					? `；请确认 SORA2API_BASE_URL=${baseUrl} 指向实际的视频任务服务，且存在 /v1/video/sora（或 /v1/video/sora-video）/ /v1/video/tasks 路由`
+					: "";
 			lastError = {
 				status: res.status,
 				data,
-				message:
-					(data &&
-						(data.error?.message ||
-							data.message ||
-							data.error)) ||
-					`sora2api 调用失败: ${res.status} (${endpoint})`,
+				message: `${upstreamMessage}${notFoundHint}`,
 				endpoint,
 				requestBody: body,
 			};
@@ -2781,7 +2795,7 @@ export async function runGenericTaskForVendor(
 	vendor: string,
 	req: TaskRequestDto,
 ): Promise<TaskResult> {
-	const v = vendor.toLowerCase();
+	const v = normalizeVendorKey(vendor);
 	const progressCtx = extractProgressContext(req, v);
 
 	// 所有厂商统一：/tasks 视为“创建任务”，立即发出 queued/running 事件

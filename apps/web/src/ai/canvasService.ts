@@ -1,9 +1,11 @@
-import type { Connection } from 'reactflow'
+import type { Connection, Node } from 'reactflow'
 import { useRFStore } from '../canvas/store'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeRemote } from '../runner/remoteRunner'
 import { FunctionResult } from './types'
 import { normalizeOrientation } from '../utils/orientation'
+import { generatePrompt, type PromptGeneratePayload } from '../api/server'
+import { useUIStore } from '../ui/uiStore'
 
 /**
  * Canvas操作服务层
@@ -40,6 +42,24 @@ const VIDEO_MODEL_WHITELIST = new Set([
 ])
 
 export class CanvasService {
+  private static resolveNodeId(value: unknown, nodes: Node[]): string | null {
+    if (typeof value !== 'string') return null
+    const needle = value.trim()
+    if (!needle) return null
+
+    const byId = nodes.find((n) => n.id === needle)
+    if (byId) return byId.id
+
+    const byLabel = nodes.find((n) => (n.data as any)?.label === needle)
+    if (byLabel) return byLabel.id
+
+    const lower = needle.toLowerCase()
+    const byLabelInsensitive = nodes.find((n) =>
+      typeof (n.data as any)?.label === 'string' &&
+      String((n.data as any).label).toLowerCase() === lower
+    )
+    return byLabelInsensitive?.id || null
+  }
 
   /**
    * 创建新节点
@@ -161,6 +181,74 @@ export class CanvasService {
     }
   }
 
+  static async generatePromptAndCreateNode(params: {
+    workflow?: 'character_creation' | 'direct_image' | 'merchandise'
+    subject?: string
+    visualStyle?: string
+    model?: string
+    consistency?: string
+    language?: 'zh' | 'en'
+    label?: string
+    type?: string
+    kind?: string
+    position?: { x: number; y: number }
+  }): Promise<FunctionResult> {
+    try {
+      const fallbackSubject =
+        (params.subject || params.label || '').trim() ||
+        'Unnamed subject'
+      const inferredWorkflow: 'character_creation' | 'direct_image' | 'merchandise' = (() => {
+        const w = params.workflow
+        if (w === 'character_creation' || w === 'direct_image' || w === 'merchandise') return w
+        const subjectText = (params.subject || '').toLowerCase()
+        if (subjectText.includes('角色') || subjectText.includes('character')) return 'character_creation'
+        if (subjectText.includes('周边') || subjectText.includes('merch')) return 'merchandise'
+        return 'direct_image'
+      })()
+
+      const payload: PromptGeneratePayload = {
+        workflow: inferredWorkflow,
+        subject: fallbackSubject,
+        visual_style: params.visualStyle,
+        model: params.model,
+        consistency: params.consistency,
+        language: params.language || 'en',
+      }
+      const result = await generatePrompt(payload)
+      const nodeType = params.type || 'image'
+      const nodeKind =
+        params.kind ||
+        (inferredWorkflow === 'character_creation' ? 'character' : 'image')
+
+      const createRes = await CanvasService.createNode({
+        type: nodeType,
+        label: params.label || fallbackSubject,
+        position: params.position,
+        config: {
+          kind: nodeKind,
+          prompt: result.prompt,
+          negativePrompt: result.negative_prompt,
+          suggestedAspects: result.suggested_aspects,
+          notes: result.notes,
+        },
+      })
+      if (!createRes.success) return createRes
+      return {
+        success: true,
+        data: {
+          ...(createRes.data || {}),
+          prompt: result.prompt,
+          negativePrompt: result.negative_prompt,
+        },
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '生成提示词并创建节点失败',
+      }
+    }
+  }
+
   private static normalizeNodeParams(params: {
     type: string
     label?: string
@@ -266,13 +354,17 @@ export class CanvasService {
   }): Promise<FunctionResult> {
     try {
       const { updateNodeLabel, updateNodeData, appendLog, nodes } = useRFStore.getState()
+      const resolvedNodeId = CanvasService.resolveNodeId(params.nodeId, nodes)
+      if (!resolvedNodeId) {
+        return { success: false, error: '节点不存在，无法更新' }
+      }
       const nowLabel = () => new Date().toLocaleTimeString()
       const targetLabel =
-        nodes.find((n) => n.id === params.nodeId)?.data?.label || params.nodeId
+        nodes.find((n) => n.id === resolvedNodeId)?.data?.label || params.nodeId
 
       if (params.label) {
-        updateNodeLabel(params.nodeId, params.label)
-        appendLog?.(params.nodeId, `[${nowLabel()}] 重命名为「${params.label}」`)
+        updateNodeLabel(resolvedNodeId, params.label)
+        appendLog?.(resolvedNodeId, `[${nowLabel()}] 重命名为「${params.label}」`)
       }
 
       const normalizedConfig = params.config
@@ -280,7 +372,7 @@ export class CanvasService {
         : null
 
       if (normalizedConfig) {
-        updateNodeData(params.nodeId, normalizedConfig)
+        updateNodeData(resolvedNodeId, normalizedConfig)
         const logs: string[] = []
         if (typeof normalizedConfig.prompt === 'string') {
           logs.push(`prompt 写入（${normalizedConfig.prompt.length} 字符）`)
@@ -306,7 +398,7 @@ export class CanvasService {
           }
         }
         if (logs.length) {
-          appendLog?.(params.nodeId, `[${nowLabel()}] ${logs.join('，')} → ${targetLabel}`)
+          appendLog?.(resolvedNodeId, `[${nowLabel()}] ${logs.join('，')} → ${targetLabel}`)
         }
       }
 
@@ -346,17 +438,23 @@ export class CanvasService {
    * 连接节点
    */
   static async connectNodes(params: {
-    sourceNodeId: string
-    targetNodeId: string
+    sourceNodeId?: string
+    targetNodeId?: string
+    sourceId?: string
+    targetId?: string
     sourceHandle?: string
     targetHandle?: string
   }): Promise<FunctionResult> {
     try {
       const { nodes, edges, onConnect } = useRFStore.getState()
+      const sourceRef = params.sourceNodeId ?? params.sourceId
+      const targetRef = params.targetNodeId ?? params.targetId
+      const resolvedSourceId = CanvasService.resolveNodeId(sourceRef, nodes)
+      const resolvedTargetId = CanvasService.resolveNodeId(targetRef, nodes)
 
       // 验证节点存在
-      const sourceNode = nodes.find(n => n.id === params.sourceNodeId)
-      const targetNode = nodes.find(n => n.id === params.targetNodeId)
+      const sourceNode = resolvedSourceId ? nodes.find(n => n.id === resolvedSourceId) : undefined
+      const targetNode = resolvedTargetId ? nodes.find(n => n.id === resolvedTargetId) : undefined
 
       if (!sourceNode || !targetNode) {
         return {
@@ -367,7 +465,7 @@ export class CanvasService {
 
       // 检查是否已存在连接
       const existingEdge = edges.find(e =>
-        e.source === params.sourceNodeId && e.target === params.targetNodeId
+        e.source === sourceNode.id && e.target === targetNode.id
       )
 
       if (existingEdge) {
@@ -379,8 +477,8 @@ export class CanvasService {
 
       // 创建连接（复用 React Flow 的 onConnect 逻辑，含去重和动画）
       onConnect({
-        source: params.sourceNodeId,
-        target: params.targetNodeId,
+        source: sourceNode.id,
+        target: targetNode.id,
         sourceHandle: params.sourceHandle,
         targetHandle: params.targetHandle
       })
@@ -536,6 +634,9 @@ export class CanvasService {
    */
   static async runDag(params: { concurrency?: number } = {}): Promise<FunctionResult> {
     try {
+      if (useUIStore.getState().viewOnly) {
+        return { success: false, error: '只读分享页禁止执行工作流' }
+      }
       const { runDag } = useRFStore.getState()
       await runDag(params.concurrency ?? 1)
       return { success: true, data: { message: '已触发工作流执行（顺序执行）' } }
@@ -552,17 +653,21 @@ export class CanvasService {
    */
   static async runNode(params: { nodeId: string }): Promise<FunctionResult> {
     try {
+      if (useUIStore.getState().viewOnly) {
+        return { success: false, error: '只读分享页禁止执行节点' }
+      }
       const { nodeId } = params
       if (!nodeId) {
         return { success: false, error: '缺少节点 ID' }
       }
 
       const store = useRFStore.getState()
-      const node = store.nodes.find(n => n.id === nodeId)
+      const resolvedNodeId = CanvasService.resolveNodeId(nodeId, store.nodes)
+      const node = resolvedNodeId ? store.nodes.find(n => n.id === resolvedNodeId) : undefined
       if (!node) {
         return { success: false, error: '节点不存在，无法执行' }
       }
-      const initialLabel = (node.data as any)?.label || nodeId
+      const initialLabel = (node.data as any)?.label || resolvedNodeId || nodeId
 
       const get = () => useRFStore.getState()
       const set = (fn: (s: any) => any) => useRFStore.setState(fn)
@@ -570,15 +675,15 @@ export class CanvasService {
       const shouldRunRemote = kind ? REMOTE_RUN_KINDS.has(kind) : false
 
       if (shouldRunRemote) {
-        await runNodeRemote(nodeId, get, set)
+        await runNodeRemote(node.id, get, set)
       } else {
-        await runNodeMock(nodeId, get, set)
+        await runNodeMock(node.id, get, set)
       }
 
       // 执行完后，从最新节点状态中提取图片/视频结果，方便 AI 对话里回显
       let mediaPatch: Record<string, any> = {}
       try {
-        const latest = useRFStore.getState().nodes.find(n => n.id === nodeId)
+        const latest = useRFStore.getState().nodes.find(n => n.id === node.id)
         if (latest) {
           const data: any = latest.data || {}
           const latestKind: string | undefined = data.kind
@@ -608,7 +713,7 @@ export class CanvasService {
             : []
 
           mediaPatch = {
-            nodeId,
+            nodeId: node.id,
             kind: latestKind,
           }
 
@@ -628,7 +733,7 @@ export class CanvasService {
         }
       } catch {
         // 回显信息获取失败时不影响主流程
-        mediaPatch = { nodeId }
+        mediaPatch = { nodeId: node.id }
       }
 
       return {
@@ -651,10 +756,10 @@ export class CanvasService {
    */
   static async formatAll(): Promise<FunctionResult> {
     try {
-      const { selectAll, autoLayoutAllDag } = useRFStore.getState()
+      const { selectAll, autoLayoutAllDagVertical } = useRFStore.getState()
       selectAll()
-      autoLayoutAllDag()
-      return { success: true, data: { message: '已全选并自动布局' } }
+      autoLayoutAllDagVertical()
+      return { success: true, data: { message: '已格式化画布' } }
     } catch (error) {
       return {
         success: false,
@@ -668,9 +773,9 @@ export class CanvasService {
    */
   static async smartLayout(params: { focusNodeId?: string } = {}): Promise<FunctionResult> {
     try {
-      const { selectAll, autoLayoutAllDag } = useRFStore.getState()
+      const { selectAll, autoLayoutAllDagVertical } = useRFStore.getState()
       selectAll()
-      autoLayoutAllDag()
+      autoLayoutAllDagVertical()
 
       const focusId = params.focusNodeId
       if (focusId) {
@@ -780,31 +885,13 @@ export class CanvasService {
    */
   static async autoLayout(params: { layoutType: string }): Promise<FunctionResult> {
     try {
-      const { autoLayoutAllDag, autoLayoutSelectedDag, layoutHorizontalSelected } = useRFStore.getState()
-
-      switch (params.layoutType) {
-        case 'grid':
-          // 网格布局
-          autoLayoutAllDag()
-          break
-        case 'horizontal':
-          // 水平布局
-          layoutHorizontalSelected()
-          break
-        case 'hierarchical':
-          // 层次布局
-          autoLayoutAllDag()
-          break
-        default:
-          return {
-            success: false,
-            error: `不支持的布局类型: ${params.layoutType}`
-          }
-      }
+      const { autoLayoutAllDagVertical } = useRFStore.getState()
+      // 统一为树形格式化（自上而下，32px 间距）
+      autoLayoutAllDagVertical()
 
       return {
         success: true,
-        data: { message: `已应用${params.layoutType}布局` }
+        data: { message: '已格式化画布' }
       }
     } catch (error) {
       return {
@@ -862,11 +949,16 @@ export class CanvasService {
       if (!IMAGE_MODEL_WHITELIST.has(model)) {
         next.imageModel = 'nano-banana-fast'
       }
+      // nano-banana 系列归属 google
+      if (next.imageModel && next.imageModel.toLowerCase().includes('banana')) {
+        next.imageModelVendor = 'google'
+      }
     }
     if (kind === 'composeVideo') {
       const model = typeof next.videoModel === 'string' ? next.videoModel : ''
       if (!VIDEO_MODEL_WHITELIST.has(model)) {
         next.videoModel = 'sora-2'
+        next.videoModelVendor = 'openai'
       }
     }
     return next
@@ -876,6 +968,7 @@ export class CanvasService {
 // 工具函数映射
 export const functionHandlers = {
   createNode: CanvasService.createNode,
+  generatePromptAndCreateNode: CanvasService.generatePromptAndCreateNode,
   updateNode: CanvasService.updateNode,
   deleteNode: CanvasService.deleteNode,
   connectNodes: CanvasService.connectNodes,

@@ -36,6 +36,8 @@ export type VideoTrimPayload = {
 }
 
 type UIState = {
+  viewOnly: boolean
+  setViewOnly: (v: boolean) => void
   subflowNodeId: string | null
   openSubflow: (nodeId: string) => void
   closeSubflow: () => void
@@ -48,8 +50,8 @@ type UIState = {
   setAddPanelOpen: (v: boolean) => void
   templatePanelOpen: boolean
   setTemplatePanelOpen: (v: boolean) => void
-  activePanel: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null
-  setActivePanel: (p: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'ai-chat' | null) => void
+  activePanel: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | null
+  setActivePanel: (p: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | null) => void
   panelAnchorY: number | null
   setPanelAnchorY: (y: number | null) => void
   paramNodeId: string | null
@@ -84,17 +86,16 @@ type UIState = {
   characterCreatorRequest: { timestamp: number; payload?: CharacterCreatorPayload } | null
   requestCharacterCreator: (payload?: CharacterCreatorPayload | null) => void
   clearCharacterCreatorRequest: () => void
-  // AI Chat
-  aiChatMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>
-  addAiMessage: (message: { role: 'user' | 'assistant'; content: string }) => void
-  clearAiMessages: () => void
-  selectedAiModel: string
-  setSelectedAiModel: (model: string) => void
+  langGraphChatOpen: boolean
+  openLangGraphChat: () => void
+  closeLangGraphChat: () => void
   assetPersistenceEnabled: boolean
   setAssetPersistenceEnabled: (v: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
+  viewOnly: false,
+  setViewOnly: (v) => set({ viewOnly: v }),
   subflowNodeId: null,
   openSubflow: (nodeId) => set({ subflowNodeId: nodeId }),
   closeSubflow: () => set({ subflowNodeId: null }),
@@ -153,14 +154,9 @@ export const useUIStore = create<UIState>((set) => ({
         : { timestamp: Date.now() },
     }),
   clearCharacterCreatorRequest: () => set({ characterCreatorRequest: null }),
-  // AI Chat
-  aiChatMessages: [],
-  addAiMessage: (message) => set((s) => ({
-    aiChatMessages: [...s.aiChatMessages, { ...message, timestamp: Date.now() }]
-  })),
-  clearAiMessages: () => set({ aiChatMessages: [] }),
-  selectedAiModel: 'gemini-2.0-flash-exp',
-  setSelectedAiModel: (model) => set({ selectedAiModel: model }),
+  langGraphChatOpen: false,
+  openLangGraphChat: () => set({ langGraphChatOpen: true }),
+  closeLangGraphChat: () => set({ langGraphChatOpen: false }),
   assetPersistenceEnabled: getInitialAssetPersistence(),
   setAssetPersistenceEnabled: (v) => {
     set({ assetPersistenceEnabled: v })

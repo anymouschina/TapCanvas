@@ -446,3 +446,17 @@ body,
 .tapshow-card-title {
   font-weight: 600;
 }
+
+/* Share / view-only mode: prevent edits and clicks on interactive UI */
+.tapcanvas-viewonly .react-flow__node,
+.tapcanvas-viewonly .react-flow__edge,
+.tapcanvas-viewonly [data-ux-panel],
+.tapcanvas-viewonly [data-ux-floating] {
+  pointer-events: none;
+}
+
+.tapcanvas-viewonly .react-flow__pane,
+.tapcanvas-viewonly .react-flow__viewport,
+.tapcanvas-viewonly .react-flow__renderer {
+  pointer-events: auto;
+}

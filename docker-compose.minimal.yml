@@ -1,48 +1,83 @@
 name: tapcanvas-minimal
-services:
-  # PostgreSQL Database with pgvector extension
-  db:
-    image: pgvector/pgvector:pg16
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: tapCanvas
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - tapcanvas-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # Redis for Bull Queue
-  redis:
-    image: redis:7-alpine
-    restart: always
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
+services:
+  deps:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    command: sh -lc "corepack enable && pnpm -w install"
     volumes:
-      - redis_data:/data
-    networks:
-      - tapcanvas-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - pnpm_store:/app/.pnpm-store
+      - web_node_modules:/app/apps/web/node_modules
+      - hono_api_node_modules:/app/apps/hono-api/node_modules
+      - ai_fullstack_node_modules:/app/apps/ai-fullstack/node_modules
+      - webcut_main_node_modules:/app/apps/webcut-main/node_modules
+      - cli_node_modules:/app/packages/cli/node_modules
+      - schemas_node_modules:/app/packages/schemas/node_modules
+      - sdk_node_modules:/app/packages/sdk/node_modules
+      - hono_api_wrangler:/app/apps/hono-api/.wrangler
+
+  web:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+    command: sh -lc "corepack enable && pnpm --filter @tapcanvas/web dev --host 0.0.0.0 --port 5173"
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - pnpm_store:/app/.pnpm-store
+      - web_node_modules:/app/apps/web/node_modules
+      - cli_node_modules:/app/packages/cli/node_modules
+      - schemas_node_modules:/app/packages/schemas/node_modules
+      - sdk_node_modules:/app/packages/sdk/node_modules
+
+  api:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+    command: sh -lc "corepack enable && pnpm --filter cloudflare-workers-openapi dev -- --ip 0.0.0.0"
+    environment:
+      NODE_ENV: development
+    ports:
+      - "8788:8788"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - pnpm_store:/app/.pnpm-store
+      - hono_api_node_modules:/app/apps/hono-api/node_modules
+      - cli_node_modules:/app/packages/cli/node_modules
+      - schemas_node_modules:/app/packages/schemas/node_modules
+      - sdk_node_modules:/app/packages/sdk/node_modules
+      - hono_api_wrangler:/app/apps/hono-api/.wrangler
 
 volumes:
-  postgres_data:
+  root_node_modules:
     driver: local
-  redis_data:
+  pnpm_store:
     driver: local
-
-networks:
-  tapcanvas-network:
-    driver: bridge
+  web_node_modules:
+    driver: local
+  hono_api_node_modules:
+    driver: local
+  ai_fullstack_node_modules:
+    driver: local
+  webcut_main_node_modules:
+    driver: local
+  cli_node_modules:
+    driver: local
+  schemas_node_modules:
+    driver: local
+  sdk_node_modules:
+    driver: local
+  hono_api_wrangler:
+    driver: local

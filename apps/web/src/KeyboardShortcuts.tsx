@@ -25,8 +25,7 @@ export default function KeyboardShortcuts() {
   const focusStack = useUIStore(s => s.focusStack)
   const exitGroupFocus = useUIStore(s => s.exitGroupFocus)
   const addGroupForSelection = useRFStore((s) => s.addGroupForSelection)
-  const layoutGridSelected = useRFStore((s) => s.layoutGridSelected)
-  const layoutHorizontalSelected = useRFStore((s) => s.layoutHorizontalSelected)
+  const formatTree = useRFStore((s) => s.formatTree)
   const renameSelectedGroup = useRFStore((s) => s.renameSelectedGroup)
   const runSelectedGroup = useRFStore((s) => s.runSelectedGroup)
   const removeGroupById = useRFStore((s) => s.removeGroupById)
@@ -138,8 +137,7 @@ export default function KeyboardShortcuts() {
       }
       // Layout
       if (!isTextInput) {
-        if (!e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); layoutGridSelected() }
-        if (e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); layoutHorizontalSelected() }
+        if (e.key.toLowerCase() === 'l') { e.preventDefault(); formatTree() }
       }
       // Rename (F2)
       if (e.key === 'F2') { e.preventDefault(); renameSelectedGroup() }

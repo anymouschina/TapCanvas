@@ -4,7 +4,7 @@ import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, Acti
 import { useUIStore } from './uiStore'
 import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, deleteProject, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
-import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh } from '@tabler/icons-react'
+import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh, IconLink } from '@tabler/icons-react'
 import { $, $t } from '../canvas/i18n'
 import { notifications } from '@mantine/notifications'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
@@ -202,6 +202,28 @@ export default function ProjectPanel(): JSX.Element | null {
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }
       })
+    }
+  }
+
+  const handleCopyShareLink = async (projectId: string) => {
+    const url = (() => {
+      try {
+        const u = new URL(window.location.href)
+        u.search = ''
+        u.hash = ''
+        u.pathname = `/share/${encodeURIComponent(projectId)}`
+        return u.toString()
+      } catch {
+        return `/share/${encodeURIComponent(projectId)}`
+      }
+    })()
+
+    try {
+      await navigator.clipboard.writeText(url)
+      notifications.show({ title: $('已复制'), message: $('分享链接已复制'), autoClose: 1500, color: 'green' })
+    } catch (err) {
+      console.error(err)
+      notifications.show({ title: $('复制失败'), message: $('请手动复制地址栏链接'), autoClose: 2500, color: 'red' })
     }
   }
 
@@ -538,6 +560,35 @@ export default function ProjectPanel(): JSX.Element | null {
                                   </ActionIcon>
                                 </Tooltip>
                               </motion.div>
+                              {p.isPublic && (
+                                <motion.div
+                                  whileHover={{ scale: 1.08 }}
+                                  whileTap={{ scale: 0.96 }}
+                                  transition={{ type: "spring", stiffness: 400 }}
+                                >
+                                  <Tooltip
+                                    label={$('复制分享链接')}
+                                    position="top"
+                                    withArrow
+                                  >
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      color="blue"
+                                      onClick={async (e) => {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        await handleCopyShareLink(p.id)
+                                      }}
+                                      style={{
+                                        border: isDarkTheme ? '1px solid rgba(59, 130, 246, 0.18)' : '1px solid rgba(37, 99, 235, 0.25)'
+                                      }}
+                                    >
+                                      <IconLink size={14} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </motion.div>
+                              )}
                               <motion.div
                                 whileHover={{ scale: 1.04 }}
                                 whileTap={{ scale: 0.96 }}

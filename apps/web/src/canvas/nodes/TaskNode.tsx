@@ -2733,8 +2733,6 @@ const rewritePromptWithCharacters = React.useCallback(
     return false
   }, [hasImageResults, isVideoNode, hasVideoResults, isAudioNode, isCharacterNode, imageUrl, imageResults.length, data, characterPrimaryImage])
 
-  const fixedWidth = (hasImageResults || isMosaicNode) ? 340 : undefined
-
   const defaultLabel = React.useMemo(() => {
     if (isComposerNode || hasVideo || hasVideoResults || schema.category === 'video') return '文生视频'
     if (hasImageResults) return '图像节点'
@@ -2795,7 +2793,7 @@ const rewritePromptWithCharacters = React.useCallback(
         position: 'relative',
         outline: shellOutline,
         boxSizing: 'border-box',
-        ...(fixedWidth ? { width: fixedWidth } : {}),
+        width: '100%',
       } as React.CSSProperties}
     >
       <TaskNodeHeader

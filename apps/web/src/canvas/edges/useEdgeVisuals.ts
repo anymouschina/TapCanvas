@@ -50,9 +50,10 @@ export function useEdgeVisuals(type?: string | null) {
       boxShadow: isLight ? '0 4px 12px rgba(15,23,42,0.12)' : '0 4px 12px rgba(0,0,0,0.35)',
     }
 
+    const directionTextColor = isLight ? theme.colors.dark[8] : 'rgba(255,255,255,0.95)'
     const directionChipStyle: CSSProperties = {
       background: `linear-gradient(90deg, ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.7 : 0.65)} 0%, ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.98 : 0.95)} 100%)`,
-      color: isLight ? theme.white : 'rgba(255,255,255,0.95)',
+      color: directionTextColor,
       border: `1px solid ${rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.6 : 0.8)}`,
       boxShadow: isLight ? '0 10px 30px rgba(15,23,42,0.18)' : '0 12px 30px rgba(0,0,0,0.45)',
       padding: '4px 10px',

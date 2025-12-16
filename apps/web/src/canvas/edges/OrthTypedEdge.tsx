@@ -89,7 +89,8 @@ export default function OrthTypedEdge(props: EdgeProps<any>) {
     return label || kind || props.target
   }, [nodes, props.target])
 
-  const directionTextColor = 'rgba(255,255,255,0.95)'
+  const directionTextColor =
+    typeof directionChipStyle.color === 'string' ? directionChipStyle.color : 'currentColor'
   const typeChip =
     t !== 'any' ? (
       <div

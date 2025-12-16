@@ -1,12 +1,41 @@
 import React from 'react'
-import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconPhotoEdit, IconRuler, IconHelpCircle, IconFolders, IconSettings, IconMovie } from '@tabler/icons-react'
-import { notifications } from '@mantine/notifications'
+import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie } from '@tabler/icons-react'
+import WriteImage from '../../public/writer.png'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
-import { useRFStore } from '../canvas/store'
-import { listServerFlows, saveServerFlow, getServerFlow } from '../api/server'
 import { $ } from '../canvas/i18n'
+
+function ImmersiveCreateIcon({ size = 22 }: { size?: number }) {
+  const stroke = 'rgba(245,247,255,0.95)'
+  const glow = 'rgba(122,226,255,0.9)'
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M5.5 7.2c0-1.05.85-1.9 1.9-1.9h7.2c1.05 0 1.9.85 1.9 1.9v6.6c0 1.05-.85 1.9-1.9 1.9H7.4c-1.05 0-1.9-.85-1.9-1.9V7.2Z"
+        stroke={stroke}
+        strokeWidth="1.6"
+        opacity="0.95"
+      />
+      <path
+        d="M8.2 12.9c1.25-1.65 2.5-2.25 3.7-1.2 1.25 1.1 2.2.55 3.9-1.25"
+        stroke={glow}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.1 18.6c-1.25 0-2.1.95-2.1 2.1 0 .35.28.63.63.63H9.4c.35 0 .63-.28.63-.63 0-1.15-.95-2.1-2.1-2.1H6.1Z"
+        fill={stroke}
+        opacity="0.9"
+      />
+      <path
+        d="M17.7 3.8l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55.55-1.25Z"
+        fill={glow}
+        opacity="0.9"
+      />
+    </svg>
+  )
+}
 
 // 添加CSS动画样式
 const animationStyles = `
@@ -45,7 +74,7 @@ const animationStyles = `
 `
 
 export default function FloatingNav(): JSX.Element {
-  const { setActivePanel, setPanelAnchorY } = useUIStore()
+  const { setActivePanel, setPanelAnchorY, openLangGraphChat } = useUIStore()
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
   const addButtonBackground = isDark ? 'rgba(15,23,42,0.85)' : '#ffffff'
@@ -107,11 +136,32 @@ export default function FloatingNav(): JSX.Element {
             </ActionIcon>
           <div style={{ height: 6 }} />
           <Item label={$('项目')} icon={<IconFolders size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
+                    <Tooltip label="沉浸式创作" position="right" withArrow>
+            <ActionIcon
+              variant="light"
+              size={36}
+              radius="xl"
+              aria-label="沉浸式创作（小T）"
+              className="floating-nav-item"
+              style={{
+                background: 'linear-gradient(135deg, rgba(92,122,255,0.22), rgba(122,226,255,0.16))',
+                border: '1px solid rgba(255,255,255,0.10)',
+                boxShadow: '0 10px 22px rgba(0,0,0,0.22)',
+              }}
+              onClick={() => {
+                setActivePanel(null)
+                openLangGraphChat()
+              }}
+            >
+              <img src={WriteImage} style={{width:'36px',height:'36px'}} alt="" />
+            </ActionIcon>
+          </Tooltip>
           <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
           <Item label={$('我的资产')} icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
           <Item label={$('TapShow')} icon={<IconMovie size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }} />
           <Item label={$('模型配置')} icon={<IconSettings size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
           <Item label={$('历史记录')} icon={<IconHistory size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
+
           {/* <Item label="图片编辑" icon={<IconPhotoEdit size={18} />}  badge="Beta" /> */}
           {/* <Item label="标尺" icon={<IconRuler size={18} />}  /> */}
           {/* <Item label="帮助" icon={<IconHelpCircle size={18} />}  /> */}

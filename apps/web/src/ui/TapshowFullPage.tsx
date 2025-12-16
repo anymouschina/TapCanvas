@@ -27,7 +27,7 @@ import {
   IconSortDescending,
   IconUser,
 } from '@tabler/icons-react'
-import { listPublicAssets, type PublicAssetDto } from '../api/server'
+import { getPublicProjectFlows, listPublicAssets, listPublicProjects, type FlowDto, type ProjectDto, type PublicAssetDto } from '../api/server'
 import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
@@ -35,6 +35,18 @@ import { ToastHost, toast } from './toast'
 type MediaFilter = 'all' | 'image' | 'video'
 type SortKey = 'createdAt' | 'duration'
 type SortOrder = 'desc' | 'asc'
+
+type ProjectCover = {
+  type: 'video' | 'image'
+  url: string
+  thumbnailUrl?: string | null
+  flowId: string
+}
+
+type PublicProjectShowcase = {
+  project: ProjectDto
+  cover: ProjectCover
+}
 
 function getActiveAssetIdFromLocation(): string | null {
   if (typeof window === 'undefined') return null
@@ -208,12 +220,166 @@ function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
   )
 }
 
+function safeDateMs(value?: string | null): number {
+  if (!value) return 0
+  const t = new Date(value).getTime()
+  return Number.isFinite(t) ? t : 0
+}
+
+function pickCoverFromFlows(flows: FlowDto[]): ProjectCover | null {
+  const sorted = [...(flows || [])].sort((a, b) => safeDateMs(b.updatedAt) - safeDateMs(a.updatedAt))
+
+  const scan = (kind: 'video' | 'image'): ProjectCover | null => {
+    for (const f of sorted) {
+      const data: any = (f as any)?.data || {}
+      const nodes: any[] = Array.isArray(data.nodes) ? data.nodes : []
+      for (let i = nodes.length - 1; i >= 0; i -= 1) {
+        const node = nodes[i]
+        const nd: any = node?.data || {}
+
+        if (kind === 'video') {
+          const results = Array.isArray(nd.videoResults) ? nd.videoResults : []
+          const primaryIndex = typeof nd.videoPrimaryIndex === 'number' && Number.isFinite(nd.videoPrimaryIndex) ? nd.videoPrimaryIndex : 0
+          const primary = results[primaryIndex] || null
+          const fallback = results.find((r: any) => typeof r?.url === 'string' && r.url.trim().length > 0) || null
+          const videoUrlRaw = (primary?.url || fallback?.url || nd.videoUrl) as any
+          const videoUrl = typeof videoUrlRaw === 'string' ? videoUrlRaw.trim() : ''
+          if (!videoUrl) continue
+          const thumbRaw = (primary?.thumbnailUrl || fallback?.thumbnailUrl || nd.videoThumbnailUrl || nd.thumbnailUrl) as any
+          const thumbnailUrl = typeof thumbRaw === 'string' && thumbRaw.trim().length ? thumbRaw.trim() : null
+          return { type: 'video', url: videoUrl, thumbnailUrl, flowId: String(f.id) }
+        }
+
+        const imageResults = Array.isArray(nd.imageResults) ? nd.imageResults : []
+        const imagePrimaryIndex = typeof nd.imagePrimaryIndex === 'number' && Number.isFinite(nd.imagePrimaryIndex) ? nd.imagePrimaryIndex : 0
+        const primaryImg = imageResults[imagePrimaryIndex] || null
+        const fallbackImg = imageResults.find((r: any) => typeof r?.url === 'string' && r.url.trim().length > 0) || null
+        const imageUrlRaw = (nd.imageUrl || primaryImg?.url || fallbackImg?.url) as any
+        const imageUrl = typeof imageUrlRaw === 'string' ? imageUrlRaw.trim() : ''
+        if (!imageUrl) continue
+        return { type: 'image', url: imageUrl, thumbnailUrl: null, flowId: String(f.id) }
+      }
+    }
+    return null
+  }
+
+  // Prefer videos as cover, then images
+  return scan('video') || scan('image')
+}
+
+type PublicProjectCardProps = {
+  item: PublicProjectShowcase
+  onOpen: (item: PublicProjectShowcase) => void
+}
+
+function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Element {
+  const cover = item.cover
+  const isVideo = cover.type === 'video'
+  const label = item.project.name || '公开项目'
+  const subtitle = item.project.ownerName || item.project.owner || ''
+
+  return (
+    <Box className="tapshow-card" onClick={() => onOpen(item)}>
+      <div className="tapshow-card-media">
+        {isVideo ? (
+          <video
+            src={cover.url}
+            poster={cover.thumbnailUrl || undefined}
+            className="tapshow-card-video"
+            muted
+            playsInline
+            preload="metadata"
+            onMouseEnter={(e) => {
+              try {
+                const el = e.currentTarget
+                el.currentTime = 0
+                el.play().catch(() => {})
+              } catch {
+                // ignore preview error
+              }
+            }}
+            onMouseLeave={(e) => {
+              try {
+                e.currentTarget.pause()
+              } catch {
+                // ignore
+              }
+            }}
+          />
+        ) : (
+          <img src={cover.url} alt={label} className="tapshow-card-image" loading="lazy" />
+        )}
+
+        <div className="tapshow-card-overlay">
+          <Group gap={8}>
+            <Badge
+              size="xs"
+              radius="xl"
+              variant="light"
+              color={isVideo ? 'violet' : 'teal'}
+              leftSection={isVideo ? <IconPlayerPlay size={12} /> : <IconPhoto size={12} />}
+            >
+              {isVideo ? '项目视频' : '项目图片'}
+            </Badge>
+            <Badge size="xs" radius="xl" variant="outline" color="gray">
+              公开项目
+            </Badge>
+          </Group>
+          <ActionIcon
+            size="sm"
+            radius="xl"
+            variant="subtle"
+            aria-label="打开分享页"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpen(item)
+            }}
+          >
+            <IconExternalLink size={14} />
+          </ActionIcon>
+        </div>
+      </div>
+
+      <Stack gap={6} mt={10}>
+        <Text size="sm" fw={600} className="tapshow-card-title" lineClamp={1}>
+          {label}
+        </Text>
+        {subtitle && (
+          <Text size="xs" c="dimmed" lineClamp={1}>
+            {subtitle}
+          </Text>
+        )}
+        <Group justify="space-between" align="center" gap={6} mt={4}>
+          <Group gap={6}>
+            {(item.project.owner || item.project.ownerName) && (
+              <Group gap={4}>
+                <IconUser size={12} />
+                <Text size="xs" c="dimmed">
+                  {item.project.ownerName || item.project.owner}
+                </Text>
+              </Group>
+            )}
+          </Group>
+          <Group gap={4}>
+            <IconClock size={12} />
+            <Text size="xs" c="dimmed">
+              {formatDate(item.project.updatedAt)}
+            </Text>
+          </Group>
+        </Group>
+      </Stack>
+    </Box>
+  )
+}
+
 function TapshowFullPageInner(): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
   const [assets, setAssets] = React.useState<PublicAssetDto[]>([])
+  const [publicProjects, setPublicProjects] = React.useState<PublicProjectShowcase[]>([])
+  const [projectsLoading, setProjectsLoading] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
   const [hasLoadedOnce, setHasLoadedOnce] = React.useState(false)
@@ -223,6 +389,33 @@ function TapshowFullPageInner(): JSX.Element {
   const [visibleCount, setVisibleCount] = React.useState(30)
   const [pendingAssetId, setPendingAssetId] = React.useState<string | null>(() => getActiveAssetIdFromLocation())
   const loadMoreRef = React.useRef<HTMLDivElement | null>(null)
+
+  const reloadProjects = React.useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setProjectsLoading(true)
+    try {
+      const projects = await listPublicProjects().catch(() => [])
+      const sorted = [...(projects || [])].sort((a, b) => safeDateMs(b.updatedAt) - safeDateMs(a.updatedAt))
+      const showcase: PublicProjectShowcase[] = []
+      for (const project of sorted) {
+        if (showcase.length >= 24) break
+        try {
+          const flows = await getPublicProjectFlows(project.id)
+          const cover = pickCoverFromFlows(flows || [])
+          if (!cover) continue
+          showcase.push({ project, cover })
+        } catch {
+          // ignore per-project failures on showcase
+        }
+      }
+      setPublicProjects(showcase)
+    } catch (err: any) {
+      console.error(err)
+      toast(err?.message || '加载公开项目失败', 'error')
+      setPublicProjects([])
+    } finally {
+      setProjectsLoading(false)
+    }
+  }, [])
 
   const reloadAssets = React.useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -246,6 +439,10 @@ function TapshowFullPageInner(): JSX.Element {
   React.useEffect(() => {
     reloadAssets().catch(() => {})
   }, [reloadAssets])
+
+  React.useEffect(() => {
+    reloadProjects({ silent: true }).catch(() => {})
+  }, [reloadProjects])
 
   React.useEffect(() => {
     setVisibleCount(30)
@@ -379,9 +576,11 @@ function TapshowFullPageInner(): JSX.Element {
                   variant="subtle"
                   aria-label="刷新 TapShow 作品"
                   onClick={() => {
-                    if (!loading && !refreshing) reloadAssets()
+                    if (loading || refreshing || projectsLoading) return
+                    reloadAssets().catch(() => {})
+                    reloadProjects({ silent: true }).catch(() => {})
                   }}
-                  loading={refreshing || loading}
+                  loading={refreshing || loading || projectsLoading}
                 >
                   <IconRefresh size={14} />
                 </ActionIcon>
@@ -396,6 +595,73 @@ function TapshowFullPageInner(): JSX.Element {
             <Text size="sm" c="dimmed" maw={620}>
               展示社区里用户公开的图片与视频作品。后续会支持按时长、热度等条件筛选排序。
             </Text>
+          </Stack>
+
+          <Stack gap={8} mb="lg">
+            <Group justify="space-between" align="center" wrap="wrap" gap={8}>
+              <Group gap={8} align="center">
+                <Title order={4}>公开项目</Title>
+                <Badge variant="light" color="gray">
+                  {publicProjects.length}
+                </Badge>
+              </Group>
+              <Group gap={6}>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => {
+                    if (typeof window === 'undefined') return
+                    window.location.href = '/share'
+                  }}
+                >
+                  查看全部
+                </Button>
+                <Tooltip label="刷新公开项目" withArrow>
+                  <ActionIcon
+                    size="sm"
+                    variant="light"
+                    aria-label="刷新公开项目"
+                    onClick={() => {
+                      if (!projectsLoading) reloadProjects()
+                    }}
+                    loading={projectsLoading}
+                  >
+                    <IconRefresh size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+            </Group>
+            <Text size="xs" c="dimmed">
+              默认使用项目内的视频作为封面，其次图片；点击进入分享页，可查看画布与创作过程（只读）。
+            </Text>
+
+            {projectsLoading && publicProjects.length === 0 ? (
+              <Center mih={140}>
+                <Stack gap={8} align="center">
+                  <Loader size="sm" />
+                  <Text size="sm" c="dimmed">
+                    正在加载公开项目…
+                  </Text>
+                </Stack>
+              </Center>
+            ) : publicProjects.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                暂无可展示的公开项目（需要项目内至少有一个视频/图片结果作为封面）。
+              </Text>
+            ) : (
+              <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }} spacing={{ base: 'md', md: 'lg' }} className="tapshow-grid">
+                {publicProjects.map((item) => (
+                  <PublicProjectCard
+                    key={item.project.id}
+                    item={item}
+                    onOpen={(it) => {
+                      const url = `/share/${encodeURIComponent(it.project.id)}/${encodeURIComponent(it.cover.flowId)}`
+                      if (typeof window !== 'undefined') window.location.href = url
+                    }}
+                  />
+                ))}
+              </SimpleGrid>
+            )}
           </Stack>
 
           <Group justify="space-between" align="center" mb="md" wrap="wrap" gap={8}>
@@ -495,4 +761,3 @@ function TapshowFullPageInner(): JSX.Element {
 export default function TapshowFullPage(): JSX.Element {
   return <TapshowFullPageInner />
 }
-

@@ -32,11 +32,12 @@ const MAX_EDGES = 16
 const MAX_CHARACTERS = 6
 const MAX_BINDINGS = 5
 const MAX_TIMELINE = 8
-const PROMPT_PREVIEW_LIMIT = 260
+const PROMPT_PREVIEW_LIMIT = 320
 
 const VIDEO_KINDS = new Set(['composeVideo', 'video', 'storyboard'])
 const CHARACTER_KIND = 'character'
 const IMAGE_KINDS = new Set(['image', 'textToImage'])
+const STORY_HINTS = ['分镜', '九宫格', '故事板', 'storyboard', '剧情', '续写', '15s视频']
 
 const trimText = (value?: string | null, limit = PROMPT_PREVIEW_LIMIT) => {
   if (!value) return undefined
@@ -167,9 +168,77 @@ function extractPendingNodes(nodes: Node[]) {
   }))
 }
 
+function extractStoryContext(nodes: Node[]) {
+  const pickExcerpt = (data: any) => {
+    const raw = typeof data?.videoPrompt === 'string' && data.videoPrompt.trim()
+      ? data.videoPrompt
+      : typeof data?.prompt === 'string'
+        ? data.prompt
+        : ''
+    const normalized = raw.replace(/\s+/g, ' ').trim()
+    if (!normalized) return undefined
+    const limit = 1200
+    return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized
+  }
+
+  const isStoryNode = (node: Node) => {
+    const data = (node.data || {}) as any
+    const label = typeof data?.label === 'string' ? data.label : ''
+    const kind = (data as any)?.kind || node.type
+    const hint = `${label}\n${kind}`.toLowerCase()
+    return STORY_HINTS.some((k) => hint.includes(k.toLowerCase()))
+  }
+
+  const candidates = nodes
+    .filter((node) => {
+      const data = (node.data || {}) as any
+      const kind = (data as any)?.kind || node.type
+      return (kind === 'composeVideo' || IMAGE_KINDS.has(kind)) && isStoryNode(node)
+    })
+    .slice(-3)
+    .reverse()
+    .map((node) => {
+      const data = (node.data || {}) as any
+      return {
+        nodeId: node.id,
+        label: data.label || node.id,
+        kind: data.kind || node.type,
+        promptExcerpt: pickExcerpt(data),
+      }
+    })
+    .filter((item) => Boolean(item.promptExcerpt))
+
+  return candidates.slice(0, 2)
+}
+
 export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
   if (!Array.isArray(nodes) || nodes.length === 0) {
     return undefined
+  }
+
+  const summarizePrompt = (data: any) => trimText(data?.videoPrompt || data?.prompt || '', PROMPT_PREVIEW_LIMIT)
+  const summarizeNegativePrompt = (data: any) => trimText(data?.negativePrompt || data?.negative || '', 220)
+  const pickPrimaryImageUrl = (data: any) => {
+    const primary = typeof data?.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    if (primary) return primary
+    const results = Array.isArray(data?.imageResults) ? data.imageResults : []
+    const idx =
+      typeof data?.imagePrimaryIndex === 'number' && data.imagePrimaryIndex >= 0 && data.imagePrimaryIndex < results.length
+        ? data.imagePrimaryIndex
+        : 0
+    const fromResults = typeof results[idx]?.url === 'string' ? results[idx].url.trim() : ''
+    return fromResults || undefined
+  }
+  const pickPrimaryVideoUrl = (data: any) => {
+    const primary = typeof data?.videoUrl === 'string' ? data.videoUrl.trim() : ''
+    if (primary) return primary
+    const results = Array.isArray(data?.videoResults) ? data.videoResults : []
+    const idx =
+      typeof data?.videoPrimaryIndex === 'number' && data.videoPrimaryIndex >= 0 && data.videoPrimaryIndex < results.length
+        ? data.videoPrimaryIndex
+        : 0
+    const fromResults = typeof results[idx]?.url === 'string' ? results[idx].url.trim() : ''
+    return fromResults || undefined
   }
 
   const base: Record<string, any> = {
@@ -183,11 +252,19 @@ export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
       label: (node.data as any)?.label,
       kind: (node.data as any)?.kind || node.type,
       type: node.type,
-      status: (node.data as any)?.status
+      status: (node.data as any)?.status,
+      promptPreview: summarizePrompt(node.data),
+      negativePromptPreview: summarizeNegativePrompt(node.data),
+      imageUrl: pickPrimaryImageUrl(node.data),
+      videoUrl: pickPrimaryVideoUrl(node.data),
+      imageModel: (node.data as any)?.imageModel,
+      videoModel: (node.data as any)?.videoModel,
     })),
     edges: edges.slice(0, MAX_EDGES).map(edge => ({
       source: edge.source,
-      target: edge.target
+      target: edge.target,
+      sourceHandle: (edge as any).sourceHandle,
+      targetHandle: (edge as any).targetHandle,
     }))
   }
 
@@ -210,6 +287,11 @@ export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
   const pendingNodes = extractPendingNodes(nodes)
   if (pendingNodes.length) {
     base.pendingNodes = pendingNodes
+  }
+
+  const storyContext = extractStoryContext(nodes)
+  if (storyContext.length) {
+    base.storyContext = storyContext
   }
 
   const runningCompose = pendingNodes.find(node => VIDEO_KINDS.has(node.kind || ''))

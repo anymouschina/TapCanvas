@@ -11,6 +11,7 @@ import {
 	cloneProjectForUser,
 	deleteProjectForUser,
 	getPublicProjectFlows,
+	getPublicProjectLangGraphThreadId,
 	listPublicProjectDtos,
 	listUserProjects,
 	toggleProjectPublicForUser,
@@ -18,6 +19,24 @@ import {
 } from "./project.service";
 
 export const projectRouter = new Hono<AppEnv>();
+
+// Public routes (no auth)
+projectRouter.get("/public", async (c) => {
+	const projects = await listPublicProjectDtos(c);
+	return c.json(ProjectSchema.array().parse(projects));
+});
+
+projectRouter.get("/:id/flows", async (c) => {
+	const id = c.req.param("id");
+	const flows = await getPublicProjectFlows(c, id);
+	return c.json(flows);
+});
+
+projectRouter.get("/:id/langgraph/thread", async (c) => {
+	const id = c.req.param("id");
+	const threadId = await getPublicProjectLangGraphThreadId(c, id);
+	return c.json({ threadId });
+});
 
 // Protected routes
 const authed = new Hono<AppEnv>();
@@ -106,16 +125,3 @@ authed.delete("/:id", async (c) => {
 });
 
 projectRouter.route("/", authed);
-
-// Public routes
-projectRouter.get("/public", async (c) => {
-	const projects = await listPublicProjectDtos(c);
-	return c.json(ProjectSchema.array().parse(projects));
-});
-
-projectRouter.get("/:id/flows", async (c) => {
-	const id = c.req.param("id");
-	const flows = await getPublicProjectFlows(c, id);
-	return c.json(flows);
-});
-

@@ -113,6 +113,23 @@ export type PromptSampleInput = {
   keywords?: string[]
 }
 
+export type PromptGeneratePayload = {
+  workflow: 'character_creation' | 'direct_image' | 'merchandise'
+  subject: string
+  visual_style?: string
+  model?: string
+  consistency?: string
+  language?: 'zh' | 'en'
+}
+
+export type PromptGenerateResult = {
+  workflow: string
+  prompt: string
+  negative_prompt: string
+  suggested_aspects: string[]
+  notes: string[]
+}
+
 export type ChatSessionSummaryDto = {
   id: string
   title: string | null
@@ -307,6 +324,77 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
       body = null
     }
     const msg = (body && (body.message || body.error)) || `delete chat session failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export type LangGraphProjectThreadDto = {
+  threadId: string | null
+}
+
+export async function getLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get langgraph thread failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return { threadId: typeof body?.threadId === 'string' ? body.threadId : null }
+}
+
+export async function getPublicLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
+  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/langgraph/thread`, {
+    headers: { 'Content-Type': 'application/json' },
+  })
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get public langgraph thread failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return { threadId: typeof body?.threadId === 'string' ? body.threadId : null }
+}
+
+export async function setLangGraphProjectThread(projectId: string, threadId: string): Promise<{ threadId: string }> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId }),
+  }))
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `set langgraph thread failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return { threadId: String(body?.threadId ?? threadId) }
+}
+
+export async function clearLangGraphProjectThread(projectId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
+    method: 'DELETE',
+  }))
+  if (!r.ok) {
+    let body: any = null
+    try {
+      body = await r.json()
+    } catch {
+      body = null
+    }
+    const msg = (body && (body.message || body.error)) || `clear langgraph thread failed: ${r.status}`
     throw new Error(msg)
   }
 }
@@ -1291,6 +1379,16 @@ export async function markDraftPromptUsed(prompt: string, provider = 'sora'): Pr
   if (provider) qs.set('provider', provider)
   const r = await fetch(`${API_BASE}/drafts/mark-used?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`mark prompt used failed: ${r.status}`)
+}
+
+export async function generatePrompt(payload: PromptGeneratePayload): Promise<PromptGenerateResult> {
+  const r = await fetch(`${API_BASE}/prompt/generate`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`generate prompt failed: ${r.status}`)
+  return await r.json() as PromptGenerateResult
 }
 
 // Assets API - 用户级别资产

@@ -58,12 +58,12 @@ type RFState = {
   findGroupMatchingSelection: () => GroupRec | null
   renameGroup: (id: string, name: string) => void
   ungroupGroupNode: (id: string) => void
-  layoutGridSelected: () => void
-  layoutHorizontalSelected: () => void
   runSelectedGroup: () => Promise<void>
   renameSelectedGroup: () => void
+  formatTree: () => void
   autoLayoutSelectedDag: () => void
   autoLayoutAllDag: () => void
+  autoLayoutAllDagVertical: () => void
   autoLayoutForParent: (parentId: string|null) => void
 }
 
@@ -81,6 +81,162 @@ function genGroupId(n: number) {
 
 function cloneGraph(nodes: Node[], edges: Edge[]) {
   return JSON.parse(JSON.stringify({ nodes, edges })) as { nodes: Node[]; edges: Edge[] }
+}
+
+type TreeLayoutPoint = { x: number; y: number }
+type TreeLayoutSize = { w: number; h: number }
+
+function parseNumericStyle(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const n = Number.parseFloat(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+function getNodeSizeForLayout(node: Node): TreeLayoutSize {
+  const anyNode = node as any
+  const measuredW = typeof anyNode?.width === 'number' && Number.isFinite(anyNode.width) ? anyNode.width : undefined
+  const measuredH = typeof anyNode?.height === 'number' && Number.isFinite(anyNode.height) ? anyNode.height : undefined
+  const styleW = parseNumericStyle(anyNode?.style?.width)
+  const styleH = parseNumericStyle(anyNode?.style?.height)
+  const fallbackW = 220
+  const fallbackH = 120
+  return { w: measuredW ?? styleW ?? fallbackW, h: measuredH ?? styleH ?? fallbackH }
+}
+
+function computeTreeLayout(
+  nodesInScope: Node[],
+  edgesInScope: Edge[],
+  gapX: number,
+  gapY: number
+): { positions: Map<string, TreeLayoutPoint>; sizes: Map<string, TreeLayoutSize> } {
+  const idSet = new Set(nodesInScope.map(n => n.id))
+  const nodeById = new Map(nodesInScope.map(n => [n.id, n] as const))
+  const positions = new Map<string, TreeLayoutPoint>()
+  const sizes = new Map<string, TreeLayoutSize>()
+
+  const incoming = new Map<string, string[]>()
+  nodesInScope.forEach(n => incoming.set(n.id, []))
+  edgesInScope.forEach(e => {
+    if (!idSet.has(e.source) || !idSet.has(e.target)) return
+    if (e.source === e.target) return
+    incoming.get(e.target)!.push(e.source)
+  })
+
+  // Spanning tree: each node has at most one parent (first incoming edge wins)
+  const parentOf = new Map<string, string>()
+  nodesInScope.forEach(n => {
+    const ins = incoming.get(n.id) || []
+    if (ins.length) parentOf.set(n.id, ins[0])
+  })
+
+  const childrenOf = new Map<string, string[]>()
+  nodesInScope.forEach(n => childrenOf.set(n.id, []))
+  parentOf.forEach((p, child) => {
+    if (!childrenOf.has(p)) return
+    childrenOf.get(p)!.push(child)
+  })
+
+  const roots = nodesInScope
+    .filter(n => !parentOf.has(n.id))
+    .sort((a, b) => a.position.x - b.position.x)
+    .map(n => n.id)
+  if (!roots.length && nodesInScope.length) roots.push(nodesInScope[nodesInScope.length - 1].id)
+
+  const depthOf = new Map<string, number>()
+  const seen = new Set<string>()
+  const queue = roots.map(r => ({ id: r, depth: 0 }))
+  while (queue.length) {
+    const cur = queue.shift()!
+    if (seen.has(cur.id)) continue
+    seen.add(cur.id)
+    depthOf.set(cur.id, cur.depth)
+    const kids = (childrenOf.get(cur.id) || []).slice().sort((a, b) => {
+      const na = nodeById.get(a)
+      const nb = nodeById.get(b)
+      return (na?.position.x || 0) - (nb?.position.x || 0)
+    })
+    kids.forEach(k => queue.push({ id: k, depth: cur.depth + 1 }))
+  }
+  nodesInScope.forEach(n => { if (!depthOf.has(n.id)) depthOf.set(n.id, 0) })
+
+  // Base sizes from measurement/style; then compute per-level max sizes (cell sizes)
+  const baseSizes = new Map<string, TreeLayoutSize>()
+  nodesInScope.forEach(n => baseSizes.set(n.id, getNodeSizeForLayout(n)))
+
+  const maxDepth = Math.max(0, ...nodesInScope.map(n => depthOf.get(n.id) || 0))
+  const levelHeights: number[] = Array.from({ length: maxDepth + 1 }, () => 0)
+  const levelWidths: number[] = Array.from({ length: maxDepth + 1 }, () => 0)
+  nodesInScope.forEach(n => {
+    const d = depthOf.get(n.id) || 0
+    const sz = baseSizes.get(n.id)!
+    levelHeights[d] = Math.max(levelHeights[d], sz.h)
+    levelWidths[d] = Math.max(levelWidths[d], sz.w)
+  })
+
+  const minX = Math.min(...nodesInScope.map(n => n.position.x))
+  const minY = Math.min(...nodesInScope.map(n => n.position.y))
+  const levelY: number[] = []
+  for (let d = 0; d <= maxDepth; d++) {
+    levelY[d] = d === 0 ? minY : levelY[d - 1] + levelHeights[d - 1] + gapY
+  }
+
+  // Cell sizes per node based on its depth (use max width/height within that level)
+  nodesInScope.forEach(n => {
+    const d = depthOf.get(n.id) || 0
+    sizes.set(n.id, { w: levelWidths[d] || baseSizes.get(n.id)!.w, h: levelHeights[d] || baseSizes.get(n.id)!.h })
+  })
+
+  const subtreeWidth = new Map<string, number>()
+  const computeSubtreeWidth = (id: string): number => {
+    if (subtreeWidth.has(id)) return subtreeWidth.get(id)!
+    const node = nodeById.get(id)
+    if (!node) { subtreeWidth.set(id, 0); return 0 }
+    const selfW = sizes.get(id)!.w
+    const kids = (childrenOf.get(id) || []).slice().sort((a, b) => {
+      const na = nodeById.get(a)
+      const nb = nodeById.get(b)
+      return (na?.position.x || 0) - (nb?.position.x || 0)
+    })
+    if (!kids.length) { subtreeWidth.set(id, selfW); return selfW }
+    const kidsTotal = kids.reduce((sum, k) => sum + computeSubtreeWidth(k), 0) + gapX * Math.max(0, kids.length - 1)
+    const total = Math.max(selfW, kidsTotal)
+    subtreeWidth.set(id, total)
+    return total
+  }
+  roots.forEach(r => computeSubtreeWidth(r))
+
+  const place = (id: string, leftX: number) => {
+    const node = nodeById.get(id)
+    if (!node) return
+    const sw = computeSubtreeWidth(id)
+    const w = sizes.get(id)!.w
+    const x = leftX + (sw - w) / 2
+    const y = levelY[depthOf.get(id) || 0] ?? minY
+    positions.set(id, { x, y })
+
+    const kids = (childrenOf.get(id) || []).slice().sort((a, b) => {
+      const na = nodeById.get(a)
+      const nb = nodeById.get(b)
+      return (na?.position.x || 0) - (nb?.position.x || 0)
+    })
+    const kidsWidth = kids.reduce((sum, k) => sum + computeSubtreeWidth(k), 0) + gapX * Math.max(0, kids.length - 1)
+    let cursor = leftX + (sw - kidsWidth) / 2
+    kids.forEach(k => {
+      place(k, cursor)
+      cursor += computeSubtreeWidth(k) + gapX
+    })
+  }
+
+  let forestCursor = minX
+  roots.forEach(r => {
+    place(r, forestCursor)
+    forestCursor += computeSubtreeWidth(r) + gapX
+  })
+
+  return { positions, sizes }
 }
 
 function upgradeVideoKind(node: Node): Node {
@@ -638,6 +794,47 @@ export const useRFStore = create<RFState>((set, get) => ({
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: restored.map(n => ({ ...n, selected: childIds.has(n.id) })), historyPast: past, historyFuture: [] }
   }),
+  formatTree: () => {
+    const s = get()
+    const sel = s.nodes.filter(n => n.selected)
+    if (sel.length < 2) {
+      s.autoLayoutAllDagVertical()
+      return
+    }
+    set((state) => {
+      const selected = state.nodes.filter(n => n.selected)
+      if (selected.length < 2) return {}
+      const byParent = new Map<string, Node[]>()
+      selected.forEach(n => {
+        const p = (n.parentNode as string) || ''
+        if (!byParent.has(p)) byParent.set(p, [])
+        byParent.get(p)!.push(n)
+      })
+      const selectedIds = new Set(selected.map(n => n.id))
+      const edgesBySel = state.edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target))
+      const updated = [...state.nodes]
+      const gapX = 32, gapY = 32
+      byParent.forEach(nodesInParent => {
+        const idSet = new Set(nodesInParent.map(n => n.id))
+        const edgesInScope = edgesBySel.filter(e => idSet.has(e.source) && idSet.has(e.target))
+        const { positions, sizes } = computeTreeLayout(nodesInParent, edgesInScope, gapX, gapY)
+        nodesInParent.forEach(n => {
+          const p = positions.get(n.id)
+          if (!p) return
+          const i = updated.findIndex(x => x.id === n.id)
+          if (i < 0) return
+          const { positionAbsolute: _pa, dragging: _dragging, ...rest } = updated[i] as any
+          updated[i] = {
+            ...rest,
+            position: { x: p.x, y: p.y },
+            // Do not overwrite node size here; layout is adaptive based on current measurements.
+          }
+        })
+      })
+      const past = [...state.historyPast, cloneGraph(state.nodes, state.edges)].slice(-50)
+      return { nodes: updated, historyPast: past, historyFuture: [] }
+    })
+  },
   // DAG auto layout for selected nodes (per parent container)
   autoLayoutSelectedDag: () => set((s) => {
     const sel = s.nodes.filter(n => n.selected)
@@ -720,85 +917,48 @@ export const useRFStore = create<RFState>((set, get) => ({
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
-  autoLayoutForParent: (parentId) => set((s) => {
-    const nodesInParent = s.nodes.filter(n => (n.parentNode||null) === parentId)
-    if (!nodesInParent.length) return {}
-    const idSet = new Set(nodesInParent.map(n=>n.id))
-    const adj = new Map<string,string[]>()
-    const indeg = new Map<string,number>()
-    nodesInParent.forEach(n=>{ adj.set(n.id, []); indeg.set(n.id, 0) })
-    s.edges.forEach(e=>{ if(idSet.has(e.source) && idSet.has(e.target)) { adj.get(e.source)!.push(e.target); indeg.set(e.target, (indeg.get(e.target)||0)+1) } })
-    const q:string[]=[]; indeg.forEach((v,k)=>{ if(v===0) q.push(k) })
-    const layers: string[][] = []
-    while(q.length){
-      const levelSize = q.length
-      const layer: string[] = []
-      for(let i=0;i<levelSize;i++){
-        const u = q.shift()!
-        layer.push(u)
-        for(const v of adj.get(u)||[]){ const nv=(indeg.get(v)||0)-1; indeg.set(v,nv); if(nv===0) q.push(v) }
-      }
-      layers.push(layer)
-    }
+  // DAG auto layout (top-down tree style) for the whole graph
+  autoLayoutAllDagVertical: () => set((s) => {
+    const byParent = new Map<string, Node[]>()
+    s.nodes.forEach(n => { const p=(n.parentNode as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
     const updated = [...s.nodes]
-    const gapX = 260, gapY = 120
-    const minX = Math.min(...nodesInParent.map(n=>n.position.x))
-    const minY = Math.min(...nodesInParent.map(n=>n.position.y))
-    layers.forEach((layer, li) => {
-      const sorted = layer.map(id => nodesInParent.find(n=>n.id===id)!).filter(Boolean).sort((a,b)=> a.position.y-b.position.y)
-      sorted.forEach((n, idx) => {
-        const i = updated.findIndex(x=>x.id===n.id)
-        if (i>=0) updated[i] = { ...updated[i], position: { x: minX + li*gapX, y: minY + idx*gapY } }
+    byParent.forEach(nodesInParent => {
+      const idSet = new Set(nodesInParent.map(n => n.id))
+      const edgesInScope = s.edges.filter(e => idSet.has(e.source) && idSet.has(e.target))
+      const { positions } = computeTreeLayout(nodesInParent, edgesInScope, 32, 32)
+      nodesInParent.forEach(n => {
+        const p = positions.get(n.id)
+        if (!p) return
+        const i = updated.findIndex(x => x.id === n.id)
+        if (i < 0) return
+        const { positionAbsolute: _pa, dragging: _dragging, ...rest } = updated[i] as any
+        updated[i] = {
+          ...rest,
+          position: { x: p.x, y: p.y },
+        }
       })
     })
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
-  layoutGridSelected: () => set((s) => {
-    const sel = s.nodes.filter(n => n.selected)
-    if (sel.length < 2) return {}
-    const byParent = new Map<string, typeof sel>()
-    sel.forEach(n => {
-      const p = (n.parentNode as string) || ''
-      if (!byParent.has(p)) byParent.set(p, [])
-      byParent.get(p)!.push(n)
-    })
-    const gapX = 260, gapY = 170
-    const updated = s.nodes.map(n => {
-      if (!n.selected) return n
-      const parent = (n.parentNode as string) || ''
-      const group = byParent.get(parent) || []
-      const nodesSorted = [...group].sort((a,b)=> (a.position.y-b.position.y) || (a.position.x-b.position.x))
-      const cols = Math.ceil(Math.sqrt(nodesSorted.length))
-      const minX = Math.min(...nodesSorted.map(x=>x.position.x))
-      const minY = Math.min(...nodesSorted.map(x=>x.position.y))
-      const idx = nodesSorted.findIndex(m => m.id === n.id)
-      const r = Math.floor(idx / cols)
-      const c = idx % cols
-      return { ...n, position: { x: minX + c*gapX, y: minY + r*gapY } }
-    })
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, historyPast: past, historyFuture: [] }
-  }),
-  layoutHorizontalSelected: () => set((s) => {
-    const sel = s.nodes.filter(n => n.selected)
-    if (sel.length < 2) return {}
-    const byParent = new Map<string, typeof sel>()
-    sel.forEach(n => {
-      const p = (n.parentNode as string) || ''
-      if (!byParent.has(p)) byParent.set(p, [])
-      byParent.get(p)!.push(n)
-    })
-    const gapX = 260
-    const updated = s.nodes.map(n => {
-      if (!n.selected) return n
-      const parent = (n.parentNode as string) || ''
-      const group = byParent.get(parent) || []
-      const nodesSorted = [...group].sort((a,b)=> a.position.x - b.position.x)
-      const minX = Math.min(...nodesSorted.map(x=>x.position.x))
-      const minY = Math.min(...nodesSorted.map(x=>x.position.y))
-      const idx = nodesSorted.findIndex(m => m.id === n.id)
-      return { ...n, position: { x: minX + idx*gapX, y: minY } }
+  autoLayoutForParent: (parentId) => set((s) => {
+    const nodesInParent = s.nodes.filter(n => (n.parentNode||null) === parentId)
+    if (!nodesInParent.length) return {}
+    const updated = [...s.nodes]
+    const idSet = new Set(nodesInParent.map(n => n.id))
+    const edgesInScope = s.edges.filter(e => idSet.has(e.source) && idSet.has(e.target))
+    const { positions, sizes } = computeTreeLayout(nodesInParent, edgesInScope, 32, 32)
+    nodesInParent.forEach(n => {
+      const p = positions.get(n.id)
+      if (!p) return
+      const i = updated.findIndex(x => x.id === n.id)
+      if (i < 0) return
+      const { positionAbsolute: _pa, dragging: _dragging, ...rest } = updated[i] as any
+      updated[i] = {
+        ...rest,
+        position: { x: p.x, y: p.y },
+        // Do not overwrite node size here; layout is adaptive based on current measurements.
+      }
     })
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
