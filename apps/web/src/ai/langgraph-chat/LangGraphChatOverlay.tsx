@@ -1274,7 +1274,7 @@ export function LangGraphChatOverlay() {
     const env = (import.meta as any).env || {}
     const explicit = env?.VITE_LANGGRAPH_API_URL || env?.VITE_LANGGRAPH_API_BASE
     if (explicit) return String(explicit)
-    return env?.DEV ? 'http://localhost:2024' : 'http://localhost:8123'
+    return env?.DEV ? 'http://localhost:2024' : 'https://ai.beqlee.icu'
   }, [])
 
   return (
