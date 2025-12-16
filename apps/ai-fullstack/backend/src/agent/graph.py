@@ -1,5 +1,7 @@
 import os
 import json
+import urllib.request
+import urllib.error
 
 from agent.tools_and_schemas import RoleDecision, SearchQueryList, Reflection
 from dotenv import load_dotenv
@@ -37,6 +39,104 @@ from agent.utils import (
 from agent.roles import DEFAULT_ROLE_ID, normalize_role_id, role_map, roles_prompt_block
 
 load_dotenv()
+
+def _autorag_normalize_result(result: dict) -> tuple[list[str], list[dict]]:
+    """Best-effort normalize AutoRAG result into (snippets, sources)."""
+    snippets: list[str] = []
+    sources: list[dict] = []
+
+    if not isinstance(result, dict):
+        return snippets, sources
+
+    answer = result.get("answer") or result.get("output") or result.get("response")
+    if isinstance(answer, str) and answer.strip():
+        snippets.append(answer.strip())
+
+    raw_sources = result.get("sources") or result.get("results") or result.get("documents") or []
+    if isinstance(raw_sources, list):
+        for idx, item in enumerate(raw_sources[:8], start=1):
+            if not isinstance(item, dict):
+                continue
+            title = item.get("title") or item.get("label") or item.get("name") or f"KB#{idx}"
+            url = item.get("url") or item.get("source_url") or item.get("source") or ""
+            text = item.get("text") or item.get("content") or item.get("snippet") or ""
+            score = item.get("score") or item.get("similarity") or None
+            line_bits: list[str] = []
+            if isinstance(title, str) and title.strip():
+                line_bits.append(title.strip())
+            if isinstance(url, str) and url.strip():
+                line_bits.append(url.strip())
+            if score is not None:
+                try:
+                    line_bits.append(f"score={float(score):.3f}")
+                except Exception:
+                    pass
+            header = " | ".join(line_bits).strip()
+            body = text.strip() if isinstance(text, str) else ""
+            if body:
+                snippets.append(f"[{idx}] {header}\n{body}" if header else f"[{idx}]\n{body}")
+            if isinstance(url, str) and url.strip():
+                sources.append({"label": title if isinstance(title, str) else f"KB#{idx}", "value": url, "short_url": url})
+
+    if not snippets:
+        try:
+            snippets.append(json.dumps(result, ensure_ascii=False)[:4000])
+        except Exception:
+            snippets.append(str(result)[:4000])
+    return snippets, sources
+
+
+def _call_autorag_search(configurable: Configuration, query: str) -> tuple[list[str], list[dict]]:
+    """Call Worker-side AutoRAG proxy and return (web_research_result, sources_gathered)."""
+    endpoint = (configurable.autorag_endpoint or "").strip()
+    rag_id = (configurable.autorag_id or "").strip()
+    secret = (os.getenv("INTERNAL_API_SECRET") or "").strip()
+    if not endpoint or not rag_id or not query.strip():
+        return [], []
+
+    payload = json.dumps({"ragId": rag_id, "query": query}).encode("utf-8")
+    headers = {"content-type": "application/json"}
+    if secret:
+        headers["x-internal-secret"] = secret
+    req = urllib.request.Request(
+        endpoint,
+        method="POST",
+        data=payload,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = str(exc)
+        return [f"[AutoRAG] HTTP {exc.code}: {body[:2000]}"], []
+    except Exception as exc:
+        return [f"[AutoRAG] 请求失败: {exc}"], []
+
+    try:
+        decoded = json.loads(body)
+    except Exception:
+        return [f"[AutoRAG] 非 JSON 响应: {body[:2000]}"], []
+
+    result = decoded.get("result") if isinstance(decoded, dict) else decoded
+    snippets, sources = _autorag_normalize_result(result if isinstance(result, dict) else {"result": result})
+    if os.getenv("DEBUG_OPENAI_RESPONSES") == "1":
+        try:
+            print(
+                "[AUTORAG] ok",
+                f"rag_id={rag_id}",
+                f"query={query[:160]}",
+                f"snippets={len(snippets)}",
+                f"sources={len(sources)}",
+            )
+            if snippets:
+                print("[AUTORAG] snippet0:", (snippets[0] or "")[:500])
+        except Exception:
+            pass
+    return snippets, sources
 
 
 def require_gemini_key() -> None:
@@ -1414,6 +1514,109 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         }
                     )
 
+                # General continuity: if the user asks to base new content on existing results (基于/续写/同款/延展),
+                # ensure newly created image nodes are connected to a relevant upstream image before running.
+                reference_intent = any(
+                    kw in (last_user_text or "")
+                    for kw in ("基于", "同款", "同风格", "沿用", "续写", "延展", "变体", "参考", "保持一致")
+                )
+
+                def _pick_latest_success_image_label(canvas_context_obj: dict | None) -> str | None:
+                    if not isinstance(canvas_context_obj, dict):
+                        return None
+                    nodes_ctx = canvas_context_obj.get("nodes")
+                    if not isinstance(nodes_ctx, list) or not nodes_ctx:
+                        return None
+                    # iterate from latest to oldest
+                    for n in reversed(nodes_ctx):
+                        if not isinstance(n, dict):
+                            continue
+                        kind = n.get("kind") or n.get("type")
+                        if kind not in ("image", "textToImage", "mosaic"):
+                            continue
+                        if n.get("status") != "success":
+                            continue
+                        label = n.get("label")
+                        if not isinstance(label, str) or not label.strip():
+                            continue
+                        label = label.strip()
+                        if any(k in label for k in ("分镜", "九宫格", "storyboard")):
+                            continue
+                        image_url = n.get("imageUrl")
+                        if not isinstance(image_url, str) or not image_url.strip():
+                            continue
+                        return label
+                    return None
+
+                if reference_intent:
+                    canvas_context_obj = state.get("canvas_context")
+                    upstream_label = _pick_latest_success_image_label(canvas_context_obj)
+                    if upstream_label:
+                        # Build a set of (source,target) already connected in this payload to avoid duplicates.
+                        existing_pairs: set[tuple[str, str]] = set()
+                        existing_targets: set[str] = set()
+                        for c in tool_calls_payload:
+                            if c.get("name") != "connectNodes":
+                                continue
+                            args = c.get("arguments") or {}
+                            src = args.get("sourceNodeId") or args.get("sourceId")
+                            tgt = args.get("targetNodeId") or args.get("targetId")
+                            if isinstance(src, str) and isinstance(tgt, str):
+                                s = src.strip()
+                                t = tgt.strip()
+                                if s and t:
+                                    existing_pairs.add((s, t))
+                                    existing_targets.add(t)
+
+                        # For each newly created image node, if it has no inbound connection yet, add one.
+                        for idx, c in enumerate(list(tool_calls_payload)):
+                            if c.get("name") != "createNode":
+                                continue
+                            args = c.get("arguments") or {}
+                            if args.get("type") != "image":
+                                continue
+                            label = args.get("label")
+                            if not isinstance(label, str) or not label.strip():
+                                continue
+                            target_label = label.strip()
+                            if target_label == upstream_label:
+                                continue
+                            # Skip storyboard grid; it has its own multi-reference logic above.
+                            cfg = args.get("config") or {}
+                            prompt = cfg.get("prompt") if isinstance(cfg, dict) else ""
+                            hint = f"{target_label}\n{prompt}"
+                            if any(k in hint for k in ("九宫格", "3x3", "分镜", "storyboard")):
+                                continue
+                            if target_label in existing_targets:
+                                continue
+                            if (upstream_label, target_label) in existing_pairs:
+                                continue
+
+                            # Insert before the runNode(target) if present, otherwise right after createNode.
+                            insert_at = idx + 1
+                            for j in range(idx + 1, len(tool_calls_payload)):
+                                tc = tool_calls_payload[j]
+                                if tc.get("name") != "runNode":
+                                    continue
+                                nid = (tc.get("arguments") or {}).get("nodeId")
+                                if isinstance(nid, str) and nid.strip() == target_label:
+                                    insert_at = j
+                                    break
+                            tool_calls_payload.insert(
+                                insert_at,
+                                {
+                                    "id": f"auto_ref_{upstream_label}_to_{target_label}",
+                                    "name": "connectNodes",
+                                    "arguments": {
+                                        "sourceNodeId": upstream_label,
+                                        "targetNodeId": target_label,
+                                        "sourceHandle": "out-image",
+                                        "targetHandle": "in-image",
+                                    },
+                                },
+                            )
+                            existing_targets.add(target_label)
+
                 # If this response sets up an image->video storyboard workflow, avoid prematurely running video.
                 created_image_labels: set[str] = set()
                 created_video_labels: set[str] = set()
@@ -1552,12 +1755,37 @@ def direct_answer(state: OverallState, config: RunnableConfig):
     state.setdefault("sources_gathered", [])
     return finalize_answer(state, config)
 
+def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
+    """Optional knowledge-base retrieval (e.g. Cloudflare AutoRAG) to ground the answer."""
+    configurable = Configuration.from_runnable_config(config)
+    provider = configurable.search_provider.lower()
+    if provider != "autorag":
+        return {}
+
+    # Use the latest user message as the query.
+    query = get_research_topic(state.get("messages") or [])
+    if not isinstance(query, str):
+        query = ""
+    query = query.strip()
+    if not query:
+        return {}
+
+    snippets, sources = _call_autorag_search(configurable, query)
+    if not snippets:
+        return {}
+    return {
+        "search_query": [query],
+        "web_research_result": snippets,
+        "sources_gathered": sources or [],
+    }
 
 builder.add_node("direct_answer", direct_answer)
+builder.add_node("kb_retrieve", kb_retrieve)
 
 # Entrypoint: role selection then direct answer (no web search)
 builder.add_edge(START, "select_role")
-builder.add_edge("select_role", "direct_answer")
+builder.add_edge("select_role", "kb_retrieve")
+builder.add_edge("kb_retrieve", "direct_answer")
 builder.add_edge("direct_answer", END)
 
 graph = builder.compile(name="animation-agent")
