@@ -10,6 +10,7 @@
   "name": "ai-fullstack-backend",
   "main": "worker/index.ts",
   "compatibility_date": "2025-12-16",
+  "ai": { "binding": "AI" },
 
   "containers": [
     {
@@ -30,14 +31,18 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentBackend"] }],
 
   "vars": {
-    "OPENAI_BASE_URL": "https://api.openai.com/v1",
-    "LLM_PROVIDER": "gemini",
-    "SEARCH_PROVIDER": "disabled",
-
-    "QUERY_GENERATOR_MODEL": "gemini-2.0-flash",
-    "ROLE_SELECTOR_MODEL": "gemini-2.0-flash",
-    "REFLECTION_MODEL": "gemini-2.5-flash",
-    "ANSWER_MODEL": "gemini-2.5-pro"
+    "OPENAI_BASE_URL": "https://www.right.codes/codex/v1",
+    "LLM_PROVIDER": "openai",
+    "SEARCH_PROVIDER": "autorag",
+    "SEARCH_MODEL": "gpt-5.2",
+    "OPENAI_API_KEY":"xxx",
+    "AUTORAG_ID": "square-glade-783b",
+    "AUTORAG_ENDPOINT": "https://ai.beqlee.icu/internal/autorag/search",
+    "QUERY_GENERATOR_MODEL": "gpt-5.2",
+    "ROLE_SELECTOR_MODEL": "gpt-5.2",
+    "REFLECTION_MODEL": "gpt-5.2",
+    "ANSWER_MODEL": "gpt-5.2",
+    "DEBUG_OPENAI_RESPONSES": "1"
   },
 
   "observability": { "enabled": true }
