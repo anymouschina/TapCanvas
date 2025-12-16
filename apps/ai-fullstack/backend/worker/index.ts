@@ -1,5 +1,6 @@
 export interface Env {
   AGENT_BACKEND: any;
+  AI: any;
 
   // Optional runtime configuration forwarded into the container.
   GEMINI_API_KEY?: string;
@@ -13,6 +14,45 @@ export interface Env {
   REFLECTION_MODEL?: string;
   ANSWER_MODEL?: string;
   DEBUG_OPENAI_RESPONSES?: string;
+  AUTORAG_ENDPOINT?: string;
+  AUTORAG_ID?: string;
+
+  // Internal endpoints auth (recommended to set via `wrangler secret put`).
+  INTERNAL_API_SECRET?: string;
+}
+
+function summarizeAutoRagResult(result: any): string {
+  try {
+    const sources = Array.isArray(result?.sources)
+      ? result.sources
+      : Array.isArray(result?.results)
+        ? result.results
+        : [];
+    const sourceCount = Array.isArray(sources) ? sources.length : 0;
+    const titles: string[] = [];
+    if (Array.isArray(sources)) {
+      for (const s of sources) {
+        const t = typeof s?.title === "string" ? s.title : typeof s?.label === "string" ? s.label : "";
+        if (t) titles.push(t.slice(0, 80));
+        if (titles.length >= 3) break;
+      }
+    }
+    const answer =
+      typeof result?.answer === "string"
+        ? result.answer
+        : typeof result?.output === "string"
+          ? result.output
+          : "";
+    const answerLen = answer ? answer.length : 0;
+    const keys =
+      result && typeof result === "object" && !Array.isArray(result)
+        ? Object.keys(result).slice(0, 12).join(",")
+        : typeof result;
+    const titlePart = titles.length ? ` titles=${JSON.stringify(titles)}` : "";
+    return `keys=${keys} sources=${sourceCount} answerLen=${answerLen}${titlePart}`;
+  } catch {
+    return "unavailable";
+  }
 }
 
 function buildCorsHeaders(request: Request): Headers {
@@ -49,11 +89,14 @@ function pickContainerEnv(env: Env): Record<string, string> {
     ["LLM_PROVIDER", env.LLM_PROVIDER],
     ["SEARCH_PROVIDER", env.SEARCH_PROVIDER],
     ["SEARCH_MODEL", env.SEARCH_MODEL],
+    ["AUTORAG_ENDPOINT", env.AUTORAG_ENDPOINT],
+    ["AUTORAG_ID", env.AUTORAG_ID],
     ["QUERY_GENERATOR_MODEL", env.QUERY_GENERATOR_MODEL],
     ["ROLE_SELECTOR_MODEL", env.ROLE_SELECTOR_MODEL],
     ["REFLECTION_MODEL", env.REFLECTION_MODEL],
     ["ANSWER_MODEL", env.ANSWER_MODEL],
     ["DEBUG_OPENAI_RESPONSES", env.DEBUG_OPENAI_RESPONSES],
+    ["INTERNAL_API_SECRET", env.INTERNAL_API_SECRET],
     ["PORT", "8080"],
   ];
 
@@ -167,6 +210,56 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/health") return new Response("ok");
+
+    // Cloudflare Workers AI AutoRAG proxy (container can't access `env.AI` directly).
+    // Call from the container with: POST /internal/autorag/search { ragId, query, ... }
+    if (url.pathname === "/internal/autorag/search") {
+      if (request.method !== "POST") {
+        return new Response("method not allowed", { status: 405 });
+      }
+
+      // Optional protection: if INTERNAL_API_SECRET is set, require it via `x-internal-secret`.
+      const expected = env.INTERNAL_API_SECRET;
+      if (expected) {
+        const provided = request.headers.get("x-internal-secret") || "";
+        if (provided !== expected) return new Response("unauthorized", { status: 401 });
+      }
+
+      let payload: any = null;
+      try {
+        payload = await request.json();
+      } catch {
+        return new Response("invalid json body", { status: 400 });
+      }
+
+      const ragId = typeof payload?.ragId === "string" ? payload.ragId.trim() : "";
+      const query = typeof payload?.query === "string" ? payload.query.trim() : "";
+      if (!ragId || !query) {
+        return Response.json(
+          { error: "ragId and query are required" },
+          { status: 400 },
+        );
+      }
+
+      const options = typeof payload?.options === "object" && payload.options ? payload.options : {};
+      const startedAt = Date.now();
+      const result = await env.AI.autorag(ragId).aiSearch({ query, ...options });
+      const tookMs = Date.now() - startedAt;
+      // Enabled by either DEBUG_AUTORAG=1 or DEBUG_OPENAI_RESPONSES=1 (reuse existing debug switch).
+      const debug =
+        (typeof (env as any).DEBUG_AUTORAG === "string" && (env as any).DEBUG_AUTORAG === "1") ||
+        env.DEBUG_OPENAI_RESPONSES === "1";
+      if (debug) {
+        console.log(
+          "[autorag] aiSearch",
+          `ragId=${ragId}`,
+          `tookMs=${tookMs}`,
+          `query=${query.slice(0, 200)}`,
+          summarizeAutoRagResult(result),
+        );
+      }
+      return Response.json({ ok: true, ragId, query, result });
+    }
 
     const id = env.AGENT_BACKEND.idFromName("default");
     const res = await env.AGENT_BACKEND.get(id).fetch(request);

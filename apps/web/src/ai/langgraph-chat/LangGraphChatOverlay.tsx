@@ -1136,15 +1136,18 @@ function LangGraphChatOverlayInner({
     if (thread.isLoading) return
     if (viewOnly) return
     setError(null)
+    // Close the confirm modal immediately after user confirms.
+    setClearConfirmOpen(false)
     try {
       void thread.stop()
       if (projectId) {
         await clearLangGraphProjectThread(projectId)
       }
-      setClearConfirmOpen(false)
       onReset()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'clear failed')
+    } finally {
+      setClearConfirmOpen(false)
     }
   }, [projectId, onReset, thread, viewOnly])
 

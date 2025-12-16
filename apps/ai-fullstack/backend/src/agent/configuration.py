@@ -49,7 +49,7 @@ class Configuration(BaseModel):
     search_provider: str = Field(
         default="disabled",
         metadata={
-            "description": "Web search provider to use. Options: 'google', 'openai', or 'disabled' to mock search."
+            "description": "Knowledge/search provider to use. Options: 'google', 'openai', 'autorag', or 'disabled'."
         },
     )
 
@@ -63,6 +63,18 @@ class Configuration(BaseModel):
         metadata={
             "description": "Provider for generate/reflection/answer steps. Options: 'gemini' or 'openai'."
         },
+    )
+
+    autorag_endpoint: str = Field(
+        default="",
+        metadata={
+            "description": "Internal AutoRAG proxy endpoint (Worker route), e.g. https://ai.beqlee.icu/internal/autorag/search",
+        },
+    )
+
+    autorag_id: str = Field(
+        default="",
+        metadata={"description": "Cloudflare AutoRAG deployment id (passed to env.AI.autorag(id))."},
     )
 
     @classmethod
