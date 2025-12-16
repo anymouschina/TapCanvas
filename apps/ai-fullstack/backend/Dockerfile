@@ -24,6 +24,7 @@ WORKDIR /app
 
 COPY requirements.txt ./
 COPY vendor ./vendor
+COPY langgraph.json ./
 
 # Install dependencies first for Docker layer caching (same pattern as your working `requirements.txt` project).
 RUN env -i \
@@ -47,4 +48,4 @@ COPY src ./src
 
 EXPOSE 8080
 
-CMD ["python", "-m", "uvicorn", "agent.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "langgraph_api.cli", "--host", "0.0.0.0", "--port", "8080", "--no-reload", "--config", "langgraph.json", "--runtime-edition", "inmem"]
