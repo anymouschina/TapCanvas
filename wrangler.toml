@@ -2,6 +2,10 @@ name = "tap-anvas"
 main = "cloudflare/worker.ts"
 compatibility_date = "2025-01-01"
 
+[vars]
+VITE_API_BASE = "https://hono-api.beqlee.icu"
+VITE_LANGGRAPH_API_URL = "https://ai.beqlee.icu"
+
 [assets]
 directory = "dist"
 binding = "ASSETS"
@@ -12,4 +16,3 @@ enabled = false
 head_sampling_rate = 1
 invocation_logs = true
 persist = true
-
