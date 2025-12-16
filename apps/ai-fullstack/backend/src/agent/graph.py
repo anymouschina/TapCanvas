@@ -438,10 +438,17 @@ def _collect_stream_text_and_tools(stream) -> tuple[str, list[dict]]:
 
 def _call_openai_structured(model: str, prompt: str, schema_model):
     """Call OpenAI Responses API and parse into Pydantic model."""
-    client = get_openai_client()
+    client: OpenAI | None = None
     text = ""
     first_exc: Exception | None = None
     try:
+        client = get_openai_client()
+    except Exception as exc:
+        first_exc = exc
+        debug_openai_error(f"{schema_model.__name__} client_init", exc)
+    try:
+        if client is None:
+            raise first_exc or ValueError("OpenAI client is unavailable.")
         response = client.responses.create(
             model=model,
             input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -461,6 +468,8 @@ def _call_openai_structured(model: str, prompt: str, schema_model):
         first_exc = exc
         debug_openai_error(f"{schema_model.__name__}", exc)
         try:
+            if client is None:
+                raise first_exc or ValueError("OpenAI client is unavailable.")
             response = client.responses.create(
                 model=model,
                 input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -1461,6 +1470,12 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         }
                     )
             result = AIMessage(content=result_text)
+        except ValueError as exc:
+            debug_openai_error("finalize_answer", exc)
+            llm_error_payload = {"type": exc.__class__.__name__, "message": str(exc)}
+            result = AIMessage(
+                content="无法生成最终答案：后端未配置模型密钥（请检查 OPENAI_API_KEY / GEMINI_API_KEY）。"
+            )
         except (APIConnectionError, OpenAIError) as exc:
             debug_openai_error("finalize_answer", exc)
             llm_error_payload = _format_openai_error(exc)

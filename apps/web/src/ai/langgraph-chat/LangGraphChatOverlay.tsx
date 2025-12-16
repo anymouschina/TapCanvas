@@ -826,6 +826,9 @@ function LangGraphChatOverlayInner({
   const [threadIdLoaded, setThreadIdLoaded] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [prefill, setPrefill] = useState<string | null>(null)
+  const lastSubmitValuesRef = useRef<any | null>(null)
+  const recoveringThreadRef = useRef(false)
+  const lastStreamErrorRef = useRef<any>(null)
 
   useEffect(() => {
     if (!open) return
@@ -837,6 +840,7 @@ function LangGraphChatOverlayInner({
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setThreadIdLoaded(false)
     void (async () => {
       try {
@@ -844,8 +848,27 @@ function LangGraphChatOverlayInner({
           ? await getPublicLangGraphProjectThread(projectId)
           : await getLangGraphProjectThread(projectId)
         if (cancelled) return
-        setThreadId(res.threadId)
-        persistedThreadIdRef.current = res.threadId
+        const loadedThreadId = res.threadId
+        if (loadedThreadId) {
+          try {
+            const check = await fetch(`${apiUrl}/threads/${loadedThreadId}`, {
+              method: 'GET',
+              credentials: 'include',
+              signal: controller.signal,
+            })
+            if (check.status === 404) {
+              if (!viewOnly) await clearLangGraphProjectThread(projectId)
+              setThreadId(null)
+              persistedThreadIdRef.current = null
+              setThreadIdLoaded(true)
+              return
+            }
+          } catch {
+            // If the check fails (network/CORS), fall back to optimistic use of the stored thread.
+          }
+        }
+        setThreadId(loadedThreadId)
+        persistedThreadIdRef.current = loadedThreadId
         setThreadIdLoaded(true)
       } catch (err) {
         if (cancelled) return
@@ -858,8 +881,9 @@ function LangGraphChatOverlayInner({
 
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [open, projectId, viewOnly])
+  }, [apiUrl, open, projectId, viewOnly])
 
   const thread = useStream<{
     messages: Message[]
@@ -911,8 +935,47 @@ function LangGraphChatOverlayInner({
         setProcessedEventsTimeline((prev) => [...prev, processedEvent!])
       }
     },
-    onError: (err: any) => setError(err?.message || 'unknown error'),
+    onError: (err: any) => {
+      lastStreamErrorRef.current = err
+      const msg = err?.message || String(err || 'unknown error')
+      setError(msg || 'unknown error')
+    },
   })
+
+  useEffect(() => {
+    if (viewOnly) return
+    const err = lastStreamErrorRef.current
+    if (!err) return
+    if (recoveringThreadRef.current) return
+
+    const msg = err?.message || String(err || '')
+    const looksLikeMissingThread =
+      err?.status === 404 ||
+      err?.response?.status === 404 ||
+      /\b404\b/.test(msg) ||
+      /thread.*not.*found/i.test(msg)
+    if (!looksLikeMissingThread) return
+
+    recoveringThreadRef.current = true
+    setError('对话线程已过期，正在自动重建...')
+    void (async () => {
+      try {
+        void thread.stop()
+        if (projectId) await clearLangGraphProjectThread(projectId)
+        persistedThreadIdRef.current = null
+        setThreadId(null)
+        await new Promise((r) => setTimeout(r, 50))
+        const last = lastSubmitValuesRef.current
+        if (last) thread.submit(last)
+        setError(null)
+      } catch (e: any) {
+        setError(e?.message || msg)
+      } finally {
+        lastStreamErrorRef.current = null
+        recoveringThreadRef.current = false
+      }
+    })()
+  }, [projectId, thread, viewOnly])
 
   const messages = thread.messages || []
   const blocked = !!projectId && !threadIdLoaded
@@ -1050,12 +1113,14 @@ function LangGraphChatOverlayInner({
       ]
       try {
         const canvas_context = buildCanvasContext(nodes, edges)
-        thread.submit({
+        const values = {
           messages: newMessages,
           initial_search_query_count,
           max_research_loops,
           canvas_context,
-        })
+        }
+        lastSubmitValuesRef.current = values
+        thread.submit(values)
       } catch (err: any) {
         setError(err?.message || 'submit failed')
       }
