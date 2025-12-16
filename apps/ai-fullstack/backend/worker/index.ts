@@ -15,6 +15,32 @@ export interface Env {
   DEBUG_OPENAI_RESPONSES?: string;
 }
 
+function buildCorsHeaders(request: Request): Headers {
+  const origin = request.headers.get("Origin");
+  const headers = new Headers();
+
+  // Browser CORS: echo the request origin when present (works with credentials).
+  // If no Origin header (server-to-server), do not set CORS headers.
+  if (!origin) return headers;
+
+  // Restrict to the production web origin only.
+  if (origin !== "https://tapcanvas.beqlee.icu") return headers;
+
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Vary", "Origin");
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+  );
+  headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type,Authorization,Accept,Origin,X-Requested-With",
+  );
+  headers.set("Access-Control-Max-Age", "86400");
+  return headers;
+}
+
 function pickContainerEnv(env: Env): Record<string, string> {
   const entries: Array<[string, string | undefined]> = [
     ["GEMINI_API_KEY", env.GEMINI_API_KEY],
@@ -74,10 +100,23 @@ export class AgentBackend {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      const cors = buildCorsHeaders(request);
+      if (cors.get("Access-Control-Allow-Origin")) {
+        return new Response(null, { status: 204, headers: cors });
+      }
+      return new Response(null, { status: 204 });
+    }
+
     const url = new URL(request.url);
     if (url.pathname === "/health") return new Response("ok");
 
     const id = env.AGENT_BACKEND.idFromName("default");
-    return env.AGENT_BACKEND.get(id).fetch(request);
+    const res = await env.AGENT_BACKEND.get(id).fetch(request);
+    const cors = buildCorsHeaders(request);
+    if (!cors.get("Access-Control-Allow-Origin")) return res;
+    const out = new Response(res.body, res);
+    cors.forEach((v, k) => out.headers.set(k, v));
+    return out;
   },
 };
