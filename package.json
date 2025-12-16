@@ -11,8 +11,8 @@
     "build": "pnpm --filter @tapcanvas/web build",
     "build:api": "pnpm --filter cloudflare-workers-openapi deploy",
     "test": "pnpm -w -r run test",
-    "deploy:web:cf": "pnpm --filter @tapcanvas/web build && npx wrangler deploy",
-    "deploy:webcut":"wrangler --config apps/webcut-main/wrangler.toml deploy"
+    "deploy:web:cf": "pnpm --filter @tapcanvas/web build && npx wrangler --config wrangler.toml deploy --keep-vars",
+    "deploy:webcut": "pnpm --filter webcut run build:app && npx wrangler --config apps/webcut-main/wrangler.toml deploy --keep-vars"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",

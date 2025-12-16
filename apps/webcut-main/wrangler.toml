@@ -1,0 +1,14 @@
+name = "webcut"
+main = "../../cloudflare/worker.ts"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "../../dist"
+binding = "ASSETS"
+
+[observability]
+[observability.logs]
+enabled = false
+head_sampling_rate = 1
+invocation_logs = true
+persist = true

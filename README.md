@@ -236,6 +236,7 @@ cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 - ✅ 项目已配置 `.gitignore` 只忽略 `.env` 文件，但保留 `.env.example` 模板
 - 🔒 确保 API 密钥安全，只在本地 `.env` 文件中填写真实密钥
 - 🔐 `apps/hono-api/wrangler.jsonc` 已在 `.gitignore` 中忽略，避免把密钥提交到仓库
+- ⚠️ Workers（如 `tap-anvas`/`webcut`）如果你在 Dashboard 手动配置过变量，部署时请使用 `wrangler deploy --keep-vars`，否则 Wrangler 会删除配置文件里未声明的 vars（已在根 `package.json` 的部署脚本内默认开启）
 - ✍️ 沉浸式创作（小T）需要额外配置 `VITE_LANGGRAPH_API_URL`（见 `apps/web/.env.example`，Docker profile 默认 `http://localhost:8123`）
 
 **获取 API 密钥：**

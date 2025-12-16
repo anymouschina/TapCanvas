@@ -32,7 +32,7 @@
     "preversion": "standard-version && exit 0",
     "release": "standard-version",
     "dev:worker": "wrangler dev --port 8790",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy --keep-vars"
   },
   "keywords": [
     "video",
