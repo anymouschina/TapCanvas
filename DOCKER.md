@@ -20,7 +20,7 @@
 确保 `apps/web/.env` 中包含（示例见 `apps/web/.env.example`）：
 
 - `VITE_API_BASE="http://localhost:8788"`
-- `VITE_LANGGRAPH_API_URL="http://localhost:8123"`（Docker langgraph profile 默认）
+- `VITE_LANGGRAPH_API_URL="https://ai.beqlee.icu"`（Docker langgraph profile 默认）
 
 3) 打开入口并开始创作
 

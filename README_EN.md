@@ -77,7 +77,7 @@ Immersive Creation (XiaoT) uses LangGraph. Start the extra profile and point you
 docker compose --profile langgraph up -d
 ```
 
-Ensure `apps/web/.env` contains `VITE_LANGGRAPH_API_URL="http://localhost:8123"` (default for the Docker profile).
+Ensure `apps/web/.env` contains `VITE_LANGGRAPH_API_URL="https://ai.beqlee.icu"` (default for the Docker profile).
 
 ## Architecture / Tech Stack
 

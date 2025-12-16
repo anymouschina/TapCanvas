@@ -38,7 +38,7 @@ LangGraph Chat Overlay 相关能力需要额外启动 `langgraph` profile：
 docker compose --profile langgraph up -d
 ```
 
-默认会把 LangGraph API 暴露在 `http://localhost:8123`（对应 `apps/web/.env.example` 的 `VITE_LANGGRAPH_API_URL`）。
+默认会把 LangGraph API 暴露在 `https://ai.beqlee.icu`（对应 `apps/web/.env.example` 的 `VITE_LANGGRAPH_API_URL`）。
 
 ## 依赖与缓存
 

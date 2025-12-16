@@ -91,7 +91,7 @@ In production, the backend server serves the optimized static frontend build. La
 
 _Note: For the docker-compose.yml example you need a LangSmith API key, you can get one from [LangSmith](https://smith.langchain.com/settings)._
 
-_Note: If you are not running the docker-compose.yml example or exposing the backend server to the public internet, you should update the `apiUrl` in the `frontend/src/App.tsx` file to your host. Currently the `apiUrl` is set to `http://localhost:8123` for docker-compose or `http://localhost:2024` for development._
+_Note: If you are not running the docker-compose.yml example or exposing the backend server to the public internet, you should update the `apiUrl` in the `frontend/src/App.tsx` file to your host. Currently the `apiUrl` is set to `https://ai.beqlee.icu` for docker-compose or `http://localhost:2024` for development._
 
 **1. Build the Docker Image:**
 
@@ -105,7 +105,7 @@ _Note: If you are not running the docker-compose.yml example or exposing the bac
    GEMINI_API_KEY=<your_gemini_api_key> LANGSMITH_API_KEY=<your_langsmith_api_key> docker-compose up
    ```
 
-Open your browser and navigate to `http://localhost:8123/app/` to see the application. The API will be available at `http://localhost:8123`.
+Open your browser and navigate to `https://ai.beqlee.icu/app/` to see the application. The API will be available at `https://ai.beqlee.icu`.
 
 ## Technologies Used
 
