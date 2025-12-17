@@ -816,6 +816,44 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         getattr(result, "allow_canvas_tools_reason", None) or "根据用户意图判断。"
     )
 
+    # Safety fallback (heuristic, not strict string matching):
+    # For very short, low-information user turns that do not contain any creation intent,
+    # default to not executing canvas tools in this turn.
+    try:
+        last_user_text = ""
+        for m in reversed(state.get("messages") or []):
+            if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
+                last_user_text = str(getattr(m, "content", "") or "")
+                break
+        t = (last_user_text or "").strip()
+        # Collapse whitespace
+        t_compact = " ".join(t.split())
+        creation_hints = (
+            "生成",
+            "创建",
+            "画",
+            "做",
+            "帮",
+            "续写",
+            "分镜",
+            "故事板",
+            "九宫格",
+            "视频",
+            "图片",
+            "改",
+            "调整",
+            "修改",
+            "连接",
+            "运行",
+        )
+        if allow_canvas_tools and t_compact and len(t_compact) <= 8 and not any(
+            k in t_compact for k in creation_hints
+        ):
+            allow_canvas_tools = False
+            allow_canvas_tools_reason = "用户输入过短且未表达明确创作动作，先用选项确认下一步。"
+    except Exception:
+        pass
+
     # ensure defaults for downstream (even though web research removed)
     defaults = {
         "search_query": [],
@@ -1192,6 +1230,141 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         break
             except Exception:
                 last_user_text = ""
+
+            # Always-on "magician" content safety:
+            # - Block explicit sexual content generation.
+            # - Allow violence only in PG-13 cinematic form (no gore close-ups).
+            def _detect_sensitive_content(text: str) -> dict[str, bool]:
+                if not isinstance(text, str) or not text.strip():
+                    return {"sexual": False, "gore": False, "violence": False}
+                t = text.lower()
+                sexual_terms = (
+                    "porn",
+                    "色情",
+                    "成人视频",
+                    "a片",
+                    "无码",
+                    "裸",
+                    "裸体",
+                    "露点",
+                    "性交",
+                    "做爱",
+                    "强奸",
+                    "迷奸",
+                    "口交",
+                    "肛交",
+                    "性虐",
+                    "sm",
+                )
+                gore_terms = (
+                    "血浆",
+                    "喷血",
+                    "断肢",
+                    "肢解",
+                    "开膛",
+                    "剖腹",
+                    "爆头",
+                    "脑浆",
+                    "碎尸",
+                    "内脏",
+                    "脏器",
+                    "肠子",
+                    "斩首",
+                    "砍头",
+                    "割喉",
+                    "血肉模糊",
+                    "gore",
+                    "dismember",
+                    "decap",
+                    "beheading",
+                    "guts",
+                    "brains",
+                )
+                violence_terms = ("虐杀", "屠杀", "暴打", "折磨", "血腥", "残忍", "torture", "massacre")
+                return {
+                    "sexual": any(k in t for k in sexual_terms),
+                    "gore": any(k in t for k in gore_terms),
+                    "violence": any(k in t for k in violence_terms),
+                }
+
+            def _sanitize_violent_text(text: str) -> str:
+                if not isinstance(text, str) or not text.strip():
+                    return text
+                replacements = {
+                    "爆头": "强烈冲击（不展示细节）",
+                    "脑浆": "冲击性的后果（不展示细节）",
+                    "断肢": "受伤倒下（不展示细节）",
+                    "肢解": "镜头切走（用暗示表达）",
+                    "开膛": "镜头切走（用暗示表达）",
+                    "剖腹": "镜头切走（用暗示表达）",
+                    "内脏": "不展示细节",
+                    "肠子": "不展示细节",
+                    "碎尸": "不展示细节",
+                    "割喉": "镜头切走（用暗示表达）",
+                    "斩首": "镜头切走（用暗示表达）",
+                    "砍头": "镜头切走（用暗示表达）",
+                    "喷血": "用剪影/反应镜头表达冲击（不展示细节）",
+                    "血浆": "用光影/音效表达冲击（不展示细节）",
+                    "血肉模糊": "画面用遮挡/虚焦表达（不展示细节）",
+                }
+                out = text
+                for k, v in replacements.items():
+                    out = out.replace(k, v)
+                return out
+
+            safety_text = last_user_text or ""
+            try:
+                for c in tool_calls_payload or []:
+                    if c.get("name") != "createNode":
+                        continue
+                    args = c.get("arguments") or {}
+                    cfg = args.get("config")
+                    if isinstance(cfg, dict):
+                        p = cfg.get("prompt")
+                        np = cfg.get("negativePrompt")
+                        if isinstance(p, str) and p.strip():
+                            safety_text += "\n" + p
+                        if isinstance(np, str) and np.strip():
+                            safety_text += "\n" + np
+            except Exception:
+                pass
+            sensitive = _detect_sensitive_content(safety_text)
+            if sensitive.get("sexual"):
+                tool_calls_payload = []
+                quick_replies_payload = [
+                    {
+                        "label": "改成含蓄浪漫（不露骨）",
+                        "input": "把刚才的内容改写成含蓄浪漫、PG-13表达：不出现裸体/性行为/露骨描写，用暗示与情绪推进；然后再生成九宫格分镜。",
+                    },
+                    {
+                        "label": "改成亲密但克制",
+                        "input": "把亲密内容改成拥抱/牵手/靠近等克制表达（不涉及色情），强调关系与情绪；然后再生成分镜/视频。",
+                    },
+                    {
+                        "label": "只保留剧情，不生成画面",
+                        "input": "先不要生成画面。把内容改成适合大众平台的剧情梗概（不露骨），并给我3个可选走向按钮。",
+                    },
+                ]
+                result_text = "这段内容包含过于露骨的性内容，我不能直接生成。我可以把它“和谐化”为含蓄、电影化的暗示表达（不露骨、不裸露），你选一个方向我继续。"
+            elif sensitive.get("gore") or sensitive.get("violence"):
+                result_text = _sanitize_violent_text(result_text or "")
+                try:
+                    for c in tool_calls_payload or []:
+                        if c.get("name") != "createNode":
+                            continue
+                        args = c.get("arguments") or {}
+                        cfg = args.get("config")
+                        if not isinstance(cfg, dict):
+                            continue
+                        if isinstance(cfg.get("prompt"), str):
+                            cfg["prompt"] = _sanitize_violent_text(cfg["prompt"])
+                        neg = cfg.get("negativePrompt")
+                        neg_text = neg if isinstance(neg, str) else ""
+                        add_neg = "gore, dismemberment, intestines, brains, blood splatter close-up, explicit violence, torture porn, nude, explicit sex"
+                        if add_neg not in neg_text:
+                            cfg["negativePrompt"] = (neg_text + ("\n" if neg_text else "") + add_neg).strip()
+                except Exception:
+                    pass
             is_story_suggestion_request = (
                 any(k in (last_user_text or "") for k in ("续写", "后续剧情", "接下来", "续作"))
                 and any(k in (last_user_text or "") for k in ("推荐", "方向", "灵感", "怎么写"))
@@ -1220,6 +1393,88 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     },
                 ]
                 result_text = "给你 3 个续写方向，点一个我就按这个继续写；也可以选“自定义方向”把你想要的走向填进去。"
+
+            # Storyboard/video continuity gate:
+            # To avoid abrupt scene drift and accidental new subjects, require an explicit "lock" confirmation
+            # before creating storyboard/video nodes, unless the user already confirmed.
+            storyboard_intent = any(
+                k in (last_user_text or "")
+                for k in ("九宫格", "分镜", "故事板", "storyboard", "短片", "动画", "成片", "15s", "15秒")
+            )
+            has_lock_confirmation = any(
+                k in (last_user_text or "")
+                for k in ("确认锁定", "锁定场景", "锁定主体", "锁定风格", "确认风格", "风格锁定", "我确认", "确认：")
+            )
+
+            def _extract_style_lock_from_messages(messages_obj: list | None) -> str | None:
+                if not isinstance(messages_obj, list):
+                    return None
+                for m in reversed(messages_obj):
+                    # Prefer user confirmations
+                    if getattr(m, "type", None) != "human" and getattr(m, "role", None) != "user":
+                        continue
+                    text = str(getattr(m, "content", "") or "")
+                    if not text:
+                        continue
+                    for key in ("确认锁定风格：", "风格锁定：", "锁定风格："):
+                        if key in text:
+                            after = text.split(key, 1)[1].strip()
+                            if not after:
+                                continue
+                            first_line = after.splitlines()[0].strip()
+                            return first_line[:80] if first_line else None
+                return None
+
+            style_lock = _extract_style_lock_from_messages(state.get("messages") or [])
+            if storyboard_intent and not has_lock_confirmation and not is_story_suggestion_request:
+                # Convert any accidental tool calls into a "plan" with buttons for user confirmation.
+                tool_calls_payload = []
+                if not quick_replies_payload:
+                    if not style_lock:
+                        quick_replies_payload = [
+                            {
+                                "label": "锁定风格：日漫2D（赛璐璐）",
+                                "input": "确认锁定风格：日漫2D（干净线稿+赛璐璐）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                            },
+                            {
+                                "label": "锁定风格：美漫2D（粗线条）",
+                                "input": "确认锁定风格：美漫2D（粗线条+高对比）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                            },
+                            {
+                                "label": "锁定风格：写实真人",
+                                "input": "确认锁定风格：写实真人（电影质感）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                            },
+                            {
+                                "label": "自定义风格…",
+                                "input": "确认锁定风格：\n- 风格类型（2D日漫/2D美漫/写实/其他）：\n- 线条/材质：\n- 色彩与光影：\n- 镜头语言：\n同时：场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。填写后请生成 3x3 九宫格分镜图并连线参考图。",
+                            },
+                        ]
+                    else:
+                        quick_replies_payload = [
+                            {
+                                "label": "确认锁定并生成分镜",
+                                "input": f"确认锁定风格：{style_lock}。确认锁定：场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（主角数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                            },
+                            {
+                                "label": "新增主体…（先出设定图）",
+                                "input": "我要新增主体（角色/产品/关键道具）：\n- 主体1：\n- 主体2：\n要求：先分别生成每个主体的设定图（image），等我确认后再生成九宫格分镜并连线消费这些设定图。",
+                            },
+                            {
+                                "label": "改场景…（先锁定场景图）",
+                                "input": "我想锁定新的主场景：\n- 场景描述：\n要求：先生成一张“场景设定图”（image）给我确认；确认后九宫格分镜必须只在该场景内推进（光线连续），再生成15s视频。",
+                            },
+                            {
+                                "label": "自定义锁定规则…",
+                                "input": "我想自定义锁定规则：\n- 主场景（只能一个）：\n- 允许的过渡场景（可选）：\n- 主体清单（角色/产品/道具）与数量：\n- 禁止事项：\n请按我的规则先补齐必要的设定图，再生成九宫格分镜并继续。",
+                            },
+                        ]
+                if not isinstance(result_text, str) or not result_text.strip():
+                    result_text = "为保证叙事连贯，我需要先锁定“主场景 + 主体数量/清单”。点一个选项确认后，我再在画布里生成九宫格分镜并继续成片。"
+                else:
+                    result_text = (
+                        result_text.strip()
+                        + "\n\n为保证叙事连贯（画风一致、场景不乱跳、主体不增删），请先确认锁定规则，我再生成九宫格分镜。"
+                    )
 
             # Supervisor gate: only allow canvas side-effects when the router approved it for this turn.
             allow_canvas_tools = state.get("allow_canvas_tools")
@@ -1410,6 +1665,32 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     nodes_ctx = canvas_context_obj.get("nodes")
                     if not isinstance(nodes_ctx, list) or not nodes_ctx:
                         return []
+                    # 1) Prefer the most recent successful storyboard image as continuity anchor (previous episode/segment).
+                    storyboard_anchor: str | None = None
+                    for n in reversed(nodes_ctx):
+                        if not isinstance(n, dict):
+                            continue
+                        label = n.get("label")
+                        if not isinstance(label, str) or not label.strip():
+                            continue
+                        label = label.strip()
+                        if label == storyboard_label:
+                            continue
+                        kind = n.get("kind") or n.get("type")
+                        if kind not in ("image", "textToImage", "mosaic"):
+                            continue
+                        if n.get("status") != "success":
+                            continue
+                        image_url = n.get("imageUrl")
+                        if not isinstance(image_url, str) or not image_url.strip():
+                            continue
+                        hint = f"{label}\n{n.get('promptPreview') or ''}"
+                        if any(k in hint for k in ("九宫格", "3x3", "分镜", "storyboard")):
+                            storyboard_anchor = label
+                            break
+
+                    # 2) Fill remaining slots with subject anchors (characters/products/key props),
+                    # excluding storyboard/video nodes to avoid over-weighting structure over subject identity.
                     candidates: list[tuple[int, int, str]] = []
                     for idx, n in enumerate(nodes_ctx):
                         if not isinstance(n, dict):
@@ -1433,20 +1714,62 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         score = 0
                         if any(k in label for k in ("角色", "设定", "立绘", "主视觉", "character", "design")):
                             score += 3
+                        # Products / key props hints
+                        if any(k in label for k in ("产品", "道具", "物件", "prop", "product")):
+                            score += 2
                         if any(k in label.lower() for k in ("fox", "bunny", "rabbit")) or any(
                             k in label for k in ("狐狸", "兔子")
                         ):
                             score += 2
                         candidates.append((score, idx, label))
                     candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
-                    picked = [label for _, _, label in candidates[:3]]
-                    return picked
+                    picked: list[str] = []
+                    if storyboard_anchor:
+                        picked.append(storyboard_anchor)
+                    for _, _, label in candidates:
+                        if label in picked:
+                            continue
+                        picked.append(label)
+                        if len(picked) >= 3:
+                            break
+                    return picked[:3]
 
                 if wants_storyboard and isinstance(storyboard_image_label, str) and storyboard_image_label:
                     canvas_context_obj = state.get("canvas_context")
                     reference_labels = _pick_reference_image_labels_from_canvas_context(
                         canvas_context_obj, storyboard_image_label
                     )
+                    # Inject a default continuity constraint into the storyboard prompt:
+                    # - panel-to-panel bridge frame (end pose/composition repeats at next start)
+                    # - if previous storyboard is among references, continue from its final panel
+                    try:
+                        for c in tool_calls_payload:
+                            if c.get("name") != "createNode":
+                                continue
+                            args = c.get("arguments") or {}
+                            if args.get("type") != "image":
+                                continue
+                            label = args.get("label")
+                            if not isinstance(label, str) or label.strip() != storyboard_image_label:
+                                continue
+                            cfg = args.get("config")
+                            if not isinstance(cfg, dict):
+                                continue
+                            prompt_val = cfg.get("prompt")
+                            if not isinstance(prompt_val, str) or not prompt_val.strip():
+                                continue
+                            if "衔接帧" in prompt_val or "bridge frame" in prompt_val.lower():
+                                break
+                            continuity = (
+                                "\n\n连续性要求（很重要）：\n"
+                                "- 九宫格面板之间要有“衔接帧”感觉：面板N的结尾姿态/构图/机位/光线，应与面板N+1的开场保持一致（像同一动作的承接），避免突兀跳切。\n"
+                                "- 如果上游参考里包含上一张九宫格分镜图：请让本次面板1自然承接上一张的面板9（构图/主体位置/光线延续），再继续推进新内容。\n"
+                                "- 场景不要自由切换；主体数量不要在分镜中途增删。\n"
+                            )
+                            cfg["prompt"] = prompt_val.rstrip() + continuity
+                            break
+                    except Exception:
+                        pass
                     if reference_labels:
                         existing_pairs: set[tuple[str, str]] = set()
                         for c in tool_calls_payload:
@@ -1744,6 +2067,68 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         content = _fallback_text_from_tool_calls(tool_calls_payload)
     if isinstance(content, str) and content.strip():
         content, quick_replies_payload = _extract_tapcanvas_actions(content)
+
+    # Ensure the assistant always provides a "hook" to continue after any canvas operations.
+    # If the model didn't provide quick replies, synthesize a few safe next-step options.
+    if tool_calls_payload:
+        try:
+            created_images: list[str] = []
+            created_videos: list[str] = []
+            ran_nodes: set[str] = set()
+            for call in tool_calls_payload:
+                name = call.get("name")
+                args = call.get("arguments") or {}
+                if name == "createNode":
+                    label = args.get("label")
+                    node_type = args.get("type")
+                    if isinstance(label, str) and label.strip():
+                        label = label.strip()
+                        if node_type in ("image", "textToImage"):
+                            created_images.append(label)
+                        if node_type == "composeVideo":
+                            created_videos.append(label)
+                if name == "runNode":
+                    node_id = args.get("nodeId")
+                    if isinstance(node_id, str) and node_id.strip():
+                        ran_nodes.add(node_id.strip())
+
+            if not quick_replies_payload:
+                actions: list[dict] = []
+                # If we created a video node but didn't run it (common storyboard flow), offer to run it next.
+                for v in created_videos:
+                    if v in ran_nodes:
+                        continue
+                    actions.append(
+                        {
+                            "label": "继续生成15s视频",
+                            "input": f"请运行节点：{v}。",
+                        }
+                    )
+                    break
+                # Offer to iterate on the just-created image/storyboard.
+                if created_images:
+                    img = created_images[-1]
+                    actions.append(
+                        {
+                            "label": "微调九宫格分镜",
+                            "input": f"请基于刚生成的九宫格分镜图（{img}）做微调：镜头更紧凑、关键转折更清晰、字幕更短更有黑色幽默；然后再生成15s视频。",
+                        }
+                    )
+                actions.append(
+                    {
+                        "label": "换一个方向/风格",
+                        "input": "我想换一个方向/风格：\n- 新风格：\n- 重点改动：\n请基于当前项目重新生成九宫格分镜并继续生成15s视频。",
+                    }
+                )
+                quick_replies_payload = actions[:4]
+
+            # Append a minimal next-step hook to the message text (avoid repeating if already present).
+            if isinstance(content, str):
+                if "下一步" not in content and "你下一步" not in content and "点一个" not in content:
+                    content = (content.strip() + "\n\n分镜生成后，点下面选项继续。").strip()
+        except Exception:
+            # best-effort only
+            pass
     for source in state["sources_gathered"]:
         if source["short_url"] in content:
             content = content.replace(source["short_url"], source["value"])

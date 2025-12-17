@@ -226,22 +226,53 @@ function collectReferenceImages(state: any, targetId: string): string[] {
   const inbound = edges.filter((e: any) => e.target === targetId)
   if (!inbound.length) return []
 
+  const pickVideoTailFrame = (data: any): string => {
+    if (!data) return ''
+    const results = Array.isArray(data.videoResults) ? data.videoResults : []
+    const primaryIndex =
+      typeof data.videoPrimaryIndex === 'number' &&
+      data.videoPrimaryIndex >= 0 &&
+      data.videoPrimaryIndex < results.length
+        ? data.videoPrimaryIndex
+        : 0
+    // Treat the latest video's thumbnail as the "tail frame" reference by default.
+    const fromResults =
+      results[primaryIndex] && typeof results[primaryIndex].thumbnailUrl === 'string'
+        ? results[primaryIndex].thumbnailUrl.trim()
+        : results[0] && typeof results[0].thumbnailUrl === 'string'
+          ? results[0].thumbnailUrl.trim()
+          : ''
+    const fromNode = typeof data.videoThumbnailUrl === 'string' ? data.videoThumbnailUrl.trim() : ''
+    return fromResults || fromNode || ''
+  }
+
   // Prefer multiple upstream images (most recent first) for multi-character consistency,
   // while still avoiding using the current node's own output as reference.
   const upstreamImageNodes: Node[] = []
   const seen = new Set<string>()
+  const collected: string[] = []
+  let videoTailFrameAdded = false
   for (const edge of [...inbound].reverse()) {
     const src = nodes.find((n: Node) => n.id === edge.source)
     if (!src || seen.has(src.id)) continue
     const kind: string | undefined = (src?.data as any)?.kind
-    if (!kind || !IMAGE_NODE_KINDS.has(kind)) continue
+    if (!kind) continue
+    // If the upstream is a video node, use its thumbnail as a tail-frame reference image.
+    if (!videoTailFrameAdded && (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard')) {
+      const tail = pickVideoTailFrame((src as any)?.data || {})
+      if (tail) {
+        collected.push(tail)
+        videoTailFrameAdded = true
+      }
+      seen.add(src.id)
+      continue
+    }
+    if (!IMAGE_NODE_KINDS.has(kind)) continue
     seen.add(src.id)
     upstreamImageNodes.push(src)
     if (upstreamImageNodes.length >= 3) break
   }
-  if (!upstreamImageNodes.length) return []
 
-  const collected: string[] = []
   const pushPrimary = (data: any) => {
     const results = Array.isArray(data.imageResults) ? data.imageResults : []
     const primaryIndex =
