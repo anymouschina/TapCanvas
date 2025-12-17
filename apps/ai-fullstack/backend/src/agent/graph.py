@@ -956,10 +956,11 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         tool_tier = "canvas"
     elif isinstance(tool_tier, str) and tool_tier.lower() == "canvas":
         tool_tier = "none"
-    if isinstance(tool_tier, str) and tool_tier.lower() == "web":
-        # Current graph may or may not include web research; keep this for future expansion.
+    if isinstance(tool_tier, str) and tool_tier.lower() in ("web", "rag"):
+        # This agent uses RAG (KB retrieval) only; external web search is disallowed.
+        tool_tier = "rag"
         allow_canvas_tools = False
-        allow_canvas_tools_reason = "本轮为检索/研究意图，禁用画布工具以保持互斥。"
+        allow_canvas_tools_reason = "本轮为知识库检索（RAG）意图，禁用画布工具以保持互斥。"
 
     # Safety fallback (heuristic, not strict string matching):
     # For very short, low-information user turns that do not contain any creation intent,
