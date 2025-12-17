@@ -3,7 +3,7 @@ import json
 import urllib.request
 import urllib.error
 
-from agent.tools_and_schemas import RoleDecision, SearchQueryList, Reflection
+from agent.tools_and_schemas import RoleDecision, SafetyDecision, SearchQueryList, Reflection
 from dotenv import load_dotenv
 from openai import OpenAI, APIConnectionError, OpenAIError
 from langchain_core.messages import AIMessage
@@ -39,6 +39,116 @@ from agent.utils import (
 from agent.roles import DEFAULT_ROLE_ID, normalize_role_id, role_map, roles_prompt_block
 
 load_dotenv()
+
+ROLE_ALLOWED_CANVAS_TOOLS: dict[str, set[str]] = {
+    # Creative operators
+    "storyboard_artist": {"createNode", "updateNode", "connectNodes", "runNode"},
+    "character_designer": {"createNode", "updateNode", "connectNodes", "runNode"},
+    "scene_designer": {"createNode", "updateNode", "connectNodes", "runNode"},
+    # Governance / writing-only roles
+    "art_director": set(),
+    "screenwriter": set(),
+    "product_designer": set(),
+    "music_director": set(),
+    # Safety rewrite role: should not mutate canvas unless explicitly requested/confirmed
+    "magician": set(),
+}
+
+def _render_canvas_context_for_prompt(canvas_context: dict | None) -> str:
+    """Render a compact, safe canvas context summary for prompts.
+
+    NOTE: Do not include negativePrompt previews to avoid contaminating safety classifiers
+    and to reduce accidental keyword-trigger loops.
+    """
+    if not isinstance(canvas_context, dict):
+        return ""
+    summary = canvas_context.get("summary") if isinstance(canvas_context.get("summary"), dict) else {}
+    node_count = summary.get("nodeCount")
+    edge_count = summary.get("edgeCount")
+    kinds = summary.get("kinds") if isinstance(summary.get("kinds"), list) else []
+
+    parts: list[str] = []
+    meta_bits: list[str] = []
+    if isinstance(node_count, int):
+        meta_bits.append(f"nodes={node_count}")
+    if isinstance(edge_count, int):
+        meta_bits.append(f"edges={edge_count}")
+    if kinds:
+        kinds_str = ", ".join([str(k) for k in kinds[:8] if isinstance(k, (str, int, float))])
+        if kinds_str:
+            meta_bits.append(f"kinds=[{kinds_str}]")
+    if meta_bits:
+        parts.append("summary: " + " | ".join(meta_bits))
+
+    characters = canvas_context.get("characters")
+    if isinstance(characters, list) and characters:
+        parts.append("characters:")
+        for c in characters[:6]:
+            if not isinstance(c, dict):
+                continue
+            label = c.get("label") or c.get("username") or c.get("nodeId")
+            desc = c.get("description")
+            line = f"- {str(label)[:80]}" if label else "- (unnamed)"
+            if isinstance(desc, str) and desc.strip():
+                line += f" | {desc.strip()[:140]}"
+            parts.append(line)
+
+    story_ctx = canvas_context.get("storyContext")
+    if isinstance(story_ctx, list) and story_ctx:
+        parts.append("storyContext (recent excerpts):")
+        for item in story_ctx[:2]:
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label") or item.get("nodeId") or ""
+            excerpt = item.get("promptExcerpt") or ""
+            if isinstance(excerpt, str) and excerpt.strip():
+                parts.append(f"- {str(label)[:60]}: {excerpt.strip()[:500]}")
+
+    timeline = canvas_context.get("timeline")
+    if isinstance(timeline, list) and timeline:
+        parts.append("timeline (top):")
+        for t in timeline[:6]:
+            if not isinstance(t, dict):
+                continue
+            label = t.get("label") or t.get("nodeId")
+            kind = t.get("kind")
+            status = t.get("status")
+            dur = t.get("duration")
+            bits: list[str] = []
+            if label:
+                bits.append(str(label)[:80])
+            if kind:
+                bits.append(f"kind={str(kind)[:24]}")
+            if status:
+                bits.append(f"status={str(status)[:16]}")
+            if isinstance(dur, (int, float)):
+                bits.append(f"duration={int(dur)}s")
+            if bits:
+                parts.append("- " + " | ".join(bits))
+
+    nodes = canvas_context.get("nodes")
+    if isinstance(nodes, list) and nodes:
+        parts.append("nodes (sample):")
+        for n in nodes[:10]:
+            if not isinstance(n, dict):
+                continue
+            label = n.get("label") or n.get("id")
+            kind = n.get("kind") or n.get("type")
+            status = n.get("status")
+            prompt_preview = n.get("promptPreview")
+            bits: list[str] = []
+            if label:
+                bits.append(str(label)[:80])
+            if kind:
+                bits.append(f"kind={str(kind)[:24]}")
+            if status:
+                bits.append(f"status={str(status)[:16]}")
+            if isinstance(prompt_preview, str) and prompt_preview.strip():
+                bits.append(f"prompt='{prompt_preview.strip()[:120]}'")
+            if bits:
+                parts.append("- " + " | ".join(bits))
+
+    return "\n".join(parts).strip()
 
 def _autorag_normalize_result(result: dict) -> tuple[list[str], list[dict]]:
     """Best-effort normalize AutoRAG result into (snippets, sources)."""
@@ -277,7 +387,7 @@ def _composevideo_prompt_from_structured_config(cfg: dict) -> str:
     shots = cfg.get("shots") if isinstance(cfg.get("shots"), list) else []
 
     parts: list[str] = []
-    parts.append("15秒分镜视频提示词（分镜清单 + 镜头语言）")
+    parts.append("10–15秒分镜视频提示词（分镜清单 + 镜头语言）")
     meta_bits: list[str] = []
     if isinstance(duration, (int, float)):
         meta_bits.append(f"时长: {duration}s")
@@ -765,6 +875,34 @@ def _tool_definitions_for_canvas() -> list[dict]:
     ]
 
 
+def _tool_definitions_for_role(role_id: str, allow_canvas_tools: bool) -> list[dict]:
+    """Return tool definitions filtered by role permissions and the decision-layer gate."""
+    if not allow_canvas_tools:
+        return []
+    resolved_id = normalize_role_id(role_id or DEFAULT_ROLE_ID)
+    allowed = ROLE_ALLOWED_CANVAS_TOOLS.get(resolved_id, set())
+    if not allowed:
+        return []
+    return [t for t in _tool_definitions_for_canvas() if t.get("name") in allowed]
+
+
+def _filter_tool_calls_by_role(tool_calls: list[dict], role_id: str, allow_canvas_tools: bool) -> list[dict]:
+    if not allow_canvas_tools:
+        return []
+    resolved_id = normalize_role_id(role_id or DEFAULT_ROLE_ID)
+    allowed = ROLE_ALLOWED_CANVAS_TOOLS.get(resolved_id, set())
+    if not allowed:
+        return []
+    filtered: list[dict] = []
+    for c in tool_calls or []:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name")
+        if name in allowed:
+            filtered.append(c)
+    return filtered
+
+
 def _resolve_role(role_id: str):
     """Return a validated role id and its profile."""
     resolved_id = normalize_role_id(role_id)
@@ -780,12 +918,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     llm_provider = configurable.llm_provider.lower()
     conversation = format_messages_for_prompt(state["messages"])
     canvas_context = state.get("canvas_context")
-    canvas_context_text = ""
-    if canvas_context:
-        try:
-            canvas_context_text = json.dumps(canvas_context, ensure_ascii=False)
-        except Exception:
-            canvas_context_text = str(canvas_context)
+    canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
     prompt = role_router_instructions.format(
         roles_block=roles_prompt_block(),
         default_role_id=DEFAULT_ROLE_ID,
@@ -815,6 +948,18 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     allow_canvas_tools_reason = (
         getattr(result, "allow_canvas_tools_reason", None) or "根据用户意图判断。"
     )
+    tool_tier = getattr(result, "tool_tier", "none") or "none"
+    intent = getattr(result, "intent", None)
+
+    # Enforce mutually-exclusive tiers.
+    if allow_canvas_tools:
+        tool_tier = "canvas"
+    elif isinstance(tool_tier, str) and tool_tier.lower() == "canvas":
+        tool_tier = "none"
+    if isinstance(tool_tier, str) and tool_tier.lower() == "web":
+        # Current graph may or may not include web research; keep this for future expansion.
+        allow_canvas_tools = False
+        allow_canvas_tools_reason = "本轮为检索/研究意图，禁用画布工具以保持互斥。"
 
     # Safety fallback (heuristic, not strict string matching):
     # For very short, low-information user turns that do not contain any creation intent,
@@ -861,6 +1006,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         "sources_gathered": [],
         "initial_search_query_count": state.get("initial_search_query_count", 0),
         "max_research_loops": state.get("max_research_loops", 0),
+        "agent_loop_count": state.get("agent_loop_count", 0),
     }
 
     return {
@@ -869,6 +1015,8 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         "active_role_reason": reason,
         "allow_canvas_tools": allow_canvas_tools,
         "allow_canvas_tools_reason": allow_canvas_tools_reason,
+        "active_intent": intent or "",
+        "active_tool_tier": tool_tier,
         **{k: v for k, v in defaults.items() if k not in state},
     }
 
@@ -1101,6 +1249,13 @@ def evaluate_research(
         if state.get("max_research_loops") is not None
         else configurable.max_research_loops
     )
+    hard_max = configurable.hard_max_research_loops if hasattr(configurable, "hard_max_research_loops") else 10
+    try:
+        max_research_loops = int(max_research_loops)
+    except Exception:
+        max_research_loops = configurable.max_research_loops
+    if isinstance(hard_max, int) and hard_max > 0:
+        max_research_loops = min(max_research_loops, hard_max)
     if state["is_sufficient"] or state["research_loop_count"] >= max_research_loops:
         return "finalize_answer"
     else:
@@ -1132,6 +1287,9 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     configurable = Configuration.from_runnable_config(config)
     llm_provider = configurable.llm_provider.lower()
     reasoning_model = state.get("reasoning_model") or configurable.answer_model
+    agent_loop_count = int(state.get("agent_loop_count", 0) or 0) + 1
+    hard_turn_cap = int(getattr(configurable, "hard_max_turn_loops", 10) or 10)
+    state["agent_loop_count"] = agent_loop_count
 
     # Resolve role directive for persona-aware answer.
     # Always include an "art director" supervision rubric, even when a specialist role is active.
@@ -1148,12 +1306,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     # Format the prompt
     current_date = get_current_date()
     canvas_context = state.get("canvas_context")
-    canvas_context_text = ""
-    if canvas_context:
-        try:
-            canvas_context_text = json.dumps(canvas_context, ensure_ascii=False)
-        except Exception:
-            canvas_context_text = str(canvas_context)
+    canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
     formatted_prompt = answer_instructions.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
@@ -1203,22 +1356,28 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 break
         return cleaned, normalized or None
 
+    allow_canvas_tools = bool(state.get("allow_canvas_tools", True))
+    role_tools = _tool_definitions_for_role(resolved_id, allow_canvas_tools)
+
     if llm_provider == "openai":
         try:
-            completion = get_openai_client().responses.create(
-                model=reasoning_model,
-                input=[
+            kwargs: dict = {
+                "model": reasoning_model,
+                "input": [
                     {
                         "role": "user",
                         "content": [{"type": "input_text", "text": formatted_prompt}],
                     }
                 ],
-                tools=_tool_definitions_for_canvas(),
-                tool_choice="auto",
-                stream=True,
-            )
+                "stream": True,
+            }
+            if role_tools:
+                kwargs["tools"] = role_tools
+                kwargs["tool_choice"] = "auto"
+            completion = get_openai_client().responses.create(**kwargs)
             debug_openai_response("finalize_answer", completion)
             result_text, tool_calls_payload = _collect_stream_text_and_tools(completion)
+            tool_calls_payload = _filter_tool_calls_by_role(tool_calls_payload, resolved_id, allow_canvas_tools)
 
             # If the user is asking for open-ended story continuation recommendations,
             # do NOT auto-create storyboard/video nodes in this turn; offer selectable directions.
@@ -1232,60 +1391,59 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 last_user_text = ""
 
             # Always-on "magician" content safety:
-            # - Block explicit sexual content generation.
-            # - Allow violence only in PG-13 cinematic form (no gore close-ups).
-            def _detect_sensitive_content(text: str) -> dict[str, bool]:
+            # - Safety classification should be decided by an LLM (not brittle keyword lists).
+            # - We only use lightweight sanitization transforms AFTER classification.
+            def _classify_safety(user_text: str, planned_prompts: str) -> SafetyDecision:
+                model = getattr(configurable, "safety_classifier_model", None) or configurable.role_selector_model
+                payload = (
+                    "You are a strict-but-practical content safety classifier for a public creative tool.\n"
+                    "Task: judge whether the request/planned prompts contain explicit sexual content, explicit nudity, graphic gore, or explicit violence.\n"
+                    "Rules:\n"
+                    "- sexual=true only for explicit sexual acts/pornographic intent.\n"
+                    "- nudity=true if explicit nudity is requested or described for output.\n"
+                    "- gore=true only for graphic body harm/viscera/dismemberment close-ups.\n"
+                    "- violence=true for explicit harm descriptions that should be softened to PG-13 cinematic implication.\n"
+                    "- should_block=true if the assistant must refuse direct generation and ask to rewrite first (typically sexual/porn; or extreme gore).\n"
+                    "- should_sanitize=true if output should be rewritten/softened (PG-13) before proceeding.\n"
+                    "Return a JSON object matching the provided schema.\n\n"
+                    "USER_TEXT:\n"
+                    f"{(user_text or '').strip()}\n\n"
+                    "PLANNED_PROMPTS (may be empty):\n"
+                    f"{(planned_prompts or '').strip()}\n"
+                )
+                try:
+                    return _call_openai_structured(model, payload, SafetyDecision)
+                except Exception:
+                    # Fallback: assume safe but keep sanitization enabled in prompts via negativePrompt.
+                    return SafetyDecision(
+                        sexual=False,
+                        nudity=False,
+                        gore=False,
+                        violence=False,
+                        should_block=False,
+                        should_sanitize=True,
+                        reason="Fallback: classifier unavailable.",
+                    )
+
+            def _sanitize_sexual_text(text: str) -> str:
                 if not isinstance(text, str) or not text.strip():
-                    return {"sexual": False, "gore": False, "violence": False}
-                t = text.lower()
-                sexual_terms = (
-                    "porn",
-                    "色情",
-                    "成人视频",
-                    "a片",
-                    "无码",
-                    "裸",
-                    "裸体",
-                    "露点",
-                    "性交",
-                    "做爱",
-                    "强奸",
-                    "迷奸",
-                    "口交",
-                    "肛交",
-                    "性虐",
-                    "sm",
-                )
-                gore_terms = (
-                    "血浆",
-                    "喷血",
-                    "断肢",
-                    "肢解",
-                    "开膛",
-                    "剖腹",
-                    "爆头",
-                    "脑浆",
-                    "碎尸",
-                    "内脏",
-                    "脏器",
-                    "肠子",
-                    "斩首",
-                    "砍头",
-                    "割喉",
-                    "血肉模糊",
-                    "gore",
-                    "dismember",
-                    "decap",
-                    "beheading",
-                    "guts",
-                    "brains",
-                )
-                violence_terms = ("虐杀", "屠杀", "暴打", "折磨", "血腥", "残忍", "torture", "massacre")
-                return {
-                    "sexual": any(k in t for k in sexual_terms),
-                    "gore": any(k in t for k in gore_terms),
-                    "violence": any(k in t for k in violence_terms),
+                    return text
+                replacements = {
+                    "无码": "（不展示细节）",
+                    "露点": "穿着完整（不露骨）",
+                    "裸体": "穿着完整（不露骨）",
+                    "性交": "亲密互动（不露骨）",
+                    "做爱": "亲密互动（不露骨）",
+                    "口交": "亲密互动（不露骨）",
+                    "肛交": "亲密互动（不露骨）",
+                    "强奸": "性侵（不展示细节，仅点到为止）",
+                    "迷奸": "性侵（不展示细节，仅点到为止）",
+                    "porn": "（不露骨）",
                 }
+                out = text
+                for k, v in replacements.items():
+                    out = out.replace(k, v)
+                return out
 
             def _sanitize_violent_text(text: str) -> str:
                 if not isinstance(text, str) or not text.strip():
@@ -1312,7 +1470,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     out = out.replace(k, v)
                 return out
 
-            safety_text = last_user_text or ""
+            tool_prompts_text = ""
             try:
                 for c in tool_calls_payload or []:
                     if c.get("name") != "createNode":
@@ -1321,15 +1479,13 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     cfg = args.get("config")
                     if isinstance(cfg, dict):
                         p = cfg.get("prompt")
-                        np = cfg.get("negativePrompt")
                         if isinstance(p, str) and p.strip():
-                            safety_text += "\n" + p
-                        if isinstance(np, str) and np.strip():
-                            safety_text += "\n" + np
+                            tool_prompts_text += "\n" + p
             except Exception:
                 pass
-            sensitive = _detect_sensitive_content(safety_text)
-            if sensitive.get("sexual"):
+            safety = _classify_safety(last_user_text or "", tool_prompts_text)
+
+            if safety.should_block and (safety.sexual or safety.nudity):
                 tool_calls_payload = []
                 quick_replies_payload = [
                     {
@@ -1344,9 +1500,35 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         "label": "只保留剧情，不生成画面",
                         "input": "先不要生成画面。把内容改成适合大众平台的剧情梗概（不露骨），并给我3个可选走向按钮。",
                     },
+                    {
+                        "label": "我只是要分镜（无色情）",
+                        "input": "我这段没有色情/裸露/性行为内容，只是要做分镜与提示词；请按原剧情继续生成九宫格分镜与统一提示词，并在提示词里明确：无裸露、无性行为、PG-13。",
+                    },
                 ]
-                result_text = "这段内容包含过于露骨的性内容，我不能直接生成。我可以把它“和谐化”为含蓄、电影化的暗示表达（不露骨、不裸露），你选一个方向我继续。"
-            elif sensitive.get("gore") or sensitive.get("violence"):
+                result_text = (
+                    "内容安全检查判定为需要先降级到 PG-13（不露骨、不裸露）。"
+                    "我不会生成露骨色情内容；可以先把表达改成含蓄、电影化暗示再继续做分镜/视频。点一个按钮继续。"
+                )
+            elif safety.should_sanitize and (safety.sexual or safety.nudity):
+                # Sanitize prompts and add safety negatives, but do not hard-block the whole turn.
+                try:
+                    for c in tool_calls_payload or []:
+                        if c.get("name") != "createNode":
+                            continue
+                        args = c.get("arguments") or {}
+                        cfg = args.get("config")
+                        if not isinstance(cfg, dict):
+                            continue
+                        if isinstance(cfg.get("prompt"), str):
+                            cfg["prompt"] = _sanitize_sexual_text(cfg["prompt"])
+                        neg = cfg.get("negativePrompt")
+                        neg_text = neg if isinstance(neg, str) else ""
+                        add_neg = "nude, naked, explicit sex, porn, nipples, genitalia"
+                        if add_neg not in neg_text:
+                            cfg["negativePrompt"] = (neg_text + ("\n" if neg_text else "") + add_neg).strip()
+                except Exception:
+                    pass
+            elif safety.should_sanitize and (safety.gore or safety.violence):
                 result_text = _sanitize_violent_text(result_text or "")
                 try:
                     for c in tool_calls_payload or []:
@@ -1405,6 +1587,16 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 k in (last_user_text or "")
                 for k in ("确认锁定", "锁定场景", "锁定主体", "锁定风格", "确认风格", "风格锁定", "我确认", "确认：")
             )
+            implicit_lock_confirmation = any(
+                k in (last_user_text or "")
+                for k in ("继续", "按你给的", "就按这个", "照这个来", "不用确认", "直接生成", "别问了")
+            )
+            # Hard fallback to prevent self-looping: after N turns in the same thread,
+            # stop blocking on lock confirmation and proceed with default lock behavior.
+            if hard_turn_cap > 0 and agent_loop_count >= hard_turn_cap:
+                has_lock_confirmation = True
+            if storyboard_intent and implicit_lock_confirmation:
+                has_lock_confirmation = True
 
             def _extract_style_lock_from_messages(messages_obj: list | None) -> str | None:
                 if not isinstance(messages_obj, list):
@@ -1433,7 +1625,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     if not style_lock:
                         quick_replies_payload = [
                             {
-                                "label": "锁定风格：日漫2D（赛璐璐）",
+                                "label": "继续（默认锁定：日漫2D）",
                                 "input": "确认锁定风格：日漫2D（干净线稿+赛璐璐）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
                             },
                             {
@@ -1452,7 +1644,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     else:
                         quick_replies_payload = [
                             {
-                                "label": "确认锁定并生成分镜",
+                                "label": "继续（按已锁定风格生成分镜）",
                                 "input": f"确认锁定风格：{style_lock}。确认锁定：场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（主角数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
                             },
                             {
@@ -1473,7 +1665,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 else:
                     result_text = (
                         result_text.strip()
-                        + "\n\n为保证叙事连贯（画风一致、场景不乱跳、主体不增删），请先确认锁定规则，我再生成九宫格分镜。"
+                        + "\n\n为保证叙事连贯（画风一致、场景不乱跳、主体不增删），请先确认锁定规则；或直接回复「继续」，我将按默认锁定（日漫2D/单主场景/主体不新增）生成九宫格分镜。"
                     )
 
             # Supervisor gate: only allow canvas side-effects when the router approved it for this turn.
@@ -1612,6 +1804,26 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     cfg = args.get("config")
                     if not isinstance(cfg, dict):
                         continue
+                    # Enforce single-run duration constraint: 10–15 seconds.
+                    # If the model requested a longer duration, clamp to 15s (and let the UX create additional segments).
+                    try:
+                        raw_dur = cfg.get("durationSeconds") if cfg.get("durationSeconds") is not None else cfg.get("duration")
+                        if isinstance(raw_dur, (int, float)):
+                            requested = float(raw_dur)
+                            if requested < 10:
+                                cfg["durationSeconds"] = 10
+                            elif requested > 15:
+                                cfg["durationSeconds"] = 15
+                                # Add a gentle hint so the user can continue with Part 2, without forcing extra nodes.
+                                if isinstance(cfg.get("prompt"), str) and "分段" not in cfg["prompt"]:
+                                    cfg["prompt"] = (
+                                        cfg["prompt"].rstrip()
+                                        + "\n\n约束：本次为第1段（<=15秒）。如需更长成片，请分段生成第2段/第3段。"
+                                    )
+                            else:
+                                cfg["durationSeconds"] = int(round(requested))
+                    except Exception:
+                        pass
                     prompt_val = cfg.get("prompt")
                     if isinstance(prompt_val, str) and prompt_val.strip():
                         continue
@@ -2141,6 +2353,10 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         "active_role": resolved_id,
         "active_role_name": profile["name"],
         "active_role_reason": state.get("active_role_reason", "根据对话意图选择。"),
+        "active_intent": state.get("active_intent", ""),
+        "active_tool_tier": state.get("active_tool_tier", "none"),
+        "allow_canvas_tools": bool(state.get("allow_canvas_tools", False)),
+        "allow_canvas_tools_reason": state.get("allow_canvas_tools_reason", ""),
     }
     if tool_calls_payload:
         message_kwargs["tool_calls"] = tool_calls_payload
@@ -2160,6 +2376,9 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         "active_role": resolved_id,
         "active_role_name": profile["name"],
         "active_role_reason": state.get("active_role_reason", "根据对话意图选择。"),
+        "active_intent": state.get("active_intent", ""),
+        "active_tool_tier": state.get("active_tool_tier", "none"),
+        "agent_loop_count": agent_loop_count,
     }
 
 

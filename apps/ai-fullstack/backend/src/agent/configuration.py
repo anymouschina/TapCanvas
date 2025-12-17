@@ -36,6 +36,13 @@ class Configuration(BaseModel):
         },
     )
 
+    safety_classifier_model: str = Field(
+        default="gemini-2.0-flash",
+        metadata={
+            "description": "Model used for safety classification decisions (sexual/gore/violence) to avoid brittle keyword heuristics.",
+        },
+    )
+
     number_of_initial_queries: int = Field(
         default=3,
         metadata={"description": "The number of initial search queries to generate."},
@@ -44,6 +51,16 @@ class Configuration(BaseModel):
     max_research_loops: int = Field(
         default=2,
         metadata={"description": "The maximum number of research loops to perform."},
+    )
+
+    hard_max_research_loops: int = Field(
+        default=10,
+        metadata={"description": "Hard cap for any research loop to prevent runaway cycles."},
+    )
+
+    hard_max_turn_loops: int = Field(
+        default=10,
+        metadata={"description": "Hard cap for repeated in-thread agent loops to prevent self-looping behavior."},
     )
 
     search_provider: str = Field(
@@ -106,6 +123,7 @@ class Configuration(BaseModel):
                 "role_selector_model",
                 "reflection_model",
                 "answer_model",
+                "safety_classifier_model",
             ):
                 if field not in values or not values[field]:
                     values[field] = "gpt-5.2"

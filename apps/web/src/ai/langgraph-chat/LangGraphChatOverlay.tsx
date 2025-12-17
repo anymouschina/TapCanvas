@@ -1523,7 +1523,11 @@ function LangGraphChatOverlayInner({
   }, [projectId, thread, viewOnly])
 
   const liveMessages = (thread.messages || []) as Message[]
-  const messages = liveMessages.length > 0 ? liveMessages : frozenMessages
+  const messages = useMemo(() => {
+    if (frozenMessages.length > liveMessages.length) return frozenMessages
+    if (liveMessages.length > 0) return liveMessages
+    return frozenMessages
+  }, [frozenMessages, liveMessages])
 
   const maybeAutoLayoutAfterTools = useCallback((focusNodeId?: string | null) => {
     try {
@@ -1693,11 +1697,12 @@ function LangGraphChatOverlayInner({
 	          id: Date.now().toString(),
 	        },
 	      ]
+        // Optimistic UI: show the user's message immediately (even if the server thread echo is delayed).
+        setFrozenMessages(newMessages)
+        lastSubmittedHumanIdRef.current = newMessages[newMessages.length - 1]?.id || null
+        toolExecutionArmedRef.current = true
 	      void (async () => {
 	        try {
-	          setFrozenMessages(newMessages)
-	          lastSubmittedHumanIdRef.current = newMessages[newMessages.length - 1]?.id || null
-	          toolExecutionArmedRef.current = true
 	          const canvas_context = buildCanvasContext(nodes, edges)
 	          const values = {
 	            messages: newMessages,
@@ -1861,6 +1866,18 @@ function LangGraphChatOverlayInner({
     })
     return map
   }, [nodes])
+
+  const handlePickQuickReply = useCallback(
+    (input: string) => {
+      if (viewOnly) return
+      if (blocked) return
+      if (thread.isLoading) return
+      if (!input.trim()) return
+      setPrefill(null)
+      handleSubmit(input, 'medium')
+    },
+    [blocked, handleSubmit, thread.isLoading, viewOnly],
+  )
 
   return (
     <>
@@ -2035,7 +2052,7 @@ function LangGraphChatOverlayInner({
 	                    toolCallBindings={toolCallBindings}
 	                    onCopy={handleCopy}
 	                    copiedId={copiedId}
-	                    onPickQuickReply={(input) => setPrefill(input)}
+	                    onPickQuickReply={handlePickQuickReply}
 	                  />
                 </div>
               </ScrollArea>
