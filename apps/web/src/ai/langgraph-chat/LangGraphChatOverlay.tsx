@@ -36,6 +36,7 @@ import {
   IconMoodSmile,
   IconPlayerStop,
   IconPhoto,
+  IconRefresh,
   IconRocket,
   IconSend,
   IconSparkles,
@@ -903,20 +904,24 @@ function ChatMessagesView({
 
 function InputForm({
   onSubmit,
+  onRetry,
   onCancel,
   isLoading,
   hasHistory,
   blocked,
   prefill,
   readOnly,
+  retryDisabled,
 }: {
   onSubmit: (input: string, effort: string) => void
+  onRetry?: () => void
   onCancel: () => void
   isLoading: boolean
   hasHistory: boolean
   blocked?: boolean
   prefill?: string | null
   readOnly?: boolean
+  retryDisabled?: boolean
 }) {
   const [value, setValue] = useState('')
   const effort = 'medium'
@@ -957,26 +962,40 @@ function InputForm({
             style={{ flex: 1 }}
             disabled={!!blocked || !!readOnly}
           />
-          {isLoading ? (
-            <Button
-              color="red"
-              variant="light"
-              leftSection={<IconPlayerStop size={16} />}
-              onClick={onCancel}
-            >
-              停止
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              variant="gradient"
-              gradient={{ from: 'indigo', to: 'cyan' }}
-              leftSection={<IconSend size={16} />}
-              disabled={disabled}
-            >
-              发送
-            </Button>
-          )}
+          {!readOnly &&
+            (isLoading ? (
+              <Button
+                color="red"
+                variant="light"
+                leftSection={<IconPlayerStop size={16} />}
+                onClick={onCancel}
+              >
+                停止
+              </Button>
+            ) : (
+              <Group gap="xs" wrap="nowrap">
+                <Tooltip label={retryDisabled ? '暂无可重试的请求' : '重试上一次请求'}>
+                  <ActionIcon
+                    variant="subtle"
+                    size="lg"
+                    aria-label="重试"
+                    onClick={onRetry}
+                    disabled={!!retryDisabled}
+                  >
+                    <IconRefresh size={18} />
+                  </ActionIcon>
+                </Tooltip>
+                <Button
+                  type="submit"
+                  variant="gradient"
+                  gradient={{ from: 'indigo', to: 'cyan' }}
+                  leftSection={<IconSend size={16} />}
+                  disabled={disabled}
+                >
+                  发送
+                </Button>
+              </Group>
+            ))}
         </Group>
       </Stack>
     </form>
@@ -1100,6 +1119,55 @@ function LangGraphChatOverlayInner({
 	  const lastSubmittedHumanIdRef = useRef<string | null>(null)
 	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
 	  const [toolCallBindings, setToolCallBindings] = useState<Record<string, string>>({})
+	  const langGraphReadyRef = useRef<{ apiUrl: string; readyAt: number } | null>(null)
+	  const langGraphReadyPromiseRef = useRef<Promise<boolean> | null>(null)
+
+	  const ensureLangGraphReady = useCallback(async () => {
+	    const cached = langGraphReadyRef.current
+	    const now = Date.now()
+	    if (cached && cached.apiUrl === apiUrl && now - cached.readyAt < 60_000) return true
+	    if (langGraphReadyPromiseRef.current) return langGraphReadyPromiseRef.current
+
+	    const baseUrl = String(apiUrl || '').replace(/\/+$/, '')
+	    const attempt = async (): Promise<boolean> => {
+	      const endpoints = [`${baseUrl}/ok`, `${baseUrl}/health`, `${baseUrl}/`]
+	      for (let i = 0; i < 3; i++) {
+	        for (const url of endpoints) {
+	          try {
+	            const controller = new AbortController()
+	            const timeout = setTimeout(() => controller.abort(), 1500)
+	            const res = await fetch(url, {
+	              method: 'GET',
+	              credentials: 'include',
+	              signal: controller.signal,
+	            }).finally(() => clearTimeout(timeout))
+
+	            // Any non-5xx response proves the service is up (and warms cold starts).
+	            if (res.status < 500) {
+	              langGraphReadyRef.current = { apiUrl, readyAt: Date.now() }
+	              return true
+	            }
+	          } catch {
+	            // try next endpoint / retry
+	          }
+	        }
+	        await new Promise((r) => setTimeout(r, 250 + i * 350))
+	      }
+	      return false
+	    }
+
+	    const promise = attempt().finally(() => {
+	      langGraphReadyPromiseRef.current = null
+	    })
+	    langGraphReadyPromiseRef.current = promise
+	    return promise
+	  }, [apiUrl])
+
+	  useEffect(() => {
+	    if (open) return
+	    langGraphReadyRef.current = null
+	    langGraphReadyPromiseRef.current = null
+	  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -1123,6 +1191,8 @@ function LangGraphChatOverlayInner({
         const loadedThreadId = res.threadId
         if (loadedThreadId) {
           try {
+            const ready = await ensureLangGraphReady()
+            if (!ready) throw new Error('LangGraph not ready')
             const check = await fetch(`${apiUrl}/threads/${loadedThreadId}`, {
               method: 'GET',
               credentials: 'include',
@@ -1433,18 +1503,18 @@ function LangGraphChatOverlayInner({
     }
   }, [messages, thread.isLoading, processedEventsTimeline])
 
-	  const handleSubmit = useCallback(
-	    (input: string, effort: string) => {
-	      if (blocked) return
-	      if (viewOnly) return
-	      if (!input.trim()) return
-	      setQuickStartOpen(false)
-	      setProcessedEventsTimeline([])
-	      hasFinalizeEventOccurredRef.current = false
-	      setError(null)
-	      let initial_search_query_count = 0
-	      let max_research_loops = 0
-      switch (effort) {
+  const handleSubmit = useCallback(
+		    (input: string, effort: string) => {
+		      if (blocked) return
+		      if (viewOnly) return
+		      if (!input.trim()) return
+		      setQuickStartOpen(false)
+		      setProcessedEventsTimeline([])
+		      hasFinalizeEventOccurredRef.current = false
+		      setError(null)
+		      let initial_search_query_count = 0
+		      let max_research_loops = 0
+	      switch (effort) {
         case 'low':
           initial_search_query_count = 1
           max_research_loops = 1
@@ -1462,32 +1532,44 @@ function LangGraphChatOverlayInner({
           max_research_loops = 3
       }
 
-      const newMessages: Message[] = [
-        ...liveMessages,
-        {
-          type: 'human',
-          content: input,
-          id: Date.now().toString(),
-        },
-      ]
-      try {
-        lastSubmittedHumanIdRef.current = newMessages[newMessages.length - 1]?.id || null
-        toolExecutionArmedRef.current = true
-        const canvas_context = buildCanvasContext(nodes, edges)
-        const values = {
-          messages: newMessages,
-          initial_search_query_count,
-          max_research_loops,
-          canvas_context,
-        }
-        lastSubmitValuesRef.current = values
-        thread.submit(values)
-      } catch (err: any) {
-        setError(err?.message || 'submit failed')
-      }
-    },
-    [blocked, edges, messages, nodes, thread, viewOnly],
-  )
+	      const newMessages: Message[] = [
+	        ...liveMessages,
+	        {
+	          type: 'human',
+	          content: input,
+	          id: Date.now().toString(),
+	        },
+	      ]
+	      void (async () => {
+	        try {
+	          setFrozenMessages(newMessages)
+	          lastSubmittedHumanIdRef.current = newMessages[newMessages.length - 1]?.id || null
+	          toolExecutionArmedRef.current = true
+	          const canvas_context = buildCanvasContext(nodes, edges)
+	          const values = {
+	            messages: newMessages,
+	            initial_search_query_count,
+	            max_research_loops,
+	            canvas_context,
+	          }
+	          lastSubmitValuesRef.current = values
+
+	          const ready = await ensureLangGraphReady()
+	          if (!ready) {
+	            setError('LangGraph 服务未就绪（可能冷启动）。请稍后点“重试”。')
+	            toolExecutionArmedRef.current = false
+	            lastSubmittedHumanIdRef.current = null
+	            return
+	          }
+
+	          thread.submit(values)
+	        } catch (err: any) {
+	          setError(err?.message || 'submit failed')
+	        }
+	      })()
+	    },
+	    [blocked, edges, ensureLangGraphReady, liveMessages, nodes, thread, viewOnly],
+	  )
 
   const handleCancel = useCallback(() => {
     void thread.stop()
@@ -1532,6 +1614,49 @@ function LangGraphChatOverlayInner({
       return typeof c === 'string' || Array.isArray(c)
     }) as Message[]
   }, [messages])
+
+  const lastHumanInput = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i--) {
+      const msg = displayMessages[i]
+      if (msg?.type === 'human') {
+        const text = renderContentText(msg.content)
+        return typeof text === 'string' ? text : ''
+      }
+    }
+    return ''
+  }, [displayMessages])
+
+  const handleRetry = useCallback(() => {
+    if (thread.isLoading) return
+    if (blocked) return
+    if (viewOnly) return
+    const prev = lastSubmitValuesRef.current
+    if (prev && Array.isArray(prev.messages) && prev.messages.length) {
+      setQuickStartOpen(false)
+      setProcessedEventsTimeline([])
+      hasFinalizeEventOccurredRef.current = false
+      setError(null)
+      void (async () => {
+        try {
+          const ready = await ensureLangGraphReady()
+          if (!ready) {
+            setError('LangGraph 服务未就绪（可能冷启动）。请稍后再试。')
+            return
+          }
+          const canvas_context = buildCanvasContext(nodes, edges)
+          const lastMsg = prev.messages[prev.messages.length - 1]
+          lastSubmittedHumanIdRef.current = lastMsg?.type === 'human' ? (lastMsg?.id ? String(lastMsg.id) : null) : null
+          toolExecutionArmedRef.current = true
+          thread.submit({ ...prev, canvas_context })
+        } catch (err: any) {
+          setError(err?.message || 'retry failed')
+        }
+      })()
+      return
+    }
+    if (!lastHumanInput.trim()) return
+    handleSubmit(lastHumanInput, 'medium')
+  }, [blocked, edges, ensureLangGraphReady, handleSubmit, lastHumanInput, nodes, thread, viewOnly])
 
   // Backward-compatible alias (older dev builds referenced this name).
   const showWelcome = !viewOnly && displayMessages.length === 0
@@ -1739,12 +1864,16 @@ function LangGraphChatOverlayInner({
               <Divider />
               <InputForm
                 onSubmit={handleSubmit}
+                onRetry={handleRetry}
                 onCancel={handleCancel}
                 isLoading={thread.isLoading}
                 hasHistory={displayMessages.length > 0}
                 blocked={blocked}
                 prefill={prefill}
                 readOnly={viewOnly}
+                retryDisabled={
+                  !!blocked || !!viewOnly || thread.isLoading || !displayMessages.length || !lastHumanInput.trim()
+                }
               />
             </Stack>
           </Paper>
