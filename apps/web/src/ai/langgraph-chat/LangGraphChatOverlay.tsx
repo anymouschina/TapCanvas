@@ -50,8 +50,11 @@ import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
 import {
   clearLangGraphProjectThread,
+  clearLangGraphProjectSnapshot,
+  getLangGraphProjectSnapshot,
   getLangGraphProjectThread,
   getPublicLangGraphProjectThread,
+  setLangGraphProjectSnapshot,
   setLangGraphProjectThread,
 } from '../../api/server'
 
@@ -831,6 +834,7 @@ function LangGraphChatOverlayInner({
   const lastStreamErrorRef = useRef<any>(null)
   const toolExecutionArmedRef = useRef(false)
   const lastSubmittedHumanIdRef = useRef<string | null>(null)
+  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
 
   useEffect(() => {
     if (!open) return
@@ -838,6 +842,7 @@ function LangGraphChatOverlayInner({
       setThreadId(null)
       persistedThreadIdRef.current = null
       setThreadIdLoaded(true)
+      setFrozenMessages([])
       return
     }
 
@@ -886,6 +891,30 @@ function LangGraphChatOverlayInner({
       controller.abort()
     }
   }, [apiUrl, open, projectId, viewOnly])
+
+  useEffect(() => {
+    if (!open) return
+    if (!projectId) return
+    if (viewOnly) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await getLangGraphProjectSnapshot(projectId)
+        if (cancelled) return
+        const raw = res?.snapshot?.messagesJson
+        if (!raw || typeof raw !== 'string') return
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length) {
+          setFrozenMessages(parsed as Message[])
+        }
+      } catch {
+        // ignore (snapshot is best-effort)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, projectId, viewOnly])
 
   const thread = useStream<{
     messages: Message[]
@@ -945,6 +974,29 @@ function LangGraphChatOverlayInner({
   })
 
   useEffect(() => {
+    const live = (thread.messages || []) as Message[]
+    if (live.length > 0) setFrozenMessages(live)
+  }, [thread.messages])
+
+  useEffect(() => {
+    if (viewOnly) return
+    if (!projectId) return
+    if (thread.isLoading) return
+    const live = (thread.messages || []) as Message[]
+    if (!live.length) return
+    const last = live[live.length - 1]
+    if (!last || last.type !== 'ai') return
+    try {
+      void setLangGraphProjectSnapshot(projectId, {
+        threadId,
+        messagesJson: JSON.stringify(live),
+      }).catch(() => {})
+    } catch {
+      // ignore
+    }
+  }, [projectId, thread.isLoading, thread.messages, threadId, viewOnly])
+
+  useEffect(() => {
     if (viewOnly) return
     const err = lastStreamErrorRef.current
     if (!err) return
@@ -959,22 +1011,14 @@ function LangGraphChatOverlayInner({
     if (!looksLikeMissingThread) return
 
     recoveringThreadRef.current = true
-    setError('对话线程已过期，正在自动重建...')
+    // Silent recovery: do not show reconnect/retry content in the chat UI.
+    setError(null)
     void (async () => {
       try {
         void thread.stop()
         if (projectId) await clearLangGraphProjectThread(projectId)
         persistedThreadIdRef.current = null
         setThreadId(null)
-        await new Promise((r) => setTimeout(r, 50))
-        const last = lastSubmitValuesRef.current
-        if (last) {
-          const submittedHumanId = String(last?.messages?.[last?.messages?.length - 1]?.id || '')
-          lastSubmittedHumanIdRef.current = submittedHumanId || null
-          toolExecutionArmedRef.current = true
-          thread.submit(last)
-        }
-        setError(null)
       } catch (e: any) {
         setError(e?.message || msg)
       } finally {
@@ -984,7 +1028,8 @@ function LangGraphChatOverlayInner({
     })()
   }, [projectId, thread, viewOnly])
 
-  const messages = thread.messages || []
+  const liveMessages = (thread.messages || []) as Message[]
+  const messages = liveMessages.length > 0 ? liveMessages : frozenMessages
   const blocked = !!projectId && !threadIdLoaded
 
   useEffect(() => {
@@ -1125,7 +1170,7 @@ function LangGraphChatOverlayInner({
       }
 
       const newMessages: Message[] = [
-        ...messages,
+        ...liveMessages,
         {
           type: 'human',
           content: input,
@@ -1165,6 +1210,7 @@ function LangGraphChatOverlayInner({
       void thread.stop()
       if (projectId) {
         await clearLangGraphProjectThread(projectId)
+        await clearLangGraphProjectSnapshot(projectId)
       }
       onReset()
     } catch (err) {
@@ -1184,7 +1230,7 @@ function LangGraphChatOverlayInner({
     }
   }, [])
 
-  const showWelcome = messages.length === 0
+  const showWelcome = !viewOnly && messages.length === 0
 
   return (
     <>
@@ -1314,6 +1360,16 @@ function LangGraphChatOverlayInner({
           >
             <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
               {showWelcome && <WelcomeCard onPickWorkflow={(prompt) => setPrefill(prompt)} />}
+              {viewOnly && !showWelcome && messages.length === 0 && (
+                <Paper withBorder radius="md" p="md" style={{ borderStyle: 'dashed' }}>
+                  <Stack gap={6}>
+                    <Text fw={600}>暂无创作过程记录</Text>
+                    <Text size="sm" c="dimmed">
+                      如果你在本地开发（例如 `localhost:5173`），可能因为 LangGraph CORS 仅放行线上域名导致无法拉取历史。
+                    </Text>
+                  </Stack>
+                </Paper>
+              )}
               <ScrollArea
                 type="never"
                 offsetScrollbars={false}

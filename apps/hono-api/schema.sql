@@ -286,6 +286,23 @@ CREATE TABLE IF NOT EXISTS langgraph_project_threads (
 
 CREATE INDEX IF NOT EXISTS idx_langgraph_project_threads_user_project ON langgraph_project_threads(user_id, project_id);
 
+-- LangGraph chat snapshot (durable memory) per project.
+-- Stores the full message list (JSON) so the UI can restore context when the LangGraph API thread expires/restarts.
+CREATE TABLE IF NOT EXISTS langgraph_project_snapshots (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	project_id TEXT NOT NULL,
+	thread_id TEXT,
+	messages_json TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+	FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+	UNIQUE (user_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_langgraph_project_snapshots_user_project ON langgraph_project_snapshots(user_id, project_id);
+
 -- Prompt samples (user-defined prompt library)
 CREATE TABLE IF NOT EXISTS prompt_samples (
 	id TEXT PRIMARY KEY,
