@@ -1,12 +1,27 @@
 # mypy: disable - error - code = "no-untyped-def,misc"
 import pathlib
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 from agent.tools_and_schemas import PromptRequest, PromptResult
 from agent.prompt_generator import generate_prompt
 from fastapi.staticfiles import StaticFiles
 
 # Define the FastAPI app
 app = FastAPI()
+
+# CORS for local dev + production web app.
+# LangGraph SDK uses preflighted requests (e.g. POST /threads), so OPTIONS must succeed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://tapcanvas.beqlee.icu",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def create_frontend_router(build_dir="../frontend/dist"):

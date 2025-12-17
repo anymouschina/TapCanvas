@@ -15,7 +15,10 @@ import {
 import {
 	clearLangGraphThreadForProject,
 	getLangGraphThreadIdForProject,
+	clearLangGraphSnapshotForProject,
+	getLangGraphSnapshotForProject,
 	setLangGraphThreadIdForProject,
+	upsertLangGraphSnapshotForProject,
 } from "./ai.langgraph";
 
 export const aiRouter = new Hono<AppEnv>();
@@ -114,5 +117,59 @@ aiRouter.delete("/langgraph/projects/:projectId/thread", async (c) => {
 		);
 	}
 	await clearLangGraphThreadForProject(c, userId, projectId);
+	return c.body(null, 204);
+});
+
+// ---- LangGraph durable chat snapshot (per project) ----
+
+aiRouter.get("/langgraph/projects/:projectId/snapshot", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const projectId = (c.req.param("projectId") || "").trim();
+	if (!projectId) {
+		return c.json(
+			{ error: "projectId is required", code: "project_id_required" },
+			400,
+		);
+	}
+	const snapshot = await getLangGraphSnapshotForProject(c, userId, projectId);
+	return c.json({ snapshot });
+});
+
+aiRouter.put("/langgraph/projects/:projectId/snapshot", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const projectId = (c.req.param("projectId") || "").trim();
+	if (!projectId) {
+		return c.json(
+			{ error: "projectId is required", code: "project_id_required" },
+			400,
+		);
+	}
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const messagesJson =
+		typeof (body as any).messagesJson === "string"
+			? (body as any).messagesJson
+			: "";
+	const threadId =
+		typeof (body as any).threadId === "string" ? (body as any).threadId : null;
+	const result = await upsertLangGraphSnapshotForProject(c, userId, projectId, {
+		threadId,
+		messagesJson,
+	});
+	return c.json({ snapshot: result });
+});
+
+aiRouter.delete("/langgraph/projects/:projectId/snapshot", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const projectId = (c.req.param("projectId") || "").trim();
+	if (!projectId) {
+		return c.json(
+			{ error: "projectId is required", code: "project_id_required" },
+			400,
+		);
+	}
+	await clearLangGraphSnapshotForProject(c, userId, projectId);
 	return c.body(null, 204);
 });
