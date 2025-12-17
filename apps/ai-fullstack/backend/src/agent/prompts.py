@@ -22,7 +22,8 @@ Rules:
 - Also output a mutually-exclusive tool tier for THIS turn:
   - tool_tier="none" for text-only responses.
   - tool_tier="canvas" ONLY if allow_canvas_tools=true.
-  - tool_tier="web" ONLY if the user explicitly asks for web research / searching.
+  - tool_tier="rag" ONLY if the user explicitly asks to search the project's knowledge base / RAG.
+  - tool_tier="web" is not allowed (legacy); never pick it.
 - Optionally provide a short intent label (intent), e.g. storyboard/image/video/chat_only.
 - If the user provides content that is too bloody/violent or sexually explicit, prefer role_id "magician" to rewrite it into metaphorical, implied, cinematic-safe expression while preserving the story.
 
