@@ -257,6 +257,64 @@ const parseTapcanvasActionsFromText = (
   }
 }
 
+function pickPrimaryMediaFromNode(node: any): {
+  nodeId: string
+  label: string | null
+  kind: string | null
+  imageUrl: string | null
+  videoUrl: string | null
+  videoThumbnailUrl: string | null
+} {
+  const nodeId = String(node?.id || '')
+  const data: any = node?.data || {}
+  const label = typeof data?.label === 'string' && data.label.trim() ? data.label.trim() : null
+  const kind = typeof data?.kind === 'string' && data.kind.trim() ? data.kind.trim() : null
+
+  const imageResults: any[] = Array.isArray(data?.imageResults) ? data.imageResults : []
+  const imagePrimaryIndex =
+    typeof data?.imagePrimaryIndex === 'number' && Number.isFinite(data.imagePrimaryIndex)
+      ? data.imagePrimaryIndex
+      : 0
+  const imageFromField =
+    typeof data?.imageUrl === 'string' && data.imageUrl.trim() ? data.imageUrl.trim() : null
+  const imageFromResults =
+    typeof imageResults?.[imagePrimaryIndex]?.url === 'string' && imageResults[imagePrimaryIndex].url.trim()
+      ? imageResults[imagePrimaryIndex].url.trim()
+      : typeof imageResults?.[0]?.url === 'string' && imageResults[0].url.trim()
+        ? imageResults[0].url.trim()
+        : null
+  const imageUrl = imageFromField || imageFromResults
+
+  const videoResults: any[] = Array.isArray(data?.videoResults) ? data.videoResults : []
+  const videoPrimaryIndex =
+    typeof data?.videoPrimaryIndex === 'number' && Number.isFinite(data.videoPrimaryIndex)
+      ? data.videoPrimaryIndex
+      : 0
+  const videoFromField =
+    typeof data?.videoUrl === 'string' && data.videoUrl.trim() ? data.videoUrl.trim() : null
+  const videoFromResults =
+    typeof videoResults?.[videoPrimaryIndex]?.url === 'string' && videoResults[videoPrimaryIndex].url.trim()
+      ? videoResults[videoPrimaryIndex].url.trim()
+      : typeof videoResults?.[0]?.url === 'string' && videoResults[0].url.trim()
+        ? videoResults[0].url.trim()
+        : null
+  const videoUrl = videoFromField || videoFromResults
+
+  const videoThumb =
+    (typeof videoResults?.[videoPrimaryIndex]?.thumbnailUrl === 'string' && videoResults[videoPrimaryIndex].thumbnailUrl.trim()
+      ? videoResults[videoPrimaryIndex].thumbnailUrl.trim()
+      : null) ||
+    (typeof videoResults?.[0]?.thumbnailUrl === 'string' && videoResults[0].thumbnailUrl.trim()
+      ? videoResults[0].thumbnailUrl.trim()
+      : null) ||
+    (typeof data?.videoThumbnailUrl === 'string' && data.videoThumbnailUrl.trim()
+      ? data.videoThumbnailUrl.trim()
+      : null) ||
+    (typeof data?.thumbnailUrl === 'string' && data.thumbnailUrl.trim() ? data.thumbnailUrl.trim() : null)
+
+  return { nodeId, label, kind, imageUrl, videoUrl, videoThumbnailUrl: videoThumb }
+}
+
 function ActivityTimeline({
   events,
   isLoading,
@@ -313,6 +371,9 @@ function MessageBubble({
   isLive,
   isLoading,
   readOnly,
+  nodesById,
+  nodeIdByLabel,
+  toolCallBindings,
   onCopy,
   copied,
   onPickQuickReply,
@@ -323,6 +384,9 @@ function MessageBubble({
   isLive: boolean
   isLoading: boolean
   readOnly: boolean
+  nodesById: Map<string, any>
+  nodeIdByLabel: Map<string, string>
+  toolCallBindings: Record<string, string>
   onCopy: (text: string, id?: string) => void
   copied: boolean
   onPickQuickReply: (input: string) => void
@@ -381,6 +445,33 @@ function MessageBubble({
     const suffix = toolCalls.length > items.length ? ` +${toolCalls.length - items.length}` : ''
     return `${items.join(' · ')}${suffix}`
   }, [toolCalls])
+
+  const toolPreviewMedia = useMemo(() => {
+    if (isHuman) return []
+    if (!toolCalls.length) return []
+    const results: Array<{ url: string; openUrl: string }> = []
+    for (const call of toolCalls) {
+      if (results.length >= 2) break
+      const args = parseJsonIfNeeded((call as any).arguments) || {}
+      const label = typeof args?.label === 'string' ? args.label : undefined
+      const nodeId = typeof args?.nodeId === 'string' ? args.nodeId : undefined
+      const toolCallId = typeof (call as any).id === 'string' ? (call as any).id : ''
+      const resolvedNodeId =
+        nodeId ||
+        (toolCallId && toolCallBindings[toolCallId]) ||
+        (label && nodeIdByLabel.get(label)) ||
+        ''
+      if (!resolvedNodeId) continue
+      const node = nodesById.get(String(resolvedNodeId))
+      if (!node) continue
+      const media = pickPrimaryMediaFromNode(node)
+      const thumb = media.videoThumbnailUrl || media.imageUrl
+      const openUrl = media.videoUrl || media.imageUrl
+      if (!thumb || !openUrl) continue
+      results.push({ url: thumb, openUrl })
+    }
+    return results
+  }, [isHuman, nodeIdByLabel, nodesById, toolCallBindings, toolCalls])
 
   return (
     <Stack align={align === 'right' ? 'flex-end' : 'flex-start'} gap={6} w="100%">
@@ -487,9 +578,38 @@ function MessageBubble({
               </Group>
             </Group>
             {!toolsOpen && (
-              <Text size="xs" c="dimmed" lineClamp={1}>
-                {toolsPreview || '—'}
-              </Text>
+              <>
+                <Text size="xs" c="dimmed" lineClamp={1}>
+                  {toolsPreview || '—'}
+                </Text>
+                {toolPreviewMedia.length > 0 && (
+                  <Group gap={8} mt={6} wrap="nowrap">
+                    {toolPreviewMedia.map((m) => (
+                      <img
+                        key={m.url}
+                        src={m.url}
+                        alt=""
+                        loading="lazy"
+                        style={{
+                          width: 88,
+                          height: 50,
+                          borderRadius: 10,
+                          objectFit: 'cover',
+                          cursor: 'pointer',
+                          flex: '0 0 auto',
+                        }}
+                        onClick={() => {
+                          try {
+                            window.open(m.openUrl, '_blank', 'noopener,noreferrer')
+                          } catch {
+                            window.location.href = m.openUrl
+                          }
+                        }}
+                      />
+                    ))}
+                  </Group>
+                )}
+              </>
             )}
             <Collapse in={toolsOpen} transitionDuration={150}>
               <Stack gap={8}>
@@ -502,11 +622,20 @@ function MessageBubble({
                   const config = args?.config && typeof args.config === 'object' ? args.config : undefined
                   const prompt =
                     typeof config?.prompt === 'string' ? config.prompt : undefined
-                  const negativePrompt =
-                    typeof config?.negativePrompt === 'string' ? config.negativePrompt : undefined
-                  const displayTitle = label || nodeId || type || ''
-                  const hasPrompt = Boolean(prompt && prompt.trim())
-                  const hasNegative = Boolean(negativePrompt && negativePrompt.trim())
+	                  const negativePrompt =
+	                    typeof config?.negativePrompt === 'string' ? config.negativePrompt : undefined
+	                  const displayTitle = label || nodeId || type || ''
+	                  const hasPrompt = Boolean(prompt && prompt.trim())
+	                  const hasNegative = Boolean(negativePrompt && negativePrompt.trim())
+	                  const toolCallId = typeof call.id === 'string' ? call.id : ''
+	                  const resolvedNodeId =
+	                    nodeId ||
+	                    (toolCallId && toolCallBindings[toolCallId]) ||
+	                    (label && nodeIdByLabel.get(label)) ||
+	                    ''
+	                  const resolvedNode = resolvedNodeId ? nodesById.get(String(resolvedNodeId)) : null
+	                  const media = resolvedNode ? pickPrimaryMediaFromNode(resolvedNode) : null
+	                  const hasMedia = Boolean(media && (media.imageUrl || media.videoUrl))
 
                   return (
                     <Paper
@@ -543,11 +672,42 @@ function MessageBubble({
                           {String(prompt)}
                         </Text>
                       )}
-                      {hasNegative && (
-                        <Text size="xs" mt={6} c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
-                          负面：{String(negativePrompt)}
-                        </Text>
-                      )}
+	                      {hasNegative && (
+	                        <Text size="xs" mt={6} c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+	                          负面：{String(negativePrompt)}
+	                        </Text>
+	                      )}
+	                      {hasMedia && media && (
+	                        <div style={{ marginTop: 8 }}>
+	                          <img
+	                            src={media.videoThumbnailUrl || media.imageUrl || ''}
+	                            alt=""
+	                            loading="lazy"
+	                            style={{
+	                              width: '100%',
+	                              borderRadius: 10,
+	                              display: 'block',
+	                              objectFit: 'cover',
+	                              aspectRatio: '16 / 9',
+	                              cursor: 'pointer',
+	                            }}
+	                            onClick={() => {
+	                              const url = media.videoUrl || media.imageUrl
+	                              if (!url) return
+	                              try {
+	                                window.open(url, '_blank', 'noopener,noreferrer')
+	                              } catch {
+	                                window.location.href = url
+	                              }
+	                            }}
+	                          />
+	                          {media.videoUrl && (
+	                            <Text size="xs" c="dimmed" mt={6} lineClamp={1}>
+	                              视频已生成
+	                            </Text>
+	                          )}
+	                        </div>
+	                      )}
                     </Paper>
                   )
                 })}
@@ -667,6 +827,9 @@ function ChatMessagesView({
   liveEvents,
   historicalEvents,
   readOnly,
+  nodesById,
+  nodeIdByLabel,
+  toolCallBindings,
   onCopy,
   copiedId,
   onPickQuickReply,
@@ -676,6 +839,9 @@ function ChatMessagesView({
   liveEvents: ProcessedEvent[]
   historicalEvents: Record<string, ProcessedEvent[]>
   readOnly: boolean
+  nodesById: Map<string, any>
+  nodeIdByLabel: Map<string, string>
+  toolCallBindings: Record<string, string>
   onCopy: (text: string, id?: string) => void
   copiedId: string | null
   onPickQuickReply: (input: string) => void
@@ -703,6 +869,9 @@ function ChatMessagesView({
             isLive={isAssistant && isLast}
             isLoading={isAssistant && isLoading}
             readOnly={readOnly}
+            nodesById={nodesById}
+            nodeIdByLabel={nodeIdByLabel}
+            toolCallBindings={toolCallBindings}
             onCopy={onCopy}
             copied={copiedId === (msg.id || '')}
             onPickQuickReply={onPickQuickReply}
@@ -923,12 +1092,14 @@ function LangGraphChatOverlayInner({
   const [threadIdLoaded, setThreadIdLoaded] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [prefill, setPrefill] = useState<string | null>(null)
+  const [quickStartOpen, setQuickStartOpen] = useState(false)
   const lastSubmitValuesRef = useRef<any | null>(null)
   const recoveringThreadRef = useRef(false)
   const lastStreamErrorRef = useRef<any>(null)
-  const toolExecutionArmedRef = useRef(false)
-  const lastSubmittedHumanIdRef = useRef<string | null>(null)
-  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
+	  const toolExecutionArmedRef = useRef(false)
+	  const lastSubmittedHumanIdRef = useRef<string | null>(null)
+	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
+	  const [toolCallBindings, setToolCallBindings] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!open) return
@@ -1073,6 +1244,11 @@ function LangGraphChatOverlayInner({
   }, [thread.messages])
 
   useEffect(() => {
+    // Clear bindings when switching projects/threads.
+    setToolCallBindings({})
+  }, [projectId, threadId])
+
+  useEffect(() => {
     if (viewOnly) return
     if (!projectId) return
     if (thread.isLoading) return
@@ -1126,14 +1302,6 @@ function LangGraphChatOverlayInner({
   const messages = liveMessages.length > 0 ? liveMessages : frozenMessages
   const blocked = !!projectId && !threadIdLoaded
 
-  useEffect(() => {
-    if (viewOnly) return
-    if (thread.isLoading) return
-    if (!toolExecutionArmedRef.current) return
-    toolExecutionArmedRef.current = false
-    lastSubmittedHumanIdRef.current = null
-  }, [thread.isLoading, viewOnly])
-
   const maybeAutoLayoutAfterTools = useCallback((focusNodeId?: string | null) => {
     try {
       if (viewOnly) return
@@ -1158,7 +1326,12 @@ function LangGraphChatOverlayInner({
     if (!last || last.type !== 'ai') return
     if (messages.length - 1 <= submittedIndex) return
     const toolCalls = parseToolCallsFromMessage(last)
-    if (!toolCalls.length) return
+    if (!toolCalls.length) {
+      // No tools to run; disarm so we don't keep scanning forever.
+      toolExecutionArmedRef.current = false
+      lastSubmittedHumanIdRef.current = null
+      return
+    }
 
     let cancelled = false
     const run = async () => {
@@ -1187,6 +1360,27 @@ function LangGraphChatOverlayInner({
           if (toolName === 'connectNodes') {
             didConnect = true
           }
+
+          // Bind this tool call to a nodeId so the chat UI can render node media directly.
+          try {
+            if (toolCallId) {
+              const fromInput =
+                typeof (input as any)?.nodeId === 'string' && (input as any).nodeId.trim()
+                  ? String((input as any).nodeId).trim()
+                  : ''
+              const fromResult =
+                res?.data?.nodeId != null && String(res.data.nodeId).trim()
+                  ? String(res.data.nodeId).trim()
+                  : ''
+              const boundNodeId = fromInput || fromResult
+              if (boundNodeId) {
+                setToolCallBindings((prev) => (prev[toolCallId] === boundNodeId ? prev : { ...prev, [toolCallId]: boundNodeId }))
+              }
+            }
+          } catch {
+            // ignore
+          }
+
           setProcessedEventsTimeline((prev) => [
             ...prev,
             { title: 'Canvas Tool', data: `${toolName}` },
@@ -1208,6 +1402,10 @@ function LangGraphChatOverlayInner({
       if (!cancelled && (lastCreatedNodeId || didConnect)) {
         setTimeout(() => maybeAutoLayoutAfterTools(lastCreatedNodeId), 50)
       }
+
+      // Mark tool execution complete for this submit.
+      toolExecutionArmedRef.current = false
+      lastSubmittedHumanIdRef.current = null
     }
 
     void run()
@@ -1235,16 +1433,17 @@ function LangGraphChatOverlayInner({
     }
   }, [messages, thread.isLoading, processedEventsTimeline])
 
-  const handleSubmit = useCallback(
-    (input: string, effort: string) => {
-      if (blocked) return
-      if (viewOnly) return
-      if (!input.trim()) return
-      setProcessedEventsTimeline([])
-      hasFinalizeEventOccurredRef.current = false
-      setError(null)
-      let initial_search_query_count = 0
-      let max_research_loops = 0
+	  const handleSubmit = useCallback(
+	    (input: string, effort: string) => {
+	      if (blocked) return
+	      if (viewOnly) return
+	      if (!input.trim()) return
+	      setQuickStartOpen(false)
+	      setProcessedEventsTimeline([])
+	      hasFinalizeEventOccurredRef.current = false
+	      setError(null)
+	      let initial_search_query_count = 0
+	      let max_research_loops = 0
       switch (effort) {
         case 'low':
           initial_search_query_count = 1
@@ -1334,7 +1533,31 @@ function LangGraphChatOverlayInner({
     }) as Message[]
   }, [messages])
 
+  // Backward-compatible alias (older dev builds referenced this name).
   const showWelcome = !viewOnly && displayMessages.length === 0
+  const showEmptyViewOnly = viewOnly && displayMessages.length === 0
+
+  const nodesById = useMemo(() => {
+    const map = new Map<string, any>()
+    ;(nodes || []).forEach((n: any) => {
+      if (!n) return
+      map.set(String(n.id), n)
+    })
+    return map
+  }, [nodes])
+
+  const nodeIdByLabel = useMemo(() => {
+    const map = new Map<string, string>()
+    ;(nodes || []).forEach((n: any) => {
+      const lbl = (n as any)?.data?.label
+      if (typeof lbl !== 'string') return
+      const key = lbl.trim()
+      if (!key) return
+      if (map.has(key)) return
+      map.set(key, String((n as any).id))
+    })
+    return map
+  }, [nodes])
 
   return (
     <>
@@ -1419,20 +1642,32 @@ function LangGraphChatOverlayInner({
                 </Badge>
               )}
             </Group>
-            <Group gap="xs">
-              {error && (
-                <Group gap={6}>
-                  <IconAlertCircle size={16} color="red" />
-                  <Text size="sm" c="red">
-                    {error}
-                  </Text>
-                </Group>
-              )}
-              <Tooltip label="清空对话记忆（项目级）" position="bottom" withArrow>
-                <ActionIcon
-                  variant="subtle"
-                  aria-label="清空对话"
-                  onClick={() => setClearConfirmOpen(true)}
+	            <Group gap="xs">
+	              {error && (
+	                <Group gap={6}>
+	                  <IconAlertCircle size={16} color="red" />
+	                  <Text size="sm" c="red">
+	                    {error}
+	                  </Text>
+	                </Group>
+	              )}
+	              {!viewOnly && (
+	                <Tooltip label="快速开始" position="bottom" withArrow>
+	                  <ActionIcon
+	                    variant="subtle"
+	                    aria-label="快速开始"
+	                    onClick={() => setQuickStartOpen((v) => !v)}
+	                    disabled={blocked || thread.isLoading}
+	                  >
+	                    <IconRocket size={18} />
+	                  </ActionIcon>
+	                </Tooltip>
+	              )}
+	              <Tooltip label="清空对话记忆（项目级）" position="bottom" withArrow>
+	                <ActionIcon
+	                  variant="subtle"
+	                  aria-label="清空对话"
+	                  onClick={() => setClearConfirmOpen(true)}
                   disabled={viewOnly || blocked || thread.isLoading}
                 >
                   <IconTrash size={18} />
@@ -1463,8 +1698,12 @@ function LangGraphChatOverlayInner({
             }}
           >
             <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-              {showWelcome && <WelcomeCard onPickWorkflow={(prompt) => setPrefill(prompt)} />}
-              {viewOnly && !showWelcome && messages.length === 0 && (
+              {!viewOnly && (
+                <Collapse in={quickStartOpen} transitionDuration={150}>
+                  <WelcomeCard onPickWorkflow={(prompt) => setPrefill(prompt)} />
+                </Collapse>
+              )}
+              {showEmptyViewOnly && (
                 <Paper withBorder radius="md" p="md" style={{ borderStyle: 'dashed' }}>
                   <Stack gap={6}>
                     <Text fw={600}>暂无创作过程记录</Text>
@@ -1482,16 +1721,19 @@ function LangGraphChatOverlayInner({
                 style={{ flex: 1, minHeight: 0, maxHeight: '100%' }}
               >
                 <div style={{ paddingRight: 8 }}>
-                  <ChatMessagesView
-                    messages={displayMessages}
-                    isLoading={thread.isLoading}
-                    liveEvents={processedEventsTimeline}
-                    historicalEvents={historicalActivities}
-                    readOnly={viewOnly}
-                    onCopy={handleCopy}
-                    copiedId={copiedId}
-                    onPickQuickReply={(input) => setPrefill(input)}
-                  />
+	                  <ChatMessagesView
+	                    messages={displayMessages}
+	                    isLoading={thread.isLoading}
+	                    liveEvents={processedEventsTimeline}
+	                    historicalEvents={historicalActivities}
+	                    readOnly={viewOnly}
+	                    nodesById={nodesById}
+	                    nodeIdByLabel={nodeIdByLabel}
+	                    toolCallBindings={toolCallBindings}
+	                    onCopy={handleCopy}
+	                    copiedId={copiedId}
+	                    onPickQuickReply={(input) => setPrefill(input)}
+	                  />
                 </div>
               </ScrollArea>
               <Divider />
