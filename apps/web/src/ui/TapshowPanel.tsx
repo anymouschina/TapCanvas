@@ -36,16 +36,6 @@ function formatDate(ts: string) {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
 }
 
-function toSingleLine(text: string): string {
-  return String(text || '').replace(/\s+/g, ' ').trim()
-}
-
-function clipLabel(text: string, maxLen = 48): string {
-  const s = toSingleLine(text)
-  if (s.length <= maxLen) return s
-  return `${s.slice(0, Math.max(0, maxLen - 1))}…`
-}
-
 export default function TapshowPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
   const setActivePanel = useUIStore((s) => s.setActivePanel)
@@ -390,9 +380,7 @@ export default function TapshowPanel(): JSX.Element | null {
                                         variant="light"
                                         onClick={() => {
                                           const kind = isVideo ? 'video' : 'image'
-                                          const safeLabel = clipLabel(label.replace(/^(image|video)\s*\\|\\s*/i, ''), 52)
-                                          const nodeLabel = `${isVideo ? 'Video' : 'Image'} | ${safeLabel || (isVideo ? 'TapShow 视频' : 'TapShow 图片')}`
-                                          addNode('taskNode', nodeLabel, {
+                                          addNode('taskNode', label, {
                                             kind,
                                             autoLabel: false,
                                             prompt: asset.prompt || '',

@@ -12,6 +12,7 @@ import { aiRouter } from "./modules/ai/ai.routes";
 import { draftRouter } from "./modules/draft/draft.routes";
 import { assetRouter } from "./modules/asset/asset.routes";
 import { taskRouter } from "./modules/task/task.routes";
+import { statsRouter } from "./modules/stats/stats.routes";
 import { TaskCreate } from "./endpoints/taskCreate";
 import { TaskDelete } from "./endpoints/taskDelete";
 import { TaskFetch } from "./endpoints/taskFetch";
@@ -70,6 +71,9 @@ app.route("/drafts", draftRouter);
 
 // Assets routes
 app.route("/assets", assetRouter);
+
+// Stats routes
+app.route("/stats", statsRouter);
 
 // Unified task routes (veo / sora2api for now)
 app.route("/tasks", taskRouter);

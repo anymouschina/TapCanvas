@@ -47,6 +47,7 @@ import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 import TapshowFullPage from './ui/TapshowFullPage'
 import ShareFullPage from './ui/ShareFullPage'
+import StatsFullPage from './ui/StatsFullPage'
 import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
@@ -946,12 +947,21 @@ function isShareRoute(): boolean {
   return path === '/share' || path.startsWith('/share/')
 }
 
+function isStatsRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  const path = window.location.pathname || ''
+  return path === '/stats' || path.startsWith('/stats/')
+}
+
 export default function App(): JSX.Element {
   if (isTapshowRoute()) {
     return <TapshowFullPage />
   }
   if (isShareRoute()) {
     return <ShareFullPage />
+  }
+  if (isStatsRoute()) {
+    return <StatsFullPage />
   }
   return <CanvasApp />
 }

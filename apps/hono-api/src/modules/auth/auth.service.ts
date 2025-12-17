@@ -141,34 +141,83 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 		name: user.name || user.login,
 		avatarUrl: user.avatar_url ?? null,
 		email: primaryEmail ?? null,
+		role: null,
 		guest: false,
 	};
 
 	const nowIso = new Date().toISOString();
 
-	await c.env.DB.prepare(
-		`
-      INSERT INTO users (id, login, name, avatar_url, email, guest, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        login = excluded.login,
-        name = excluded.name,
-        avatar_url = excluded.avatar_url,
-        email = excluded.email,
-        guest = 0,
-        updated_at = excluded.updated_at
-    `,
-	)
-		.bind(
-			payload.sub,
-			payload.login,
-			payload.name,
-			payload.avatarUrl,
-			payload.email,
-			nowIso,
-			nowIso,
+	try {
+		await c.env.DB.prepare(
+			`
+        INSERT INTO users (id, login, name, avatar_url, email, guest, last_seen_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          login = excluded.login,
+          name = excluded.name,
+          avatar_url = excluded.avatar_url,
+          email = excluded.email,
+          guest = 0,
+          last_seen_at = excluded.last_seen_at,
+          updated_at = excluded.updated_at
+      `,
 		)
-		.run();
+			.bind(
+				payload.sub,
+				payload.login,
+				payload.name,
+				payload.avatarUrl,
+				payload.email,
+				nowIso,
+				nowIso,
+				nowIso,
+			)
+			.run();
+	} catch (err: any) {
+		// Backward-compatible: local DB might not be migrated yet (no last_seen_at/role columns).
+		const msg = String(err?.message || "");
+		if (msg.includes("no such column") || msg.includes("SQLITE_ERROR")) {
+			await c.env.DB.prepare(
+				`
+          INSERT INTO users (id, login, name, avatar_url, email, guest, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            login = excluded.login,
+            name = excluded.name,
+            avatar_url = excluded.avatar_url,
+            email = excluded.email,
+            guest = 0,
+            updated_at = excluded.updated_at
+        `,
+			)
+				.bind(
+					payload.sub,
+					payload.login,
+					payload.name,
+					payload.avatarUrl,
+					payload.email,
+					nowIso,
+					nowIso,
+				)
+				.run();
+		} else {
+			throw err;
+		}
+	}
+
+	try {
+		const row = await c.env.DB.prepare(
+			`SELECT role FROM users WHERE id = ? LIMIT 1`,
+		)
+			.bind(payload.sub)
+			.first<any>();
+		payload.role =
+			row && typeof row.role === "string" && row.role.trim().length
+				? row.role.trim()
+				: null;
+	} catch {
+		payload.role = null;
+	}
 
 	const token = await signJwtHS256(
 		payload,
@@ -196,21 +245,52 @@ export async function createGuestUser(c: AppContext, nickname?: string) {
 
 	const nowIso = new Date().toISOString();
 
-	await c.env.DB.prepare(
-		`
-      INSERT INTO users (id, login, name, avatar_url, email, guest, created_at, updated_at)
-      VALUES (?, ?, ?, NULL, NULL, 1, ?, ?)
-    `,
-	)
-		.bind(id, login, name, nowIso, nowIso)
-		.run();
+	try {
+		await c.env.DB.prepare(
+			`
+        INSERT INTO users (id, login, name, avatar_url, email, guest, last_seen_at, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, NULL, 1, ?, ?, ?)
+      `,
+		)
+			.bind(id, login, name, nowIso, nowIso, nowIso)
+			.run();
+	} catch (err: any) {
+		const msg = String(err?.message || "");
+		if (msg.includes("no such column") || msg.includes("SQLITE_ERROR")) {
+			await c.env.DB.prepare(
+				`
+          INSERT INTO users (id, login, name, avatar_url, email, guest, created_at, updated_at)
+          VALUES (?, ?, ?, NULL, NULL, 1, ?, ?)
+        `,
+			)
+				.bind(id, login, name, nowIso, nowIso)
+				.run();
+		} else {
+			throw err;
+		}
+	}
 
 	const payload: UserPayload = {
 		sub: id,
 		login,
 		name,
+		role: null,
 		guest: true,
 	};
+
+	try {
+		const row = await c.env.DB.prepare(
+			`SELECT role FROM users WHERE id = ? LIMIT 1`,
+		)
+			.bind(payload.sub)
+			.first<any>();
+		payload.role =
+			row && typeof row.role === "string" && row.role.trim().length
+				? row.role.trim()
+				: null;
+	} catch {
+		payload.role = null;
+	}
 
 	const token = await signJwtHS256(
 		payload,
