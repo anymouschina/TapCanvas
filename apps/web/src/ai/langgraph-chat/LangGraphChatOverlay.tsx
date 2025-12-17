@@ -74,6 +74,11 @@ type QuickReply = {
   input: string
 }
 
+type TapcanvasActionsPayload = {
+  title?: string
+  actions?: Array<{ label?: string; input?: string }>
+}
+
 type RoleMeta = {
   roleId?: string
   roleName?: string
@@ -231,6 +236,27 @@ const renderContentText = (content: Message['content']): string => {
   }
 }
 
+const parseTapcanvasActionsFromText = (
+  text: string,
+): { cleanedText: string; payload: TapcanvasActionsPayload } | null => {
+  const marker = '\ntapcanvas_actions'
+  const idx = text.indexOf(marker)
+  if (idx === -1) return null
+
+  const tail = text.slice(idx + marker.length)
+  const brace = tail.indexOf('{')
+  if (brace === -1) return null
+  const jsonText = tail.slice(brace).trim()
+
+  try {
+    const payload = JSON.parse(jsonText) as TapcanvasActionsPayload
+    const cleanedText = text.slice(0, idx).trim()
+    return { cleanedText, payload }
+  } catch {
+    return null
+  }
+}
+
 function ActivityTimeline({
   events,
   isLoading,
@@ -286,6 +312,7 @@ function MessageBubble({
   activity,
   isLive,
   isLoading,
+  readOnly,
   onCopy,
   copied,
   onPickQuickReply,
@@ -295,6 +322,7 @@ function MessageBubble({
   activity?: ProcessedEvent[]
   isLive: boolean
   isLoading: boolean
+  readOnly: boolean
   onCopy: (text: string, id?: string) => void
   copied: boolean
   onPickQuickReply: (input: string) => void
@@ -303,17 +331,23 @@ function MessageBubble({
   const { colorScheme } = useMantineColorScheme()
   const isLight = colorScheme === 'light'
   const isHuman = message.type === 'human'
+  const parsedTapActions = useMemo(() => parseTapcanvasActionsFromText(text), [text])
+  const displayText = parsedTapActions?.cleanedText ?? text
   const bubbleBg = isHuman
-    ? 'linear-gradient(135deg,#4f6bff,#7ae2ff)'
+    ? isLight
+      ? 'rgba(15,23,42,0.04)'
+      : 'rgba(255,255,255,0.06)'
     : isLight
       ? 'rgba(255,255,255,0.92)'
       : 'rgba(255,255,255,0.04)'
   const bubbleBorder = isHuman
-    ? '1px solid rgba(255,255,255,0.18)'
+    ? isLight
+      ? '1px solid rgba(59,130,246,0.18)'
+      : '1px solid rgba(255,255,255,0.10)'
     : isLight
       ? '1px solid rgba(15,23,42,0.08)'
       : '1px solid rgba(255,255,255,0.06)'
-  const bubbleTextColor = isHuman ? '#fff' : isLight ? 'var(--mantine-color-text)' : '#f5f7ff'
+  const bubbleTextColor = isLight ? 'var(--mantine-color-text)' : '#f5f7ff'
   const subPanelBg = isLight ? 'rgba(15,23,42,0.03)' : 'rgba(255,255,255,0.04)'
   const subPanelBgTight = isLight ? 'rgba(15,23,42,0.028)' : 'rgba(255,255,255,0.035)'
   const subPanelBgThin = isLight ? 'rgba(15,23,42,0.022)' : 'rgba(255,255,255,0.03)'
@@ -377,10 +411,13 @@ function MessageBubble({
         shadow="md"
         style={{
           maxWidth: '88%',
+          minWidth: 0,
           alignSelf: align === 'right' ? 'flex-end' : 'flex-start',
           background: bubbleBg,
           border: bubbleBorder,
           color: bubbleTextColor,
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
         }}
       >
         {activity && activity.length > 0 && (
@@ -522,23 +559,77 @@ function MessageBubble({
           components={{
             h1: ({ children }) => <Title order={3}>{children}</Title>,
             h2: ({ children }) => <Title order={4}>{children}</Title>,
-            p: ({ children }) => <Text size="sm" fw={400} style={{ whiteSpace: 'pre-wrap' }}>{children}</Text>,
-            ul: ({ children }) => <Stack gap={4} style={{ paddingLeft: 16 }}>{children}</Stack>,
-            li: ({ children }) => <Text size="sm" component="div">• {children}</Text>,
+            p: ({ children }) => (
+              <Text size="sm" fw={400} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                {children}
+              </Text>
+            ),
+            ul: ({ children }) => <Stack gap={4} style={{ paddingLeft: 16, maxWidth: '100%' }}>{children}</Stack>,
+            li: ({ children }) => (
+              <Text size="sm" component="div" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                • {children}
+              </Text>
+            ),
             a: ({ children, href }) => (
               <a
                 href={href}
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: isLight ? 'var(--mantine-color-anchor)' : '#8ad1ff' }}
+                style={{
+                  color: isLight ? 'var(--mantine-color-anchor)' : '#8ad1ff',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                }}
               >
                 {children}
               </a>
             ),
+            code: ({ children }) => (
+              <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                {children}
+              </code>
+            ),
+            pre: ({ children }) => (
+              <pre
+                style={{
+                  maxWidth: '100%',
+                  overflowX: 'auto',
+                  margin: '8px 0',
+                  padding: 12,
+                  borderRadius: 10,
+                  background: isLight ? 'rgba(15,23,42,0.04)' : 'rgba(255,255,255,0.05)',
+                  border: isLight ? '1px solid rgba(15,23,42,0.08)' : '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                {children}
+              </pre>
+            ),
           }}
         >
-          {text || '…'}
+          {displayText || '…'}
         </ReactMarkdown>
+        {!isHuman && parsedTapActions?.payload?.actions?.length ? (
+          <Group gap="xs" mt="sm" wrap="wrap">
+            {parsedTapActions.payload.actions
+              .map((a) => ({
+                label: typeof a?.label === 'string' ? a.label.trim() : '',
+                input: typeof a?.input === 'string' ? a.input : '',
+              }))
+              .filter((a) => a.label && a.input.trim())
+              .slice(0, 8)
+              .map((a) => (
+                <Button
+                  key={a.label}
+                  size="xs"
+                  variant="light"
+                  disabled={readOnly}
+                  onClick={() => onPickQuickReply(a.input)}
+                >
+                  {a.label}
+                </Button>
+              ))}
+          </Group>
+        ) : null}
         {!isHuman && quickReplies.length > 0 && (
           <Group gap="xs" mt="sm" wrap="wrap">
             {quickReplies.map((qr) => (
@@ -575,6 +666,7 @@ function ChatMessagesView({
   isLoading,
   liveEvents,
   historicalEvents,
+  readOnly,
   onCopy,
   copiedId,
   onPickQuickReply,
@@ -583,6 +675,7 @@ function ChatMessagesView({
   isLoading: boolean
   liveEvents: ProcessedEvent[]
   historicalEvents: Record<string, ProcessedEvent[]>
+  readOnly: boolean
   onCopy: (text: string, id?: string) => void
   copiedId: string | null
   onPickQuickReply: (input: string) => void
@@ -609,6 +702,7 @@ function ChatMessagesView({
             activity={activity}
             isLive={isAssistant && isLast}
             isLoading={isAssistant && isLoading}
+            readOnly={readOnly}
             onCopy={onCopy}
             copied={copiedId === (msg.id || '')}
             onPickQuickReply={onPickQuickReply}
@@ -1230,7 +1324,17 @@ function LangGraphChatOverlayInner({
     }
   }, [])
 
-  const showWelcome = !viewOnly && messages.length === 0
+  const displayMessages = useMemo(() => {
+    const list = (messages || []) as any[]
+    return list.filter((m) => {
+      const t = m?.type
+      if (t !== 'human' && t !== 'ai') return false
+      const c = m?.content
+      return typeof c === 'string' || Array.isArray(c)
+    }) as Message[]
+  }, [messages])
+
+  const showWelcome = !viewOnly && displayMessages.length === 0
 
   return (
     <>
@@ -1374,14 +1478,16 @@ function LangGraphChatOverlayInner({
                 type="never"
                 offsetScrollbars={false}
                 viewportRef={scrollViewportRef}
+                styles={{ viewport: { overflowX: 'hidden' } }}
                 style={{ flex: 1, minHeight: 0, maxHeight: '100%' }}
               >
                 <div style={{ paddingRight: 8 }}>
                   <ChatMessagesView
-                    messages={messages}
+                    messages={displayMessages}
                     isLoading={thread.isLoading}
                     liveEvents={processedEventsTimeline}
                     historicalEvents={historicalActivities}
+                    readOnly={viewOnly}
                     onCopy={handleCopy}
                     copiedId={copiedId}
                     onPickQuickReply={(input) => setPrefill(input)}
@@ -1393,7 +1499,7 @@ function LangGraphChatOverlayInner({
                 onSubmit={handleSubmit}
                 onCancel={handleCancel}
                 isLoading={thread.isLoading}
-                hasHistory={messages.length > 0}
+                hasHistory={displayMessages.length > 0}
                 blocked={blocked}
                 prefill={prefill}
                 readOnly={viewOnly}

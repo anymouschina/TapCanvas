@@ -341,24 +341,6 @@ export type StatsDto = {
 export type DauPointDto = { day: string; activeUsers: number }
 export type DauSeriesDto = { days: number; series: DauPointDto[] }
 
-export async function pingPresence(): Promise<void> {
-  const r = await fetch(`${API_BASE}/stats/ping`, withAuth({
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  }))
-  if (!r.ok) {
-    let body: any = null
-    try {
-      body = await r.json()
-    } catch {
-      body = null
-    }
-    const msg = (body && (body.message || body.error)) || `presence ping failed: ${r.status}`
-    throw new Error(msg)
-  }
-}
-
 export async function getStats(): Promise<StatsDto> {
   const r = await fetch(`${API_BASE}/stats`, withAuth())
   let body: any = null

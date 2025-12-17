@@ -5,7 +5,6 @@ import WriteImage from '../../public/writer.png'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
-import { pingPresence } from '../api/server'
 
 function ImmersiveCreateIcon({ size = 22 }: { size?: number }) {
   const stroke = 'rgba(245,247,255,0.95)'
@@ -96,31 +95,7 @@ export default function FloatingNav(): JSX.Element {
   const token = useAuth((s) => s.token)
   const role = useAuth((s) => s.user?.role || null)
   const isAdmin = role === 'admin'
-  React.useEffect(() => {
-    if (!token) return
-    let cancelled = false
-    const run = async () => {
-      try {
-        await pingPresence()
-      } catch {
-        // ignore presence failures
-      }
-      if (cancelled) return
-      // keep user "online" while the app is open
-      const id = window.setInterval(() => {
-        void pingPresence().catch(() => {})
-      }, 30_000)
-      return () => window.clearInterval(id)
-    }
-    let cleanup: undefined | (() => void)
-    void run().then((c) => {
-      cleanup = typeof c === 'function' ? c : undefined
-    })
-    return () => {
-      cancelled = true
-      cleanup?.()
-    }
-  }, [token])
+  // Removed presence ping heartbeat: Cloudflare Workers does not need keep-alive and this endpoint isn't used elsewhere.
 
   const Item = ({ label, icon, onHover, badge }: { label: string; icon: React.ReactNode; onHover: (y: number) => void; badge?: string }) => (
     <div style={{ position: 'relative' }} data-ux-floating>
