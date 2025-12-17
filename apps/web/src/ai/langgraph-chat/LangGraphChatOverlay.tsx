@@ -86,6 +86,63 @@ type RoleMeta = {
   roleReason?: string
 }
 
+const LAST_SUBMIT_STORAGE_PREFIX = 'tapcanvas:langgraph:lastSubmit:'
+
+function getLastSubmitStorageKey(projectId: string) {
+  return `${LAST_SUBMIT_STORAGE_PREFIX}${projectId}`
+}
+
+function persistLastSubmit(projectId: string, values: any) {
+  try {
+    window.localStorage.setItem(
+      getLastSubmitStorageKey(projectId),
+      JSON.stringify({ savedAt: Date.now(), values }),
+    )
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
+function loadLastSubmit(projectId: string): any | null {
+  try {
+    const raw = window.localStorage.getItem(getLastSubmitStorageKey(projectId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.values ?? null
+  } catch {
+    return null
+  }
+}
+
+function clearLastSubmit(projectId: string) {
+  try {
+    window.localStorage.removeItem(getLastSubmitStorageKey(projectId))
+  } catch {
+    // ignore
+  }
+}
+
+function isLikelyTransientLangGraphError(err: any, message: string) {
+  const status = err?.status ?? err?.response?.status
+  if (status === 404) return false
+  if (typeof status === 'number' && [408, 425, 429, 500, 502, 503, 504].includes(status)) return true
+
+  const msg = String(message || err?.message || '').toLowerCase()
+  if (!msg) return false
+  return (
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('network') ||
+    msg.includes('econnreset') ||
+    msg.includes('aborted') ||
+    msg.includes('not ready') ||
+    msg.includes('cold start') ||
+    msg.includes('gateway') ||
+    msg.includes('temporarily unavailable')
+  )
+}
+
 const parseRoleMetaFromMessage = (message: Message): RoleMeta => {
   const anyMsg = message as any
   const carrier =
@@ -1115,6 +1172,11 @@ function LangGraphChatOverlayInner({
   const lastSubmitValuesRef = useRef<any | null>(null)
   const recoveringThreadRef = useRef(false)
   const lastStreamErrorRef = useRef<any>(null)
+  const autoRetryRef = useRef<{ key: string | null; attempts: number; timer: number | null }>({
+    key: null,
+    attempts: 0,
+    timer: null,
+  })
 	  const toolExecutionArmedRef = useRef(false)
 	  const lastSubmittedHumanIdRef = useRef<string | null>(null)
 	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
@@ -1251,6 +1313,17 @@ function LangGraphChatOverlayInner({
     }
   }, [open, projectId, viewOnly])
 
+  useEffect(() => {
+    if (!open) return
+    if (!projectId) return
+    if (viewOnly) return
+    if (lastSubmitValuesRef.current) return
+    const restored = loadLastSubmit(projectId)
+    if (!restored) return
+    if (!Array.isArray(restored?.messages) || restored.messages.length === 0) return
+    lastSubmitValuesRef.current = restored
+  }, [open, projectId, viewOnly])
+
   const thread = useStream<{
     messages: Message[]
     initial_search_query_count: number
@@ -1307,6 +1380,86 @@ function LangGraphChatOverlayInner({
       setError(msg || 'unknown error')
     },
   })
+
+  useEffect(() => {
+    return () => {
+      const t = autoRetryRef.current.timer
+      if (t) window.clearTimeout(t)
+      autoRetryRef.current.timer = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (viewOnly) return
+    if (!projectId) return
+    if (!error) return
+    if (thread.isLoading) return
+    if (blocked) return
+    if (recoveringThreadRef.current) return
+    const err = lastStreamErrorRef.current
+    if (!isLikelyTransientLangGraphError(err, error)) return
+
+    const values = lastSubmitValuesRef.current
+    if (!values || !Array.isArray(values.messages) || values.messages.length === 0) return
+    const lastMsg = values.messages[values.messages.length - 1]
+    const key = `${projectId}:${String(lastMsg?.id ?? '')}:${String(err?.status ?? err?.response?.status ?? '')}:${String(error)}`
+
+    if (autoRetryRef.current.key !== key) {
+      const prevTimer = autoRetryRef.current.timer
+      if (prevTimer) window.clearTimeout(prevTimer)
+      autoRetryRef.current = { key, attempts: 0, timer: null }
+    }
+    if (autoRetryRef.current.attempts >= 2) return
+
+    const submittedHumanId = lastSubmittedHumanIdRef.current
+    if (submittedHumanId) {
+      const live = (thread.messages || []) as any[]
+      const idx = live.findIndex((m) => String(m?.id ?? '') === String(submittedHumanId))
+      if (idx >= 0 && live.slice(idx + 1).some((m) => m?.type === 'ai')) return
+    }
+
+    autoRetryRef.current.attempts += 1
+    const attempt = autoRetryRef.current.attempts
+    const delayMs = 800 + (attempt - 1) * 1200
+    setError(null)
+
+    autoRetryRef.current.timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          if (thread.isLoading) return
+          if (blocked) return
+          if (viewOnly) return
+
+          const latest = lastSubmitValuesRef.current
+          if (!latest || !Array.isArray(latest.messages) || latest.messages.length === 0) return
+
+          void thread.stop()
+
+          const ready = await ensureLangGraphReady()
+          if (!ready) {
+            setError('LangGraph 服务未就绪（可能冷启动）。请稍后点“重试”。')
+            return
+          }
+
+          const canvas_context = buildCanvasContext(nodes, edges)
+          const retryValues = { ...latest, canvas_context }
+          lastSubmitValuesRef.current = retryValues
+          persistLastSubmit(projectId, retryValues)
+          try {
+            void setLangGraphProjectSnapshot(projectId, {
+              threadId,
+              messagesJson: JSON.stringify(latest.messages),
+            }).catch(() => {})
+          } catch {
+            // ignore
+          }
+          thread.submit(retryValues)
+        } catch (e: any) {
+          setError(e?.message || 'auto retry failed')
+        }
+      })()
+    }, delayMs)
+  }, [blocked, edges, ensureLangGraphReady, error, nodes, projectId, recoveringThreadRef, thread, thread.isLoading, thread.messages, threadId, viewOnly])
 
   useEffect(() => {
     const live = (thread.messages || []) as Message[]
@@ -1553,6 +1706,17 @@ function LangGraphChatOverlayInner({
 	            canvas_context,
 	          }
 	          lastSubmitValuesRef.current = values
+            if (projectId) {
+              persistLastSubmit(projectId, values)
+              try {
+                void setLangGraphProjectSnapshot(projectId, {
+                  threadId,
+                  messagesJson: JSON.stringify(newMessages),
+                }).catch(() => {})
+              } catch {
+                // ignore
+              }
+            }
 
 	          const ready = await ensureLangGraphReady()
 	          if (!ready) {
@@ -1568,7 +1732,7 @@ function LangGraphChatOverlayInner({
 	        }
 	      })()
 	    },
-	    [blocked, edges, ensureLangGraphReady, liveMessages, nodes, thread, viewOnly],
+	    [blocked, edges, ensureLangGraphReady, liveMessages, nodes, projectId, thread, threadId, viewOnly],
 	  )
 
   const handleCancel = useCallback(() => {
@@ -1586,6 +1750,7 @@ function LangGraphChatOverlayInner({
       if (projectId) {
         await clearLangGraphProjectThread(projectId)
         await clearLangGraphProjectSnapshot(projectId)
+        clearLastSubmit(projectId)
       }
       onReset()
     } catch (err) {
@@ -1647,7 +1812,20 @@ function LangGraphChatOverlayInner({
           const lastMsg = prev.messages[prev.messages.length - 1]
           lastSubmittedHumanIdRef.current = lastMsg?.type === 'human' ? (lastMsg?.id ? String(lastMsg.id) : null) : null
           toolExecutionArmedRef.current = true
-          thread.submit({ ...prev, canvas_context })
+          const values = { ...prev, canvas_context }
+          lastSubmitValuesRef.current = values
+          if (projectId) {
+            persistLastSubmit(projectId, values)
+            try {
+              void setLangGraphProjectSnapshot(projectId, {
+                threadId,
+                messagesJson: JSON.stringify(prev.messages),
+              }).catch(() => {})
+            } catch {
+              // ignore
+            }
+          }
+          thread.submit(values)
         } catch (err: any) {
           setError(err?.message || 'retry failed')
         }
@@ -1656,7 +1834,7 @@ function LangGraphChatOverlayInner({
     }
     if (!lastHumanInput.trim()) return
     handleSubmit(lastHumanInput, 'medium')
-  }, [blocked, edges, ensureLangGraphReady, handleSubmit, lastHumanInput, nodes, thread, viewOnly])
+  }, [blocked, edges, ensureLangGraphReady, handleSubmit, lastHumanInput, nodes, projectId, thread, threadId, viewOnly])
 
   // Backward-compatible alias (older dev builds referenced this name).
   const showWelcome = !viewOnly && displayMessages.length === 0
