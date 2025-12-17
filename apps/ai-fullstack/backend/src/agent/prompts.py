@@ -15,6 +15,10 @@ Rules:
 - Only choose a role_id from the list above. If nothing fits, default to "{default_role_id}".
 - Keep the reason concise (one sentence) describing why the role matches the user's intent.
 - Do not invent new roles.
+- Also decide whether canvas tool execution should be allowed in THIS turn:
+  - allow_canvas_tools=true ONLY if the user clearly asks to create/update/connect/run canvas nodes, or explicitly confirms an action choice.
+  - allow_canvas_tools=false for greetings/smalltalk, vague requests, or when you should first ask the user to choose/confirm via buttons.
+- Keep allow_canvas_tools_reason concise (one sentence).
 
 Conversation so far:
 {conversation}

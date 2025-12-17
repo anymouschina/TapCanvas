@@ -811,6 +811,10 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
 
     resolved_id, profile = _resolve_role(result.role_id)
     reason = result.reason or "基于对话意图的默认选择。"
+    allow_canvas_tools = bool(getattr(result, "allow_canvas_tools", True))
+    allow_canvas_tools_reason = (
+        getattr(result, "allow_canvas_tools_reason", None) or "根据用户意图判断。"
+    )
 
     # ensure defaults for downstream (even though web research removed)
     defaults = {
@@ -825,6 +829,8 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         "active_role": resolved_id,
         "active_role_name": profile["name"],
         "active_role_reason": reason,
+        "allow_canvas_tools": allow_canvas_tools,
+        "allow_canvas_tools_reason": allow_canvas_tools_reason,
         **{k: v for k, v in defaults.items() if k not in state},
     }
 
@@ -1089,10 +1095,15 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     llm_provider = configurable.llm_provider.lower()
     reasoning_model = state.get("reasoning_model") or configurable.answer_model
 
-    # Resolve role directive for persona-aware answer
+    # Resolve role directive for persona-aware answer.
+    # Always include an "art director" supervision rubric, even when a specialist role is active.
     resolved_id, profile = _resolve_role(state.get("active_role", DEFAULT_ROLE_ID))
+    director_id, director_profile = _resolve_role("art_director")
     role_directive = (
-        f"{profile['name']}（{resolved_id}）: {profile['summary']}。回复风格：{profile['style']}。"
+        f"总监审查（{director_profile['name']}｜{director_id}）: {director_profile['summary']}。"
+        f" 审查风格：{director_profile['style']}。"
+        f" 你必须先审查本轮是否应该执行画布动作（tool calls）、是否需要用户确认、是否保持风格/上下文一致，再输出最终回复。\n"
+        f"主执行角色（{profile['name']}｜{resolved_id}）: {profile['summary']}。回复风格：{profile['style']}。"
         f" 选择原因：{state.get('active_role_reason', '根据对话意图选择。')}"
     )
 
@@ -1186,6 +1197,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 and any(k in (last_user_text or "") for k in ("推荐", "方向", "灵感", "怎么写"))
                 and not any(k in (last_user_text or "") for k in ("九宫格", "分镜", "故事板", "storyboard", "15s"))
             )
+
             if is_story_suggestion_request and "tapcanvas_actions" not in (result_text or ""):
                 # Prevent unintended canvas actions triggered by the model.
                 tool_calls_payload = []
@@ -1208,6 +1220,28 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     },
                 ]
                 result_text = "给你 3 个续写方向，点一个我就按这个继续写；也可以选“自定义方向”把你想要的走向填进去。"
+
+            # Supervisor gate: only allow canvas side-effects when the router approved it for this turn.
+            allow_canvas_tools = state.get("allow_canvas_tools")
+            if allow_canvas_tools is False:
+                tool_calls_payload = []
+                if not quick_replies_payload:
+                    quick_replies_payload = [
+                        {
+                            "label": "继续创作（先选方向）",
+                            "input": "基于我当前项目画布，先给 3 个可选方向（按钮）让我选；我选完你再在画布创建分镜/视频节点。",
+                        },
+                        {
+                            "label": "直接生成（我给具体需求）",
+                            "input": "我想在画布生成一个内容：\n- 类型（图片/分镜/视频）：\n- 主题：\n- 风格：\n- 时长/比例（如需要）：\n请按我的填写创建节点并执行。",
+                        },
+                        {
+                            "label": "只聊不操作画布",
+                            "input": "先不操作画布。请先用一句话问我：我想做什么类型的内容、有什么参考、以及希望的风格/时长。",
+                        },
+                    ]
+                if not isinstance(result_text, str) or not result_text.strip():
+                    result_text = "我先不动画布。你想先聊清楚需求，还是直接点一个选项让我开始执行？"
 
             # Autopilot: if the model created an image node, also run it immediately.
             # The frontend can resolve nodeId from label, so we can safely reference labels here.
