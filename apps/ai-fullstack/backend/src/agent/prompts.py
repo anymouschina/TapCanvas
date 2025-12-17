@@ -19,6 +19,11 @@ Rules:
   - allow_canvas_tools=true ONLY if the user clearly asks to create/update/connect/run canvas nodes, or explicitly confirms an action choice.
   - allow_canvas_tools=false for greetings/smalltalk, vague requests, or when you should first ask the user to choose/confirm via buttons.
 - Keep allow_canvas_tools_reason concise (one sentence).
+- Also output a mutually-exclusive tool tier for THIS turn:
+  - tool_tier="none" for text-only responses.
+  - tool_tier="canvas" ONLY if allow_canvas_tools=true.
+  - tool_tier="web" ONLY if the user explicitly asks for web research / searching.
+- Optionally provide a short intent label (intent), e.g. storyboard/image/video/chat_only.
 - If the user provides content that is too bloody/violent or sexually explicit, prefer role_id "magician" to rewrite it into metaphorical, implied, cinematic-safe expression while preserving the story.
 
 Conversation so far:
@@ -138,6 +143,9 @@ Instructions:
   3) Only after confirmation, create storyboard/video nodes that include that character.
 - For “I need an image / generate a picture” requests, create exactly one `image` node with a clear label, write `config.prompt` and `config.negativePrompt`, then immediately call `runNode` using that same label as `nodeId`.
 - For “分镜/故事板/storyboard/15s分镜” requests: create one `image` node that generates a 3x3 九宫格分镜图（同一张图里包含9个镜头），then create one `composeVideo` node for the 15s video, connect the storyboard image node `out-image` -> video node `in-image`. Only run the image node in this turn (do NOT run the video node yet).
+- Video duration rule (hard constraint): a single video generation run must be 10–15 seconds.
+  - If the user asks for >15s (e.g. 30–45s), split into multiple 10–15s segments (Part 1/2/3...), each with its own `composeVideo` node.
+  - Never create a `composeVideo` node with durationSeconds > 15.
 - For “分镜/故事板/动画/短片/成片” requests, prioritize continuity:
   - Do NOT let scenes drift freely or change the number of main subjects mid-sequence.
   - If the user has NOT explicitly confirmed a lock (e.g. says “确认锁定/锁定场景/锁定主体/我确认”), first ask the user to confirm:

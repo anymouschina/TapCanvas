@@ -41,6 +41,45 @@ class RoleDecision(BaseModel):
         default="Default to allow unless the intent is ambiguous.",
         description="Short rationale for allow_canvas_tools (1 sentence).",
     )
+    intent: Optional[str] = Field(
+        default=None,
+        description="Optional high-level intent label, e.g. 'storyboard', 'image', 'video', 'prompt_refine', 'chat_only'.",
+    )
+    tool_tier: Literal["none", "canvas", "rag", "web"] = Field(
+        default="none",
+        description="Tool tier for this turn. Must be mutually exclusive: 'none' (text-only), 'canvas' (create/update/connect/run), 'rag' (KB retrieval). 'web' is legacy and will be treated as 'rag'.",
+    )
+
+
+class SafetyDecision(BaseModel):
+    sexual: bool = Field(
+        default=False,
+        description="True if the user request contains explicit sexual content or requests pornographic output.",
+    )
+    nudity: bool = Field(
+        default=False,
+        description="True if the user request contains explicit nudity requests (may be non-sexual but disallowed for many platforms).",
+    )
+    gore: bool = Field(
+        default=False,
+        description="True if the user request contains graphic gore / dismemberment / explicit blood/viscera depiction.",
+    )
+    violence: bool = Field(
+        default=False,
+        description="True if the user request contains explicit violent harm that should be softened to PG-13 cinematic depiction.",
+    )
+    should_block: bool = Field(
+        default=False,
+        description="True if the assistant must refuse direct generation and instead ask to rewrite/soften first.",
+    )
+    should_sanitize: bool = Field(
+        default=True,
+        description="True if the assistant should rewrite the content into implied/PG-13 language (cutaways, silhouettes) before continuing.",
+    )
+    reason: str = Field(
+        default="",
+        description="One-sentence rationale for the decision.",
+    )
 
 
 class PromptRequest(BaseModel):
