@@ -829,6 +829,8 @@ function LangGraphChatOverlayInner({
   const lastSubmitValuesRef = useRef<any | null>(null)
   const recoveringThreadRef = useRef(false)
   const lastStreamErrorRef = useRef<any>(null)
+  const toolExecutionArmedRef = useRef(false)
+  const lastSubmittedHumanIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -966,7 +968,12 @@ function LangGraphChatOverlayInner({
         setThreadId(null)
         await new Promise((r) => setTimeout(r, 50))
         const last = lastSubmitValuesRef.current
-        if (last) thread.submit(last)
+        if (last) {
+          const submittedHumanId = String(last?.messages?.[last?.messages?.length - 1]?.id || '')
+          lastSubmittedHumanIdRef.current = submittedHumanId || null
+          toolExecutionArmedRef.current = true
+          thread.submit(last)
+        }
         setError(null)
       } catch (e: any) {
         setError(e?.message || msg)
@@ -979,6 +986,14 @@ function LangGraphChatOverlayInner({
 
   const messages = thread.messages || []
   const blocked = !!projectId && !threadIdLoaded
+
+  useEffect(() => {
+    if (viewOnly) return
+    if (thread.isLoading) return
+    if (!toolExecutionArmedRef.current) return
+    toolExecutionArmedRef.current = false
+    lastSubmittedHumanIdRef.current = null
+  }, [thread.isLoading, viewOnly])
 
   const maybeAutoLayoutAfterTools = useCallback((focusNodeId?: string | null) => {
     try {
@@ -995,8 +1010,14 @@ function LangGraphChatOverlayInner({
   useEffect(() => {
     if (viewOnly) return
     if (!messages.length) return
+    if (!toolExecutionArmedRef.current) return
+    const submittedHumanId = lastSubmittedHumanIdRef.current
+    if (!submittedHumanId) return
+    const submittedIndex = messages.findIndex((m) => m?.id === submittedHumanId)
+    if (submittedIndex < 0) return
     const last = messages[messages.length - 1]
     if (!last || last.type !== 'ai') return
+    if (messages.length - 1 <= submittedIndex) return
     const toolCalls = parseToolCallsFromMessage(last)
     if (!toolCalls.length) return
 
@@ -1112,6 +1133,8 @@ function LangGraphChatOverlayInner({
         },
       ]
       try {
+        lastSubmittedHumanIdRef.current = newMessages[newMessages.length - 1]?.id || null
+        toolExecutionArmedRef.current = true
         const canvas_context = buildCanvasContext(nodes, edges)
         const values = {
           messages: newMessages,
