@@ -465,6 +465,68 @@ export async function clearLangGraphProjectThread(projectId: string): Promise<vo
   }
 }
 
+export type LangGraphProjectSnapshotDto = {
+  snapshot: { threadId: string | null; messagesJson: string } | null
+}
+
+export async function getLangGraphProjectSnapshot(projectId: string): Promise<LangGraphProjectSnapshotDto> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get langgraph snapshot failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const snap = body?.snapshot
+  if (!snap) return { snapshot: null }
+  return {
+    snapshot: {
+      threadId: typeof snap?.threadId === 'string' ? snap.threadId : null,
+      messagesJson: typeof snap?.messagesJson === 'string' ? snap.messagesJson : '',
+    },
+  }
+}
+
+export async function setLangGraphProjectSnapshot(projectId: string, payload: { threadId?: string | null; messagesJson: string }): Promise<{ threadId: string | null }> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `set langgraph snapshot failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const threadId = typeof body?.snapshot?.threadId === 'string' ? body.snapshot.threadId : null
+  return { threadId }
+}
+
+export async function clearLangGraphProjectSnapshot(projectId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
+    method: 'DELETE',
+  }))
+  if (!r.ok) {
+    let body: any = null
+    try {
+      body = await r.json()
+    } catch {
+      body = null
+    }
+    const msg = (body && (body.message || body.error)) || `clear langgraph snapshot failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
 export type AgentContinueInput = {
   sessionId: string
   planId?: string

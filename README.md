@@ -973,6 +973,10 @@ MIT License
 - [问题反馈](https://github.com/anymouschina/TapCanvas/issues)
 - [功能建议](https://github.com/anymouschina/TapCanvas/discussions)
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=anymouschina/TapCanvas&type=Date)](https://star-history.com/#anymouschina/TapCanvas&Date)
+
 ---
 
 **让 AI 创作变得简单而强大！** 🎨✨

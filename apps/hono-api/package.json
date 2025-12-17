@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev --port 8788",
+    "dev": "mkdir -p .wrangler/local-logs && WRANGLER_LOG_PATH=$PWD/.wrangler/local-logs/wrangler.log wrangler dev --port 8788",
+    "dev:local": "pnpm db:update:local && pnpm dev",
     "dev:log": "DEBUG_HTTP_LOG=1 wrangler dev --port 8788 2>&1 | tee log.txt",
     "start": "wrangler dev --remote",
     "cf-typegen": "wrangler types",
-    "db:update:local": "wrangler d1 execute tapcanvas --file=./schema.sql --local",
+    "db:update:local": "mkdir -p .wrangler/local-logs && WRANGLER_LOG_PATH=$PWD/.wrangler/local-logs/wrangler.log wrangler d1 execute tapcanvas --file=./schema.sql --local",
     "db:update:remote": "wrangler d1 execute tapcanvas --file=./schema.sql --remote"
   },
   "dependencies": {

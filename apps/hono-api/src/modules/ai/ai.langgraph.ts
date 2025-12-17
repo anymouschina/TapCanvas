@@ -12,6 +12,26 @@ type LangGraphProjectThreadRow = {
 	updated_at: string;
 };
 
+type LangGraphProjectSnapshotRow = {
+	id: string;
+	user_id: string;
+	project_id: string;
+	thread_id: string | null;
+	messages_json: string;
+	created_at: string;
+	updated_at: string;
+};
+
+function isMissingLangGraphSnapshotTable(err: unknown): boolean {
+	const msg =
+		err instanceof Error
+			? err.message
+			: typeof err === "string"
+				? err
+				: "";
+	return /no such table:\s*langgraph_project_snapshots/i.test(msg);
+}
+
 async function assertProjectOwned(
 	c: AppContext,
 	userId: string,
@@ -38,6 +58,124 @@ export async function getLangGraphThreadIdForProject(
 		[userId, projectId],
 	);
 	return row?.thread_id ?? null;
+}
+
+export async function getLangGraphSnapshotForProject(
+	c: AppContext,
+	userId: string,
+	projectId: string,
+): Promise<{ threadId: string | null; messagesJson: string } | null> {
+	await assertProjectOwned(c, userId, projectId);
+	try {
+		const row = await queryOne<
+			Pick<LangGraphProjectSnapshotRow, "thread_id" | "messages_json">
+		>(
+			c.env.DB,
+			`SELECT thread_id, messages_json FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
+			[userId, projectId],
+		);
+		if (!row?.messages_json) return null;
+		return {
+			threadId: row.thread_id ?? null,
+			messagesJson: row.messages_json,
+		};
+	} catch (err) {
+		// Deploy safety: allow shipping code before the D1 migration lands.
+		if (isMissingLangGraphSnapshotTable(err)) return null;
+		throw err;
+	}
+}
+
+export async function upsertLangGraphSnapshotForProject(
+	c: AppContext,
+	userId: string,
+	projectId: string,
+	payload: { threadId?: string | null; messagesJson: string },
+): Promise<{ threadId: string | null }> {
+	const messagesJson =
+		typeof payload.messagesJson === "string" ? payload.messagesJson : "";
+	if (!messagesJson.trim()) {
+		throw new AppError("messagesJson is required", {
+			status: 400,
+			code: "messages_json_required",
+		});
+	}
+
+	await assertProjectOwned(c, userId, projectId);
+
+	const nowIso = new Date().toISOString();
+	let existing: Pick<LangGraphProjectSnapshotRow, "id"> | null = null;
+	try {
+		existing = await queryOne<Pick<LangGraphProjectSnapshotRow, "id">>(
+			c.env.DB,
+			`SELECT id FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
+			[userId, projectId],
+		);
+	} catch (err) {
+		if (isMissingLangGraphSnapshotTable(err)) {
+			// Best-effort: if the table hasn't been migrated yet, do not block chat.
+			return {
+				threadId:
+					typeof payload.threadId === "string" && payload.threadId.trim()
+						? payload.threadId.trim()
+						: null,
+			};
+		}
+		throw err;
+	}
+
+	const threadId =
+		typeof payload.threadId === "string" && payload.threadId.trim()
+			? payload.threadId.trim()
+			: null;
+
+	if (existing?.id) {
+		try {
+			await execute(
+				c.env.DB,
+				`UPDATE langgraph_project_snapshots SET thread_id = ?, messages_json = ?, updated_at = ? WHERE id = ?`,
+				[threadId, messagesJson, nowIso, existing.id],
+			);
+		} catch (err) {
+			if (isMissingLangGraphSnapshotTable(err)) return { threadId };
+			throw err;
+		}
+		return { threadId };
+	}
+
+	const id = crypto.randomUUID();
+	try {
+		await execute(
+			c.env.DB,
+			`INSERT INTO langgraph_project_snapshots
+     (id, user_id, project_id, thread_id, messages_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[id, userId, projectId, threadId, messagesJson, nowIso, nowIso],
+		);
+	} catch (err) {
+		if (isMissingLangGraphSnapshotTable(err)) return { threadId };
+		throw err;
+	}
+
+	return { threadId };
+}
+
+export async function clearLangGraphSnapshotForProject(
+	c: AppContext,
+	userId: string,
+	projectId: string,
+): Promise<void> {
+	await assertProjectOwned(c, userId, projectId);
+	try {
+		await execute(
+			c.env.DB,
+			`DELETE FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ?`,
+			[userId, projectId],
+		);
+	} catch (err) {
+		if (isMissingLangGraphSnapshotTable(err)) return;
+		throw err;
+	}
 }
 
 export async function setLangGraphThreadIdForProject(
