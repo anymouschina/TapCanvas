@@ -18,6 +18,7 @@ import {
 } from '@mantine/core'
 import {
   IconArrowLeft,
+  IconChartBar,
   IconClock,
   IconExternalLink,
   IconFilter,
@@ -31,6 +32,7 @@ import { getPublicProjectFlows, listPublicAssets, listPublicProjects, type FlowD
 import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
+import { useAuth } from '../auth/store'
 
 type MediaFilter = 'all' | 'image' | 'video'
 type SortKey = 'createdAt' | 'duration'
@@ -374,6 +376,7 @@ function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Elemen
 
 function TapshowFullPageInner(): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
+  const isAdmin = useAuth((s) => s.user?.role === 'admin')
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
@@ -570,6 +573,28 @@ function TapshowFullPageInner(): JSX.Element {
               </Button>
             </Group>
             <Group gap={6}>
+              {isAdmin && (
+                <Tooltip label="看板（仅管理员）" withArrow>
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    aria-label="看板"
+                    onClick={() => {
+                      try {
+                        const url = new URL(window.location.href)
+                        url.search = ''
+                        url.hash = ''
+                        url.pathname = '/stats'
+                        window.open(url.toString(), '_blank', 'noopener,noreferrer')
+                      } catch {
+                        window.open('/stats', '_blank', 'noopener,noreferrer')
+                      }
+                    }}
+                  >
+                    <IconChartBar size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
               <Tooltip label="刷新" withArrow>
                 <ActionIcon
                   size="sm"

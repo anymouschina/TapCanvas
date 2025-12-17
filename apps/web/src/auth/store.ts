@@ -32,9 +32,22 @@ const initialToken = (() => {
   return readCookie('tap_token')
 })()
 const initialUser = (() => {
-  const cached = localStorage.getItem('tap_user')
-  if (cached) { try { return JSON.parse(cached) as User } catch {} }
-  return decodeJwtUser(initialToken)
+  const decoded = decodeJwtUser(initialToken)
+  const cachedRaw = localStorage.getItem('tap_user')
+  const cached = (() => {
+    if (!cachedRaw) return null
+    try {
+      return JSON.parse(cachedRaw) as User
+    } catch {
+      return null
+    }
+  })()
+
+  // Prefer token as source of truth (especially for role), then fill from cached.
+  if (decoded && cached) {
+    return { ...cached, ...decoded, role: decoded.role ?? cached.role ?? null }
+  }
+  return decoded || cached
 })()
 
 type AuthState = {
@@ -76,7 +89,19 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
   setAuth: (token, user) => {
     localStorage.setItem('tap_token', token)
-    const u = user ?? decodeJwtUser(token)
+    const decoded = decodeJwtUser(token)
+    const u = (() => {
+      if (!decoded && !user) return null
+      const merged: User = { ...(user || ({} as any)), ...(decoded || ({} as any)) }
+      merged.role = (user as any)?.role ?? decoded?.role ?? null
+      merged.sub = (user as any)?.sub ?? decoded?.sub
+      merged.login = (user as any)?.login ?? decoded?.login
+      merged.name = (user as any)?.name ?? decoded?.name
+      merged.avatarUrl = (user as any)?.avatarUrl ?? decoded?.avatarUrl
+      merged.email = (user as any)?.email ?? decoded?.email
+      merged.guest = (user as any)?.guest ?? decoded?.guest
+      return merged
+    })()
     if (u) localStorage.setItem('tap_user', JSON.stringify(u)); else localStorage.removeItem('tap_user')
     set({ token, user: u || null })
   },
