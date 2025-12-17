@@ -20,6 +20,8 @@ class OverallState(TypedDict):
     active_role: str
     active_role_name: str
     active_role_reason: str
+    allow_canvas_tools: bool
+    allow_canvas_tools_reason: str
     research_loop_count: int
     reasoning_model: str
     canvas_context: dict

@@ -33,6 +33,14 @@ class RoleDecision(BaseModel):
     reason: str = Field(
         description="Short rationale for why this role matches the user's intent."
     )
+    allow_canvas_tools: bool = Field(
+        default=True,
+        description="Whether the assistant should execute canvas operations (tool calls) in this turn. Use false for greetings/ambiguous intent; use true only when the user clearly requests canvas changes.",
+    )
+    allow_canvas_tools_reason: str = Field(
+        default="Default to allow unless the intent is ambiguous.",
+        description="Short rationale for allow_canvas_tools (1 sentence).",
+    )
 
 
 class PromptRequest(BaseModel):
