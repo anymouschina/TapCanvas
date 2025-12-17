@@ -1166,6 +1166,7 @@ function LangGraphChatOverlayInner({
   const persistedThreadIdRef = useRef<string | null>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threadIdLoaded, setThreadIdLoaded] = useState(false)
+  const blocked = !!projectId && !threadIdLoaded
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [prefill, setPrefill] = useState<string | null>(null)
   const [quickStartOpen, setQuickStartOpen] = useState(false)
@@ -1523,7 +1524,6 @@ function LangGraphChatOverlayInner({
 
   const liveMessages = (thread.messages || []) as Message[]
   const messages = liveMessages.length > 0 ? liveMessages : frozenMessages
-  const blocked = !!projectId && !threadIdLoaded
 
   const maybeAutoLayoutAfterTools = useCallback((focusNodeId?: string | null) => {
     try {
