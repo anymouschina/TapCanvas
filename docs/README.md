@@ -4,8 +4,8 @@
 
 ## 目录
 
-- 快速启动：`docs/docker.md`
-- 本地开发：`docs/development.md`
-- AI/后端契约与扩展：`docs/INTELLIGENT_AI_IMPLEMENTATION.md`
-- Prompt 参考：`docs/AI_VIDEO_REALISM_GUIDE.md`
-
+- [快速启动](docker.md)
+- [本地开发](development.md)
+- [AI/后端契约与扩展](INTELLIGENT_AI_IMPLEMENTATION.md)
+- [Prompt 参考](AI_VIDEO_REALISM_GUIDE.md)
+- [根 README 拆分的中文详细文档](README.zh-CN.md)
