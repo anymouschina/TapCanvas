@@ -10,6 +10,7 @@ export type AuthPayload = {
 	name?: string;
 	avatarUrl?: string | null;
 	email?: string | null;
+	role?: string | null;
 	guest?: boolean;
 };
 

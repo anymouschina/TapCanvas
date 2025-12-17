@@ -15,10 +15,24 @@ CREATE TABLE IF NOT EXISTS users (
 	name TEXT,
 	avatar_url TEXT,
 	email TEXT,
+	role TEXT,
+	last_seen_at TEXT,
 	guest INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
+
+-- Daily active users (one row per user per UTC day)
+CREATE TABLE IF NOT EXISTS user_activity_days (
+	day TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL,
+	PRIMARY KEY (day, user_id),
+	FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_activity_days_day ON user_activity_days(day);
+CREATE INDEX IF NOT EXISTS idx_user_activity_days_user_id ON user_activity_days(user_id);
 
 -- Projects table (migrated from Prisma Project model)
 CREATE TABLE IF NOT EXISTS projects (

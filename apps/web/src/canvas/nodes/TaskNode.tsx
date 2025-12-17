@@ -2778,6 +2778,11 @@ const rewritePromptWithCharacters = React.useCallback(
   const visibleDefs = uniqueDefs.slice(0, maxUniqueVisible)
   const extraDefs = uniqueDefs.slice(maxUniqueVisible)
 
+  const nodeWidth =
+    typeof (data as any)?.nodeWidth === 'number' && Number.isFinite((data as any)?.nodeWidth)
+      ? Math.max(320, Math.min(720, Number((data as any)?.nodeWidth)))
+      : (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard') ? 460 : 420
+
   return (
     <div
       style={{
@@ -2793,7 +2798,8 @@ const rewritePromptWithCharacters = React.useCallback(
         position: 'relative',
         outline: shellOutline,
         boxSizing: 'border-box',
-        width: '100%',
+        width: nodeWidth,
+        maxWidth: 720,
       } as React.CSSProperties}
     >
       <TaskNodeHeader

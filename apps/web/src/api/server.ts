@@ -332,6 +332,72 @@ export type LangGraphProjectThreadDto = {
   threadId: string | null
 }
 
+export type StatsDto = {
+  onlineUsers: number
+  totalUsers: number
+  newUsersToday: number
+}
+
+export type DauPointDto = { day: string; activeUsers: number }
+export type DauSeriesDto = { days: number; series: DauPointDto[] }
+
+export async function pingPresence(): Promise<void> {
+  const r = await fetch(`${API_BASE}/stats/ping`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  }))
+  if (!r.ok) {
+    let body: any = null
+    try {
+      body = await r.json()
+    } catch {
+      body = null
+    }
+    const msg = (body && (body.message || body.error)) || `presence ping failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export async function getStats(): Promise<StatsDto> {
+  const r = await fetch(`${API_BASE}/stats`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get stats failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return {
+    onlineUsers: Number(body?.onlineUsers ?? 0) || 0,
+    totalUsers: Number(body?.totalUsers ?? 0) || 0,
+    newUsersToday: Number(body?.newUsersToday ?? 0) || 0,
+  }
+}
+
+export async function getDailyActiveUsers(days = 30): Promise<DauSeriesDto> {
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.min(365, Math.floor(days))) : 30
+  const r = await fetch(`${API_BASE}/stats/dau?days=${encodeURIComponent(String(safeDays))}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get dau failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const seriesRaw = Array.isArray(body?.series) ? body.series : []
+  const series = seriesRaw
+    .map((p: any) => ({ day: String(p?.day || ''), activeUsers: Number(p?.activeUsers ?? 0) || 0 }))
+    .filter((p: any) => typeof p.day === 'string' && p.day.length >= 10)
+  return { days: Number(body?.days ?? safeDays) || safeDays, series }
+}
+
 export async function getLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
   const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth())
   let body: any = null

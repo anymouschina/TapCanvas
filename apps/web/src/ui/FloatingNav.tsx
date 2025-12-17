@@ -1,10 +1,11 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie } from '@tabler/icons-react'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar } from '@tabler/icons-react'
 import WriteImage from '../../public/writer.png'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
+import { pingPresence } from '../api/server'
 
 function ImmersiveCreateIcon({ size = 22 }: { size?: number }) {
   const stroke = 'rgba(245,247,255,0.95)'
@@ -92,6 +93,35 @@ export default function FloatingNav(): JSX.Element {
     }
   }, [])
 
+  const token = useAuth((s) => s.token)
+  const role = useAuth((s) => s.user?.role || null)
+  const isAdmin = role === 'admin'
+  React.useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const run = async () => {
+      try {
+        await pingPresence()
+      } catch {
+        // ignore presence failures
+      }
+      if (cancelled) return
+      // keep user "online" while the app is open
+      const id = window.setInterval(() => {
+        void pingPresence().catch(() => {})
+      }, 30_000)
+      return () => window.clearInterval(id)
+    }
+    let cleanup: undefined | (() => void)
+    void run().then((c) => {
+      cleanup = typeof c === 'function' ? c : undefined
+    })
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
+  }, [token])
+
   const Item = ({ label, icon, onHover, badge }: { label: string; icon: React.ReactNode; onHover: (y: number) => void; badge?: string }) => (
     <div style={{ position: 'relative' }} data-ux-floating>
       <ActionIcon
@@ -159,6 +189,30 @@ export default function FloatingNav(): JSX.Element {
           <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
           <Item label={$('我的资产')} icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
           <Item label={$('TapShow')} icon={<IconMovie size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }} />
+          {isAdmin && (
+            <Tooltip label={$('看板（仅管理员）')} position="right" withArrow>
+              <ActionIcon
+                variant="subtle"
+                size={36}
+                radius="xl"
+                aria-label="看板"
+                className="floating-nav-item"
+                onClick={() => {
+                  try {
+                    const url = new URL(window.location.href)
+                    url.search = ''
+                    url.hash = ''
+                    url.pathname = '/stats'
+                    window.open(url.toString(), '_blank', 'noopener,noreferrer')
+                  } catch {
+                    window.open('/stats', '_blank', 'noopener,noreferrer')
+                  }
+                }}
+              >
+                <IconChartBar size={18} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Item label={$('模型配置')} icon={<IconSettings size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
           <Item label={$('历史记录')} icon={<IconHistory size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
 

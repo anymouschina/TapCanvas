@@ -1332,7 +1332,9 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                             cfg["prompt"] = coerced
 
                 # Storyboard workflow: prefer "九宫格分镜图(image) -> composeVideo" (single reference image).
-                wants_storyboard = any(
+                # Note: users may ask for "短片/宣传片/产品介绍" without mentioning "分镜/九宫格";
+                # we infer storyboard intent from tool calls as well to keep continuity and auto-connect references.
+                wants_storyboard_by_user = any(
                     kw in (last_user_text or "")
                     for kw in ("分镜", "故事板", "storyboard", "九宫格", "15s")
                 )
@@ -1343,25 +1345,26 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 )
                 storyboard_image_label = None
                 storyboard_image_prompt = None
-                if wants_storyboard:
-                    for c in tool_calls_payload:
-                        if c.get("name") != "createNode":
-                            continue
-                        args = c.get("arguments") or {}
-                        if args.get("type") != "image":
-                            continue
-                        cfg = args.get("config") or {}
-                        prompt = cfg.get("prompt") if isinstance(cfg, dict) else None
-                        label = args.get("label")
-                        if isinstance(label, str) and label.strip():
-                            label = label.strip()
-                        else:
-                            label = None
-                        hint = (label or "") + "\n" + (prompt or "")
-                        if any(k in hint for k in ("九宫格", "3x3", "分镜", "storyboard")):
-                            storyboard_image_label = label
-                            storyboard_image_prompt = prompt if isinstance(prompt, str) else None
-                            break
+                for c in tool_calls_payload:
+                    if c.get("name") != "createNode":
+                        continue
+                    args = c.get("arguments") or {}
+                    if args.get("type") != "image":
+                        continue
+                    cfg = args.get("config") or {}
+                    prompt = cfg.get("prompt") if isinstance(cfg, dict) else None
+                    label = args.get("label")
+                    if isinstance(label, str) and label.strip():
+                        label = label.strip()
+                    else:
+                        label = None
+                    hint = (label or "") + "\n" + (prompt or "")
+                    if any(k in hint for k in ("九宫格", "3x3", "分镜", "storyboard")):
+                        storyboard_image_label = label
+                        storyboard_image_prompt = prompt if isinstance(prompt, str) else None
+                        break
+
+                wants_storyboard = wants_storyboard_by_user or bool(storyboard_image_label)
 
                 # If we are creating a storyboard grid image, connect existing character/reference images
                 # (already generated on canvas) as upstream inputs BEFORE running the storyboard node.
@@ -1454,8 +1457,8 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                                     "arguments": {
                                         "sourceNodeId": src_label,
                                         "targetNodeId": storyboard_image_label,
-                                        "sourceHandle": "out-image",
-                                        "targetHandle": "in-image",
+                                        "sourceHandle": "out-image-wide",
+                                        "targetHandle": "in-image-wide",
                                     },
                                 }
                             )

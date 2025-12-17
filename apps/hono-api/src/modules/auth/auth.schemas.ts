@@ -6,6 +6,7 @@ export const UserPayloadSchema = z.object({
 	name: z.string().optional(),
 	avatarUrl: z.string().nullable().optional(),
 	email: z.string().nullable().optional(),
+	role: z.string().nullable().optional(),
 	guest: z.boolean().default(false),
 });
 
@@ -23,4 +24,3 @@ export const AuthResponseSchema = z.object({
 export const GuestLoginRequestSchema = z.object({
 	nickname: z.string().optional(),
 });
-
