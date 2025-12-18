@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 from langgraph.graph import add_messages
-from typing_extensions import Annotated
+from typing_extensions import Annotated, NotRequired
 
 
 import operator
@@ -12,6 +12,10 @@ import operator
 
 class OverallState(TypedDict):
     messages: Annotated[list, add_messages]
+    # Durable conversation memory (a compact summary of earlier turns).
+    # The frontend may persist this per-project and provide it back on the next run
+    # when LangGraph threads are restarted/expired.
+    conversation_summary: NotRequired[str]
     search_query: Annotated[list, operator.add]
     web_research_result: Annotated[list, operator.add]
     sources_gathered: Annotated[list, operator.add]

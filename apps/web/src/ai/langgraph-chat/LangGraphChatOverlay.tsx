@@ -50,13 +50,9 @@ import { functionHandlers } from '../canvasService'
 import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
 import {
-  clearLangGraphProjectThread,
   clearLangGraphProjectSnapshot,
   getLangGraphProjectSnapshot,
-  getLangGraphProjectThread,
-  getPublicLangGraphProjectThread,
   setLangGraphProjectSnapshot,
-  setLangGraphProjectThread,
 } from '../../api/server'
 
 type ProcessedEvent = {
@@ -1163,10 +1159,8 @@ function LangGraphChatOverlayInner({
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const handledToolCallsRef = useRef(new Set<string>())
-  const persistedThreadIdRef = useRef<string | null>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
-  const [threadIdLoaded, setThreadIdLoaded] = useState(false)
-  const blocked = !!projectId && !threadIdLoaded
+  const blocked = false
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [prefill, setPrefill] = useState<string | null>(null)
   const [quickStartOpen, setQuickStartOpen] = useState(false)
@@ -1182,6 +1176,7 @@ function LangGraphChatOverlayInner({
 	  const lastSubmittedHumanIdRef = useRef<string | null>(null)
 	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
 	  const [toolCallBindings, setToolCallBindings] = useState<Record<string, string>>({})
+    const conversationSummaryRef = useRef<string>('')
 	  const langGraphReadyRef = useRef<{ apiUrl: string; readyAt: number } | null>(null)
 	  const langGraphReadyPromiseRef = useRef<Promise<boolean> | null>(null)
 
@@ -1236,59 +1231,12 @@ function LangGraphChatOverlayInner({
     if (!open) return
     if (!projectId) {
       setThreadId(null)
-      persistedThreadIdRef.current = null
-      setThreadIdLoaded(true)
       setFrozenMessages([])
       return
     }
-
-    let cancelled = false
-    const controller = new AbortController()
-    setThreadIdLoaded(false)
-    void (async () => {
-      try {
-        const res = viewOnly
-          ? await getPublicLangGraphProjectThread(projectId)
-          : await getLangGraphProjectThread(projectId)
-        if (cancelled) return
-        const loadedThreadId = res.threadId
-        if (loadedThreadId) {
-          try {
-            const ready = await ensureLangGraphReady()
-            if (!ready) throw new Error('LangGraph not ready')
-            const check = await fetch(`${apiUrl}/threads/${loadedThreadId}`, {
-              method: 'GET',
-              credentials: 'include',
-              signal: controller.signal,
-            })
-            if (check.status === 404) {
-              if (!viewOnly) await clearLangGraphProjectThread(projectId)
-              setThreadId(null)
-              persistedThreadIdRef.current = null
-              setThreadIdLoaded(true)
-              return
-            }
-          } catch {
-            // If the check fails (network/CORS), fall back to optimistic use of the stored thread.
-          }
-        }
-        setThreadId(loadedThreadId)
-        persistedThreadIdRef.current = loadedThreadId
-        setThreadIdLoaded(true)
-      } catch (err) {
-        if (cancelled) return
-        setThreadId(null)
-        persistedThreadIdRef.current = null
-        setThreadIdLoaded(true)
-        setError(err instanceof Error ? err.message : 'load thread failed')
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      controller.abort()
-    }
-  }, [apiUrl, open, projectId, viewOnly])
+    // Do not load/persist LangGraph threads. Threads are ephemeral and recreated when needed.
+    setThreadId(null)
+  }, [open, projectId])
 
   useEffect(() => {
     if (!open) return
@@ -1304,6 +1252,14 @@ function LangGraphChatOverlayInner({
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length) {
           setFrozenMessages(parsed as Message[])
+          conversationSummaryRef.current = ''
+          return
+        }
+        if (parsed && typeof parsed === 'object') {
+          const msgs = Array.isArray((parsed as any).messages) ? ((parsed as any).messages as Message[]) : []
+          if (msgs.length) setFrozenMessages(msgs)
+          const summary = (parsed as any).conversation_summary
+          conversationSummaryRef.current = typeof summary === 'string' ? summary : ''
         }
       } catch {
         // ignore (snapshot is best-effort)
@@ -1331,6 +1287,7 @@ function LangGraphChatOverlayInner({
     max_research_loops: number
     reasoning_model: string
     canvas_context?: any
+    conversation_summary?: string
   }>({
     apiUrl,
     assistantId: 'agent',
@@ -1339,15 +1296,6 @@ function LangGraphChatOverlayInner({
     onThreadId: (tid) => {
       if (viewOnly) return
       setThreadId(tid)
-      if (!projectId) return
-      if (persistedThreadIdRef.current === tid) return
-      void setLangGraphProjectThread(projectId, tid)
-        .then(() => {
-          persistedThreadIdRef.current = tid
-        })
-        .catch((err) => {
-          setError(err instanceof Error ? err.message : 'persist thread failed')
-        })
     },
     onUpdateEvent: (event: any) => {
       let processedEvent: ProcessedEvent | null = null
@@ -1443,13 +1391,23 @@ function LangGraphChatOverlayInner({
           }
 
           const canvas_context = buildCanvasContext(nodes, edges)
-          const retryValues = { ...latest, canvas_context }
+          const retryValues = {
+            ...latest,
+            canvas_context,
+            conversation_summary:
+              (latest as any)?.conversation_summary ??
+              conversationSummaryRef.current ||
+              undefined,
+          }
           lastSubmitValuesRef.current = retryValues
           persistLastSubmit(projectId, retryValues)
           try {
             void setLangGraphProjectSnapshot(projectId, {
               threadId,
-              messagesJson: JSON.stringify(latest.messages),
+              messagesJson: JSON.stringify({
+                messages: latest.messages,
+                conversation_summary: conversationSummaryRef.current || '',
+              }),
             }).catch(() => {})
           } catch {
             // ignore
@@ -1483,7 +1441,10 @@ function LangGraphChatOverlayInner({
     try {
       void setLangGraphProjectSnapshot(projectId, {
         threadId,
-        messagesJson: JSON.stringify(live),
+        messagesJson: JSON.stringify({
+          messages: live,
+          conversation_summary: conversationSummaryRef.current || '',
+        }),
       }).catch(() => {})
     } catch {
       // ignore
@@ -1510,8 +1471,6 @@ function LangGraphChatOverlayInner({
     void (async () => {
       try {
         void thread.stop()
-        if (projectId) await clearLangGraphProjectThread(projectId)
-        persistedThreadIdRef.current = null
         setThreadId(null)
       } catch (e: any) {
         setError(e?.message || msg)
@@ -1528,6 +1487,26 @@ function LangGraphChatOverlayInner({
     if (liveMessages.length > 0) return liveMessages
     return frozenMessages
   }, [frozenMessages, liveMessages])
+
+  useEffect(() => {
+    if (!open) return
+    if (viewOnly) return
+    const summary = (thread.values as any)?.conversation_summary
+    if (typeof summary !== 'string') return
+    const next = summary.trim()
+    if (!next) return
+    if (conversationSummaryRef.current === next) return
+    conversationSummaryRef.current = next
+    if (!projectId) return
+    try {
+      void setLangGraphProjectSnapshot(projectId, {
+        threadId,
+        messagesJson: JSON.stringify({ messages, conversation_summary: next }),
+      }).catch(() => {})
+    } catch {
+      // ignore
+    }
+  }, [messages, open, projectId, thread.values, threadId, viewOnly])
 
   const maybeAutoLayoutAfterTools = useCallback((focusNodeId?: string | null) => {
     try {
@@ -1709,6 +1688,7 @@ function LangGraphChatOverlayInner({
 	            initial_search_query_count,
 	            max_research_loops,
 	            canvas_context,
+              conversation_summary: conversationSummaryRef.current || undefined,
 	          }
 	          lastSubmitValuesRef.current = values
             if (projectId) {
@@ -1716,7 +1696,10 @@ function LangGraphChatOverlayInner({
               try {
                 void setLangGraphProjectSnapshot(projectId, {
                   threadId,
-                  messagesJson: JSON.stringify(newMessages),
+                  messagesJson: JSON.stringify({
+                    messages: newMessages,
+                    conversation_summary: conversationSummaryRef.current || '',
+                  }),
                 }).catch(() => {})
               } catch {
                 // ignore
@@ -1753,7 +1736,6 @@ function LangGraphChatOverlayInner({
     try {
       void thread.stop()
       if (projectId) {
-        await clearLangGraphProjectThread(projectId)
         await clearLangGraphProjectSnapshot(projectId)
         clearLastSubmit(projectId)
       }
@@ -1824,7 +1806,10 @@ function LangGraphChatOverlayInner({
             try {
               void setLangGraphProjectSnapshot(projectId, {
                 threadId,
-                messagesJson: JSON.stringify(prev.messages),
+                messagesJson: JSON.stringify({
+                  messages: prev.messages,
+                  conversation_summary: conversationSummaryRef.current || '',
+                }),
               }).catch(() => {})
             } catch {
               // ignore

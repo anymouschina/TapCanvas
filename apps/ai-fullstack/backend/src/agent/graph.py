@@ -911,12 +911,47 @@ def _resolve_role(role_id: str):
     return resolved_id, profile
 
 
+def _tail_messages(messages: list, limit: int) -> list:
+    if not isinstance(messages, list) or limit <= 0:
+        return []
+    if len(messages) <= limit:
+        return messages
+    return messages[-limit:]
+
+
+def _render_compact_conversation(state: OverallState, *, tail: int = 16) -> str:
+    """Render a compact conversation string for prompts.
+
+    Prefer the durable `conversation_summary` (if present), plus the most recent turns.
+    This keeps role selection stable without exploding prompt length on long chats.
+    """
+    summary = state.get("conversation_summary")
+    tail_messages = _tail_messages(state.get("messages") or [], tail)
+    recent = format_messages_for_prompt(tail_messages)
+    if isinstance(summary, str) and summary.strip():
+        if recent.strip():
+            return f"Conversation summary:\n{summary.strip()}\n\nRecent turns:\n{recent}".strip()
+        return summary.strip()
+    return recent
+
+
+def _get_research_topic_with_summary(state: OverallState, *, tail: int = 16) -> str:
+    summary = state.get("conversation_summary")
+    topic = get_research_topic(_tail_messages(state.get("messages") or [], tail))
+    if isinstance(summary, str) and summary.strip():
+        s = summary.strip()
+        if isinstance(topic, str) and topic.strip():
+            return f"Conversation summary:\n{s}\n\nRecent conversation:\n{topic}".strip()
+        return s
+    return topic
+
+
 # Nodes
 def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     """Pick the active assistant role based on the latest conversation."""
     configurable = Configuration.from_runnable_config(config)
     llm_provider = configurable.llm_provider.lower()
-    conversation = format_messages_for_prompt(state["messages"])
+    conversation = _render_compact_conversation(state, tail=16)
     canvas_context = state.get("canvas_context")
     canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
     prompt = role_router_instructions.format(
@@ -1048,7 +1083,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         current_date = get_current_date()
         formatted_prompt = query_writer_instructions.format(
             current_date=current_date,
-            research_topic=get_research_topic(state["messages"]),
+            research_topic=_get_research_topic_with_summary(state, tail=16),
             number_queries=state["initial_search_query_count"],
         )
         result = _call_openai_structured(
@@ -1070,7 +1105,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     current_date = get_current_date()
     formatted_prompt = query_writer_instructions.format(
         current_date=current_date,
-        research_topic=get_research_topic(state["messages"]),
+        research_topic=_get_research_topic_with_summary(state, tail=16),
         number_queries=state["initial_search_query_count"],
     )
     # Generate the search queries
@@ -1310,7 +1345,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
     formatted_prompt = answer_instructions.format(
         current_date=current_date,
-        research_topic=get_research_topic(state["messages"]),
+        research_topic=_get_research_topic_with_summary(state, tail=16),
         role_directive=role_directive,
         summaries="\n---\n\n".join(state["web_research_result"]),
         canvas_context=canvas_context_text,
@@ -2405,7 +2440,7 @@ def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
         return {}
 
     # Use the latest user message as the query.
-    query = get_research_topic(state.get("messages") or [])
+    query = _get_research_topic_with_summary(state, tail=8)
     if not isinstance(query, str):
         query = ""
     query = query.strip()
@@ -2424,10 +2459,96 @@ def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
 builder.add_node("direct_answer", direct_answer)
 builder.add_node("kb_retrieve", kb_retrieve)
 
+
+def summarize_memory(state: OverallState, config: RunnableConfig) -> OverallState:
+    """Best-effort conversation summarization to keep long threads compact.
+
+    This runs after answering. The summary is returned in `conversation_summary` and can be
+    persisted by the frontend (e.g. in D1) to survive thread expiry/restarts.
+    """
+    try:
+        messages = state.get("messages") or []
+        if not isinstance(messages, list):
+            return {}
+        # Do not summarize short threads.
+        tail_keep = 16
+        if len(messages) <= tail_keep:
+            return {}
+        rendered = format_messages_for_prompt(messages)
+        # Trigger only when the serialized history becomes large.
+        trigger_chars = 120_000
+        if isinstance(rendered, str) and len(rendered) < trigger_chars:
+            # Still allow a first-time summary when the conversation is moderately long.
+            if not (isinstance(state.get("conversation_summary"), str) and state.get("conversation_summary").strip()):
+                if len(messages) < 40:
+                    return {}
+            else:
+                return {}
+
+        configurable = Configuration.from_runnable_config(config)
+        llm_provider = configurable.llm_provider.lower()
+        model = getattr(configurable, "reflection_model", None) or configurable.answer_model
+        prev = state.get("conversation_summary") or ""
+        older = format_messages_for_prompt(messages[:-tail_keep])
+        recent = format_messages_for_prompt(messages[-tail_keep:])
+        canvas_context = state.get("canvas_context")
+        canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
+        prompt = (
+            "You are a background memory compressor for a creative assistant.\n"
+            "Goal: produce a compact, durable conversation summary that preserves user intent, preferences, constraints,\n"
+            "project/canvas facts, and any decisions. This summary will be injected into future prompts.\n"
+            "Rules:\n"
+            "- Output plain text only (no markdown fences).\n"
+            "- Max 1800 characters.\n"
+            "- Prefer stable facts over transient chatter.\n"
+            "- Keep named entities, style locks, and any explicit constraints.\n"
+            "- If there is a previous summary, update it incrementally; do not rewrite from scratch unless necessary.\n\n"
+            f"CANVAS_CONTEXT:\n{canvas_context_text}\n\n"
+            f"PREVIOUS_SUMMARY:\n{str(prev).strip()}\n\n"
+            f"OLDER_MESSAGES_TO_COMPRESS:\n{older}\n\n"
+            f"RECENT_TURNS (do not fully duplicate; keep as-is for recency):\n{recent}\n"
+        )
+
+        new_summary = ""
+        if llm_provider == "openai":
+            client = get_openai_client()
+            response = client.responses.create(
+                model=model,
+                input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+                stream=True,
+            )
+            debug_openai_response("summarize_memory", response)
+            new_summary = _collect_stream_text(response)
+        else:
+            require_gemini_key()
+            llm = ChatGoogleGenerativeAI(
+                model=model,
+                temperature=0,
+                max_retries=2,
+                api_key=os.getenv("GEMINI_API_KEY"),
+            )
+            new_summary = str(llm.invoke(prompt).content or "")
+
+        if not isinstance(new_summary, str):
+            return {}
+        new_summary = new_summary.strip()
+        if not new_summary:
+            return {}
+        # Clamp overly-long outputs defensively.
+        if len(new_summary) > 2200:
+            new_summary = new_summary[:2200].rstrip()
+        return {"conversation_summary": new_summary}
+    except Exception:
+        return {}
+
+
+builder.add_node("summarize_memory", summarize_memory)
+
 # Entrypoint: role selection then direct answer (no web search)
 builder.add_edge(START, "select_role")
 builder.add_edge("select_role", "kb_retrieve")
 builder.add_edge("kb_retrieve", "direct_answer")
-builder.add_edge("direct_answer", END)
+builder.add_edge("direct_answer", "summarize_memory")
+builder.add_edge("summarize_memory", END)
 
 graph = builder.compile(name="animation-agent")
