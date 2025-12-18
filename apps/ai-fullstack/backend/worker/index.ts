@@ -209,7 +209,15 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname === "/health") return new Response("ok");
+    if (url.pathname === "/health") {
+      const res = new Response("ok", {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+      const cors = buildCorsHeaders(request);
+      if (!cors.get("Access-Control-Allow-Origin")) return res;
+      cors.forEach((v, k) => res.headers.set(k, v));
+      return res;
+    }
 
     // Cloudflare Workers AI AutoRAG proxy (container can't access `env.AI` directly).
     // Call from the container with: POST /internal/autorag/search { ragId, query, ... }
