@@ -17,10 +17,14 @@
 
 2) 配置前端环境变量（如需）
 
-确保 `apps/web/.env` 中包含（示例见 `apps/web/.env.example`）：
+默认情况下，`docker-compose.yml` 已为 Web 容器注入常用变量（可通过根目录 `.env` 覆盖），其中 `VITE_API_BASE` 默认是 `/api`（由 Vite dev server 反向代理到 `api:8788`）。
+
+对应的默认注入值在根目录 `.env.docker`（可直接修改，或用启动时环境变量覆盖）。
+
+如你需要自定义，可确保 `apps/web/.env` 中包含（示例见 `apps/web/.env.example`）：
 
 - `VITE_API_BASE="http://localhost:8788"`
-- `VITE_LANGGRAPH_API_URL="https://ai.beqlee.icu"`（Docker langgraph profile 默认）
+- `VITE_LANGGRAPH_API_URL="http://localhost:8123"`（Docker langgraph profile 默认）
 
 3) 打开入口并开始创作
 

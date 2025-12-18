@@ -120,8 +120,21 @@ modelRouter.get("/proxy/:vendor", async (c) => {
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const vendor = c.req.param("vendor");
 	const cfg = await getProxyConfigForUser(c, userId, vendor);
-	if (!cfg) return c.json({ error: "Not found" }, 404);
-	return c.json(ProxyConfigSchema.parse(cfg));
+	if (cfg) return c.json(ProxyConfigSchema.parse(cfg));
+	const nowIso = new Date().toISOString();
+	return c.json(
+		ProxyConfigSchema.parse({
+			id: `virtual:${vendor}`,
+			name: vendor,
+			vendor,
+			baseUrl: "",
+			enabled: false,
+			enabledVendors: [],
+			hasApiKey: false,
+			createdAt: nowIso,
+			updatedAt: nowIso,
+		}),
+	);
 });
 
 modelRouter.post("/proxy/:vendor", async (c) => {

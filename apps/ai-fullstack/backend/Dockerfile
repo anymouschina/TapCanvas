@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+ARG DOCKERHUB_REGISTRY=docker.1ms.run
+FROM ${DOCKERHUB_REGISTRY}/library/python:3.11-slim
 
 # Optional: override PyPI index for faster/more reliable builds (e.g. mirrors).
 ARG PIP_INDEX_URL="https://pypi.org/simple"

@@ -1,40 +1,37 @@
+from __future__ import annotations
+
 import os
 import json
+import time
 import urllib.request
 import urllib.error
+import urllib.parse
 
-from agent.tools_and_schemas import RoleDecision, SafetyDecision, SearchQueryList, Reflection
+from agent.tools_and_schemas import (
+    RoleDecision,
+    SafetyDecision,
+    CharacterExtraction,
+)
 from dotenv import load_dotenv
 from openai import OpenAI, APIConnectionError, OpenAIError
 from langchain_core.messages import AIMessage
-from langgraph.types import Send
 from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
-from google.genai import Client
 
 from agent.state import (
     OverallState,
-    QueryGenerationState,
-    ReflectionState,
-    WebSearchState,
 )
 from agent.configuration import Configuration
 from agent.prompts import (
     role_router_instructions,
     get_current_date,
-    query_writer_instructions,
-    web_searcher_instructions,
-    reflection_instructions,
     answer_instructions,
 )
 from langchain_google_genai import ChatGoogleGenerativeAI
 from agent.utils import (
     format_messages_for_prompt,
-    get_citations,
     get_research_topic,
-    insert_citation_markers,
-    resolve_urls,
 )
 from agent.roles import DEFAULT_ROLE_ID, normalize_role_id, role_map, roles_prompt_block
 
@@ -250,15 +247,34 @@ def _call_autorag_search(configurable: Configuration, query: str) -> tuple[list[
 
 
 def require_gemini_key() -> None:
-    """Ensure GEMINI_API_KEY is available before using Gemini models."""
-    if os.getenv("GEMINI_API_KEY") is None:
-        raise ValueError("GEMINI_API_KEY is not set; required for Gemini-based steps.")
+    """Ensure a Gemini key is available before using Gemini models."""
+    if (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) is None:
+        raise ValueError(
+            "Gemini API key is not set; provide GEMINI_API_KEY or GOOGLE_API_KEY."
+        )
 
 
-def get_genai_client() -> Client:
-    """Create a Gemini client when needed to avoid import-time failures."""
-    require_gemini_key()
-    return Client(api_key=os.getenv("GEMINI_API_KEY"))
+def get_gemini_api_key() -> str:
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if key is None:
+        require_gemini_key()
+        raise ValueError("Gemini API key is missing.")
+    return key
+
+
+def resolve_llm_provider(raw: str | None) -> str:
+    """Resolve provider from config + env.
+
+    Supports: 'auto', 'openai', 'gemini'. Defaults to OpenAI when OPENAI_API_KEY is set.
+    """
+    value = str(raw or "").strip().lower()
+    if value in ("openai", "gemini"):
+        return value
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        return "gemini"
+    return "openai"
 
 
 def get_openai_client() -> OpenAI:
@@ -267,6 +283,16 @@ def get_openai_client() -> OpenAI:
     if api_key is None:
         raise ValueError("OPENAI_API_KEY is not set; required for OpenAI-based steps.")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    # Common pitfall: setting OPENAI_BASE_URL to localhost on the host machine.
+    # Inside Docker, localhost points to the container itself, so rewrite to host.docker.internal.
+    try:
+        if os.path.exists("/.dockerenv"):
+            parsed = urllib.parse.urlparse(base_url)
+            if parsed.hostname in ("127.0.0.1", "localhost"):
+                rewritten = parsed._replace(netloc=f"host.docker.internal:{parsed.port}" if parsed.port else "host.docker.internal")
+                base_url = urllib.parse.urlunparse(rewritten)
+    except Exception:
+        pass
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
@@ -646,6 +672,488 @@ def _collect_stream_text_and_tools(stream) -> tuple[str, list[dict]]:
     return "".join(parts), tool_calls
 
 
+def _to_chat_completions_tools(response_api_tools: list[dict] | None) -> list[dict]:
+    """Convert Responses-API style tools to Chat Completions tool schema."""
+    if not isinstance(response_api_tools, list) or not response_api_tools:
+        return []
+    out: list[dict] = []
+    for t in response_api_tools:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") != "function":
+            continue
+        name = t.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": t.get("description") or "",
+                    "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+                },
+            }
+        )
+    return out
+
+
+def _parse_chat_completions_tool_calls(message) -> list[dict]:
+    """Parse tool calls from Chat Completions message object."""
+    calls = getattr(message, "tool_calls", None) or []
+    out: list[dict] = []
+    for c in calls:
+        try:
+            cid = getattr(c, "id", None)
+            fn = getattr(c, "function", None)
+            name = getattr(fn, "name", None) if fn is not None else None
+            args = getattr(fn, "arguments", None) if fn is not None else None
+            parsed_args = args
+            if isinstance(args, str):
+                try:
+                    parsed_args = json.loads(args) if args.strip() else {}
+                except Exception:
+                    parsed_args = args
+            out.append({"id": cid, "name": name, "arguments": parsed_args})
+        except Exception:
+            continue
+    return out
+
+
+def _normalize_tool_calls_payload(tool_calls: list[dict]) -> list[dict]:
+    """Normalize tool call payloads so downstream code can safely access dict arguments.
+
+    - If arguments is a JSON string, parse it.
+    - If arguments is invalid JSON, drop the tool call (better than crashing the run).
+    - If arguments is missing/other type, coerce to {}.
+    """
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return []
+    normalized: list[dict] = []
+    for c in tool_calls:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name")
+        if not name:
+            continue
+        args = c.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except Exception:
+                # Malformed JSON (often due to truncated stream); skip to avoid runtime errors.
+                continue
+        if not isinstance(args, dict):
+            args = {}
+        normalized.append({"id": c.get("id"), "name": name, "arguments": args})
+    return normalized
+
+
+def _looks_like_story_request(text: str) -> bool:
+    """Heuristic: user pasted story text that should trigger the animation pipeline.
+
+    We default to triggering in Agent/Agent Max when the user provides a long-form narrative,
+    even if they didn't explicitly say "generate storyboard/video".
+    """
+    if not isinstance(text, str):
+        return False
+    t = text.strip()
+    if not t:
+        return False
+    # Avoid triggering on code/payload dumps.
+    if "```" in t or t.count("{") > 20 or t.count(";") > 40:
+        return False
+
+    # Long multi-paragraph text is a strong signal.
+    long_form = len(t) >= 500 and (t.count("\n") >= 2 or t.count("。") >= 6 or t.count(".") >= 8)
+    if not long_form:
+        return False
+
+    # Intent hints (strong positive).
+    intent = any(
+        k in t
+        for k in (
+            "分镜",
+            "九宫格",
+            "故事板",
+            "动画",
+            "短片",
+            "成片",
+            "视频",
+            "日漫",
+            "2d",
+            "2D",
+        )
+    )
+
+    # Narrative cues (weaker positive): dialogues, pronouns, scene/action verbs.
+    narrative = any(k in t for k in ("“", "”", "他", "她", "他们", "忽然", "转身", "抬头", "回头", "是夜"))
+    return intent or narrative
+
+
+def _get_last_user_text(state: dict) -> str:
+    try:
+        for m in reversed(state.get("messages") or []):
+            if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
+                return str(getattr(m, "content", "") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _canvas_label_index(canvas_context_obj: dict | None) -> dict[str, dict]:
+    """Return {label: node_dict} index for nodes in canvas_context."""
+    if not isinstance(canvas_context_obj, dict):
+        return {}
+    nodes = canvas_context_obj.get("nodes")
+    if not isinstance(nodes, list):
+        return {}
+    out: dict[str, dict] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        label = n.get("label")
+        if not isinstance(label, str) or not label.strip():
+            continue
+        out[label.strip()] = n
+    return out
+
+
+def _canvas_existing_pairs_by_label(canvas_context_obj: dict | None) -> set[tuple[str, str]]:
+    """Return {(sourceLabel, targetLabel)} for edges present in canvas_context.
+
+    Note: canvas_context edges use node ids. We map ids to labels using nodes[].
+    """
+    if not isinstance(canvas_context_obj, dict):
+        return set()
+    nodes = canvas_context_obj.get("nodes")
+    edges = canvas_context_obj.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return set()
+    id_to_label: dict[str, str] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("id")
+        label = n.get("label")
+        if isinstance(nid, str) and nid.strip() and isinstance(label, str) and label.strip():
+            id_to_label[nid.strip()] = label.strip()
+    pairs: set[tuple[str, str]] = set()
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        src = e.get("source")
+        tgt = e.get("target")
+        if not isinstance(src, str) or not isinstance(tgt, str):
+            continue
+        sl = id_to_label.get(src.strip())
+        tl = id_to_label.get(tgt.strip())
+        if sl and tl:
+            pairs.add((sl, tl))
+    return pairs
+
+
+def _node_is_success_media(node: dict | None) -> bool:
+    if not isinstance(node, dict):
+        return False
+    if node.get("status") != "success":
+        return False
+    has_image = isinstance(node.get("imageUrl"), str) and node.get("imageUrl").strip()
+    has_video = isinstance(node.get("videoUrl"), str) and node.get("videoUrl").strip()
+    return bool(has_image or has_video)
+
+
+def _deterministic_tool_id(prefix: str, *parts: str) -> str:
+    safe: list[str] = []
+    for p in parts:
+        if not isinstance(p, str):
+            continue
+        s = p.strip().replace("\n", " ")
+        if len(s) > 120:
+            s = s[:120]
+        safe.append(s)
+    joined = "|".join([prefix, *safe])
+    return joined[:220]
+
+
+def _synthesize_story_pipeline_tool_calls(
+    state: OverallState,
+    configurable: Configuration,
+    *,
+    interaction_mode: str,
+    story_text: str,
+) -> tuple[list[dict], str]:
+    """Deterministically build tool calls for: character refs -> storyboard -> video.
+
+    Uses canvas_context to skip already-success nodes and avoid duplicate edges.
+    """
+    canvas_context_obj = state.get("canvas_context")
+    node_by_label = _canvas_label_index(canvas_context_obj)
+    existing_pairs = _canvas_existing_pairs_by_label(canvas_context_obj)
+
+    style = "日漫2D（干净线稿+赛璐璐），现实荒诞→清冷民俗志怪，冷蓝灰夜戏，PG-13克制表达"
+    mains, _props = _extract_characters_from_story(configurable, story_text or "")
+
+    duration_seconds = 12
+    if "15" in (story_text or "") or "15秒" in (story_text or ""):
+        duration_seconds = 15
+
+    wants_video = any(k in (story_text or "") for k in ("视频", "动画", "短片", "成片", "生成"))
+    auto_run_video = interaction_mode == "agent_max" or wants_video
+
+    tool_calls: list[dict] = []
+    ref_labels: list[str] = []
+
+    def ensure_image_node(label: str, *, prompt: str, negative: str, image_model: str = "nano-banana-fast"):
+        existing = node_by_label.get(label)
+        if existing and _node_is_success_media(existing):
+            return
+        if not existing:
+            tool_calls.append(
+                {
+                    "id": _deterministic_tool_id("auto:createNode:image", label),
+                    "name": "createNode",
+                    "arguments": {
+                        "type": "image",
+                        "label": label,
+                        "config": {
+                            "kind": "image",
+                            "imageModel": image_model,
+                            "prompt": prompt,
+                            "negativePrompt": negative,
+                        },
+                    },
+                }
+            )
+        tool_calls.append(
+            {
+                "id": _deterministic_tool_id("auto:runNode", label),
+                "name": "runNode",
+                "arguments": {"nodeId": label},
+            }
+        )
+
+    def ensure_compose_video_create(label: str, *, prompt: str, duration: int):
+        """Create composeVideo node if missing; do not run it (run is added after wiring references)."""
+        existing = node_by_label.get(label)
+        if existing and _node_is_success_media(existing):
+            return
+        if existing:
+            return
+        tool_calls.append(
+            {
+                "id": _deterministic_tool_id("auto:createNode:composeVideo", label),
+                "name": "createNode",
+                "arguments": {
+                    "type": "composeVideo",
+                    "label": label,
+                    "config": {
+                        "kind": "composeVideo",
+                        "videoModel": "sora-2",
+                        "videoDurationSeconds": duration,
+                        "prompt": prompt,
+                    },
+                },
+            }
+        )
+
+    def ensure_edge(src_label: str, tgt_label: str):
+        if not src_label or not tgt_label:
+            return
+        if (src_label, tgt_label) in existing_pairs:
+            return
+        tool_calls.append(
+            {
+                "id": _deterministic_tool_id("auto:connectNodes", src_label, "->", tgt_label),
+                "name": "connectNodes",
+                "arguments": {
+                    "sourceNodeId": src_label,
+                    "targetNodeId": tgt_label,
+                    "sourceHandle": "out-image",
+                    "targetHandle": "in-image",
+                },
+            }
+        )
+
+    # 1) Character refs (limit to 3 for cost)
+    for name in (mains or [])[:3]:
+        label = f"角色三视图-{name}"
+        p, n = _build_character_turnaround_prompt(name, style=style)
+        ensure_image_node(label, prompt=p, negative=n)
+        ref_labels.append(label)
+
+    # 2) Prop sheet when explicitly present in story
+    if any(k in (story_text or "") for k in ("线装书", "恶鬼", "画像")):
+        prop_label = "道具设定-线装书与恶鬼画像"
+        ensure_image_node(
+            prop_label,
+            prompt=(
+                "日漫2D道具设定图：一张画面内包含两部分。\n"
+                "A区：陈旧线装书三视图（封面正面、侧面书脊、摊开内页），暖黄色硬皮封面，粗麻线穿孔装订，书页泛黄、边缘微卷。\n"
+                "B区：书页上的“恶鬼插画”设定特写 + 小范围结构分解（只做图案语言，不要实体化）：墨色褪色、线条阴冷、民俗志怪感；不出现血腥。\n"
+                "背景干净浅灰；信息清晰，适合后续分镜复用。"
+            ),
+            negative="写实摄影、3D渲染、复杂场景背景、血腥/内脏/断肢、跳出纸面实体怪物、低俗恐怖、文字水印",
+        )
+        ref_labels.append(prop_label)
+
+    # 3) Storyboard (3x3 image)
+    storyboard_label = f"九宫格分镜-故事提炼{duration_seconds}秒（日漫2D）"
+    sp, sn = _build_storyboard_prompt(story_text or "", style=style, duration_seconds=duration_seconds)
+    existing_storyboard = node_by_label.get(storyboard_label)
+    if not (existing_storyboard and _node_is_success_media(existing_storyboard)):
+        if not existing_storyboard:
+            tool_calls.append(
+                {
+                    "id": _deterministic_tool_id("auto:createNode:image", storyboard_label),
+                    "name": "createNode",
+                    "arguments": {
+                        "type": "image",
+                        "label": storyboard_label,
+                        "config": {
+                            "kind": "image",
+                            "imageModel": "nano-banana-fast",
+                            "prompt": sp,
+                            "negativePrompt": sn,
+                        },
+                    },
+                }
+            )
+        for ref in ref_labels[:6]:
+            ensure_edge(ref, storyboard_label)
+        tool_calls.append(
+            {
+                "id": _deterministic_tool_id("auto:runNode", storyboard_label),
+                "name": "runNode",
+                "arguments": {"nodeId": storyboard_label},
+            }
+        )
+
+    # 4) Video (composeVideo) + connect storyboard -> video
+    video_label = f"短片-故事提炼{duration_seconds}秒（日漫2D）"
+    video_prompt = (
+        f"基于输入的九宫格分镜图生成一段{duration_seconds}秒日漫2D短片。"
+        "风格：2D赛璐璐、干净线条、冷蓝灰色调；"
+        "恐怖表达克制PG-13：用影子、线条活化、空间轻微扭曲、音画错位；不要血腥与直白怪物扑脸。"
+    )
+    existing_video = node_by_label.get(video_label)
+    if not (existing_video and _node_is_success_media(existing_video)):
+        ensure_compose_video_create(video_label, duration=duration_seconds, prompt=video_prompt)
+        ensure_edge(storyboard_label, video_label)
+        if auto_run_video:
+            tool_calls.append(
+                {
+                    "id": _deterministic_tool_id("auto:runNode", video_label),
+                    "name": "runNode",
+                    "arguments": {"nodeId": video_label},
+                }
+            )
+
+    text = (
+        "已从故事中自动提取主要角色并生成角色三视参考，随后生成九宫格分镜并生成短片。"
+        "如果你想把更长剧情拆成多段 10–15 秒连续短片，我可以继续自动拆分生成 Part 2/3。"
+    )
+    return tool_calls, text
+
+
+def _extract_characters_from_story(
+    configurable: Configuration, story_text: str
+) -> tuple[list[str], list[str]]:
+    """Return (main_characters, key_props). Best-effort, safe defaults."""
+    # Fast heuristic fallback (works offline / when structured call fails).
+    def heuristic(text: str) -> tuple[list[str], list[str]]:
+        candidates: list[str] = []
+        for name in ("李长安", "李老头"):
+            if name in text:
+                candidates.append(name)
+        if "开发商" in text:
+            candidates.append("开发商")
+        if "黑西装" in text or "黑老大" in text:
+            candidates.append("黑西装老大")
+        # de-dup preserve order
+        seen = set()
+        main: list[str] = []
+        for n in candidates:
+            if n in seen:
+                continue
+            seen.add(n)
+            main.append(n)
+        props: list[str] = []
+        if "线装书" in text or ("线装" in text and "书" in text):
+            props.append("线装书")
+        if "棺材" in text:
+            props.append("棺材")
+        if "挖掘机" in text:
+            props.append("挖掘机")
+        if "纸钱" in text:
+            props.append("纸钱")
+        return (main[:4] or ["主角"], props[:4])
+
+    try:
+        # Keep the extraction prompt short to avoid token blowups.
+        excerpt = story_text.strip()
+        if len(excerpt) > 6000:
+            excerpt = excerpt[:6000]
+        prompt = (
+            "Extract characters for an animation pipeline.\n"
+            "Return JSON that matches the provided schema.\n"
+            "Rules:\n"
+            "- Only include characters that appear in the text.\n"
+            "- Mark main recurring characters (is_main=true) that should get a 3-view turnaround.\n"
+            "- Keep names in Chinese as-is.\n"
+            "- Also extract key props for consistency.\n\n"
+            f"STORY_TEXT:\n{excerpt}\n"
+        )
+        model = getattr(configurable, "role_selector_model", None) or configurable.answer_model
+        result = _call_openai_structured(model, prompt, CharacterExtraction)
+        mains = [n for n in (result.main_characters or []) if isinstance(n, str) and n.strip()]
+        if not mains:
+            mains = [c.name for c in (result.characters or []) if getattr(c, "is_main", False) and c.name]
+        mains = [n.strip() for n in mains if n.strip()]
+        props = [p.strip() for p in (result.key_props or []) if isinstance(p, str) and p.strip()]
+        # Clamp
+        return (mains[:4] or heuristic(story_text)[0], props[:4] or heuristic(story_text)[1])
+    except Exception:
+        return heuristic(story_text)
+
+
+def _build_character_turnaround_prompt(name: str, *, style: str) -> tuple[str, str]:
+    prompt = (
+        "日漫2D角色设定图，三视图同画面（正面/侧面/背面），全身站姿，A-pose（手臂自然下垂略外展）以便看清服装结构；"
+        "三视同一身高、肩宽、头身比一致；脸型五官一致，发型轮廓一致；线条干净利落，赛璐璐平涂，少量材质高光与阴影；"
+        "纯浅灰背景；脚底对齐同一地面线；清晰服装结构与褶皱逻辑（口袋/拉链/领口/袖口可读）；适合后续分镜复用。\n"
+        f"角色：{name}。\n"
+        f"风格：{style}。\n"
+        "要求：不要换脸、不要换衣服、不要改变发型分缝；三视一致。"
+    )
+    negative = (
+        "写实3D，真人照片感，过度肌肉，Q版幼态大头，夸张大眼萌系，复杂背景/场景，三视图不一致（换衣/换发/换脸/比例漂移），"
+        "多余人物，血腥、断肢、内脏，恐怖特写，强烈霓虹色光，过曝，手指畸形，多本书，多张脸，文字水印"
+    )
+    return prompt, negative
+
+
+def _build_storyboard_prompt(story_text: str, *, style: str, duration_seconds: int) -> tuple[str, str]:
+    excerpt = story_text.strip()
+    if len(excerpt) > 4800:
+        excerpt = excerpt[:4800]
+    prompt = (
+        "把下面故事改编成一张 3x3 九宫格分镜图（同一张图里 9 个镜头），日漫2D动画分镜稿风格；"
+        "每格标注镜头号与时长（总时长控制在 10–15 秒）；镜头之间动作与构图要连续衔接。"
+        "优先挑选最关键的 9 个节拍，形成一个可做成 12–15 秒短片的“浓缩版剧情”。\n"
+        f"风格：{style}。\n"
+        "角色一致性：主要人物必须保持同一张脸、同一发型、同一服装（参考上游角色三视图）。\n"
+        "PG-13：冲突与恐怖用影子/反应镜头/切走/声场暗示，不要血腥与直白扑脸。\n"
+        f"目标总时长：{duration_seconds} 秒。\n\n"
+        f"故事文本（可裁剪提炼，不要照抄原文长段落）：\n{excerpt}\n"
+    )
+    negative = (
+        "写实3D，真人照片感，血腥恐怖特写，怪物实体化扑脸，低俗惊吓，过度夸张超大眼Q版，人物跑脸换装，"
+        "镜头间角色比例漂移，复杂彩色背景，文字水印"
+    )
+    return prompt, negative
+
+
 def _call_openai_structured(model: str, prompt: str, schema_model):
     """Call OpenAI Responses API and parse into Pydantic model."""
     client: OpenAI | None = None
@@ -656,6 +1164,7 @@ def _call_openai_structured(model: str, prompt: str, schema_model):
     except Exception as exc:
         first_exc = exc
         debug_openai_error(f"{schema_model.__name__} client_init", exc)
+    # Preferred: Responses API (best quality for structured JSON). Fallback: Chat Completions for proxy compatibility.
     try:
         if client is None:
             raise first_exc or ValueError("OpenAI client is unavailable.")
@@ -676,34 +1185,29 @@ def _call_openai_structured(model: str, prompt: str, schema_model):
         text = _collect_stream_text(response)
     except Exception as exc:
         first_exc = exc
-        debug_openai_error(f"{schema_model.__name__}", exc)
+        debug_openai_error(f"{schema_model.__name__} responses", exc)
         try:
             if client is None:
                 raise first_exc or ValueError("OpenAI client is unavailable.")
-            response = client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-                stream=True,
+            forced = (
+                prompt.strip()
+                + "\n\nIMPORTANT: Return ONLY a single JSON object matching this schema:\n"
+                + json.dumps(schema_model.model_json_schema(), ensure_ascii=False)
             )
-            debug_openai_response(f"{schema_model.__name__}", response)
-            text = _collect_stream_text(response)
+            chat = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": forced}],
+                temperature=0,
+            )
+            msg = chat.choices[0].message
+            text = str(getattr(msg, "content", "") or "")
         except Exception as exc2:
-            debug_openai_error(f"{schema_model.__name__} fallback", exc2)
+            debug_openai_error(f"{schema_model.__name__} chat_fallback", exc2)
             text = ""
     try:
         return schema_model.model_validate_json(text)
     except Exception as exc:
         # Fallback: if provider ignores JSON format, try to construct minimal valid payload
-        if schema_model.__name__ == "SearchQueryList":
-            rationale = "Fallback from unparseable model output."
-            if first_exc is not None and not text:
-                rationale = f"Fallback due to OpenAI error: {_format_openai_error(first_exc).get('message', '')}"
-            return schema_model(query=[prompt], rationale=rationale)
-        if schema_model.__name__ == "Reflection":
-            # This node is unused in the current (no web research) graph, but keep a safe default.
-            return schema_model(
-                is_sufficient=True, knowledge_gap="", follow_up_queries=[]
-            )
         if schema_model.__name__ == "RoleDecision":
             raw = (text or "").strip()
             mapping = role_map()
@@ -950,7 +1454,10 @@ def _get_research_topic_with_summary(state: OverallState, *, tail: int = 16) -> 
 def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     """Pick the active assistant role based on the latest conversation."""
     configurable = Configuration.from_runnable_config(config)
-    llm_provider = configurable.llm_provider.lower()
+    llm_provider = resolve_llm_provider(configurable.llm_provider)
+    interaction_mode = state.get("interaction_mode")
+    if interaction_mode not in ("agent", "agent_max", "plan"):
+        interaction_mode = "agent"
     conversation = _render_compact_conversation(state, tail=16)
     canvas_context = state.get("canvas_context")
     canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
@@ -973,7 +1480,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
             model=configurable.role_selector_model,
             temperature=0,
             max_retries=2,
-            api_key=os.getenv("GEMINI_API_KEY"),
+            api_key=get_gemini_api_key(),
         )
         result = llm.with_structured_output(RoleDecision).invoke(prompt)
 
@@ -997,6 +1504,18 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         allow_canvas_tools = False
         allow_canvas_tools_reason = "本轮为知识库检索（RAG）意图，禁用画布工具以保持互斥。"
 
+    # Interaction mode override:
+    # - agent: prefer self-executing canvas tools (avoid repeated confirmations).
+    # - plan: keep conservative behavior (confirmations/gates may apply).
+    if interaction_mode in ("agent", "agent_max"):
+        allow_canvas_tools = True
+        allow_canvas_tools_reason = (
+            "Agent Max 模式：允许自执行画布工具（包含图片/视频自动执行）。"
+            if interaction_mode == "agent_max"
+            else "Agent 模式：允许自执行画布工具（尽量不反复询问）。"
+        )
+        tool_tier = "canvas"
+
     # Safety fallback (heuristic, not strict string matching):
     # For very short, low-information user turns that do not contain any creation intent,
     # default to not executing canvas tools in this turn.
@@ -1009,6 +1528,24 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         t = (last_user_text or "").strip()
         # Collapse whitespace
         t_compact = " ".join(t.split())
+
+        if interaction_mode == "plan" and allow_canvas_tools:
+            explicit_execute_hints = (
+                "不用确认",
+                "不必确认",
+                "别问",
+                "直接执行",
+                "直接生成",
+                "自动执行",
+                "自执行",
+                "run",
+                "tool",
+            )
+            if not any(k in t_compact for k in explicit_execute_hints):
+                allow_canvas_tools = False
+                allow_canvas_tools_reason = "Plan 模式：按步骤询问确认，本轮不自动执行画布工具。"
+                tool_tier = "none"
+
         creation_hints = (
             "生成",
             "创建",
@@ -1027,8 +1564,12 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
             "连接",
             "运行",
         )
-        if allow_canvas_tools and t_compact and len(t_compact) <= 8 and not any(
-            k in t_compact for k in creation_hints
+        if (
+            interaction_mode == "plan"
+            and allow_canvas_tools
+            and t_compact
+            and len(t_compact) <= 8
+            and not any(k in t_compact for k in creation_hints)
         ):
             allow_canvas_tools = False
             allow_canvas_tools_reason = "用户输入过短且未表达明确创作动作，先用选项确认下一步。"
@@ -1051,6 +1592,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         "active_role_reason": reason,
         "allow_canvas_tools": allow_canvas_tools,
         "allow_canvas_tools_reason": allow_canvas_tools_reason,
+        "interaction_mode": interaction_mode,
         "active_intent": intent or "",
         "active_tool_tier": tool_tier,
         **{k: v for k, v in defaults.items() if k not in state},
@@ -1058,255 +1600,6 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
 
 
 # Nodes
-def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
-    """LangGraph node that generates search queries based on the User's question.
-
-    Uses Gemini 2.0 Flash to create an optimized search queries for web research based on
-    the User's question.
-
-    Args:
-        state: Current graph state containing the User's question
-        config: Configuration for the runnable, including LLM provider settings
-
-    Returns:
-        Dictionary with state update, including search_query key containing the generated queries
-    """
-    configurable = Configuration.from_runnable_config(config)
-    llm_provider = configurable.llm_provider.lower()
-
-    # check for custom initial search query count
-    if state.get("initial_search_query_count") is None:
-        state["initial_search_query_count"] = configurable.number_of_initial_queries
-
-    # OpenAI path (Responses API)
-    if llm_provider == "openai":
-        current_date = get_current_date()
-        formatted_prompt = query_writer_instructions.format(
-            current_date=current_date,
-            research_topic=_get_research_topic_with_summary(state, tail=16),
-            number_queries=state["initial_search_query_count"],
-        )
-        result = _call_openai_structured(
-            configurable.query_generator_model, formatted_prompt, SearchQueryList
-        )
-        return {"search_query": result.query}
-
-    # init Gemini 2.0 Flash
-    require_gemini_key()
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
-    structured_llm = llm.with_structured_output(SearchQueryList)
-
-    # Format the prompt
-    current_date = get_current_date()
-    formatted_prompt = query_writer_instructions.format(
-        current_date=current_date,
-        research_topic=_get_research_topic_with_summary(state, tail=16),
-        number_queries=state["initial_search_query_count"],
-    )
-    # Generate the search queries
-    result = structured_llm.invoke(formatted_prompt)
-    return {"search_query": result.query}
-
-
-def continue_to_web_research(state: QueryGenerationState):
-    """LangGraph node that sends the search queries to the web research node.
-
-    This is used to spawn n number of web research nodes, one for each search query.
-    """
-    return [
-        Send("web_research", {"search_query": search_query, "id": int(idx)})
-        for idx, search_query in enumerate(state["search_query"])
-    ]
-
-
-def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
-    """LangGraph node that performs web research using the native Google Search API tool.
-
-    Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
-
-    Args:
-        state: Current graph state containing the search query and research loop count
-        config: Configuration for the runnable, including search API settings
-
-    Returns:
-        Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
-    """
-    # Configure
-    configurable = Configuration.from_runnable_config(config)
-    provider = configurable.search_provider.lower()
-    formatted_prompt = web_searcher_instructions.format(
-        current_date=get_current_date(),
-        research_topic=state["search_query"],
-    )
-
-    if provider == "disabled":
-        return {
-            "sources_gathered": [],
-            "search_query": [state["search_query"]],
-            "web_research_result": ["[mocked search result: no external search performed]"],
-        }
-
-    if provider == "openai":
-        openai_client = get_openai_client()
-        try:
-            completion = openai_client.responses.create(
-                model=configurable.search_model,
-                input=[
-                    {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": formatted_prompt}],
-                    }
-                ],
-                tools=[{"type": "web_search"}],
-                stream=True,
-            )
-            debug_openai_response("web_research", completion)
-            output_text = _collect_stream_text(completion)
-        except (APIConnectionError, OpenAIError, Exception):
-            output_text = "搜索失败：OpenAI API 未返回结果（连接或接口异常）。"
-        return {
-            "sources_gathered": [],
-            "search_query": [state["search_query"]],
-            "web_research_result": [output_text],
-        }
-
-    # Default to Gemini search
-    # Uses the google genai client as the langchain client doesn't return grounding metadata
-    genai_client = get_genai_client()
-    response = genai_client.models.generate_content(
-        model=configurable.search_model,
-        contents=formatted_prompt,
-        config={
-            "tools": [{"google_search": {}}],
-            "temperature": 0,
-        },
-    )
-    # resolve the urls to short urls for saving tokens and time
-    resolved_urls = resolve_urls(
-        response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
-    )
-    # Gets the citations and adds them to the generated text
-    citations = get_citations(response, resolved_urls)
-    modified_text = insert_citation_markers(response.text, citations)
-    sources_gathered = [item for citation in citations for item in citation["segments"]]
-
-    return {
-        "sources_gathered": sources_gathered,
-        "search_query": [state["search_query"]],
-        "web_research_result": [modified_text],
-    }
-
-
-def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
-    """LangGraph node that identifies knowledge gaps and generates potential follow-up queries.
-
-    Analyzes the current summary to identify areas for further research and generates
-    potential follow-up queries. Uses structured output to extract
-    the follow-up query in JSON format.
-
-    Args:
-        state: Current graph state containing the running summary and research topic
-        config: Configuration for the runnable, including LLM provider settings
-
-    Returns:
-        Dictionary with state update, including search_query key containing the generated follow-up query
-    """
-    configurable = Configuration.from_runnable_config(config)
-    llm_provider = configurable.llm_provider.lower()
-    # Increment the research loop count and get the reasoning model
-    state["research_loop_count"] = state.get("research_loop_count", 0) + 1
-    reasoning_model = state.get("reasoning_model", configurable.reflection_model)
-
-    # Format the prompt
-    current_date = get_current_date()
-    formatted_prompt = reflection_instructions.format(
-        current_date=current_date,
-        research_topic=get_research_topic(state["messages"]),
-        summaries="\n\n---\n\n".join(state["web_research_result"]),
-    )
-    # OpenAI path (Responses API)
-    if llm_provider == "openai":
-        result = _call_openai_structured(
-            reasoning_model,
-            formatted_prompt,
-            Reflection,
-        )
-        return {
-            "is_sufficient": result.is_sufficient,
-            "knowledge_gap": result.knowledge_gap,
-            "follow_up_queries": result.follow_up_queries,
-            "research_loop_count": state["research_loop_count"],
-            "number_of_ran_queries": len(state["search_query"]),
-        }
-
-    # init Reasoning Model
-    require_gemini_key()
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
-    result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
-
-    return {
-        "is_sufficient": result.is_sufficient,
-        "knowledge_gap": result.knowledge_gap,
-        "follow_up_queries": result.follow_up_queries,
-        "research_loop_count": state["research_loop_count"],
-        "number_of_ran_queries": len(state["search_query"]),
-    }
-
-
-def evaluate_research(
-    state: ReflectionState,
-    config: RunnableConfig,
-) -> OverallState:
-    """LangGraph routing function that determines the next step in the research flow.
-
-    Controls the research loop by deciding whether to continue gathering information
-    or to finalize the summary based on the configured maximum number of research loops.
-
-    Args:
-        state: Current graph state containing the research loop count
-        config: Configuration for the runnable, including max_research_loops setting
-
-    Returns:
-        String literal indicating the next node to visit ("web_research" or "finalize_summary")
-    """
-    configurable = Configuration.from_runnable_config(config)
-    max_research_loops = (
-        state.get("max_research_loops")
-        if state.get("max_research_loops") is not None
-        else configurable.max_research_loops
-    )
-    hard_max = configurable.hard_max_research_loops if hasattr(configurable, "hard_max_research_loops") else 10
-    try:
-        max_research_loops = int(max_research_loops)
-    except Exception:
-        max_research_loops = configurable.max_research_loops
-    if isinstance(hard_max, int) and hard_max > 0:
-        max_research_loops = min(max_research_loops, hard_max)
-    if state["is_sufficient"] or state["research_loop_count"] >= max_research_loops:
-        return "finalize_answer"
-    else:
-        return [
-            Send(
-                "web_research",
-                {
-                    "search_query": follow_up_query,
-                    "id": state["number_of_ran_queries"] + int(idx),
-                },
-            )
-            for idx, follow_up_query in enumerate(state["follow_up_queries"])
-        ]
-
-
 def finalize_answer(state: OverallState, config: RunnableConfig):
     """LangGraph node that finalizes the research summary.
 
@@ -1321,7 +1614,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         Dictionary with state update, including running_summary key containing the formatted final summary with sources
     """
     configurable = Configuration.from_runnable_config(config)
-    llm_provider = configurable.llm_provider.lower()
+    llm_provider = resolve_llm_provider(configurable.llm_provider)
     reasoning_model = state.get("reasoning_model") or configurable.answer_model
     agent_loop_count = int(state.get("agent_loop_count", 0) or 0) + 1
     hard_turn_cap = int(getattr(configurable, "hard_max_turn_loops", 10) or 10)
@@ -1343,8 +1636,12 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     current_date = get_current_date()
     canvas_context = state.get("canvas_context")
     canvas_context_text = _render_canvas_context_for_prompt(canvas_context)
+    interaction_mode = state.get("interaction_mode")
+    if interaction_mode not in ("agent", "agent_max", "plan"):
+        interaction_mode = "agent"
     formatted_prompt = answer_instructions.format(
         current_date=current_date,
+        interaction_mode=interaction_mode,
         research_topic=_get_research_topic_with_summary(state, tail=16),
         role_directive=role_directive,
         summaries="\n---\n\n".join(state["web_research_result"]),
@@ -1355,45 +1652,158 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     quick_replies_payload: list[dict] | None = None
 
     def _extract_tapcanvas_actions(text: str) -> tuple[str, list[dict] | None]:
-        if not isinstance(text, str) or "```" not in text:
+        if not isinstance(text, str):
             return text, None
+
+        def _normalize_actions(obj: object) -> list[dict] | None:
+            actions = obj.get("actions") if isinstance(obj, dict) else None
+            if not isinstance(actions, list):
+                return None
+            normalized: list[dict] = []
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                label = item.get("label")
+                input_text = item.get("input")
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                if not isinstance(input_text, str) or not input_text.strip():
+                    continue
+                normalized.append({"label": label.strip(), "input": input_text})
+                if len(normalized) >= 6:
+                    break
+            return normalized or None
+
+        def _extract_json_object(s: str, start_index: int) -> tuple[str, int] | None:
+            """Return (json_text, end_index_exclusive) for a JSON object starting at/after start_index."""
+            start = s.find("{", start_index)
+            if start < 0:
+                return None
+            depth = 0
+            in_string = False
+            quote = ""
+            i = start
+            while i < len(s):
+                ch = s[i]
+                if in_string:
+                    if ch == "\\":
+                        i += 2
+                        continue
+                    if ch == quote:
+                        in_string = False
+                        quote = ""
+                    i += 1
+                    continue
+                if ch in ('"', "'"):
+                    in_string = True
+                    quote = ch
+                    i += 1
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return s[start : i + 1].strip(), i + 1
+                i += 1
+            return None
+
+        cleaned = text
+        obj: object | None = None
+
+        # Preferred: fenced block (per prompt convention).
         marker = "```tapcanvas_actions"
         start = text.find(marker)
-        if start < 0:
-            return text, None
-        start_payload = text.find("\n", start + len(marker))
-        if start_payload < 0:
-            return text, None
-        start_payload = start_payload + 1
-        end_fence = text.find("```", start_payload)
-        if end_fence < 0:
-            return text, None
-        payload_raw = text[start_payload:end_fence].strip()
-        cleaned = (text[:start] + text[end_fence + 3 :]).strip()
-        try:
-            obj = json.loads(payload_raw)
-        except Exception:
+        if start >= 0:
+            start_payload = text.find("\n", start + len(marker))
+            if start_payload >= 0:
+                start_payload += 1
+                end_fence = text.find("```", start_payload)
+                if end_fence >= 0:
+                    payload_raw = text[start_payload:end_fence].strip()
+                    cleaned = (text[:start] + text[end_fence + 3 :]).strip()
+                    try:
+                        obj = json.loads(payload_raw)
+                    except Exception:
+                        obj = None
+
+        # Fallback: plain marker + JSON (some models omit the code fence and may append extra text after JSON).
+        if obj is None and "tapcanvas_actions" in text:
+            token = "tapcanvas_actions"
+            token_idx = text.find(token)
+            while token_idx >= 0:
+                if token_idx == 0 or text[token_idx - 1] == "\n":
+                    break
+                token_idx = text.find(token, token_idx + len(token))
+            if token_idx >= 0:
+                extracted = _extract_json_object(text, token_idx + len(token))
+                if extracted:
+                    payload_raw, end_index = extracted
+                    remove_start = token_idx - 1 if token_idx > 0 and text[token_idx - 1] == "\n" else token_idx
+                    cleaned = (text[:remove_start] + text[end_index:]).strip()
+                    try:
+                        obj = json.loads(payload_raw)
+                    except Exception:
+                        obj = None
+
+        if obj is None:
             return cleaned, None
-        actions = obj.get("actions") if isinstance(obj, dict) else None
-        if not isinstance(actions, list):
-            return cleaned, None
-        normalized: list[dict] = []
-        for item in actions:
-            if not isinstance(item, dict):
-                continue
-            label = item.get("label")
-            input_text = item.get("input")
-            if not isinstance(label, str) or not label.strip():
-                continue
-            if not isinstance(input_text, str) or not input_text.strip():
-                continue
-            normalized.append({"label": label.strip(), "input": input_text})
-            if len(normalized) >= 6:
-                break
-        return cleaned, normalized or None
+
+        normalized = _normalize_actions(obj)
+        return cleaned, normalized
 
     allow_canvas_tools = bool(state.get("allow_canvas_tools", True))
     role_tools = _tool_definitions_for_role(resolved_id, allow_canvas_tools)
+
+    # Fast path: when user pastes a long story in Agent/Agent Max, deterministically run
+    # the character->storyboard->video pipeline instead of relying on the LLM to emit tool calls.
+    # This avoids truncated tool-call JSON and makes the workflow repeatable/dedupable.
+    try:
+        last_user_text = _get_last_user_text(state)
+        if (
+            allow_canvas_tools
+            and interaction_mode in ("agent", "agent_max")
+            and _looks_like_story_request(last_user_text)
+            and not any(
+                k in (last_user_text or "")
+                for k in (
+                    "先不操作画布",
+                    "不要操作画布",
+                    "只聊",
+                    "只写",
+                    "不要生成",
+                    "不生成",
+                )
+            )
+        ):
+            tool_calls_payload, content = _synthesize_story_pipeline_tool_calls(
+                state,
+                configurable,
+                interaction_mode=interaction_mode,
+                story_text=last_user_text,
+            )
+            message_kwargs = {
+                "active_role": resolved_id,
+                "active_role_name": profile["name"],
+                "active_role_reason": state.get("active_role_reason", "根据对话意图选择。"),
+                "active_intent": state.get("active_intent", ""),
+                "active_tool_tier": state.get("active_tool_tier", "canvas"),
+                "allow_canvas_tools": True,
+                "allow_canvas_tools_reason": state.get("allow_canvas_tools_reason", ""),
+                "tool_calls": tool_calls_payload,
+            }
+            return {
+                "messages": [AIMessage(content=content, additional_kwargs=message_kwargs)],
+                "sources_gathered": state.get("sources_gathered", []) or [],
+                "active_role": resolved_id,
+                "active_role_name": profile["name"],
+                "active_role_reason": state.get("active_role_reason", "根据对话意图选择。"),
+                "active_intent": state.get("active_intent", ""),
+                "active_tool_tier": "canvas",
+                "agent_loop_count": agent_loop_count,
+            }
+    except Exception:
+        pass
 
     if llm_provider == "openai":
         try:
@@ -1410,10 +1820,135 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             if role_tools:
                 kwargs["tools"] = role_tools
                 kwargs["tool_choice"] = "auto"
-            completion = get_openai_client().responses.create(**kwargs)
-            debug_openai_response("finalize_answer", completion)
-            result_text, tool_calls_payload = _collect_stream_text_and_tools(completion)
-            tool_calls_payload = _filter_tool_calls_by_role(tool_calls_payload, resolved_id, allow_canvas_tools)
+            try:
+                completion = get_openai_client().responses.create(**kwargs)
+                debug_openai_response("finalize_answer", completion)
+                result_text, tool_calls_payload = _collect_stream_text_and_tools(completion)
+                tool_calls_payload = _normalize_tool_calls_payload(tool_calls_payload)
+                tool_calls_payload = _filter_tool_calls_by_role(tool_calls_payload, resolved_id, allow_canvas_tools)
+            except Exception as exc:
+                # Fallback for OpenAI-compatible proxies that don't implement Responses API.
+                debug_openai_error("finalize_answer responses_fallback", exc)
+                client = get_openai_client()
+                chat_kwargs: dict = {
+                    "model": reasoning_model,
+                    "messages": [{"role": "user", "content": formatted_prompt}],
+                    "temperature": 0,
+                }
+                chat_tools = _to_chat_completions_tools(role_tools)
+                if chat_tools:
+                    chat_kwargs["tools"] = chat_tools
+                    chat_kwargs["tool_choice"] = "auto"
+                chat = client.chat.completions.create(**chat_kwargs)
+                msg = chat.choices[0].message
+                result_text = str(getattr(msg, "content", "") or "")
+                tool_calls_payload = _parse_chat_completions_tool_calls(msg)
+                tool_calls_payload = _normalize_tool_calls_payload(tool_calls_payload)
+                tool_calls_payload = _filter_tool_calls_by_role(tool_calls_payload, resolved_id, allow_canvas_tools)
+
+            # Story -> characters -> storyboard -> video autopipeline
+            # Trigger when user pastes long story text and asks for animation/storyboard/video.
+            try:
+                last_user_text = _get_last_user_text(state)
+                if (
+                    allow_canvas_tools
+                    and interaction_mode in ("agent", "agent_max")
+                    and _looks_like_story_request(last_user_text)
+                ):
+                    tool_calls_payload, result_text = _synthesize_story_pipeline_tool_calls(
+                        state,
+                        configurable,
+                        interaction_mode=interaction_mode,
+                        story_text=last_user_text,
+                    )
+            except Exception:
+                pass
+
+            # AgentMax fallback: if the user explicitly asks for character turnarounds (三视图)
+            # but the model returned no tool calls, synthesize minimal character-ref nodes.
+            # This prevents "explaining prompts" loops when the intent is clearly generation.
+            if (
+                interaction_mode in ("agent_max",)
+                and allow_canvas_tools
+                and not tool_calls_payload
+            ):
+                try:
+                    last_user_text = ""
+                    try:
+                        for m in reversed(state.get("messages") or []):
+                            if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
+                                last_user_text = str(getattr(m, "content", "") or "")
+                                break
+                    except Exception:
+                        last_user_text = ""
+                    t = (last_user_text or "").strip()
+                    if any(k in t for k in ("三视", "三视图", "角色三视", "角色三视图")):
+                        # Infer character names from recent user text (best-effort).
+                        recent_user_text = ""
+                        try:
+                            user_msgs = []
+                            for m in (state.get("messages") or [])[-12:]:
+                                if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
+                                    user_msgs.append(str(getattr(m, "content", "") or ""))
+                            recent_user_text = "\n".join(user_msgs)
+                        except Exception:
+                            recent_user_text = t
+
+                        candidates: list[str] = []
+                        for name in ("李长安", "李老头"):
+                            if name in recent_user_text:
+                                candidates.append(name)
+                        if "开发商" in recent_user_text:
+                            candidates.append("开发商")
+                        if "黑西装" in recent_user_text:
+                            candidates.append("黑西装老大")
+                        # De-dup, keep order.
+                        seen = set()
+                        names: list[str] = []
+                        for n in candidates:
+                            if n in seen:
+                                continue
+                            seen.add(n)
+                            names.append(n)
+                        if not names:
+                            names = ["主角"]
+
+                        def _three_view_prompt(n: str) -> str:
+                            return (
+                                "日漫2D角色设定图，三视图同画面（正面/侧面/背面），全身站姿，比例统一，三视同一身高与肩宽，脸型五官一致，"
+                                "发型轮廓一致；线条干净，赛璐璐平涂，少量高光与阴影；纯浅灰背景；脚底对齐同一地面线；"
+                                "清晰服装结构与褶皱逻辑；适合后续分镜复用。\n"
+                                f"角色：{n}。\n"
+                                "风格：民俗志怪+现实荒诞的日漫2D，克制写实（非Q版）。\n"
+                                "要求：不要换脸、不要换衣服、不要改变发型分缝；三视一致。"
+                            )
+
+                        negative = (
+                            "写实3D, 真人照片风, Q版, 夸张大眼幼态, 换脸, 换发型, 换衣服, 多余人物, 多张脸, "
+                            "背景复杂, 血腥细节, 肢体缺失, 手指畸形"
+                        )
+
+                        synthesized: list[dict] = []
+                        for n in names[:6]:
+                            label = f"角色三视图-{n}"
+                            synthesized.append(
+                                {
+                                    "name": "createNode",
+                                    "arguments": {
+                                        "type": "image",
+                                        "label": label,
+                                        "config": {
+                                            "kind": "image",
+                                            "prompt": _three_view_prompt(n),
+                                            "negativePrompt": negative,
+                                        },
+                                    },
+                                }
+                            )
+                            synthesized.append({"name": "runNode", "arguments": {"nodeId": label}})
+                        tool_calls_payload = synthesized
+                except Exception:
+                    pass
 
             # If the user is asking for open-ended story continuation recommendations,
             # do NOT auto-create storyboard/video nodes in this turn; offer selectable directions.
@@ -1589,7 +2124,11 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 and not any(k in (last_user_text or "") for k in ("九宫格", "分镜", "故事板", "storyboard", "15s"))
             )
 
-            if is_story_suggestion_request and "tapcanvas_actions" not in (result_text or ""):
+            if (
+                interaction_mode == "plan"
+                and is_story_suggestion_request
+                and "tapcanvas_actions" not in (result_text or "")
+            ):
                 # Prevent unintended canvas actions triggered by the model.
                 tool_calls_payload = []
                 quick_replies_payload = [
@@ -1615,9 +2154,21 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             # Storyboard/video continuity gate:
             # To avoid abrupt scene drift and accidental new subjects, require an explicit "lock" confirmation
             # before creating storyboard/video nodes, unless the user already confirmed.
-            storyboard_intent = any(
-                k in (last_user_text or "")
-                for k in ("九宫格", "分镜", "故事板", "storyboard", "短片", "动画", "成片", "15s", "15秒")
+            has_canvas_tool_calls = any(
+                (c.get("name") in ("createNode", "updateNode", "connectNodes", "runNode"))
+                for c in (tool_calls_payload or [])
+                if isinstance(c, dict)
+            )
+            # Only treat it as "generation intent" when the user asks for storyboard/image/video output,
+            # or when the model already emitted canvas tool calls. This avoids forcing lock-confirmation
+            # for text-only deliverables like scripts, character sheets, or shot lists.
+            storyboard_generation_intent = (
+                has_canvas_tool_calls
+                or any(k in (last_user_text or "") for k in ("九宫格", "分镜图", "故事板", "storyboard"))
+                or (
+                    any(k in (last_user_text or "") for k in ("生成", "出", "做成"))
+                    and any(k in (last_user_text or "") for k in ("分镜", "九宫格", "故事板", "图片", "生图", "视频", "15s", "15秒"))
+                )
             )
             has_lock_confirmation = any(
                 k in (last_user_text or "")
@@ -1631,7 +2182,10 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             # stop blocking on lock confirmation and proceed with default lock behavior.
             if hard_turn_cap > 0 and agent_loop_count >= hard_turn_cap:
                 has_lock_confirmation = True
-            if storyboard_intent and implicit_lock_confirmation:
+            if storyboard_generation_intent and implicit_lock_confirmation:
+                has_lock_confirmation = True
+            if interaction_mode in ("agent", "agent_max") and storyboard_generation_intent:
+                # Agent mode: proceed without additional lock-confirm steps.
                 has_lock_confirmation = True
 
             def _extract_style_lock_from_messages(messages_obj: list | None) -> str | None:
@@ -1654,23 +2208,23 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                 return None
 
             style_lock = _extract_style_lock_from_messages(state.get("messages") or [])
-            if storyboard_intent and not has_lock_confirmation and not is_story_suggestion_request:
+            if storyboard_generation_intent and not has_lock_confirmation and not is_story_suggestion_request:
                 # Convert any accidental tool calls into a "plan" with buttons for user confirmation.
                 tool_calls_payload = []
                 if not quick_replies_payload:
                     if not style_lock:
                         quick_replies_payload = [
                             {
-                                "label": "继续（默认锁定：日漫2D）",
-                                "input": "确认锁定风格：日漫2D（干净线稿+赛璐璐）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                                "label": "继续（锁定+先做角色设定图）",
+                                "input": "确认锁定风格：日漫2D（干净线稿+赛璐璐）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。\n第一步：先为所有主要角色生成可复现的角色设定图/参考图（character/image 节点），并把这些参考图连到后续分镜节点作为引用。\n第二步：再生成 3x3 九宫格分镜图。",
                             },
                             {
                                 "label": "锁定风格：美漫2D（粗线条）",
-                                "input": "确认锁定风格：美漫2D（粗线条+高对比）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                                "input": "确认锁定风格：美漫2D（粗线条+高对比）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。\n第一步：先为所有主要角色生成可复现的角色设定图/参考图（character/image 节点），并把这些参考图连到后续分镜节点作为引用。\n第二步：再生成 3x3 九宫格分镜图。",
                             },
                             {
                                 "label": "锁定风格：写实真人",
-                                "input": "确认锁定风格：写实真人（电影质感）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。请把剧情压缩成 3x3 九宫格分镜图，并把参考图全部连到分镜节点上。",
+                                "input": "确认锁定风格：写实真人（电影质感）。场景沿用当前项目主场景（光线连续，不自由换景）；主体不新增（数量不变）。\n第一步：先为所有主要角色生成可复现的角色设定图/参考图（character/image 节点），并把这些参考图连到后续分镜节点作为引用。\n第二步：再生成 3x3 九宫格分镜图。",
                             },
                             {
                                 "label": "自定义风格…",
@@ -2020,6 +2574,10 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         pass
                     if reference_labels:
                         existing_pairs: set[tuple[str, str]] = set()
+                        try:
+                            existing_pairs |= _canvas_existing_pairs_by_label(state.get("canvas_context"))
+                        except Exception:
+                            pass
                         for c in tool_calls_payload:
                             if c.get("name") != "connectNodes":
                                 continue
@@ -2062,8 +2620,8 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                                     "arguments": {
                                         "sourceNodeId": src_label,
                                         "targetNodeId": storyboard_image_label,
-                                        "sourceHandle": "out-image-wide",
-                                        "targetHandle": "in-image-wide",
+                                        "sourceHandle": "out-image",
+                                        "targetHandle": "in-image",
                                     },
                                 }
                             )
@@ -2163,6 +2721,12 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                         # Build a set of (source,target) already connected in this payload to avoid duplicates.
                         existing_pairs: set[tuple[str, str]] = set()
                         existing_targets: set[str] = set()
+                        try:
+                            existing_pairs |= _canvas_existing_pairs_by_label(state.get("canvas_context"))
+                            for _, t in existing_pairs:
+                                existing_targets.add(t)
+                        except Exception:
+                            pass
                         for c in tool_calls_payload:
                             if c.get("name") != "connectNodes":
                                 continue
@@ -2299,12 +2863,11 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             result = AIMessage(content="无法生成最终答案：运行时异常。")
     else:
         # init Reasoning Model, default to Gemini 2.5 Flash
-        require_gemini_key()
         llm = ChatGoogleGenerativeAI(
             model=reasoning_model,
             temperature=0,
             max_retries=2,
-            api_key=os.getenv("GEMINI_API_KEY"),
+            api_key=get_gemini_api_key(),
         )
         result = llm.invoke(formatted_prompt)
 
@@ -2435,16 +2998,26 @@ def direct_answer(state: OverallState, config: RunnableConfig):
 def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
     """Optional knowledge-base retrieval (e.g. Cloudflare AutoRAG) to ground the answer."""
     configurable = Configuration.from_runnable_config(config)
-    provider = configurable.search_provider.lower()
-    if provider != "autorag":
+    # This project uses RAG on-demand only (never external web search).
+    requested_tier = (state.get("active_tool_tier") or "").strip().lower()
+    if requested_tier != "rag":
         return {}
 
-    # Use the latest user message as the query.
-    query = _get_research_topic_with_summary(state, tail=8)
-    if not isinstance(query, str):
+    # Use the latest user message as the query (avoid echoing full thread history).
+    query = ""
+    try:
+        for m in reversed(state.get("messages") or []):
+            if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
+                query = str(getattr(m, "content", "") or "").strip()
+                break
+    except Exception:
         query = ""
-    query = query.strip()
     if not query:
+        return {}
+
+    # Allow RAG retrieval even when search_provider is "disabled", as long as AutoRAG is configured.
+    provider = (configurable.search_provider or "").strip().lower()
+    if provider not in ("", "disabled", "autorag"):
         return {}
 
     snippets, sources = _call_autorag_search(configurable, query)
@@ -2486,7 +3059,7 @@ def summarize_memory(state: OverallState, config: RunnableConfig) -> OverallStat
                 return {}
 
         configurable = Configuration.from_runnable_config(config)
-        llm_provider = configurable.llm_provider.lower()
+        llm_provider = resolve_llm_provider(configurable.llm_provider)
         model = getattr(configurable, "reflection_model", None) or configurable.answer_model
         prev = state.get("conversation_summary") or ""
         older = format_messages_for_prompt(messages[:-tail_keep])
@@ -2512,20 +3085,29 @@ def summarize_memory(state: OverallState, config: RunnableConfig) -> OverallStat
         new_summary = ""
         if llm_provider == "openai":
             client = get_openai_client()
-            response = client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-                stream=True,
-            )
-            debug_openai_response("summarize_memory", response)
-            new_summary = _collect_stream_text(response)
+            try:
+                response = client.responses.create(
+                    model=model,
+                    input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+                    stream=True,
+                )
+                debug_openai_response("summarize_memory", response)
+                new_summary = _collect_stream_text(response)
+            except Exception as exc:
+                debug_openai_error("summarize_memory responses_fallback", exc)
+                chat = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                )
+                msg = chat.choices[0].message
+                new_summary = str(getattr(msg, "content", "") or "")
         else:
-            require_gemini_key()
             llm = ChatGoogleGenerativeAI(
                 model=model,
                 temperature=0,
                 max_retries=2,
-                api_key=os.getenv("GEMINI_API_KEY"),
+                api_key=get_gemini_api_key(),
             )
             new_summary = str(llm.invoke(prompt).content or "")
 

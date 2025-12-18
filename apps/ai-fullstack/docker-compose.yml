@@ -3,7 +3,7 @@ volumes:
     driver: local
 services:
   langgraph-redis:
-    image: docker.io/redis:6
+    image: ${DOCKERHUB_REGISTRY:-docker.1ms.run}/library/redis:6
     container_name: langgraph-redis
     healthcheck:
       test: redis-cli ping
@@ -11,7 +11,7 @@ services:
       timeout: 1s
       retries: 5
   langgraph-postgres:
-    image: docker.io/postgres:16
+    image: ${DOCKERHUB_REGISTRY:-docker.1ms.run}/library/postgres:16
     container_name: langgraph-postgres
     ports:
       - "5433:5432"

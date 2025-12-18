@@ -241,10 +241,25 @@ function computeTreeLayout(
 
 function upgradeVideoKind(node: Node): Node {
   const data: any = node.data || {}
-  if (data.kind === 'video') {
-    return { ...node, data: { ...data, kind: 'composeVideo' } }
+  const upgradedKind = data.kind === 'video' ? 'composeVideo' : data.kind
+  const isVideoKind = upgradedKind === 'composeVideo' || upgradedKind === 'storyboard' || upgradedKind === 'video'
+  if (!isVideoKind) {
+    if (upgradedKind === data.kind) return node
+    return { ...node, data: { ...data, kind: upgradedKind } }
   }
-  return node
+
+  const rawVideoDuration = Number(data.videoDurationSeconds)
+  const rawDuration = Number(data.durationSeconds)
+  const hasVideoDurationSeconds = Number.isFinite(rawVideoDuration) && rawVideoDuration > 0
+  const hasDurationSeconds = Number.isFinite(rawDuration) && rawDuration > 0
+  const defaultSeconds = 15
+  const nextData = {
+    ...data,
+    kind: upgradedKind,
+    ...(hasVideoDurationSeconds ? null : { videoDurationSeconds: defaultSeconds }),
+    ...(hasDurationSeconds ? null : { durationSeconds: defaultSeconds }),
+  }
+  return { ...node, data: nextData }
 }
 
 function getRemixTargetIdFromNode(node?: Node) {
@@ -407,6 +422,21 @@ export const useRFStore = create<RFState>((set, get) => ({
           videoModel: 'sora-2',
           videoModelVendor:
             (dataExtra as any).videoModelVendor ?? 'sora2api',
+        }
+      }
+
+      if (kindValue === 'composeVideo' || kindValue === 'storyboard' || kindValue === 'video') {
+        const rawVideoDuration = Number((dataExtra as any).videoDurationSeconds)
+        const rawDuration = Number((dataExtra as any).durationSeconds)
+        const hasVideoDurationSeconds = Number.isFinite(rawVideoDuration) && rawVideoDuration > 0
+        const hasDurationSeconds = Number.isFinite(rawDuration) && rawDuration > 0
+        const defaultSeconds = 15
+        if (!hasVideoDurationSeconds || !hasDurationSeconds) {
+          dataExtra = {
+            ...dataExtra,
+            ...(!hasVideoDurationSeconds ? { videoDurationSeconds: defaultSeconds } : null),
+            ...(!hasDurationSeconds ? { durationSeconds: defaultSeconds } : null),
+          }
         }
       }
     }

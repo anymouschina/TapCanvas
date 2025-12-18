@@ -76,9 +76,9 @@ class Configuration(BaseModel):
     )
 
     llm_provider: str = Field(
-        default="gemini",
+        default="auto",
         metadata={
-            "description": "Provider for generate/reflection/answer steps. Options: 'gemini' or 'openai'."
+            "description": "Provider for generate/reflection/answer steps. Options: 'auto', 'gemini', or 'openai'."
         },
     )
 
@@ -116,8 +116,13 @@ class Configuration(BaseModel):
         # Filter out None values
         values = {k: v for k, v in raw_values.items() if v is not None}
 
+        llm_provider = values.get("llm_provider", _default("llm_provider"))
+        llm_provider = str(llm_provider).lower().strip()
+        if llm_provider == "auto":
+            llm_provider = "openai" if os.environ.get("OPENAI_API_KEY") else "gemini"
+
         # If using OpenAI provider and models are missing/invalid, default to gpt-5.2
-        if values.get("llm_provider", _default("llm_provider")).lower() == "openai":
+        if llm_provider == "openai":
             for field in (
                 "query_generator_model",
                 "role_selector_model",

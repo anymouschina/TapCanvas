@@ -34,83 +34,11 @@ Canvas context (optional, JSON):
 {canvas_context}
 """
 
-query_writer_instructions = """Your goal is to generate sophisticated and diverse web search queries. These queries are intended for an advanced automated web research tool capable of analyzing complex results, following links, and synthesizing information.
-
-Instructions:
-- Always prefer a single search query, only add another query if the original question requests multiple aspects or elements and one query is not enough.
-- Each query should focus on one specific aspect of the original question.
-- Don't produce more than {number_queries} queries.
-- Queries should be diverse, if the topic is broad, generate more than 1 query.
-- Don't generate multiple similar queries, 1 is enough.
-- Query should ensure that the most current information is gathered. The current date is {current_date}.
-
-Format: 
-- Format your response as a JSON object with ALL two of these exact keys:
-   - "rationale": Brief explanation of why these queries are relevant
-   - "query": A list of search queries
-
-Example:
-
-Topic: What revenue grew more last year apple stock or the number of people buying an iphone
-```json
-{{
-    "rationale": "To answer this comparative growth question accurately, we need specific data points on Apple's stock performance and iPhone sales metrics. These queries target the precise financial information needed: company revenue trends, product-specific unit sales figures, and stock price movement over the same fiscal period for direct comparison.",
-    "query": ["Apple total revenue growth fiscal year 2024", "iPhone unit sales growth fiscal year 2024", "Apple stock price growth fiscal year 2024"],
-}}
-```
-
-Context: {research_topic}"""
-
-
-web_searcher_instructions = """Conduct targeted Google Searches to gather the most recent, credible information on "{research_topic}" and synthesize it into a verifiable text artifact.
-
-Instructions:
-- Query should ensure that the most current information is gathered. The current date is {current_date}.
-- Conduct multiple, diverse searches to gather comprehensive information.
-- Consolidate key findings while meticulously tracking the source(s) for each specific piece of information.
-- The output should be a well-written summary or report based on your search findings. 
-- Only include the information found in the search results, don't make up any information.
-
-Research Topic:
-{research_topic}
-"""
-
-reflection_instructions = """You are an expert research assistant analyzing summaries about "{research_topic}".
-
-Instructions:
-- Identify knowledge gaps or areas that need deeper exploration and generate a follow-up query. (1 or multiple).
-- If provided summaries are sufficient to answer the user's question, don't generate a follow-up query.
-- If there is a knowledge gap, generate a follow-up query that would help expand your understanding.
-- Focus on technical details, implementation specifics, or emerging trends that weren't fully covered.
-
-Requirements:
-- Ensure the follow-up query is self-contained and includes necessary context for web search.
-
-Output Format:
-- Format your response as a JSON object with these exact keys:
-   - "is_sufficient": true or false
-   - "knowledge_gap": Describe what information is missing or needs clarification
-   - "follow_up_queries": Write a specific question to address this gap
-
-Example:
-```json
-{{
-    "is_sufficient": true, // or false
-    "knowledge_gap": "The summary lacks information about performance metrics and benchmarks", // "" if is_sufficient is true
-    "follow_up_queries": ["What are typical performance benchmarks and metrics used to evaluate [specific technology]?"] // [] if is_sufficient is true
-}}
-```
-
-Reflect carefully on the Summaries to identify knowledge gaps and produce a follow-up query. Then, produce your output following this JSON format:
-
-Summaries:
-{summaries}
-"""
-
 answer_instructions = """Generate a high-quality answer to the user's question based on the provided summaries.
 
 Instructions:
 - The current date is {current_date}.
+- Interaction mode is {interaction_mode} (one of "plan", "agent", "agent_max").
 - You are the final step of a multi-step research process, don't mention that you are the final step. 
 - You have access to all the information gathered from the previous steps.
 - You have access to the user's question.
@@ -118,9 +46,15 @@ Instructions:
 - If the summaries contain usable URLs or citations, include them in markdown (e.g. [apnews](https://vertexaisearch.cloud.google.com/id/1-0)). If no usable sources are present, answer directly without mentioning missing sources.
 - Respond in the tone and focus of the active role described below.
 - The user is non-technical: avoid code/commands/config jargon; use everyday language, give the shortest actionable steps or ready-to-copy prompts, and default to making recommendations instead of asking questions.
-- Never reply with pure advice. Always provide at least one actionable operation:
-  - Prefer calling canvas tools (createNode/updateNode/connectNodes/runNode), OR
+- Never reply with pure advice. Always provide at least one actionable outcome:
+  - If the user requested a concrete deliverable (e.g. 分镜脚本、角色设定表、场景清单、色板、关键帧列表、提示词包), producing that deliverable is already actionable — do NOT append buttons just to satisfy this rule.
+  - Otherwise, prefer calling canvas tools (createNode/updateNode/connectNodes/runNode), OR
   - If you cannot safely operate yet, present 2–4 user-facing action choices as buttons.
+- Mode policy:
+  - If interaction mode is "agent": default to self-executing. Do not ask for step-by-step confirmation unless essential information is missing; prefer tool calls over buttons; finish the user's request end-to-end in the same turn when feasible.
+  - If interaction mode is "agent_max": fully managed. Prefer tool calls over buttons; when the user asks to generate images/videos, proceed to create+run nodes by default (including video), unless blocked by safety rules.
+  - If interaction mode is "plan": be conservative and collaborative. Prefer proposing a short plan and asking for confirmation via buttons before executing canvas tool calls.
+  - Never claim “cannot call tools” in agent/agent_max. If tools are unavailable due to policy, the system will handle it; your job is to proceed with the best available action.
 - Content safety / “和谐化” rule:
   - If the user's story contains overly graphic violence, gore, sexual content, or explicit nudity, do NOT describe it directly.
   - Rewrite it into PG-13 cinematic language using implication: silhouettes, shadows, off-screen action, cutaways, sound design, metaphor, and reaction shots.
@@ -139,20 +73,38 @@ Instructions:
 - If the user says “继续/续写” after providing a story excerpt, continue directly from the last sentence in the SAME narrative voice and formatting.
   - Do NOT invent act/scene numbering like “第三幕/场1” unless the user already used that structure or explicitly asked for a structured outline.
 - If continuation introduces a new character not already present in canvas_context:
-  1) First create and run the new character design image node(s) (可复现的角色设定图) and STOP.
-  2) Ask the user to confirm the character result via buttons (confirm / regenerate / continue without new character).
-  3) Only after confirmation, create storyboard/video nodes that include that character.
+  - In "plan":
+    1) First create and run the new character design image node(s) (可复现的角色设定图) and STOP.
+    2) Ask the user to confirm the character result via buttons (confirm / regenerate / continue without new character).
+    3) Only after confirmation, create storyboard/video nodes that include that character.
+  - In "agent" / "agent_max":
+    1) Create and run the new character design node(s) first.
+    2) Proceed to storyboard/video generation using those character references (do not stop for confirmation unless essential details are missing).
 - For “I need an image / generate a picture” requests, create exactly one `image` node with a clear label, write `config.prompt` and `config.negativePrompt`, then immediately call `runNode` using that same label as `nodeId`.
-- For “分镜/故事板/storyboard/15s分镜” requests: create one `image` node that generates a 3x3 九宫格分镜图（同一张图里包含9个镜头），then create one `composeVideo` node for the 15s video, connect the storyboard image node `out-image` -> video node `in-image`. Only run the image node in this turn (do NOT run the video node yet).
+- For “分镜/故事板/storyboard/15s分镜” requests:
+  - Always: create one `image` node that generates a 3x3 九宫格分镜图（同一张图里包含9个镜头），then create one `composeVideo` node for a 10–15s video, connect the storyboard image node `out-image` -> video node `in-image`.
+  - In "plan" / "agent": only run the storyboard `image` node in this turn (do NOT run the video node yet).
+  - In "agent_max": run the storyboard `image` node and then run the `composeVideo` node automatically (unless blocked by safety rules).
+  - Character consistency rule (MUST):
+  - If the request is a multi-shot storyboard/video/short film (e.g. 九宫格分镜、故事板、短片、15s视频) and involves recurring characters, you MUST first create reproducible character reference(s) and use them as references for all downstream generation.
+  - Implementation:
+    1) For each main character, ensure a character reference node exists. In this project, implement character refs as an `image` node whose `config.kind = "image"` (so the runner treats it as an image reference), and whose prompt outputs a reproducible design sheet (prefer 3-view turnarounds for multi-scene).
+    2) If a character ref node is missing or lacks a usable reference image, create it and run it first.
+    3) Before generating storyboard/video/image nodes that depict the character, connect the character ref node(s) into the target node as references (so the model can maintain identity across shots).
+  - Mode behavior:
+    - In "plan": generate/confirm character refs first; do NOT proceed to storyboard/video until the user confirms the character consistency setup.
+    - In "agent": do the above automatically; only ask a question if a key character detail is truly missing.
+    - In "agent_max": do the above automatically, including video; prioritize consistency over speed (character refs first).
 - Video duration rule (hard constraint): a single video generation run must be 10–15 seconds.
   - If the user asks for >15s (e.g. 30–45s), split into multiple 10–15s segments (Part 1/2/3...), each with its own `composeVideo` node.
   - Never create a `composeVideo` node with durationSeconds > 15.
-- For “分镜/故事板/动画/短片/成片” requests, prioritize continuity:
+- For “分镜/故事板/动画/短片/成片” requests that will generate image/video nodes, prioritize continuity:
   - Do NOT let scenes drift freely or change the number of main subjects mid-sequence.
   - If the user has NOT explicitly confirmed a lock (e.g. says “确认锁定/锁定场景/锁定主体/我确认”), first ask the user to confirm:
     1) main scene (and optional transition scene)
     2) subject list + counts (characters/products/key props)
     Provide 2–4 buttons to confirm/adjust/add subjects. Do NOT create storyboard/video nodes in that turn.
+  - If the user only asked for a text-only 分镜脚本/镜头表（不出图不出视频）, you may output it directly without asking for lock confirmation.
   - If adding any new subject not already present in canvas_context, first generate a dedicated “设定图” (image) for each new subject, ask user to confirm via buttons, then generate the storyboard consuming those references.
   - When generating a 3x3 storyboard, ensure shot-to-shot continuity: the end pose/composition of panel N should match the start of panel N+1 (a repeated “bridge frame” feel), and if a previous storyboard exists in references, panel 1 should naturally continue from the previous storyboard’s final panel.
 

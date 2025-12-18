@@ -5,9 +5,7 @@ import { exchangeGithub, createGuestSession } from '../api/server'
 import { toast } from '../ui/toast'
 
 const CLIENT_ID =
-  (import.meta as any).env?.VITE_GITHUB_CLIENT_ID ||
-  'Ov23liMBjR33FzIBNbmD'
-  // 加点注释
+  (import.meta as any).env?.VITE_GITHUB_CLIENT_ID || ''
 const REDIRECT_URI =
   (import.meta as any).env?.VITE_GITHUB_REDIRECT_URI ||
   'http://localhost:5173/oauth/github'
@@ -106,6 +104,7 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
   const user = useAuth(s => s.user)
   const setAuth = useAuth(s => s.setAuth)
   const [guestLoading, setGuestLoading] = React.useState(false)
+  const githubEnabled = Boolean(String(CLIENT_ID || '').trim())
   const redirectingRef = React.useRef(false)
   const [hasRedirect, setHasRedirect] = React.useState(() => !!readStoredRedirect())
 
@@ -137,6 +136,10 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
   React.useEffect(() => {
     const u = new URL(window.location.href)
     if (u.pathname === '/oauth/github' && u.searchParams.get('code')) {
+      if (!githubEnabled) {
+        toast('当前环境未配置 GitHub OAuth，建议使用游客模式登录', 'error')
+        return
+      }
       const stored = captureRedirectFromLocation()
       if (stored) {
         setHasRedirect(true)
@@ -150,9 +153,12 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
           setAuth(t, uinfo)
           redirectIfNeeded(t, uinfo)
         })
-        .catch(() => {})
+        .catch((error) => {
+          console.error('GitHub exchange failed', error)
+          toast('GitHub 登录失败，请改用游客模式或检查后端 GitHub 配置', 'error')
+        })
     }
-  }, [setAuth, redirectIfNeeded])
+  }, [setAuth, redirectIfNeeded, githubEnabled])
 
   React.useEffect(() => {
     if (token && hasRedirect) {
@@ -176,13 +182,17 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
   }, [guestLoading, setAuth, redirectIfNeeded])
 
   const handleGithubLogin = React.useCallback(() => {
+    if (!githubEnabled) {
+      toast('当前环境未配置 GitHub OAuth（缺少 VITE_GITHUB_CLIENT_ID）', 'error')
+      return
+    }
     const redirectTarget = readStoredRedirect() || captureRedirectFromLocation()
     if (redirectTarget) {
       setHasRedirect(true)
     }
     const state = buildAuthState(redirectTarget || null)
     window.location.href = buildAuthUrl(state)
-  }, [setHasRedirect])
+  }, [setHasRedirect, githubEnabled])
 
   if (token) return <>{children}</>
 
@@ -194,7 +204,9 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
         <Stack gap="sm">
           <Group justify="center" gap="sm">
             <Button onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
-            <Button onClick={handleGithubLogin}>使用 GitHub 登录</Button>
+            <Tooltip label={githubEnabled ? '' : '未配置 VITE_GITHUB_CLIENT_ID，已禁用 GitHub 登录'} disabled={githubEnabled}>
+              <Button onClick={handleGithubLogin} disabled={!githubEnabled}>使用 GitHub 登录</Button>
+            </Tooltip>
           </Group>
           <Button variant="default" loading={guestLoading} onClick={handleGuestLogin}>游客模式体验</Button>
           <Text size="xs" c="dimmed">无需 GitHub，系统会自动创建临时账号，数据仅保存在当前浏览器。</Text>

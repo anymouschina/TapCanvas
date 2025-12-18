@@ -61,6 +61,20 @@ app.mount(
     name="frontend",
 )
 
+@app.get("/")
+def root():
+    return {"ok": True}
+
+
+@app.get("/ok")
+def ok():
+    return {"ok": True}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
 
 @app.post("/api/prompt/generate", response_model=PromptResult)
 def api_generate_prompt(payload: PromptRequest) -> PromptResult:

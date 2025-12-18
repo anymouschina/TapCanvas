@@ -12,6 +12,7 @@ import {
   Modal,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Text,
   Textarea,
@@ -22,6 +23,7 @@ import {
 } from '@mantine/core'
 import {
   IconAlertCircle,
+  IconArrowDown,
   IconBolt,
   IconBrain,
   IconCheck,
@@ -60,6 +62,28 @@ type ProcessedEvent = {
   data: any
 }
 
+const getMessageId = (m: any) => (m && typeof m.id === 'string' ? m.id : '')
+
+const getProcessingLine = (events: ProcessedEvent[]) => {
+  const last = events.length ? events[events.length - 1] : null
+  if (!last) return '处理中…'
+  const title = typeof last.title === 'string' ? last.title.trim() : ''
+  const data =
+    typeof last.data === 'string'
+      ? last.data.trim()
+      : last.data == null
+        ? ''
+        : (() => {
+            try {
+              return JSON.stringify(last.data)
+            } catch {
+              return String(last.data)
+            }
+          })()
+  const combined = [title, data].filter(Boolean).join(': ')
+  return combined || '处理中…'
+}
+
 type ToolCallPayload = {
   id?: string
   name?: string
@@ -83,9 +107,34 @@ type RoleMeta = {
 }
 
 const LAST_SUBMIT_STORAGE_PREFIX = 'tapcanvas:langgraph:lastSubmit:'
+const INTERACTION_MODE_STORAGE_PREFIX = 'tapcanvas:langgraph:interactionMode:'
+
+type InteractionMode = 'plan' | 'agent' | 'agent_max'
 
 function getLastSubmitStorageKey(projectId: string) {
   return `${LAST_SUBMIT_STORAGE_PREFIX}${projectId}`
+}
+
+function getInteractionModeStorageKey(projectId: string) {
+  return `${INTERACTION_MODE_STORAGE_PREFIX}${projectId}`
+}
+
+function loadInteractionMode(projectId: string): InteractionMode {
+  try {
+    const raw = window.localStorage.getItem(getInteractionModeStorageKey(projectId))
+    if (raw === 'agent' || raw === 'agent_max' || raw === 'plan') return raw
+    return 'agent'
+  } catch {
+    return 'agent'
+  }
+}
+
+function persistInteractionMode(projectId: string, mode: InteractionMode) {
+  try {
+    window.localStorage.setItem(getInteractionModeStorageKey(projectId), mode)
+  } catch {
+    // ignore (best-effort)
+  }
 }
 
 function persistLastSubmit(projectId: string, values: any) {
@@ -293,18 +342,88 @@ const renderContentText = (content: Message['content']): string => {
 const parseTapcanvasActionsFromText = (
   text: string,
 ): { cleanedText: string; payload: TapcanvasActionsPayload } | null => {
-  const marker = '\ntapcanvas_actions'
-  const idx = text.indexOf(marker)
-  if (idx === -1) return null
+  const source = (text || '').trim()
+  if (!source) return null
 
-  const tail = text.slice(idx + marker.length)
-  const brace = tail.indexOf('{')
-  if (brace === -1) return null
-  const jsonText = tail.slice(brace).trim()
+  const extractJsonObject = (
+    input: string,
+    startIndex: number,
+  ): { jsonText: string; endIndex: number } | null => {
+    const start = input.indexOf('{', startIndex)
+    if (start === -1) return null
+
+    let depth = 0
+    let inString = false
+    let quoteChar: '"' | "'" | null = null
+    for (let i = start; i < input.length; i++) {
+      const ch = input[i]
+      if (inString) {
+        if (ch === '\\') {
+          i += 1
+          continue
+        }
+        if (quoteChar && ch === quoteChar) {
+          inString = false
+          quoteChar = null
+        }
+        continue
+      }
+      if (ch === '"' || ch === "'") {
+        inString = true
+        quoteChar = ch as '"' | "'"
+        continue
+      }
+      if (ch === '{') {
+        depth += 1
+        continue
+      }
+      if (ch === '}') {
+        depth -= 1
+        if (depth === 0) {
+          const jsonText = input.slice(start, i + 1).trim()
+          return { jsonText, endIndex: i + 1 }
+        }
+      }
+    }
+    return null
+  }
+
+  // Preferred: fenced block (matches backend prompt convention).
+  const fenceMarker = '```tapcanvas_actions'
+  const fenceStart = source.indexOf(fenceMarker)
+  if (fenceStart !== -1) {
+    const payloadStart = source.indexOf('\n', fenceStart + fenceMarker.length)
+    if (payloadStart !== -1) {
+      const fenceEnd = source.indexOf('```', payloadStart + 1)
+      if (fenceEnd !== -1) {
+        const raw = source.slice(payloadStart + 1, fenceEnd).trim()
+        try {
+          const payload = JSON.parse(raw) as TapcanvasActionsPayload
+          const cleanedText = (source.slice(0, fenceStart) + source.slice(fenceEnd + 3)).trim()
+          return { cleanedText, payload }
+        } catch {
+          // fall through to non-fenced parsing
+        }
+      }
+    }
+  }
+
+  // Fallback: legacy plain marker (some models omit the code fence and may append extra text after JSON).
+  const token = 'tapcanvas_actions'
+  let tokenIdx = source.indexOf(token)
+  while (tokenIdx !== -1) {
+    if (tokenIdx === 0 || source[tokenIdx - 1] === '\n') break
+    tokenIdx = source.indexOf(token, tokenIdx + token.length)
+  }
+  if (tokenIdx === -1) return null
+
+  const extracted = extractJsonObject(source, tokenIdx + token.length)
+  if (!extracted) return null
 
   try {
-    const payload = JSON.parse(jsonText) as TapcanvasActionsPayload
-    const cleanedText = text.slice(0, idx).trim()
+    const payload = JSON.parse(extracted.jsonText) as TapcanvasActionsPayload
+    const removeStart = tokenIdx > 0 && source[tokenIdx - 1] === '\n' ? tokenIdx - 1 : tokenIdx
+    const cleanedText = (source.slice(0, removeStart) + source.slice(extracted.endIndex)).trim()
     return { cleanedText, payload }
   } catch {
     return null
@@ -421,6 +540,7 @@ function ActivityTimeline({
 function MessageBubble({
   message,
   align,
+  queued,
   activity,
   isLive,
   isLoading,
@@ -434,6 +554,7 @@ function MessageBubble({
 }: {
   message: Message
   align: 'left' | 'right'
+  queued: boolean
   activity?: ProcessedEvent[]
   isLive: boolean
   isLoading: boolean
@@ -533,6 +654,11 @@ function MessageBubble({
         <Text size="xs" c="dimmed">
           {isHuman ? '你' : '助手'}
         </Text>
+        {isHuman && queued && (
+          <Badge color="gray" variant="light" size="xs">
+            待发送
+          </Badge>
+        )}
         {!isHuman && roleMeta.roleName && (
           <Tooltip
             label={roleMeta.roleReason || roleMeta.roleId || ''}
@@ -880,6 +1006,7 @@ function ChatMessagesView({
   isLoading,
   liveEvents,
   historicalEvents,
+  queuedMessageIds,
   readOnly,
   nodesById,
   nodeIdByLabel,
@@ -892,6 +1019,7 @@ function ChatMessagesView({
   isLoading: boolean
   liveEvents: ProcessedEvent[]
   historicalEvents: Record<string, ProcessedEvent[]>
+  queuedMessageIds: Set<string>
   readOnly: boolean
   nodesById: Map<string, any>
   nodeIdByLabel: Map<string, string>
@@ -900,10 +1028,6 @@ function ChatMessagesView({
   copiedId: string | null
   onPickQuickReply: (input: string) => void
 }) {
-  const { colorScheme } = useMantineColorScheme()
-  const isLight = colorScheme === 'light'
-  const loadingBg = isLight ? 'rgba(15,23,42,0.03)' : 'rgba(255,255,255,0.04)'
-  const loadingBorder = isLight ? '1px solid rgba(15,23,42,0.08)' : '1px solid rgba(255,255,255,0.06)'
   return (
     <Stack gap="lg">
       {messages.map((msg, index) => {
@@ -919,6 +1043,7 @@ function ChatMessagesView({
             key={msg.id || `${msg.type}-${index}`}
             message={msg}
             align={msg.type === 'human' ? 'right' : 'left'}
+            queued={msg.type === 'human' && !!msg.id && queuedMessageIds.has(String(msg.id))}
             activity={activity}
             isLive={isAssistant && isLast}
             isLoading={isAssistant && isLoading}
@@ -932,25 +1057,6 @@ function ChatMessagesView({
           />
         )
       })}
-      {isLoading && (messages.length === 0 || messages[messages.length - 1]?.type === 'human') && (
-        <Paper
-          radius="lg"
-          p="md"
-          style={{
-            background: loadingBg,
-            border: loadingBorder,
-          }}
-        >
-          {liveEvents.length ? (
-            <ActivityTimeline events={liveEvents} isLoading />
-          ) : (
-            <Group gap="xs">
-              <Loader size="sm" type="dots" color="gray" />
-              <Text size="sm">处理中…</Text>
-            </Group>
-          )}
-        </Paper>
-      )}
     </Stack>
   )
 }
@@ -991,7 +1097,7 @@ function InputForm({
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [prefill, readOnly, value])
 
-  const disabled = !!blocked || !!readOnly || !value.trim() || isLoading
+  const disabled = !!blocked || !!readOnly || !value.trim()
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
@@ -1008,6 +1114,14 @@ function InputForm({
             ref={textareaRef}
             value={value}
             onChange={(e) => setValue(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              const native = e.nativeEvent as any
+              if (e.key !== 'Enter') return
+              if (e.shiftKey) return
+              if (native?.isComposing) return
+              e.preventDefault()
+              handleSubmit()
+            }}
             placeholder={readOnly ? '只读分享页：不能发送消息' : '描述你想在画布里生成的图片/视频（一句话也可以）…'}
             autosize
             minRows={2}
@@ -1017,14 +1131,25 @@ function InputForm({
           />
           {!readOnly &&
             (isLoading ? (
-              <Button
-                color="red"
-                variant="light"
-                leftSection={<IconPlayerStop size={16} />}
-                onClick={onCancel}
-              >
-                停止
-              </Button>
+              <Group gap="xs" wrap="nowrap">
+                <Button
+                  color="red"
+                  variant="light"
+                  leftSection={<IconPlayerStop size={16} />}
+                  onClick={onCancel}
+                >
+                  停止
+                </Button>
+                <Button
+                  type="submit"
+                  variant="gradient"
+                  gradient={{ from: 'indigo', to: 'cyan' }}
+                  leftSection={<IconSend size={16} />}
+                  disabled={disabled}
+                >
+                  排队发送
+                </Button>
+              </Group>
             ) : (
               <Group gap="xs" wrap="nowrap">
                 <Tooltip label={retryDisabled ? '暂无可重试的请求' : '重试上一次请求'}>
@@ -1157,6 +1282,8 @@ function LangGraphChatOverlayInner({
   const [error, setError] = useState<string | null>(null)
   const hasFinalizeEventOccurredRef = useRef(false)
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const isAtBottomRef = useRef(true)
+  const [isAtBottom, setIsAtBottom] = useState(true)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const handledToolCallsRef = useRef(new Set<string>())
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -1177,8 +1304,83 @@ function LangGraphChatOverlayInner({
 	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
 	  const [toolCallBindings, setToolCallBindings] = useState<Record<string, string>>({})
     const conversationSummaryRef = useRef<string>('')
+	  const [interactionMode, setInteractionMode] = useState<InteractionMode>('agent')
 	  const langGraphReadyRef = useRef<{ apiUrl: string; readyAt: number } | null>(null)
 	  const langGraphReadyPromiseRef = useRef<Promise<boolean> | null>(null)
+
+  const nodesById = useMemo(() => {
+    const map = new Map<string, any>()
+    ;(nodes || []).forEach((n: any) => {
+      if (!n) return
+      map.set(String(n.id), n)
+    })
+    return map
+  }, [nodes])
+
+  const nodeIdByLabel = useMemo(() => {
+    const map = new Map<string, string>()
+    ;(nodes || []).forEach((n: any) => {
+      const lbl = (n as any)?.data?.label
+      if (typeof lbl !== 'string') return
+      const key = lbl.trim()
+      if (!key) return
+      if (map.has(key)) return
+      map.set(key, String((n as any).id))
+    })
+    return map
+  }, [nodes])
+
+  const updateAtBottom = useCallback(() => {
+    const el = scrollViewportRef.current
+    if (!el) return
+    const thresholdPx = 48
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx
+    isAtBottomRef.current = atBottom
+    setIsAtBottom(atBottom)
+  }, [])
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = scrollViewportRef.current
+    if (!el) return
+    try {
+      el.scrollTo({ top: el.scrollHeight, behavior })
+    } catch {
+      el.scrollTop = el.scrollHeight
+    }
+    isAtBottomRef.current = true
+    setIsAtBottom(true)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    let el: HTMLDivElement | null = null
+    const onScroll = () => updateAtBottom()
+    let cancelled = false
+
+    const attach = () => {
+      if (cancelled) return
+      el = scrollViewportRef.current
+      if (!el) {
+        requestAnimationFrame(attach)
+        return
+      }
+      updateAtBottom()
+      el.addEventListener('scroll', onScroll, { passive: true })
+    }
+
+    attach()
+    return () => {
+      cancelled = true
+      el?.removeEventListener('scroll', onScroll)
+    }
+  }, [open, updateAtBottom])
+
+  useEffect(() => {
+    if (!open) return
+    if (!projectId) return
+    if (viewOnly) return
+    setInteractionMode(loadInteractionMode(projectId))
+  }, [open, projectId, threadId, viewOnly])
 
 	  const ensureLangGraphReady = useCallback(async () => {
 	    const cached = langGraphReadyRef.current
@@ -1188,7 +1390,8 @@ function LangGraphChatOverlayInner({
 
 	    const baseUrl = String(apiUrl || '').replace(/\/+$/, '')
 	    const attempt = async (): Promise<boolean> => {
-	      const endpoints = [`${baseUrl}/ok`, `${baseUrl}/health`, `${baseUrl}/`]
+	      // Prefer stable endpoints that exist on both in-mem and deployment runtimes.
+	      const endpoints = [`${baseUrl}/ok`]
 	      for (let i = 0; i < 3; i++) {
 	        for (const url of endpoints) {
 	          try {
@@ -1234,8 +1437,7 @@ function LangGraphChatOverlayInner({
       setFrozenMessages([])
       return
     }
-    // Do not load/persist LangGraph threads. Threads are ephemeral and recreated when needed.
-    setThreadId(null)
+    // Best-effort thread reuse is allowed via server snapshot; if missing/expired, recovery logic will recreate.
   }, [open, projectId])
 
   useEffect(() => {
@@ -1247,6 +1449,8 @@ function LangGraphChatOverlayInner({
       try {
         const res = await getLangGraphProjectSnapshot(projectId)
         if (cancelled) return
+        const snapThreadId = typeof res?.snapshot?.threadId === 'string' ? res.snapshot.threadId : null
+        if (snapThreadId && !threadId) setThreadId(snapThreadId)
         const raw = res?.snapshot?.messagesJson
         if (!raw || typeof raw !== 'string') return
         const parsed = JSON.parse(raw)
@@ -1262,7 +1466,8 @@ function LangGraphChatOverlayInner({
           conversationSummaryRef.current = typeof summary === 'string' ? summary : ''
         }
       } catch {
-        // ignore (snapshot is best-effort)
+        // Server-only persistence: do not silently show an empty chat when history load fails.
+        setError('会话历史加载失败：请检查登录状态或服务端快照接口是否正常。')
       }
     })()
     return () => {
@@ -1402,6 +1607,7 @@ function LangGraphChatOverlayInner({
           persistLastSubmit(projectId, retryValues)
           try {
             void setLangGraphProjectSnapshot(projectId, {
+              threadId,
               messagesJson: JSON.stringify({
                 messages: latest.messages,
                 conversation_summary: conversationSummaryRef.current || '',
@@ -1434,19 +1640,29 @@ function LangGraphChatOverlayInner({
     if (thread.isLoading) return
     const live = (thread.messages || []) as Message[]
     if (!live.length) return
-    const last = live[live.length - 1]
+    const liveIds = new Set(live.map(getMessageId).filter(Boolean))
+    const head = frozenMessages.filter((m) => {
+      const id = getMessageId(m)
+      return !!id && !liveIds.has(id)
+    })
+    const merged = head.length ? ([...head, ...live] as Message[]) : live
+    const last = merged[merged.length - 1]
     if (!last || last.type !== 'ai') return
     try {
       void setLangGraphProjectSnapshot(projectId, {
+        threadId,
         messagesJson: JSON.stringify({
-          messages: live,
+          messages: merged,
           conversation_summary: conversationSummaryRef.current || '',
         }),
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn('[LangGraphChatOverlay] set snapshot failed', err)
+        setError('会话历史保存失败：服务端快照未落盘，刷新后可能丢失。')
+      })
     } catch {
-      // ignore
+      // ignore (best-effort)
     }
-  }, [projectId, thread.isLoading, thread.messages, threadId, viewOnly])
+  }, [frozenMessages, projectId, thread.isLoading, thread.messages, threadId, viewOnly])
 
   useEffect(() => {
     if (viewOnly) return
@@ -1478,12 +1694,33 @@ function LangGraphChatOverlayInner({
     })()
   }, [projectId, thread, viewOnly])
 
+  type QueuedInput = {
+    message: Message
+    effort: string
+  }
+  const [queuedInputs, setQueuedInputs] = useState<QueuedInput[]>([])
+
   const liveMessages = (thread.messages || []) as Message[]
-  const messages = useMemo(() => {
-    if (frozenMessages.length > liveMessages.length) return frozenMessages
-    if (liveMessages.length > 0) return liveMessages
-    return frozenMessages
+  const baseMessages = useMemo(() => {
+    if (liveMessages.length === 0) return frozenMessages
+    if (frozenMessages.length === 0) return liveMessages
+    const liveIds = new Set(liveMessages.map(getMessageId).filter(Boolean))
+    const tail = frozenMessages.filter((m) => {
+      const id = getMessageId(m)
+      return !!id && !liveIds.has(id)
+    })
+    return tail.length ? [...liveMessages, ...tail] : liveMessages
   }, [frozenMessages, liveMessages])
+
+  const messages = useMemo(() => {
+    if (!queuedInputs.length) return baseMessages
+    const existing = new Set(baseMessages.map(getMessageId).filter(Boolean))
+    const queuedTail = queuedInputs.map((q) => q.message).filter((m) => {
+      const id = getMessageId(m)
+      return !!id && !existing.has(id)
+    })
+    return queuedTail.length ? [...baseMessages, ...queuedTail] : baseMessages
+  }, [baseMessages, queuedInputs])
 
   useEffect(() => {
     if (!open) return
@@ -1497,6 +1734,7 @@ function LangGraphChatOverlayInner({
     if (!projectId) return
     try {
       void setLangGraphProjectSnapshot(projectId, {
+        threadId,
         messagesJson: JSON.stringify({ messages, conversation_summary: next }),
       }).catch(() => {})
     } catch {
@@ -1563,25 +1801,29 @@ function LangGraphChatOverlayInner({
             didConnect = true
           }
 
-          // Bind this tool call to a nodeId so the chat UI can render node media directly.
-          try {
-            if (toolCallId) {
-              const fromInput =
-                typeof (input as any)?.nodeId === 'string' && (input as any).nodeId.trim()
-                  ? String((input as any).nodeId).trim()
-                  : ''
-              const fromResult =
-                res?.data?.nodeId != null && String(res.data.nodeId).trim()
-                  ? String(res.data.nodeId).trim()
-                  : ''
-              const boundNodeId = fromInput || fromResult
-              if (boundNodeId) {
-                setToolCallBindings((prev) => (prev[toolCallId] === boundNodeId ? prev : { ...prev, [toolCallId]: boundNodeId }))
-              }
-            }
-          } catch {
-            // ignore
-          }
+	          // Bind this tool call to a nodeId so the chat UI can render node media directly.
+	          try {
+	            if (toolCallId) {
+	              const fromInput =
+	                typeof (input as any)?.nodeId === 'string' && (input as any).nodeId.trim()
+	                  ? String((input as any).nodeId).trim()
+	                  : ''
+	              const fromResult =
+	                res?.data?.nodeId != null && String(res.data.nodeId).trim()
+	                  ? String(res.data.nodeId).trim()
+	                  : ''
+	              const rawBound = fromInput || fromResult
+	              const resolvedBound =
+	                rawBound && !nodesById.has(rawBound) ? (nodeIdByLabel.get(rawBound) || rawBound) : rawBound
+	              if (resolvedBound) {
+	                setToolCallBindings((prev) =>
+	                  prev[toolCallId] === resolvedBound ? prev : { ...prev, [toolCallId]: resolvedBound },
+	                )
+	              }
+	            }
+	          } catch {
+	            // ignore
+	          }
 
           setProcessedEventsTimeline((prev) => [
             ...prev,
@@ -1614,13 +1856,13 @@ function LangGraphChatOverlayInner({
     return () => {
       cancelled = true
     }
-  }, [messages, viewOnly, maybeAutoLayoutAfterTools])
+	  }, [messages, nodeIdByLabel, nodesById, viewOnly, maybeAutoLayoutAfterTools])
 
   useEffect(() => {
-    if (scrollViewportRef.current) {
-      scrollViewportRef.current.scrollTop = scrollViewportRef.current.scrollHeight
-    }
-  }, [messages])
+    if (!open) return
+    // On open, always jump to bottom (most recent context).
+    requestAnimationFrame(() => scrollToBottom('auto'))
+  }, [open, scrollToBottom])
 
   useEffect(() => {
     if (hasFinalizeEventOccurredRef.current && !thread.isLoading && messages.length > 0) {
@@ -1635,11 +1877,127 @@ function LangGraphChatOverlayInner({
     }
   }, [messages, thread.isLoading, processedEventsTimeline])
 
+  const queuedMessageIds = useMemo(() => {
+    const ids = queuedInputs.map((q) => getMessageId(q.message)).filter(Boolean)
+    return new Set(ids)
+  }, [queuedInputs])
+
+  const runNextQueued = useCallback(
+    (next: QueuedInput) => {
+      if (blocked) return
+      if (viewOnly) return
+      if (thread.isLoading) return
+
+      // If an auto-retry was scheduled for the previous run, cancel it before starting the next queued run.
+      const t = autoRetryRef.current.timer
+      if (t) window.clearTimeout(t)
+      autoRetryRef.current.timer = null
+
+      setQuickStartOpen(false)
+      setProcessedEventsTimeline([])
+      hasFinalizeEventOccurredRef.current = false
+      setError(null)
+
+      let initial_search_query_count = 3
+      let max_research_loops = 3
+      switch (next.effort) {
+        case 'low':
+          initial_search_query_count = 1
+          max_research_loops = 1
+          break
+        case 'medium':
+          initial_search_query_count = 3
+          max_research_loops = 3
+          break
+        case 'high':
+          initial_search_query_count = 5
+          max_research_loops = 10
+          break
+        default:
+          break
+      }
+
+      const priorMessages: Message[] = liveMessages.length ? liveMessages : frozenMessages
+      const newMessages: Message[] = [...priorMessages, next.message]
+      setFrozenMessages(newMessages)
+      lastSubmittedHumanIdRef.current = next.message?.id ? String(next.message.id) : null
+      toolExecutionArmedRef.current = true
+
+      void (async () => {
+        try {
+          const canvas_context = buildCanvasContext(nodes, edges)
+          const values = {
+            messages: newMessages,
+            initial_search_query_count,
+            max_research_loops,
+            canvas_context,
+            conversation_summary: conversationSummaryRef.current || undefined,
+            interaction_mode: interactionMode,
+          }
+          lastSubmitValuesRef.current = values
+          if (projectId) {
+            persistLastSubmit(projectId, values)
+            try {
+              void setLangGraphProjectSnapshot(projectId, {
+                threadId,
+                messagesJson: JSON.stringify({
+                  messages: newMessages,
+                  conversation_summary: conversationSummaryRef.current || '',
+                }),
+              }).catch(() => {})
+            } catch {
+              // ignore
+            }
+          }
+
+          const ready = await ensureLangGraphReady()
+          if (!ready) {
+            setError('LangGraph 服务未就绪（可能冷启动）。请稍后点“重试”。')
+            toolExecutionArmedRef.current = false
+            lastSubmittedHumanIdRef.current = null
+            setQueuedInputs((prev) => [{ message: next.message, effort: next.effort }, ...prev])
+            return
+          }
+
+          thread.submit(values)
+        } catch (err: any) {
+          setError(err?.message || 'submit failed')
+          toolExecutionArmedRef.current = false
+          lastSubmittedHumanIdRef.current = null
+          setQueuedInputs((prev) => [{ message: next.message, effort: next.effort }, ...prev])
+        }
+      })()
+    },
+    [blocked, edges, ensureLangGraphReady, frozenMessages, interactionMode, liveMessages, nodes, projectId, thread, threadId, viewOnly],
+  )
+
+  useEffect(() => {
+    if (!open) return
+    if (viewOnly) return
+    if (blocked) return
+    if (thread.isLoading) return
+    if (!queuedInputs.length) return
+    const next = queuedInputs[0]
+    if (!next) return
+    setQueuedInputs((prev) => prev.slice(1))
+    runNextQueued(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, open, queuedInputs.length, runNextQueued, thread.isLoading, viewOnly])
+
   const handleSubmit = useCallback(
 		    (input: string, effort: string) => {
 		      if (blocked) return
 		      if (viewOnly) return
 		      if (!input.trim()) return
+          if (thread.isLoading) {
+            const msg: Message = {
+              type: 'human',
+              content: input,
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            }
+            setQueuedInputs((prev) => [...prev, { message: msg, effort }])
+            return
+          }
 		      setQuickStartOpen(false)
 		      setProcessedEventsTimeline([])
 		      hasFinalizeEventOccurredRef.current = false
@@ -1664,8 +2022,9 @@ function LangGraphChatOverlayInner({
           max_research_loops = 3
       }
 
+	      const baseForSubmit = liveMessages.length ? liveMessages : frozenMessages
 	      const newMessages: Message[] = [
-	        ...liveMessages,
+	        ...baseForSubmit,
 	        {
 	          type: 'human',
 	          content: input,
@@ -1685,12 +2044,14 @@ function LangGraphChatOverlayInner({
 	            max_research_loops,
 	            canvas_context,
               conversation_summary: conversationSummaryRef.current || undefined,
+              interaction_mode: interactionMode,
 	          }
 	          lastSubmitValuesRef.current = values
             if (projectId) {
               persistLastSubmit(projectId, values)
               try {
                 void setLangGraphProjectSnapshot(projectId, {
+                  threadId,
                   messagesJson: JSON.stringify({
                     messages: newMessages,
                     conversation_summary: conversationSummaryRef.current || '',
@@ -1715,7 +2076,7 @@ function LangGraphChatOverlayInner({
 	        }
 	      })()
 	    },
-	    [blocked, edges, ensureLangGraphReady, liveMessages, nodes, projectId, thread, threadId, viewOnly],
+	    [blocked, edges, ensureLangGraphReady, frozenMessages, interactionMode, liveMessages, nodes, projectId, thread, threadId, viewOnly],
 	  )
 
   const handleCancel = useCallback(() => {
@@ -1773,6 +2134,20 @@ function LangGraphChatOverlayInner({
     return ''
   }, [displayMessages])
 
+  const lastDisplayKey = useMemo(() => {
+    const last = displayMessages.length ? displayMessages[displayMessages.length - 1] : null
+    const contentLen = last ? String((last as any).content ?? '').length : 0
+    const id = last && typeof (last as any).id === 'string' ? (last as any).id : ''
+    const type = last && typeof (last as any).type === 'string' ? (last as any).type : ''
+    return `${displayMessages.length}:${id}:${type}:${contentLen}:${processedEventsTimeline.length}:${thread.isLoading ? 1 : 0}`
+  }, [displayMessages, processedEventsTimeline.length, thread.isLoading])
+
+  useEffect(() => {
+    if (!open) return
+    if (!isAtBottomRef.current) return
+    requestAnimationFrame(() => scrollToBottom('auto'))
+  }, [lastDisplayKey, open, scrollToBottom])
+
   const handleRetry = useCallback(() => {
     if (thread.isLoading) return
     if (blocked) return
@@ -1800,6 +2175,7 @@ function LangGraphChatOverlayInner({
             persistLastSubmit(projectId, values)
             try {
               void setLangGraphProjectSnapshot(projectId, {
+                threadId,
                 messagesJson: JSON.stringify({
                   messages: prev.messages,
                   conversation_summary: conversationSummaryRef.current || '',
@@ -1823,28 +2199,6 @@ function LangGraphChatOverlayInner({
   // Backward-compatible alias (older dev builds referenced this name).
   const showWelcome = !viewOnly && displayMessages.length === 0
   const showEmptyViewOnly = viewOnly && displayMessages.length === 0
-
-  const nodesById = useMemo(() => {
-    const map = new Map<string, any>()
-    ;(nodes || []).forEach((n: any) => {
-      if (!n) return
-      map.set(String(n.id), n)
-    })
-    return map
-  }, [nodes])
-
-  const nodeIdByLabel = useMemo(() => {
-    const map = new Map<string, string>()
-    ;(nodes || []).forEach((n: any) => {
-      const lbl = (n as any)?.data?.label
-      if (typeof lbl !== 'string') return
-      const key = lbl.trim()
-      if (!key) return
-      if (map.has(key)) return
-      map.set(key, String((n as any).id))
-    })
-    return map
-  }, [nodes])
 
   const handlePickQuickReply = useCallback(
     (input: string) => {
@@ -1935,6 +2289,33 @@ function LangGraphChatOverlayInner({
             <Group gap="sm">
               <IconSparkles size={18} />
               <Text fw={700}>小T</Text>
+              {!viewOnly && projectId && (
+                <SegmentedControl
+                  size="xs"
+                  radius="xl"
+                  value={interactionMode}
+                  data={[
+                    { label: 'Plan', value: 'plan' },
+                    { label: 'Agent', value: 'agent' },
+                    { label: 'Agent Max', value: 'agent_max' },
+                  ]}
+                  onChange={(next) => {
+                    const mode = next === 'agent_max' ? 'agent_max' : next === 'agent' ? 'agent' : 'plan'
+                    setInteractionMode(mode)
+                    persistInteractionMode(projectId, mode)
+                  }}
+                  styles={{
+                    root: {
+                      background: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.06)',
+                      border: isLight ? '1px solid rgba(15,23,42,0.10)' : '1px solid rgba(255,255,255,0.10)',
+                    },
+                    indicator: {
+                      background: isLight ? 'rgba(59,130,246,0.14)' : 'rgba(59,130,246,0.22)',
+                    },
+                    label: { fontSize: 12 },
+                  }}
+                />
+              )}
               {blocked && (
                 <Badge color="gray" variant="light" leftSection={<Loader size={12} type="dots" color="gray" />}>
                   加载项目会话…
@@ -2012,29 +2393,67 @@ function LangGraphChatOverlayInner({
                   </Stack>
                 </Paper>
               )}
-              <ScrollArea
-                type="never"
-                offsetScrollbars={false}
-                viewportRef={scrollViewportRef}
-                styles={{ viewport: { overflowX: 'hidden' } }}
-                style={{ flex: 1, minHeight: 0, maxHeight: '100%' }}
-              >
-                <div style={{ paddingRight: 8 }}>
-	                  <ChatMessagesView
-	                    messages={displayMessages}
-	                    isLoading={thread.isLoading}
-	                    liveEvents={processedEventsTimeline}
-	                    historicalEvents={historicalActivities}
-	                    readOnly={viewOnly}
-	                    nodesById={nodesById}
-	                    nodeIdByLabel={nodeIdByLabel}
-	                    toolCallBindings={toolCallBindings}
-	                    onCopy={handleCopy}
-	                    copiedId={copiedId}
-	                    onPickQuickReply={handlePickQuickReply}
-	                  />
-                </div>
-              </ScrollArea>
+              <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+                <ScrollArea
+                  type="never"
+                  offsetScrollbars={false}
+                  viewportRef={scrollViewportRef}
+                  styles={{ viewport: { overflowX: 'hidden' } }}
+                  style={{ height: '100%' }}
+                >
+                  <div style={{ paddingRight: 8 }}>
+                    <ChatMessagesView
+                      messages={displayMessages}
+                      isLoading={thread.isLoading}
+                      liveEvents={processedEventsTimeline}
+                      historicalEvents={historicalActivities}
+                      queuedMessageIds={queuedMessageIds}
+                      readOnly={viewOnly}
+                      nodesById={nodesById}
+                      nodeIdByLabel={nodeIdByLabel}
+                      toolCallBindings={toolCallBindings}
+                      onCopy={handleCopy}
+                      copiedId={copiedId}
+                      onPickQuickReply={handlePickQuickReply}
+                    />
+                  </div>
+                </ScrollArea>
+                {!isAtBottom && (
+                  <Tooltip label="滚动到底部" position="left" withArrow>
+                    <ActionIcon
+                      aria-label="滚动到底部"
+                      variant="light"
+                      color="blue"
+                      onClick={() => scrollToBottom('smooth')}
+                      style={{
+                        position: 'absolute',
+                        right: 10,
+                        bottom: 10,
+                        zIndex: 3,
+                      }}
+                    >
+                      <IconArrowDown size={18} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </div>
+              {(thread.isLoading || queuedInputs.length > 0) && (
+                <Group
+                  gap="xs"
+                  style={{
+                    paddingRight: 8,
+                    marginTop: 6,
+                  }}
+                >
+                  {thread.isLoading ? <Loader size="xs" type="dots" color="gray" /> : null}
+                  <Text size="xs" c="dimmed" lineClamp={1} style={{ flex: 1 }}>
+                    {thread.isLoading
+                      ? `正在处理：${getProcessingLine(processedEventsTimeline)}`
+                      : `队列中：${queuedInputs.length}（等待执行）`}
+                    {thread.isLoading && queuedInputs.length ? ` · 队列 ${queuedInputs.length}` : ''}
+                  </Text>
+                </Group>
+              )}
               <Divider />
               <InputForm
                 onSubmit={handleSubmit}
@@ -2067,6 +2486,50 @@ export function LangGraphChatOverlay() {
   const nodes = useRFStore((s) => s.nodes)
   const edges = useRFStore((s) => s.edges)
   const [resetCounter, setResetCounter] = useState(0)
+
+  const langGraphEnabled = useMemo(() => {
+    const env = (import.meta as any).env || {}
+    return String(env?.VITE_LANGGRAPH_ENABLED || '').trim() === '1'
+  }, [])
+
+  if (!langGraphEnabled) {
+    if (!open) return null
+    return (
+      <Modal
+        opened={open}
+        onClose={close}
+        centered
+        title={<Text fw={700}>沉浸式创作（小T）</Text>}
+        size="lg"
+        styles={{
+          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
+          header: { background: 'transparent' },
+          title: { width: '100%' },
+        }}
+      >
+        <Stack gap="sm">
+          <Title order={5}>当前未启用 LangGraph</Title>
+          <Text c="dimmed" size="sm">
+            这是前端开关关闭导致的。把根目录 `.env.docker` 里的 `VITE_LANGGRAPH_ENABLED=1` 后重启 `web`，
+            然后确保 LangGraph 服务在 `http://localhost:8123` 可访问。
+          </Text>
+          <Text size="sm">启用方式（Docker）：</Text>
+          <Text size="sm" c="dimmed">
+            1) 把根目录 `.env.docker` 里的 `VITE_LANGGRAPH_ENABLED=1`
+            <br />
+            2) `docker-compose up --build -d`
+            <br />
+            3) `docker-compose up -d --force-recreate web`
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>
+              关闭
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    )
+  }
 
   const apiUrl = useMemo(() => {
     const env = (import.meta as any).env || {}

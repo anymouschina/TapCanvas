@@ -1,61 +1,52 @@
-name: tapcanvas-minimal
-
 services:
-  deps:
-    image: node:20-bookworm-slim
-    working_dir: /app
-    command: sh -lc "corepack enable && pnpm -w install"
-    volumes:
-      - .:/app
-      - root_node_modules:/app/node_modules
-      - pnpm_store:/app/.pnpm-store
-      - web_node_modules:/app/apps/web/node_modules
-      - hono_api_node_modules:/app/apps/hono-api/node_modules
-      - ai_fullstack_node_modules:/app/apps/ai-fullstack/node_modules
-      - webcut_main_node_modules:/app/apps/webcut-main/node_modules
-      - cli_node_modules:/app/packages/cli/node_modules
-      - schemas_node_modules:/app/packages/schemas/node_modules
-      - sdk_node_modules:/app/packages/sdk/node_modules
-      - hono_api_wrangler:/app/apps/hono-api/.wrangler
-
   web:
-    image: node:20-bookworm-slim
+    image: ${DOCKERHUB_REGISTRY:-docker.1ms.run}/library/node:20-bookworm-slim
     working_dir: /app
-    depends_on:
-      deps:
-        condition: service_completed_successfully
-    command: sh -lc "corepack enable && pnpm --filter @tapcanvas/web dev --host 0.0.0.0 --port 5173"
+    command: sh -lc "sh ./scripts/docker-dev.sh pnpm --filter @tapcanvas/web dev --host 0.0.0.0 --port 5173"
+    env_file:
+      - .env.docker
     environment:
       NODE_ENV: development
       CHOKIDAR_USEPOLLING: "true"
+      VITE_LANGGRAPH_ENABLED: "0"
     ports:
       - "5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
       - .:/app
       - root_node_modules:/app/node_modules
       - pnpm_store:/app/.pnpm-store
       - web_node_modules:/app/apps/web/node_modules
-      - cli_node_modules:/app/packages/cli/node_modules
       - schemas_node_modules:/app/packages/schemas/node_modules
       - sdk_node_modules:/app/packages/sdk/node_modules
 
   api:
-    image: node:20-bookworm-slim
+    image: ${DOCKERHUB_REGISTRY:-docker.1ms.run}/library/node:20-bookworm-slim
     working_dir: /app
-    depends_on:
-      deps:
-        condition: service_completed_successfully
-    command: sh -lc "corepack enable && pnpm --filter cloudflare-workers-openapi dev -- --ip 0.0.0.0"
+    command: sh -lc "sh ./scripts/docker-dev.sh sh -lc 'pnpm --filter cloudflare-workers-openapi db:update:local && pnpm --filter cloudflare-workers-openapi dev --ip 0.0.0.0'"
+    env_file:
+      - .env.docker
     environment:
       NODE_ENV: development
     ports:
       - "8788:8788"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:8788/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+      start_period: 20s
     volumes:
       - .:/app
       - root_node_modules:/app/node_modules
       - pnpm_store:/app/.pnpm-store
       - hono_api_node_modules:/app/apps/hono-api/node_modules
-      - cli_node_modules:/app/packages/cli/node_modules
       - schemas_node_modules:/app/packages/schemas/node_modules
       - sdk_node_modules:/app/packages/sdk/node_modules
       - hono_api_wrangler:/app/apps/hono-api/.wrangler
@@ -68,12 +59,6 @@ volumes:
   web_node_modules:
     driver: local
   hono_api_node_modules:
-    driver: local
-  ai_fullstack_node_modules:
-    driver: local
-  webcut_main_node_modules:
-    driver: local
-  cli_node_modules:
     driver: local
   schemas_node_modules:
     driver: local

@@ -2,27 +2,6 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-class SearchQueryList(BaseModel):
-    query: List[str] = Field(
-        description="A list of search queries to be used for web research."
-    )
-    rationale: str = Field(
-        description="A brief explanation of why these queries are relevant to the research topic."
-    )
-
-
-class Reflection(BaseModel):
-    is_sufficient: bool = Field(
-        description="Whether the provided summaries are sufficient to answer the user's question."
-    )
-    knowledge_gap: str = Field(
-        description="A description of what information is missing or needs clarification."
-    )
-    follow_up_queries: List[str] = Field(
-        description="A list of follow-up queries to address the knowledge gap."
-    )
-
-
 class RoleDecision(BaseModel):
     role_id: str = Field(
         description="The id of the role that should answer the user. Must be one of the provided role ids."
@@ -119,4 +98,35 @@ class PromptResult(BaseModel):
     notes: List[str] = Field(
         default_factory=list,
         description="Extra guidance for the frontend to apply (e.g., camera/background).",
+    )
+
+
+class CharacterItem(BaseModel):
+    name: str = Field(description="Character name as mentioned in the story.")
+    role: Optional[str] = Field(
+        default=None,
+        description="Short role label in the story (e.g. 主角/反派/配角/群像).",
+    )
+    appearance: Optional[str] = Field(
+        default=None,
+        description="Brief appearance cues explicitly supported by the text (age/gender/clothes vibe).",
+    )
+    is_main: bool = Field(
+        default=False,
+        description="True if this character is a main recurring character for multi-shot consistency.",
+    )
+
+
+class CharacterExtraction(BaseModel):
+    characters: List[CharacterItem] = Field(
+        default_factory=list,
+        description="Characters extracted from the provided story text.",
+    )
+    main_characters: List[str] = Field(
+        default_factory=list,
+        description="Ordered list of main recurring characters (subset of characters[].name).",
+    )
+    key_props: List[str] = Field(
+        default_factory=list,
+        description="Key props that should be consistent across shots (e.g. 线装书).",
     )

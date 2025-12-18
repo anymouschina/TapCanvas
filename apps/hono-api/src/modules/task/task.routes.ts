@@ -98,6 +98,7 @@ taskRouter.get("/stream", (c) => {
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
 	return streamSSE(c, async (stream) => {
+		const HEARTBEAT_MS = 15_000;
 		const queue: TaskProgressSnapshotDto[] = [];
 		let closed = false;
 
@@ -145,7 +146,19 @@ taskRouter.get("/stream", (c) => {
 
 			while (!closed) {
 				if (!queue.length) {
-					await waitForEvent();
+					await Promise.race([
+						waitForEvent(),
+						new Promise<void>((resolve) =>
+							setTimeout(resolve, HEARTBEAT_MS),
+						),
+					]);
+					if (!queue.length && !closed) {
+						await stream.writeSSE({
+							event: "ping",
+							data: JSON.stringify({ type: "ping" }),
+						});
+						continue;
+					}
 				}
 				await drainQueue();
 			}

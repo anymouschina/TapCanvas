@@ -765,13 +765,13 @@ async function runSora2ApiVideoTask(
         return
       }
 
-      await sleep(pollIntervalMs)
       let snapshot: TaskResultDto
       try {
         snapshot = await fetchSora2ApiTaskResult(taskId, prompt)
       } catch (err: any) {
         const msg = err?.message || '查询 Sora2API 任务进度失败'
         appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        await sleep(pollIntervalMs)
         continue
       }
 
@@ -785,6 +785,7 @@ async function runSora2ApiVideoTask(
           lastProgress = normalized
           setNodeStatus(id, 'running', { progress: normalized })
         }
+        await sleep(pollIntervalMs)
         continue
       }
 
@@ -928,6 +929,181 @@ async function runSora2ApiVideoTask(
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
   } finally {
     endRunToken(id)
+  }
+}
+
+export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
+  const ctx = buildRunnerContext(id, get)
+  if (!ctx) return
+  if (!ctx.isVideoTask) return
+  if (ctx.isCanceled(id)) return
+
+  const { data, kind, prompt, setNodeStatus, appendLog } = ctx
+  const status = (data as any)?.status as NodeStatusValue | undefined
+  if (status !== 'running' && status !== 'queued') return
+
+  const vendorRaw = ((data as any)?.videoModelVendor as string | undefined) || ''
+  const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
+  if (vendor !== 'sora2api') return
+
+  const taskId = (data as any)?.videoTaskId as string | undefined
+  if (!taskId || !taskId.trim().startsWith('task_')) return
+
+  let snapshot: TaskResultDto
+  try {
+    snapshot = await fetchSora2ApiTaskResult(taskId.trim(), prompt)
+  } catch (err: any) {
+    const msg = err?.message || '查询 Sora2API 任务进度失败'
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  if (snapshot.status === 'running') {
+    const rawProgress =
+      (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+      (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
+      null
+    if (typeof rawProgress === 'number') {
+      const current = typeof (data as any)?.progress === 'number' ? (data as any).progress : 10
+      const normalized = Math.min(95, Math.max(current, Math.max(5, Math.round(rawProgress))))
+      setNodeStatus(id, 'running', { progress: normalized })
+    }
+    return
+  }
+
+  if (snapshot.status === 'failed') {
+    const msg =
+      (snapshot.raw && (snapshot.raw.response?.error || snapshot.raw.error || snapshot.raw.message)) ||
+      'Sora2API 视频任务失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  // succeeded
+  const rawResponse = (snapshot.raw as any)?.response
+  const pickText = (v: any) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const extractVideoFromRaw = (): { url: string; thumbnailUrl: string | null } | null => {
+    if (!rawResponse) return null
+    const fromVideoUrlField = rawResponse.video_url
+    const fromVideoUrl =
+      pickText(fromVideoUrlField?.url) ||
+      pickText(fromVideoUrlField) ||
+      pickText(rawResponse.videoUrl?.url) ||
+      pickText(rawResponse.videoUrl) ||
+      null
+    const fromResults = Array.isArray(rawResponse.results) && rawResponse.results.length
+      ? pickText(rawResponse.results[0]?.url) ||
+        pickText(rawResponse.results[0]?.video_url) ||
+        pickText(rawResponse.results[0]?.videoUrl)
+      : null
+    const fromDataResults =
+      rawResponse.data && Array.isArray(rawResponse.data.results) && rawResponse.data.results.length
+        ? pickText(rawResponse.data.results[0]?.url) ||
+          pickText(rawResponse.data.results[0]?.video_url) ||
+          pickText(rawResponse.data.results[0]?.videoUrl)
+        : null
+    let url = fromVideoUrl || fromResults || fromDataResults
+    if (!url) {
+      const content = pickText(rawResponse.content)
+      if (content) {
+        const match = content.match(/<video[^>]+src=['"]([^'"]+)['"][^>]*>/i)
+        if (match && match[1] && match[1].trim()) {
+          url = match[1].trim()
+        }
+      }
+    }
+    if (!url) return null
+    const thumb =
+      pickText(rawResponse.thumbnail_url) ||
+      pickText(rawResponse.thumbnailUrl) ||
+      (Array.isArray(rawResponse.results) && rawResponse.results.length
+        ? pickText(rawResponse.results[0]?.thumbnailUrl) || pickText(rawResponse.results[0]?.thumbnail_url)
+        : null) ||
+      (rawResponse.data && Array.isArray(rawResponse.data.results) && rawResponse.data.results.length
+        ? pickText(rawResponse.data.results[0]?.thumbnailUrl) || pickText(rawResponse.data.results[0]?.thumbnail_url)
+        : null) ||
+      null
+    return { url, thumbnailUrl: thumb }
+  }
+
+  let asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+  if (!asset || !asset.url) {
+    const fallback = extractVideoFromRaw()
+    if (fallback?.url) {
+      asset = { type: 'video', url: fallback.url, thumbnailUrl: fallback.thumbnailUrl }
+    }
+  }
+  if (!asset || !asset.url) {
+    const msg = 'Sora2API 视频任务执行失败：未返回有效视频地址'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  const videoUrl = asset.url
+  const thumbnailUrl = asset.thumbnailUrl || null
+  const preview = { type: 'video' as const, src: videoUrl }
+  const firstResultEntry =
+    rawResponse && Array.isArray(rawResponse.results) && rawResponse.results.length
+      ? rawResponse.results[0]
+      : rawResponse &&
+          rawResponse.data &&
+          Array.isArray(rawResponse.data.results) &&
+          rawResponse.data.results.length
+        ? rawResponse.data.results[0]
+        : null
+  const pidCandidate =
+    (firstResultEntry && typeof firstResultEntry.pid === 'string' && firstResultEntry.pid.trim()) ||
+    (firstResultEntry && typeof firstResultEntry.postId === 'string' && firstResultEntry.postId.trim()) ||
+    (firstResultEntry && typeof firstResultEntry.post_id === 'string' && firstResultEntry.post_id.trim()) ||
+    (rawResponse && typeof rawResponse.pid === 'string' && rawResponse.pid.trim()) ||
+    (rawResponse && typeof rawResponse.postId === 'string' && rawResponse.postId.trim()) ||
+    (rawResponse && typeof rawResponse.post_id === 'string' && rawResponse.post_id.trim()) ||
+    null
+
+  const modelKey = ((data as any)?.videoModel as string | undefined)?.trim() || 'sora-2'
+  let durationSeconds = Number((data as any)?.videoDurationSeconds)
+  if (Number.isNaN(durationSeconds) || durationSeconds <= 0) {
+    const fallback = Number((data as any)?.durationSeconds)
+    durationSeconds = !Number.isNaN(fallback) && fallback > 0 ? fallback : 10
+  }
+  const existingResults = ((data as any)?.videoResults as any[] | undefined) || []
+  const newResult = {
+    id: snapshot.id || taskId,
+    url: videoUrl,
+    thumbnailUrl,
+    title: (data as any)?.videoTitle || null,
+    duration: durationSeconds,
+    model: modelKey,
+    remixTargetId: pidCandidate,
+  }
+  const updatedVideoResults = [...existingResults, newResult]
+  const nextPrimaryIndex = updatedVideoResults.length - 1
+
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    lastResult: {
+      id: snapshot.id || taskId,
+      at: Date.now(),
+      kind,
+      preview,
+    },
+    prompt,
+    videoUrl,
+    videoThumbnailUrl: thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
+    videoResults: updatedVideoResults,
+    videoPrimaryIndex: nextPrimaryIndex,
+    videoDurationSeconds: durationSeconds,
+    videoModel: modelKey,
+    videoModelVendor: (data as any)?.videoModelVendor || 'sora2api',
+    videoTaskId: taskId,
+    remixTargetId: pidCandidate || (data as any)?.remixTargetId || null,
+    videoPostId: pidCandidate || (data as any)?.videoPostId || null,
+  })
+  appendLog(id, `[${nowLabel()}] 已同步 Sora2API 视频结果。`)
+  if (snapshot.assets && snapshot.assets.length) {
+    notifyAssetRefresh()
   }
 }
 

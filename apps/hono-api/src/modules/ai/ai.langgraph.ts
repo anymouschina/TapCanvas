@@ -22,6 +22,72 @@ type LangGraphProjectSnapshotRow = {
 	updated_at: string;
 };
 
+type ParsedSnapshot = { messages: unknown[]; conversation_summary: string };
+
+function parseSnapshotJson(raw: string): ParsedSnapshot | null {
+	if (typeof raw !== "string" || !raw.trim()) return null;
+	try {
+		const parsed = JSON.parse(raw);
+		if (Array.isArray(parsed)) {
+			return { messages: parsed, conversation_summary: "" };
+		}
+		if (parsed && typeof parsed === "object") {
+			const messages = Array.isArray((parsed as any).messages)
+				? ((parsed as any).messages as unknown[])
+				: [];
+			const summary =
+				typeof (parsed as any).conversation_summary === "string"
+					? (parsed as any).conversation_summary
+					: "";
+			return { messages, conversation_summary: summary };
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function mergeSnapshotJson(prevRaw: string, nextRaw: string): string {
+	const prev = parseSnapshotJson(prevRaw) || { messages: [], conversation_summary: "" };
+	const next = parseSnapshotJson(nextRaw) || { messages: [], conversation_summary: "" };
+
+	const seen = new Set<string>();
+	const merged: unknown[] = [];
+
+	const keyOf = (m: any): string => {
+		const id = m?.id;
+		if (typeof id === "string" && id.trim()) return `id:${id.trim()}`;
+		try {
+			return `raw:${JSON.stringify(m).slice(0, 2000)}`;
+		} catch {
+			return `raw:${String(m)}`;
+		}
+	};
+
+	for (const m of prev.messages || []) {
+		const k = keyOf(m);
+		if (seen.has(k)) continue;
+		seen.add(k);
+		merged.push(m);
+	}
+	for (const m of next.messages || []) {
+		const k = keyOf(m);
+		if (seen.has(k)) continue;
+		seen.add(k);
+		merged.push(m);
+	}
+
+	const summary =
+		typeof next.conversation_summary === "string" && next.conversation_summary.trim()
+			? next.conversation_summary
+			: prev.conversation_summary || "";
+
+	return JSON.stringify({
+		messages: merged,
+		conversation_summary: summary,
+	});
+}
+
 function isMissingLangGraphSnapshotTable(err: unknown): boolean {
 	const msg =
 		err instanceof Error
@@ -30,6 +96,29 @@ function isMissingLangGraphSnapshotTable(err: unknown): boolean {
 				? err
 				: "";
 	return /no such table:\s*langgraph_project_snapshots/i.test(msg);
+}
+
+async function ensureLangGraphSnapshotTable(db: D1Database): Promise<void> {
+	// Keep this in sync with ../../../apps/hono-api/schema.sql
+	await execute(
+		db,
+		`CREATE TABLE IF NOT EXISTS langgraph_project_snapshots (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      thread_id TEXT,
+      messages_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      UNIQUE (user_id, project_id)
+    )`,
+	);
+	await execute(
+		db,
+		`CREATE INDEX IF NOT EXISTS idx_langgraph_project_snapshots_user_project ON langgraph_project_snapshots(user_id, project_id)`,
+	);
 }
 
 async function assertProjectOwned(
@@ -92,9 +181,9 @@ export async function upsertLangGraphSnapshotForProject(
 	projectId: string,
 	payload: { threadId?: string | null; messagesJson: string },
 ): Promise<{ threadId: string | null }> {
-	const messagesJson =
+	const incomingMessagesJson =
 		typeof payload.messagesJson === "string" ? payload.messagesJson : "";
-	if (!messagesJson.trim()) {
+	if (!incomingMessagesJson.trim()) {
 		throw new AppError("messagesJson is required", {
 			status: 400,
 			code: "messages_json_required",
@@ -104,43 +193,62 @@ export async function upsertLangGraphSnapshotForProject(
 	await assertProjectOwned(c, userId, projectId);
 
 	const nowIso = new Date().toISOString();
-	let existing: Pick<LangGraphProjectSnapshotRow, "id"> | null = null;
+	let existing:
+		| Pick<LangGraphProjectSnapshotRow, "id" | "thread_id" | "messages_json">
+		| null = null;
 	try {
-		existing = await queryOne<Pick<LangGraphProjectSnapshotRow, "id">>(
+		existing = await queryOne<
+			Pick<LangGraphProjectSnapshotRow, "id" | "thread_id" | "messages_json">
+		>(
 			c.env.DB,
-			`SELECT id FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
+			`SELECT id, thread_id, messages_json FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
 			[userId, projectId],
 		);
 	} catch (err) {
 		if (isMissingLangGraphSnapshotTable(err)) {
-			// Best-effort: if the table hasn't been migrated yet, do not block chat.
-			return {
-				threadId:
-					typeof payload.threadId === "string" && payload.threadId.trim()
-						? payload.threadId.trim()
-						: null,
-			};
+			// Self-heal: create the missing table so snapshots become durable without requiring manual migration.
+			await ensureLangGraphSnapshotTable(c.env.DB);
+			existing = await queryOne<
+				Pick<LangGraphProjectSnapshotRow, "id" | "thread_id" | "messages_json">
+			>(
+				c.env.DB,
+				`SELECT id, thread_id, messages_json FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
+				[userId, projectId],
+			);
+		} else {
+			throw err;
 		}
-		throw err;
 	}
-
 	const threadId =
 		typeof payload.threadId === "string" && payload.threadId.trim()
 			? payload.threadId.trim()
 			: null;
+	const effectiveThreadId = threadId ?? existing?.thread_id ?? null;
+	const mergedMessagesJson =
+		existing?.messages_json && existing.messages_json.trim()
+			? mergeSnapshotJson(existing.messages_json, incomingMessagesJson)
+			: incomingMessagesJson;
 
 	if (existing?.id) {
 		try {
 			await execute(
 				c.env.DB,
 				`UPDATE langgraph_project_snapshots SET thread_id = ?, messages_json = ?, updated_at = ? WHERE id = ?`,
-				[threadId, messagesJson, nowIso, existing.id],
+				[effectiveThreadId, mergedMessagesJson, nowIso, existing.id],
 			);
 		} catch (err) {
-			if (isMissingLangGraphSnapshotTable(err)) return { threadId };
-			throw err;
+			if (isMissingLangGraphSnapshotTable(err)) {
+				await ensureLangGraphSnapshotTable(c.env.DB);
+				await execute(
+					c.env.DB,
+					`UPDATE langgraph_project_snapshots SET thread_id = ?, messages_json = ?, updated_at = ? WHERE id = ?`,
+					[effectiveThreadId, mergedMessagesJson, nowIso, existing.id],
+				);
+			} else {
+				throw err;
+			}
 		}
-		return { threadId };
+		return { threadId: effectiveThreadId };
 	}
 
 	const id = crypto.randomUUID();
@@ -150,14 +258,24 @@ export async function upsertLangGraphSnapshotForProject(
 			`INSERT INTO langgraph_project_snapshots
      (id, user_id, project_id, thread_id, messages_json, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			[id, userId, projectId, threadId, messagesJson, nowIso, nowIso],
+			[id, userId, projectId, effectiveThreadId, mergedMessagesJson, nowIso, nowIso],
 		);
 	} catch (err) {
-		if (isMissingLangGraphSnapshotTable(err)) return { threadId };
-		throw err;
+		if (isMissingLangGraphSnapshotTable(err)) {
+			await ensureLangGraphSnapshotTable(c.env.DB);
+			await execute(
+				c.env.DB,
+				`INSERT INTO langgraph_project_snapshots
+     (id, user_id, project_id, thread_id, messages_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				[id, userId, projectId, effectiveThreadId, mergedMessagesJson, nowIso, nowIso],
+			);
+		} else {
+			throw err;
+		}
 	}
 
-	return { threadId };
+	return { threadId: effectiveThreadId };
 }
 
 export async function clearLangGraphSnapshotForProject(

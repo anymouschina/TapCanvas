@@ -112,10 +112,28 @@ export async function runFlowDag(
     while (running < concurrency && ready.length) {
       const id = ready.shift()!
       if (blocked.has(id)) {
-        // skip but propagate block to children
+        // Skip execution but still behave like a completed node:
+        // - mark this node as error (blocked)
+        // - propagate "blocked" to children
+        // - decrement inDeg for children so they only become runnable after ALL upstream are done
+        set((state: any) => ({
+          nodes: state.nodes.map((n: Node) =>
+            n.id === id
+              ? ({
+                  ...n,
+                  data: {
+                    ...n.data,
+                    status: 'error',
+                    lastError: (n.data as any)?.lastError || '前置节点失败，已阻塞',
+                  },
+                } as Node)
+              : n
+          ),
+        }))
         for (const v of graph.adj.get(id) || []) {
           blocked.add(v)
-          ready.push(v)
+          inDeg.set(v, (inDeg.get(v) || 1) - 1)
+          if (inDeg.get(v) === 0) pushReady(v)
         }
         done.add(id)
         continue

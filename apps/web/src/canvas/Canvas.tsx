@@ -24,6 +24,7 @@ import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
+import { syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
 import { getQuickStartSampleFlow } from './quickStartSample'
@@ -109,6 +110,7 @@ function CanvasInner(): JSX.Element {
   const authToken = useAuth(s => s.token)
   const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const viewOnlyFormattedOnceRef = useRef(false)
+  const soraSyncingRef = useRef<Set<string>>(new Set())
 
   const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
     if (!event || !event.nodeId) return
@@ -153,6 +155,40 @@ function CanvasInner(): JSX.Element {
       unsubscribe()
     }
   }, [authToken, handleTaskProgress])
+
+  useEffect(() => {
+    if (!authToken) return
+    if (viewOnly) return
+
+    const tick = () => {
+      const state = useRFStore.getState()
+      const list = (state.nodes || []) as any[]
+      for (const n of list) {
+        const data: any = n?.data || {}
+        const kind = String(data.kind || '')
+        if (kind !== 'composeVideo' && kind !== 'video' && kind !== 'storyboard') continue
+        const status = String(data.status || '')
+        if (status !== 'running' && status !== 'queued') continue
+        const vendorRaw = String(data.videoModelVendor || data.videoVendor || '')
+        const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
+        if (vendor !== 'sora2api') continue
+        const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
+        if (!taskId.startsWith('task_')) continue
+
+        const nodeId = String(n.id || '')
+        if (!nodeId) continue
+        if (soraSyncingRef.current.has(nodeId)) continue
+        soraSyncingRef.current.add(nodeId)
+        void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+          soraSyncingRef.current.delete(nodeId)
+        })
+      }
+    }
+
+    tick()
+    const t = window.setInterval(tick, 4000)
+    return () => window.clearInterval(t)
+  }, [authToken, viewOnly])
 
   useEffect(() => {
     // initial: no local restore, rely on explicit load from server via UI

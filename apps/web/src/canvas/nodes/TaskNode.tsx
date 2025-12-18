@@ -945,7 +945,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (!Number.isNaN(raw) && raw > 0) {
       return raw
     }
-    return isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 10
+    return isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 15
   })
   const [orientation, setOrientation] = React.useState<Orientation>(() =>
     normalizeOrientation((data as any)?.orientation),
