@@ -1395,15 +1395,13 @@ function LangGraphChatOverlayInner({
             ...latest,
             canvas_context,
             conversation_summary:
-              (latest as any)?.conversation_summary ??
-              conversationSummaryRef.current ||
+              ((latest as any)?.conversation_summary ?? conversationSummaryRef.current) ||
               undefined,
           }
           lastSubmitValuesRef.current = retryValues
           persistLastSubmit(projectId, retryValues)
           try {
             void setLangGraphProjectSnapshot(projectId, {
-              threadId,
               messagesJson: JSON.stringify({
                 messages: latest.messages,
                 conversation_summary: conversationSummaryRef.current || '',
@@ -1440,7 +1438,6 @@ function LangGraphChatOverlayInner({
     if (!last || last.type !== 'ai') return
     try {
       void setLangGraphProjectSnapshot(projectId, {
-        threadId,
         messagesJson: JSON.stringify({
           messages: live,
           conversation_summary: conversationSummaryRef.current || '',
@@ -1500,7 +1497,6 @@ function LangGraphChatOverlayInner({
     if (!projectId) return
     try {
       void setLangGraphProjectSnapshot(projectId, {
-        threadId,
         messagesJson: JSON.stringify({ messages, conversation_summary: next }),
       }).catch(() => {})
     } catch {
@@ -1695,7 +1691,6 @@ function LangGraphChatOverlayInner({
               persistLastSubmit(projectId, values)
               try {
                 void setLangGraphProjectSnapshot(projectId, {
-                  threadId,
                   messagesJson: JSON.stringify({
                     messages: newMessages,
                     conversation_summary: conversationSummaryRef.current || '',
@@ -1805,7 +1800,6 @@ function LangGraphChatOverlayInner({
             persistLastSubmit(projectId, values)
             try {
               void setLangGraphProjectSnapshot(projectId, {
-                threadId,
                 messagesJson: JSON.stringify({
                   messages: prev.messages,
                   conversation_summary: conversationSummaryRef.current || '',
