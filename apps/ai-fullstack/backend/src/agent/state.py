@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TypedDict
 
 from langgraph.graph import add_messages
@@ -32,30 +31,3 @@ class OverallState(TypedDict):
     research_loop_count: int
     reasoning_model: str
     canvas_context: dict
-
-
-class ReflectionState(TypedDict):
-    is_sufficient: bool
-    knowledge_gap: str
-    follow_up_queries: Annotated[list, operator.add]
-    research_loop_count: int
-    number_of_ran_queries: int
-
-
-class Query(TypedDict):
-    query: str
-    rationale: str
-
-
-class QueryGenerationState(TypedDict):
-    search_query: list[Query]
-
-
-class WebSearchState(TypedDict):
-    search_query: str
-    id: str
-
-
-@dataclass(kw_only=True)
-class SearchStateOutput:
-    running_summary: str = field(default=None)  # Final report

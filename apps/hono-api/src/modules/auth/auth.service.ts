@@ -12,8 +12,13 @@ export async function exchangeGithubCode(c: AppContext, code: string) {
 			{
 				success: false,
 				error: "GitHub OAuth is not configured",
+				code: "github_oauth_not_configured",
+				missing: {
+					GITHUB_CLIENT_ID: !config.githubClientId,
+					GITHUB_CLIENT_SECRET: !config.githubClientSecret,
+				},
 			},
-			500,
+			501,
 		);
 	}
 

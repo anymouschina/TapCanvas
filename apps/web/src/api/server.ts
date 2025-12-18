@@ -592,7 +592,10 @@ export async function deleteServerFlow(id: string): Promise<void> {
 
 export async function exchangeGithub(code: string): Promise<{ token: string; user: any }> {
   const r = await fetch(`${API_BASE}/auth/github/exchange`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
-  if (!r.ok) throw new Error(`exchange failed: ${r.status}`)
+  if (!r.ok) {
+    const text = await r.text().catch(() => '')
+    throw new Error(`exchange failed: ${r.status} ${text}`.trim())
+  }
   return r.json()
 }
 

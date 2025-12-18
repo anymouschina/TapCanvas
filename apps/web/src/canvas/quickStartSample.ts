@@ -159,7 +159,7 @@ const flow: { nodes: Node[]; edges: Edge[] } = {
         videoThumbnailUrl:
           'https://videos.beqlee.icu/az/files/3506917c9d543a2_00000000-f860-7280-bb0a-b4ebf92a8a43%2Fdrvs%2Fthumbnail%2Fraw?se=2025-12-02T00%3A00%3A00Z&sp=r&sv=2024-08-04&sr=b&skoid=8ffff87a-01f1-47c9-9090-32999d4d6380&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-11-27T01%3A07%3A50Z&ske=2025-12-04T01%3A12%3A50Z&sks=b&skv=2024-08-04&sig=mAM1/afA%2Bwux%2BdcxwcetMFpo8CEUnlwEGD/Hny%2BGXAY%3D&ac=oaisdsorprsouthcentralus',
         videoInpaintFileId: null,
-        videoDurationSeconds: 10,
+        videoDurationSeconds: 15,
         geminiModel: 'sora-2',
         imageModel: 'sora-2',
       },
