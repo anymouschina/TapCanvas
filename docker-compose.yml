@@ -114,6 +114,9 @@ services:
       https_proxy: ""
       all_proxy: ""
       NO_PROXY: "localhost,127.0.0.1,host.docker.internal"
+      # Allow LangSmith Studio to connect to local dev server.
+      # Note: when credentials are used, wildcard (*) cannot be used for Access-Control-Allow-Origin.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,https://smith.langchain.com}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       REDIS_URI: redis://langgraph-redis:6379
       POSTGRES_URI: postgres://postgres:postgres@langgraph-postgres:5432/postgres?sslmode=disable
