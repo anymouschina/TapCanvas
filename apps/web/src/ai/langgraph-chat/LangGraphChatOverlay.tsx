@@ -51,6 +51,7 @@ import { useUIStore } from '../../ui/uiStore'
 import { functionHandlers } from '../canvasService'
 import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
+import { useAuth } from '../../auth/store'
 import {
   clearLangGraphProjectSnapshot,
   getLangGraphProjectSnapshot,
@@ -2483,6 +2484,7 @@ export function LangGraphChatOverlay() {
   const close = useUIStore((s) => s.closeLangGraphChat)
   const projectId = useUIStore((s) => (s.currentProject?.id ? String(s.currentProject.id) : null))
   const viewOnly = useUIStore((s) => s.viewOnly)
+  const token = useAuth((s) => s.token)
   const nodes = useRFStore((s) => s.nodes)
   const edges = useRFStore((s) => s.edges)
   const [resetCounter, setResetCounter] = useState(0)
@@ -2491,6 +2493,66 @@ export function LangGraphChatOverlay() {
     const env = (import.meta as any).env || {}
     return String(env?.VITE_LANGGRAPH_ENABLED || '').trim() === '1'
   }, [])
+
+  if (!token) {
+    if (!open) return null
+    return (
+      <Modal
+        opened={open}
+        onClose={close}
+        centered
+        title={<Text fw={700}>沉浸式创作（小T）</Text>}
+        size="lg"
+        styles={{
+          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
+          header: { background: 'transparent' },
+          title: { width: '100%' },
+        }}
+      >
+        <Stack gap="sm">
+          <Title order={5}>请先登录</Title>
+          <Text c="dimmed" size="sm">
+            登录后才可以使用沉浸式创作（小T）。你可以选择 GitHub 登录或游客模式。
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>
+              关闭
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    )
+  }
+
+  if (viewOnly) {
+    if (!open) return null
+    return (
+      <Modal
+        opened={open}
+        onClose={close}
+        centered
+        title={<Text fw={700}>沉浸式创作（小T）</Text>}
+        size="lg"
+        styles={{
+          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
+          header: { background: 'transparent' },
+          title: { width: '100%' },
+        }}
+      >
+        <Stack gap="sm">
+          <Title order={5}>当前为只读模式</Title>
+          <Text c="dimmed" size="sm">
+            分享/只读模式下无法运行沉浸式创作（小T）。
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>
+              关闭
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    )
+  }
 
   if (!langGraphEnabled) {
     if (!open) return null

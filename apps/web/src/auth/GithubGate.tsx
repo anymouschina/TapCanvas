@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Paper, Group, Title, Text, Stack } from '@mantine/core'
+import { Button, Paper, Group, Title, Text, Stack, Tooltip } from '@mantine/core'
 import { useAuth, type User } from './store'
 import { exchangeGithub, createGuestSession } from '../api/server'
 import { toast } from '../ui/toast'
