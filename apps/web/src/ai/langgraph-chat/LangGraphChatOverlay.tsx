@@ -1302,10 +1302,12 @@ function LangGraphChatOverlayInner({
   })
 	  const toolExecutionArmedRef = useRef(false)
 	  const lastSubmittedHumanIdRef = useRef<string | null>(null)
+    const autoStopAfterAiRef = useRef<string | null>(null)
+    const lastStreamActivityAtRef = useRef<number>(Date.now())
 	  const [frozenMessages, setFrozenMessages] = useState<Message[]>([])
 	  const [toolCallBindings, setToolCallBindings] = useState<Record<string, string>>({})
     const conversationSummaryRef = useRef<string>('')
-	  const [interactionMode, setInteractionMode] = useState<InteractionMode>('agent')
+    const [interactionMode, setInteractionMode] = useState<InteractionMode>('agent')
 	  const langGraphReadyRef = useRef<{ apiUrl: string; readyAt: number } | null>(null)
 	  const langGraphReadyPromiseRef = useRef<Promise<boolean> | null>(null)
 
@@ -1504,6 +1506,7 @@ function LangGraphChatOverlayInner({
       setThreadId(tid)
     },
     onUpdateEvent: (event: any) => {
+      lastStreamActivityAtRef.current = Date.now()
       let processedEvent: ProcessedEvent | null = null
       if (event?.generate_query) {
         processedEvent = {
@@ -1530,11 +1533,80 @@ function LangGraphChatOverlayInner({
       }
     },
     onError: (err: any) => {
+      lastStreamActivityAtRef.current = Date.now()
       lastStreamErrorRef.current = err
       const msg = err?.message || String(err || 'unknown error')
       setError(msg || 'unknown error')
     },
   })
+
+  useEffect(() => {
+    // Treat any message delta as stream activity (some server versions may not emit update events reliably).
+    lastStreamActivityAtRef.current = Date.now()
+  }, [thread.messages?.length])
+
+  useEffect(() => {
+    if (!thread.isLoading) {
+      autoStopAfterAiRef.current = null
+      return
+    }
+    const submittedHumanId = lastSubmittedHumanIdRef.current
+    if (!submittedHumanId) return
+    const live = (thread.messages || []) as any[]
+    const idx = live.findIndex((m) => String(m?.id ?? '') === String(submittedHumanId))
+    if (idx < 0) return
+    const hasAiAfter = live.slice(idx + 1).some((m) => m?.type === 'ai')
+    if (!hasAiAfter) return
+
+    const key = `${threadId || ''}:${submittedHumanId}`
+    if (autoStopAfterAiRef.current === key) return
+    autoStopAfterAiRef.current = key
+
+    // Sometimes the server finishes but the streaming connection doesn't close cleanly.
+    // If we've already received an AI message for the last submit, stop the stream to unblock UI.
+    const t = window.setTimeout(() => {
+      if (thread.isLoading) void thread.stop()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [thread.isLoading, thread.messages, thread, threadId])
+
+  useEffect(() => {
+    if (viewOnly) return
+    if (!projectId) return
+    if (!thread.isLoading) return
+
+    let cancelled = false
+    const intervalMs = 2500
+    const maxIdleMs = 20000
+
+    const t = window.setInterval(() => {
+      if (cancelled) return
+      if (!thread.isLoading) return
+      const idle = Date.now() - lastStreamActivityAtRef.current
+      if (idle < maxIdleMs) return
+
+      // Stream looks stalled; stop it and try to pull the latest snapshot so UI can recover.
+      void thread.stop()
+      setError('LangGraph 流连接长时间无响应，已停止。可点“重试”。')
+      void (async () => {
+        try {
+          const snap = await getLangGraphProjectSnapshot(projectId)
+          const parsed = snap?.messagesJson ? JSON.parse(snap.messagesJson) : null
+          const msgs = Array.isArray(parsed?.messages) ? (parsed.messages as Message[]) : []
+          if (msgs.length) setFrozenMessages(msgs)
+          const summary = parsed?.conversation_summary
+          conversationSummaryRef.current = typeof summary === 'string' ? summary : conversationSummaryRef.current
+        } catch {
+          // ignore
+        }
+      })()
+    }, intervalMs)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [projectId, thread, thread.isLoading, viewOnly])
 
   useEffect(() => {
     return () => {

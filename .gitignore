@@ -32,4 +32,4 @@ __pycache__/
 *.pyc
 .pycache/
 .buildx
-
+.xdg

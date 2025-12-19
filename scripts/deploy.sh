@@ -65,7 +65,7 @@ deploy_web() {
   echo "[deploy] web (root wrangler config)"
   (
     cd "$repo_root"
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PWD/.xdg}" npx wrangler deploy
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PWD/.xdg}" npx wrangler deploy --config wrangler.toml
   )
 }
 
@@ -88,4 +88,3 @@ deploy_ai_backend() {
 if [ "$want_web" = "1" ]; then deploy_web; fi
 if [ "$want_api" = "1" ]; then deploy_api; fi
 if [ "$want_ai_backend" = "1" ]; then deploy_ai_backend; fi
-
