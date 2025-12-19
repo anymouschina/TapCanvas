@@ -2491,7 +2491,10 @@ export function LangGraphChatOverlay() {
 
   const langGraphEnabled = useMemo(() => {
     const env = (import.meta as any).env || {}
-    return String(env?.VITE_LANGGRAPH_ENABLED || '').trim() === '1'
+    // Enabled by default; allow explicit opt-out.
+    const raw = String(env?.VITE_LANGGRAPH_ENABLED ?? '').trim()
+    if (!raw) return true
+    return raw !== '0' && raw.toLowerCase() !== 'false'
   }, [])
 
   if (!token) {
@@ -2572,16 +2575,16 @@ export function LangGraphChatOverlay() {
         <Stack gap="sm">
           <Title order={5}>当前未启用 LangGraph</Title>
           <Text c="dimmed" size="sm">
-            这是前端开关关闭导致的。把根目录 `.env.docker` 里的 `VITE_LANGGRAPH_ENABLED=1` 后重启 `web`，
-            然后确保 LangGraph 服务在 `http://localhost:8123` 可访问。
+            这是前端开关被显式关闭导致的。移除/置空 `VITE_LANGGRAPH_ENABLED`（或设为 `1`）后重启 Web，
+            然后确保 LangGraph 服务可访问。
           </Text>
           <Text size="sm">启用方式（Docker）：</Text>
           <Text size="sm" c="dimmed">
-            1) 把根目录 `.env.docker` 里的 `VITE_LANGGRAPH_ENABLED=1`
+            1) 确保根目录 `.env.docker` 未设置 `VITE_LANGGRAPH_ENABLED=0`
             <br />
-            2) `docker-compose up --build -d`
+            2) `docker compose up --build -d`
             <br />
-            3) `docker-compose up -d --force-recreate web`
+            3) `docker compose up -d --force-recreate web`
           </Text>
           <Group justify="flex-end">
             <Button variant="default" onClick={close}>
