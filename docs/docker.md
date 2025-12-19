@@ -31,7 +31,7 @@ docker compose up -d
 
 - Compose 会通过根目录 `.env.docker` 向容器注入默认环境变量（如 `VITE_API_BASE=/api`、`NPM_REGISTRY`、`DISABLE_PROXY=1`）。
 - 你可以直接修改 `.env.docker`，或在启动时覆盖：`VITE_API_BASE=http://localhost:8788 docker-compose up -d`
-- LangGraph 默认关闭（`VITE_LANGGRAPH_ENABLED=0`）；如需使用 Overlay，请先启动 profile 并把 `.env.docker` 里 `VITE_LANGGRAPH_ENABLED=1`。
+- LangGraph 默认启用；如需关闭可在 `.env.docker` 设置 `VITE_LANGGRAPH_ENABLED=0`。如需使用 LangGraph 服务，请先启动 `langgraph` profile。
 - GitHub 登录默认关闭（`VITE_GITHUB_CLIENT_ID` 为空）；如需启用，需要同时配置前端 `VITE_GITHUB_CLIENT_ID` 与后端 `apps/hono-api/.dev.vars` 中的 `GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET`。
 
 ### 2) 启动最小化（显式指定文件）

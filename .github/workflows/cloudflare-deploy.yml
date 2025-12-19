@@ -1,4 +1,4 @@
-name: Deploy Web to Cloudflare
+name: Deploy TapCanvas to Cloudflare
 
 on:
   push:
@@ -35,6 +35,13 @@ jobs:
       - name: Build web app
         run: pnpm --filter @tapcanvas/web build
 
-      - name: Deploy to Cloudflare
+      - name: Deploy web (Cloudflare Pages/Workers)
         run: npx wrangler deploy
 
+      - name: Deploy hono-api (Workers)
+        working-directory: apps/hono-api
+        run: npx wrangler deploy --config wrangler.jsonc
+
+      - name: Deploy ai-fullstack backend (Workers + Containers)
+        working-directory: apps/ai-fullstack/backend
+        run: npx wrangler deploy --config wrangler.jsonc
