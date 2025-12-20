@@ -2,7 +2,10 @@ import type { Edge, Node } from 'reactflow'
 import { getAuthToken, getAuthTokenFromCookie } from '../auth/store'
 // self-import guard: only used for type re-export in the same module
 
-export const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
+const viteEnv = ((import.meta as any).env || {}) as Record<string, any>
+export const API_BASE =
+  (typeof viteEnv.VITE_API_BASE === 'string' && viteEnv.VITE_API_BASE.trim() ? viteEnv.VITE_API_BASE.trim() : null) ||
+  (viteEnv.DEV ? 'http://localhost:8788' : '')
 function withAuth(init?: RequestInit): RequestInit {
   const t = getAuthToken() || getAuthTokenFromCookie()
   return {

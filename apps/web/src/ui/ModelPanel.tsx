@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import {
+  API_BASE,
   deleteModelToken,
   listModelEndpoints,
   listModelProviders,
@@ -126,7 +127,6 @@ export default function ModelPanel(): JSX.Element | null {
         throw new Error('用户未登录，无法导出配置')
       }
 
-      const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
       const response = await fetch(`${API_BASE}/models/export`, {
         method: 'GET',
         headers: {
@@ -292,7 +292,6 @@ export default function ModelPanel(): JSX.Element | null {
         throw new Error('用户未登录，无法导入配置')
       }
 
-      const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3000'
       const importUrl = `${API_BASE}/models/import`
       console.log('Making import request to:', importUrl)
 
