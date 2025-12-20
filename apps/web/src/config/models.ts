@@ -35,12 +35,21 @@ export const IMAGE_MODELS: ModelOption[] = [
   { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'sora2api' },
   { value: 'sora-image-landscape', label: 'Sora Image Landscape', vendor: 'sora2api' },
   { value: 'sora-image-portrait', label: 'Sora Image Portrait', vendor: 'sora2api' },
+  // Sora2API OpenAI-compatible: Gemini/Imagen image endpoints (via /v1/chat/completions)
+  { value: 'gemini-2.5-flash-image-landscape', label: 'Gemini 2.5 Flash Image (Landscape)', vendor: 'sora2api' },
+  { value: 'gemini-2.5-flash-image-portrait', label: 'Gemini 2.5 Flash Image (Portrait)', vendor: 'sora2api' },
+  { value: 'gemini-3.0-pro-image-landscape', label: 'Gemini 3.0 Pro Image (Landscape)', vendor: 'sora2api' },
+  { value: 'gemini-3.0-pro-image-portrait', label: 'Gemini 3.0 Pro Image (Portrait)', vendor: 'sora2api' },
+  { value: 'imagen-4.0-generate-preview-landscape', label: 'Imagen 4.0 Generate Preview (Landscape)', vendor: 'sora2api' },
+  { value: 'imagen-4.0-generate-preview-portrait', label: 'Imagen 4.0 Generate Preview (Portrait)', vendor: 'sora2api' },
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
   { value: 'sora-2', label: 'Sora 2', vendor: 'sora2api' },
   { value: 'veo3.1-pro', label: 'Veo 3.1 Pro', vendor: 'veo' },
   { value: 'veo3.1-fast', label: 'Veo 3.1 Fast', vendor: 'veo' },
+  // Sora2API OpenAI-compatible: Veo models via /v1/chat/completions (model ids are veo_*)
+  { value: 'veo_3_1_i2v_s_fast_fl_landscape', label: 'Veo 3.1 i2v (Fast, FL, Landscape)', vendor: 'veo' },
 ]
 
 export type NodeKind =
@@ -121,6 +130,12 @@ const IMAGE_EDIT_MODELS = new Set([
   'sora-image',
   'sora-image-landscape',
   'sora-image-portrait',
+  'gemini-2.5-flash-image-landscape',
+  'gemini-2.5-flash-image-portrait',
+  'gemini-3.0-pro-image-landscape',
+  'gemini-3.0-pro-image-portrait',
+  'imagen-4.0-generate-preview-landscape',
+  'imagen-4.0-generate-preview-portrait',
 ])
 
 const normalizeModelId = (value: string | undefined | null): string => {

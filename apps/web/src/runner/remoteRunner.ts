@@ -1963,6 +1963,8 @@ async function runGenericTask(ctx: RunnerContext) {
             ? 'Claude'
             : vendor === 'openai'
               ? 'OpenAI'
+              : vendor === 'sora2api'
+                ? 'Sora2API'
               : 'Gemini'
       const modelType =
         effectiveTaskKind === 'image_edit'

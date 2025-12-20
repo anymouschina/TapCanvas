@@ -37,7 +37,7 @@ export function useEdgeVisuals(type?: string | null) {
 
     const edgeStyle: CSSProperties = {
       stroke,
-      strokeWidth: isLight ? 3.4 : 3,
+      strokeWidth: isLight ? 4.8 : 4.2,
       opacity: 0.95,
       strokeLinecap: 'round',
       strokeLinejoin: 'round',

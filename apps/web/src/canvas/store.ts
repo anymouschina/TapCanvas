@@ -329,7 +329,16 @@ export const useRFStore = create<RFState>((set, get) => ({
       e.sourceHandle === connection.sourceHandle &&
       e.targetHandle === connection.targetHandle
     )
-    const nextEdges = exists ? s.edges : addEdge({ ...connection, animated: true, type: 'smoothstep' }, s.edges)
+    const nextEdges = exists
+      ? s.edges
+      : addEdge(
+          {
+            ...connection,
+            animated: true,
+            type: (connection as any)?.type || 'typed',
+          },
+          s.edges,
+        )
     const past = exists ? s.historyPast : [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     if (exists) {
       return { edges: nextEdges }

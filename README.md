@@ -37,6 +37,47 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 - **图生图链路**：图像节点支持上传参考图、抽帧、资产拖拽，任何生成的图片都可以作为下一次调用的输入，实现文本→图像→图像（图生图）→视频的完整闭环。
 - **GRSAI 中转站适配**：内置 grsai 代理配置面板，可以一次性填入 Host 与 API Key，同步展示积分与可用模型状态，将 Nano Banana、Sora 2、Veo 3 等请求稳定转发到海外节点或国内直连。
 
+## Gemini/Imagen/Veo 兜底入口（sora2api / OpenAI 兼容）
+
+本项目支持将 Gemini / Imagen / Veo（含 Banana）统一走 OpenAI 兼容入口：
+
+- 统一入口：`POST http://localhost:8000/v1/chat/completions`（通过 `model` 选择 `gemini-*` / `imagen-*` / `veo_*`）
+- 可用模型：`GET http://localhost:8000/v1/models`（会返回全部 `sora-*` + `gemini/imagen/veo` 的 `id`）
+- 先配置 Gemini Token（与 Sora token 池隔离）：`http://localhost:8000/manage-gemini`（填写 `st`，后台会自动 `ST -> AT` 并创建/绑定 `project_id`；代理配置与 Sora 管理页共用）
+- TapCanvas 兜底：当你未配置其它平台（例如 Gemini 直连 / Veo 直连）时，可仅配置 `Sora2API`（Host + API Key），即可在画布里调用这些模型
+
+示例（查看模型列表）：
+
+```bash
+curl -H "Authorization: Bearer han1234" http://localhost:8000/v1/models
+```
+
+示例（文生图 / Gemini / Imagen）：
+
+```bash
+curl -N http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer han1234" -H "Content-Type: application/json" \
+  -d '{"model":"gemini-2.5-flash-image-landscape","stream":true,"messages":[{"role":"user","content":"一只赛博朋克猫，电影光效"}]}'
+```
+
+示例（参考图生图 / Imagen）：
+
+```bash
+curl -N http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer han1234" -H "Content-Type: application/json" \
+  -d '{"model":"imagen-4.0-generate-preview-portrait","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"把这张图改成水彩风格"},{"type":"image_url","image_url":{"url":"data:image/png;base64,<BASE64>"}}]}]}'
+```
+
+示例（生视频 / Veo / i2v 首尾帧）：
+
+```bash
+curl -N http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer han1234" -H "Content-Type: application/json" \
+  -d '{"model":"veo_3_1_i2v_s_fast_fl_landscape","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"从静止到奔跑，镜头跟随"},{"type":"image_url","image_url":{"url":"data:image/png;base64,<START>"}},{"type":"image_url","image_url":{"url":"data:image/png;base64,<END>"}}]}]}'
+```
+
+返回为 SSE 流式文本：最终会输出 `![Generated Image](...)` 或 `<video src='...'></video>`；若开启缓存，会变成本地 `http://<host>/tmp/<file>` 链接。
+
 ## 协议
 
 MIT License（详见 `LICENSE`）。

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+let hoveredEdgeClearTimer: ReturnType<typeof setTimeout> | null = null
+
 function getInitialAssetPersistence(): boolean {
   if (typeof window === 'undefined') return true
   try {
@@ -38,6 +40,9 @@ export type VideoTrimPayload = {
 type UIState = {
   viewOnly: boolean
   setViewOnly: (v: boolean) => void
+  hoveredEdgeId: string | null
+  hoverEdge: (id: string | null) => void
+  unhoverEdgeSoon: () => void
   subflowNodeId: string | null
   openSubflow: (nodeId: string) => void
   closeSubflow: () => void
@@ -96,6 +101,21 @@ type UIState = {
 export const useUIStore = create<UIState>((set) => ({
   viewOnly: false,
   setViewOnly: (v) => set({ viewOnly: v }),
+  hoveredEdgeId: null,
+  hoverEdge: (id) => {
+    if (hoveredEdgeClearTimer) {
+      clearTimeout(hoveredEdgeClearTimer)
+      hoveredEdgeClearTimer = null
+    }
+    set({ hoveredEdgeId: id })
+  },
+  unhoverEdgeSoon: () => {
+    if (hoveredEdgeClearTimer) clearTimeout(hoveredEdgeClearTimer)
+    hoveredEdgeClearTimer = setTimeout(() => {
+      hoveredEdgeClearTimer = null
+      set({ hoveredEdgeId: null })
+    }, 180)
+  },
   subflowNodeId: null,
   openSubflow: (nodeId) => set({ subflowNodeId: nodeId }),
   closeSubflow: () => set({ subflowNodeId: null }),
