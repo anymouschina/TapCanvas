@@ -460,35 +460,43 @@ function extractVeoResultPayload(body: any): any {
 	return body;
 }
 
-export async function runVeoVideoTask(
-	c: AppContext,
-	userId: string,
-	req: TaskRequestDto,
-): Promise<TaskResult> {
-	const progressCtx = extractProgressContext(req, "veo");
-	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+	export async function runVeoVideoTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
+	): Promise<TaskResult> {
+		const progressCtx = extractProgressContext(req, "veo");
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
-	const ctx = await resolveVendorContext(c, userId, "veo");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-	const apiKey = ctx.apiKey.trim();
-	if (!apiKey) {
-		throw new AppError("未配置 Veo API Key", {
-			status: 400,
-			code: "veo_api_key_missing",
-		});
-	}
+		const extras = (req.extras || {}) as Record<string, any>;
+		const model = normalizeVeoModelKey(
+			(typeof extras.modelKey === "string" && extras.modelKey) ||
+				(req.extras && (req.extras as any).modelKey) ||
+				null,
+		);
 
-	const extras = (req.extras || {}) as Record<string, any>;
-	const model = normalizeVeoModelKey(
-		(typeof extras.modelKey === "string" && extras.modelKey) ||
-			(req.extras && (req.extras as any).modelKey) ||
-			null,
-	);
+		// New: Veo models can be served via sora2api's OpenAI-compatible chat endpoint (model ids are veo_*)
+		if (/^veo_/i.test(model)) {
+			return runSora2ApiChatCompletionsVideoTask(c, userId, req, {
+				model,
+				progressVendor: "veo",
+			});
+		}
 
-	const aspectRatio =
-		typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()
-			? extras.aspectRatio.trim()
-			: "16:9";
+		const ctx = await resolveVendorContext(c, userId, "veo");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+		const apiKey = ctx.apiKey.trim();
+		if (!apiKey) {
+			throw new AppError("未配置 Veo API Key", {
+				status: 400,
+				code: "veo_api_key_missing",
+			});
+		}
+
+		const aspectRatio =
+			typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()
+				? extras.aspectRatio.trim()
+				: "16:9";
 
 	const urls: string[] = [];
 	const appendUrl = (value: any) => {
@@ -1632,20 +1640,136 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 	return last;
 }
 
-function extractMarkdownImageUrlsFromText(text: string): string[] {
-	if (typeof text !== "string" || !text.trim()) return [];
-	const urls = new Set<string>();
-	const regex = /!\[[^\]]*]\(([^)]+)\)/g;
-	let match: RegExpExecArray | null;
-	// eslint-disable-next-line no-cond-assign
-	while ((match = regex.exec(text)) !== null) {
-		const raw = (match[1] || "").trim();
-		const first = raw.split(/\s+/)[0] || "";
-		const url = first.replace(/^<(.+)>$/, "$1").trim();
-		if (url) urls.add(url);
+	function extractMarkdownImageUrlsFromText(text: string): string[] {
+		if (typeof text !== "string" || !text.trim()) return [];
+		const urls = new Set<string>();
+		const regex = /!\[[^\]]*]\(([^)]+)\)/g;
+		let match: RegExpExecArray | null;
+		// eslint-disable-next-line no-cond-assign
+		while ((match = regex.exec(text)) !== null) {
+			const raw = (match[1] || "").trim();
+			const first = raw.split(/\s+/)[0] || "";
+			const url = first.replace(/^<(.+)>$/, "$1").trim();
+			if (url) urls.add(url);
+		}
+		return Array.from(urls);
 	}
-	return Array.from(urls);
-}
+
+	function extractMarkdownLinkUrlsFromText(text: string): string[] {
+		if (typeof text !== "string" || !text.trim()) return [];
+		const urls = new Set<string>();
+		const regex = /\[[^\]]*]\(([^)]+)\)/g;
+		let match: RegExpExecArray | null;
+		// eslint-disable-next-line no-cond-assign
+		while ((match = regex.exec(text)) !== null) {
+			const raw = (match[1] || "").trim();
+			const first = raw.split(/\s+/)[0] || "";
+			const url = first.replace(/^<(.+)>$/, "$1").trim();
+			if (url) urls.add(url);
+		}
+		return Array.from(urls);
+	}
+
+	function extractHtmlVideoUrlsFromText(text: string): string[] {
+		if (typeof text !== "string" || !text.trim()) return [];
+		const urls = new Set<string>();
+		const regexes = [
+			/<video[^>]*\ssrc=['"]([^'"]+)['"][^>]*>/gi,
+			/<source[^>]*\ssrc=['"]([^'"]+)['"][^>]*>/gi,
+		];
+		for (const regex of regexes) {
+			let match: RegExpExecArray | null;
+			// eslint-disable-next-line no-cond-assign
+			while ((match = regex.exec(text)) !== null) {
+				const url = (match[1] || "").trim();
+				if (url) urls.add(url);
+			}
+		}
+		return Array.from(urls);
+	}
+
+	function looksLikeVideoUrl(url: string): boolean {
+		const lower = (url || "").toLowerCase();
+		if (!lower) return false;
+		if (/\.(mp4|webm|mov|m4v)(\?|#|$)/.test(lower)) return true;
+		// sora2api cache may return local /tmp/* links without extensions.
+		if (lower.includes("/tmp/")) return true;
+		return false;
+	}
+
+	function arrayBufferToBase64(buf: ArrayBuffer): string {
+		const bytes = new Uint8Array(buf);
+		let binary = "";
+		const chunkSize = 0x2000;
+		for (let i = 0; i < bytes.length; i += chunkSize) {
+			const chunk = bytes.subarray(i, i + chunkSize);
+			binary += String.fromCharCode(...chunk);
+		}
+		return btoa(binary);
+	}
+
+	async function resolveSora2ApiImageUrl(
+		c: AppContext,
+		url: string,
+	): Promise<string> {
+		const trimmed = (url || "").trim();
+		if (!trimmed) return trimmed;
+		if (/^data:image\//i.test(trimmed)) return trimmed;
+		if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+
+		const MAX_BYTES = 8 * 1024 * 1024;
+		const res = await fetchWithHttpDebugLog(
+			c,
+			trimmed,
+			{ method: "GET" },
+			{ tag: "sora2api:imageFetch" },
+		);
+		if (!res.ok) {
+			throw new AppError(`参考图下载失败: ${res.status}`, {
+				status: 502,
+				code: "image_fetch_failed",
+				details: { upstreamStatus: res.status, url: trimmed },
+			});
+		}
+
+		const ct = (res.headers.get("content-type") || "").toLowerCase();
+		if (!ct.startsWith("image/")) {
+			throw new AppError("参考图不是 image/* 内容", {
+				status: 400,
+				code: "invalid_image_content_type",
+				details: { contentType: ct, url: trimmed },
+			});
+		}
+
+		const lenHeader = res.headers.get("content-length");
+		const len =
+			typeof lenHeader === "string" && /^\d+$/.test(lenHeader)
+				? Number(lenHeader)
+				: null;
+		if (typeof len === "number" && Number.isFinite(len) && len > MAX_BYTES) {
+			throw new AppError("参考图过大，无法转换为 base64", {
+				status: 400,
+				code: "image_too_large",
+				details: { contentLength: len, maxBytes: MAX_BYTES, url: trimmed },
+			});
+		}
+
+		const buf = await res.arrayBuffer();
+		if (buf.byteLength > MAX_BYTES) {
+			throw new AppError("参考图过大，无法转换为 base64", {
+				status: 400,
+				code: "image_too_large",
+				details: {
+					contentLength: buf.byteLength,
+					maxBytes: MAX_BYTES,
+					url: trimmed,
+				},
+			});
+		}
+
+		const base64 = arrayBufferToBase64(buf);
+		return `data:${ct};base64,${base64}`;
+	}
 
 // 解析 Codex / OpenAI Responses SSE 文本，提取最终的 completed response
 function parseSseResponseForTask(raw: string): any | null {
@@ -2508,21 +2632,34 @@ async function runQwenTextToImageTask(
 
 // ---- Sora2API 图像（text_to_image / image_edit） ----
 
-function normalizeSora2ApiImageModelKey(modelKey?: string | null): string {
-	const trimmed = (modelKey || "").trim();
-	if (trimmed && /^sora-image/i.test(trimmed)) {
-		return trimmed;
-	}
-	return "sora-image";
-}
+	function normalizeSora2ApiImageModelKey(modelKey?: string | null): string {
+		const trimmed = (modelKey || "").trim();
+		if (!trimmed) return "sora-image";
+		const normalized = trimmed.startsWith("models/")
+			? trimmed.slice(7)
+			: trimmed;
 
-async function runSora2ApiImageTask(
-	c: AppContext,
-	userId: string,
-	req: TaskRequestDto,
-): Promise<TaskResult> {
-	const progressCtx = extractProgressContext(req, "sora2api");
-	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+		// Sora2API is a unified OpenAI-compatible gateway; accept known image-capable model ids.
+		if (
+			/^sora-image/i.test(normalized) ||
+			/^gemini-.*-image($|-(landscape|portrait)$)/i.test(normalized) ||
+			/^imagen-.*($|-(landscape|portrait)$)/i.test(normalized) ||
+			/^nano-banana/i.test(normalized)
+		) {
+			return normalized;
+		}
+
+		return "sora-image";
+	}
+
+	async function runSora2ApiImageTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
+		progressVendor: string = "sora2api",
+	): Promise<TaskResult> {
+		const progressCtx = extractProgressContext(req, progressVendor);
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
@@ -2549,13 +2686,14 @@ async function runSora2ApiImageTask(
 				)
 				.filter((url: string) => url.length > 0)
 		: [];
-	if (referenceImages.length) {
-		// sora2api 兼容 OpenAI chat.completions 的 image_url 内容格式
-		promptParts.push({
-			type: "image_url",
-			image_url: { url: referenceImages[0] },
-		});
-	}
+		if (referenceImages.length) {
+			// sora2api 兼容 OpenAI chat.completions 的 image_url 内容格式
+			const dataUrl = await resolveSora2ApiImageUrl(c, referenceImages[0]!);
+			promptParts.push({
+				type: "image_url",
+				image_url: { url: dataUrl },
+			});
+		}
 
 	const body: any = {
 		model,
@@ -2683,21 +2821,233 @@ async function runSora2ApiImageTask(
 		raw: { response: payload },
 	});
 
-	return TaskResultSchema.parse({
-		id,
-		kind: req.kind,
-		status,
-		assets,
-		raw: {
-			provider: "sora2api",
-			model,
-			response: payload,
-			rawBody: rawText,
-		},
-	});
-}
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status,
+			assets,
+			raw: {
+				provider: "sora2api",
+				model,
+				response: payload,
+				rawBody: rawText,
+			},
+		});
+	}
 
-// ---- Anthropic 文案（仅 chat/prompt_refine） ----
+	async function runSora2ApiChatCompletionsVideoTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
+		options: { model: string; progressVendor: string },
+	): Promise<TaskResult> {
+		const progressCtx = extractProgressContext(req, options.progressVendor);
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+		const ctx = await resolveVendorContext(c, userId, "sora2api");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+		const apiKey = ctx.apiKey.trim();
+		if (!apiKey) {
+			throw new AppError("未配置 sora2api API Key", {
+				status: 400,
+				code: "sora2api_api_key_missing",
+			});
+		}
+
+		const extras = (req.extras || {}) as Record<string, any>;
+		const model = options.model;
+
+		const firstFrameUrl =
+			typeof extras.firstFrameUrl === "string" && extras.firstFrameUrl.trim()
+				? extras.firstFrameUrl.trim()
+				: undefined;
+		const lastFrameUrl =
+			typeof extras.lastFrameUrl === "string" && extras.lastFrameUrl.trim()
+				? extras.lastFrameUrl.trim()
+				: undefined;
+
+		const rawUrls: string[] = [];
+		const appendUrl = (value: any) => {
+			if (typeof value === "string" && value.trim()) rawUrls.push(value.trim());
+		};
+		if (Array.isArray(extras.referenceImages))
+			extras.referenceImages.forEach(appendUrl);
+		if (Array.isArray(extras.urls)) extras.urls.forEach(appendUrl);
+		const referenceImages = Array.from(new Set(rawUrls)).filter(Boolean);
+
+		const parts: any[] = [{ type: "text", text: req.prompt }];
+
+		// Mode rules (aligned with local sora2api implementation notes):
+		// - t2v: ignore images
+		// - i2v: must provide 1~2 images (first=START, second=END)
+		// - r2v: provide 0~N reference images
+		const isI2v = !!firstFrameUrl;
+		if (isI2v) {
+			const startDataUrl = await resolveSora2ApiImageUrl(c, firstFrameUrl!);
+			parts.push({ type: "image_url", image_url: { url: startDataUrl } });
+			if (lastFrameUrl) {
+				const endDataUrl = await resolveSora2ApiImageUrl(c, lastFrameUrl);
+				parts.push({ type: "image_url", image_url: { url: endDataUrl } });
+			}
+		} else if (referenceImages.length) {
+			for (const url of referenceImages.slice(0, 8)) {
+				const dataUrl = await resolveSora2ApiImageUrl(c, url);
+				parts.push({ type: "image_url", image_url: { url: dataUrl } });
+			}
+		}
+
+		const body: any = {
+			model,
+			messages: [
+				{
+					role: "user",
+					content: parts.length === 1 ? req.prompt : parts,
+				},
+			],
+			stream: true,
+		};
+
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		let res: Response;
+		let rawText = "";
+		try {
+			res = await fetchWithHttpDebugLog(
+				c,
+				`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream,application/json",
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: JSON.stringify(body),
+				},
+				{ tag: "sora2api:chatCompletions" },
+			);
+			rawText = await res.text().catch(() => "");
+		} catch (error: any) {
+			throw new AppError("sora2api 视频请求失败", {
+				status: 502,
+				code: "sora2api_request_failed",
+				details: { message: error?.message ?? String(error) },
+			});
+		}
+
+		const ct = (res.headers.get("content-type") || "").toLowerCase();
+		const parsedBody = (() => {
+			if (ct.includes("application/json")) {
+				return safeParseJsonForTask(rawText) || null;
+			}
+			return parseSseJsonPayloadForTask(rawText) || safeParseJsonForTask(rawText);
+		})();
+
+		if (res.status < 200 || res.status >= 300) {
+			const msg =
+				(parsedBody &&
+					(parsedBody.error?.message ||
+						parsedBody.message ||
+						parsedBody.error)) ||
+				`sora2api 视频调用失败: ${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "sora2api_request_failed",
+				details: { upstreamStatus: res.status, upstreamData: parsedBody ?? rawText },
+			});
+		}
+
+		const payload = parsedBody;
+		const urls = (() => {
+			const collected = new Set<string>();
+
+			const appendFromText = (value: any) => {
+				if (!value) return;
+				if (typeof value === "string") {
+					extractHtmlVideoUrlsFromText(value).forEach((url) =>
+						collected.add(url),
+					);
+					extractMarkdownLinkUrlsFromText(value)
+						.filter(looksLikeVideoUrl)
+						.forEach((url) => collected.add(url));
+					return;
+				}
+				if (Array.isArray(value)) {
+					value.forEach((part) => {
+						if (!part) return;
+						if (typeof part === "string") {
+							extractHtmlVideoUrlsFromText(part).forEach((url) =>
+								collected.add(url),
+							);
+							extractMarkdownLinkUrlsFromText(part)
+								.filter(looksLikeVideoUrl)
+								.forEach((url) => collected.add(url));
+							return;
+						}
+						if (typeof part === "object" && typeof part.text === "string") {
+							extractHtmlVideoUrlsFromText(part.text).forEach((url) =>
+								collected.add(url),
+							);
+							extractMarkdownLinkUrlsFromText(part.text)
+								.filter(looksLikeVideoUrl)
+								.forEach((url) => collected.add(url));
+						}
+					});
+				}
+			};
+
+			appendFromText(payload?.content);
+			if (Array.isArray(payload?.choices)) {
+				for (const choice of payload.choices) {
+					appendFromText(choice?.delta?.content);
+					appendFromText(choice?.message?.content);
+					appendFromText(choice?.content);
+				}
+			}
+
+			if (collected.size === 0 && typeof rawText === "string" && rawText.trim()) {
+				extractHtmlVideoUrlsFromText(rawText).forEach((url) =>
+					collected.add(url),
+				);
+				extractMarkdownLinkUrlsFromText(rawText)
+					.filter(looksLikeVideoUrl)
+					.forEach((url) => collected.add(url));
+			}
+
+			return Array.from(collected);
+		})();
+
+		const assets = urls.map((url) =>
+			TaskAssetSchema.parse({ type: "video", url, thumbnailUrl: null }),
+		);
+
+		const id =
+			(typeof payload?.id === "string" && payload.id.trim()) ||
+			`veo-${Date.now().toString(36)}`;
+		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+		emitProgress(userId, progressCtx, {
+			status,
+			progress: 100,
+			assets,
+			raw: { response: payload },
+		});
+
+		return TaskResultSchema.parse({
+			id,
+			kind: "text_to_video",
+			status,
+			assets,
+			raw: {
+				provider: "sora2api",
+				model,
+				response: payload,
+				rawBody: rawText,
+			},
+		});
+	}
+
+	// ---- Anthropic 文案（仅 chat/prompt_refine） ----
 
 async function runAnthropicTextTask(
 	c: AppContext,
@@ -2832,13 +3182,32 @@ export async function runGenericTaskForVendor(
 					},
 				);
 			}
-		} else if (v === "gemini") {
-			if (req.kind === "text_to_image" || req.kind === "image_edit") {
-				result = await runGeminiBananaImageTask(c, userId, req);
-			} else if (
-				req.kind === "chat" ||
-				req.kind === "prompt_refine"
-			) {
+			} else if (v === "gemini") {
+				if (req.kind === "text_to_image" || req.kind === "image_edit") {
+					try {
+						result = await runGeminiBananaImageTask(c, userId, req);
+					} catch (err: any) {
+						// Fallback: when Gemini/Banana isn't configured, try sora2api OpenAI-compatible gateway.
+						const code =
+							typeof err?.code === "string"
+								? err.code
+								: typeof err?.details?.code === "string"
+									? err.details.code
+									: null;
+						if (
+							code === "banana_api_key_missing" ||
+							code === "provider_not_configured" ||
+							code === "key_missing"
+						) {
+							result = await runSora2ApiImageTask(c, userId, req, "gemini");
+						} else {
+							throw err;
+						}
+					}
+				} else if (
+					req.kind === "chat" ||
+					req.kind === "prompt_refine"
+				) {
 				result = await runGeminiTextTask(c, userId, req);
 			} else {
 				throw new AppError(

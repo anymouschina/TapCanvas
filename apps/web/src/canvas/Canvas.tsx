@@ -569,8 +569,8 @@ function CanvasInner(): JSX.Element {
   const handleConnect = useCallback((c: any) => {
     lastReason.current = null
     didConnectRef.current = true
-    onConnect(c)
-  }, [onConnect])
+    onConnect({ ...c, type: edgeRoute === 'orth' ? 'orth' : 'typed' })
+  }, [edgeRoute, onConnect])
 
   const pickDefaultSourceHandle = useCallback((kind?: string | null) => {
     if (!kind) return 'out-any'
@@ -790,12 +790,21 @@ function CanvasInner(): JSX.Element {
   const selectedIds = new Set(selectedNodes.map(n=>n.id))
   const viewEdges = useMemo(() => {
     const base = focusFiltered.edges
-    if (selectedIds.size === 0) return base
-    return base.map(e => {
-      const active = selectedIds.has(e.source) || selectedIds.has(e.target)
-      return active ? { ...e, style: { ...(e.style||{}), stroke: '#e5e7eb', opacity: 1 } } : { ...e, style: { ...(e.style||{}), opacity: 0.5 } }
+    const routed = base.map((e: any) => {
+      const t = e.type
+      if (t === 'typed' || t === 'orth') return e
+      return { ...e, type: edgeRoute === 'orth' ? 'orth' : 'typed' }
     })
-  }, [focusFiltered.edges, selectedIds])
+    const withHitbox = (e: any) => ({ ...e, interactionWidth: e.interactionWidth ?? 40 })
+    if (selectedIds.size === 0) return routed.map(withHitbox)
+    return routed.map((e: any) => {
+      const active = selectedIds.has(e.source) || selectedIds.has(e.target)
+      const styled = active
+        ? { ...e, style: { ...(e.style || {}), stroke: '#e5e7eb', opacity: 1 } }
+        : { ...e, style: { ...(e.style || {}), opacity: 0.5 } }
+      return withHitbox(styled)
+    })
+  }, [edgeRoute, focusFiltered.edges, selectedIds])
 
   // 使用多选拖拽（内置），不自定义组拖拽，避免与画布交互冲突
 
@@ -1117,6 +1126,8 @@ function CanvasInner(): JSX.Element {
         onNodesChange={viewOnly ? undefined : handleNodesChange}
         onEdgesChange={viewOnly ? undefined : onEdgesChange}
         onConnect={viewOnly ? undefined : handleConnect}
+        onEdgeMouseEnter={viewOnly ? undefined : (_evt, edge) => useUIStore.getState().hoverEdge(edge.id)}
+        onEdgeMouseLeave={viewOnly ? undefined : () => useUIStore.getState().unhoverEdgeSoon()}
         onConnectStart={viewOnly ? undefined : onConnectStart}
         onConnectEnd={viewOnly ? undefined : onConnectEnd}
         onNodeDragStart={viewOnly ? undefined : onNodeDragStart}
@@ -1165,9 +1176,15 @@ function CanvasInner(): JSX.Element {
         }}
         snapToGrid
         snapGrid={[16, 16]}
-        defaultEdgeOptions={{ animated: true, type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any, style: { strokeWidth: 3 }, interactionWidth: 24, markerEnd: { type: MarkerType.ArrowClosed, color: edgeMarkerColor, width: 16, height: 16 } }}
+        defaultEdgeOptions={{
+          animated: true,
+          type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
+          style: { strokeWidth: 4.5 },
+          interactionWidth: 40,
+          markerEnd: { type: MarkerType.ArrowClosed, color: edgeMarkerColor, width: 16, height: 16 },
+        }}
         connectionLineType={ConnectionLineType.SmoothStep}
-        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 3 }}
+        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 4.5 }}
       >
         <MiniMap style={{ width: 160, height: 110 }} />
         <Controls position="bottom-left" />
