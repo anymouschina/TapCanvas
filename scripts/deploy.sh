@@ -65,6 +65,7 @@ deploy_web() {
   echo "[deploy] web (root wrangler config)"
   (
     cd "$repo_root"
+    pnpm --filter @tapcanvas/web build
     XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PWD/.xdg}" npx wrangler deploy --config wrangler.toml
   )
 }

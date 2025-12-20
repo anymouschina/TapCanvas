@@ -34,6 +34,10 @@ jobs:
 
       - name: Build web app
         run: pnpm --filter @tapcanvas/web build
+        env:
+          VITE_API_BASE: "https://hono-api.beqlee.icu"
+          VITE_LANGGRAPH_API_URL: "https://ai.beqlee.icu"
+          VITE_LANGGRAPH_API_BASE: "https://ai.beqlee.icu"
 
       - name: Deploy web (Cloudflare Pages/Workers)
         run: npx wrangler deploy
