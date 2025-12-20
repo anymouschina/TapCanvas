@@ -59,6 +59,8 @@ pnpm --filter ./apps/hono-api dev
 
 本仓库包含两个 Worker（`apps/hono-api`、`apps/ai-fullstack/backend`）以及 Web 部署（根目录 `wrangler.*`）。
 
+- 注意：Web 的 `vite build` 强制使用 `production` mode，并且会拒绝在 production build 中使用 `localhost/127.0.0.1` 的 `VITE_API_BASE`。部署时请通过 CI 环境变量或本地 `apps/web/.env.production` 提供 `VITE_API_BASE`（以及可选的 `VITE_LANGGRAPH_*`）。
+
 - 本地手动部署：
   - 全部：`pnpm deploy`
   - 仅 API：`pnpm deploy:api`
