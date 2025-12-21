@@ -2634,22 +2634,24 @@ async function runQwenTextToImageTask(
 
 	function normalizeSora2ApiImageModelKey(modelKey?: string | null): string {
 		const trimmed = (modelKey || "").trim();
-		if (!trimmed) return "sora-image";
+		if (!trimmed) return "gemini-2.5-flash-image-landscape";
 		const normalized = trimmed.startsWith("models/")
 			? trimmed.slice(7)
 			: trimmed;
+
+		if (/^nano-banana-pro/i.test(normalized)) return "gemini-3.0-pro-image-landscape";
+		if (/^nano-banana/i.test(normalized)) return "gemini-2.5-flash-image-landscape";
 
 		// Sora2API is a unified OpenAI-compatible gateway; accept known image-capable model ids.
 		if (
 			/^sora-image/i.test(normalized) ||
 			/^gemini-.*-image($|-(landscape|portrait)$)/i.test(normalized) ||
-			/^imagen-.*($|-(landscape|portrait)$)/i.test(normalized) ||
-			/^nano-banana/i.test(normalized)
+			/^imagen-.*($|-(landscape|portrait)$)/i.test(normalized)
 		) {
 			return normalized;
 		}
 
-		return "sora-image";
+		return "gemini-2.5-flash-image-landscape";
 	}
 
 	async function runSora2ApiImageTask(
@@ -2672,9 +2674,24 @@ async function runQwenTextToImageTask(
 	}
 
 	const extras = (req.extras || {}) as Record<string, any>;
-	const model = normalizeSora2ApiImageModelKey(
-		typeof extras.modelKey === "string" ? extras.modelKey : undefined,
-	);
+	const modelKeyRaw = typeof extras.modelKey === "string" ? extras.modelKey.trim() : "";
+	const defaultGeminiModelKey = (() => {
+		const isPortrait = (() => {
+			if (typeof req.width === "number" && typeof req.height === "number") return req.height > req.width;
+			const ar = typeof extras.aspectRatio === "string" ? extras.aspectRatio.toLowerCase().trim() : "";
+			if (ar.includes("portrait")) return true;
+			if (ar.includes("landscape")) return false;
+			const ratio = ar.match(/(\d+(?:\.\d+)?)\s*[:x\/\*]\s*(\d+(?:\.\d+)?)/);
+			if (ratio) {
+				const w = Number(ratio[1]);
+				const h = Number(ratio[2]);
+				if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return h > w;
+			}
+			return false;
+		})();
+		return "gemini-2.5-flash-image-" + (isPortrait ? "portrait" : "landscape");
+	})();
+	const model = normalizeSora2ApiImageModelKey(modelKeyRaw || defaultGeminiModelKey);
 
 	const promptParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
 		{ type: "text", text: req.prompt },
@@ -3195,11 +3212,36 @@ export async function runGenericTaskForVendor(
 									? err.details.code
 									: null;
 						if (
+							code === "api_key_missing" ||
 							code === "banana_api_key_missing" ||
 							code === "provider_not_configured" ||
+							code === "base_url_missing" ||
 							code === "key_missing"
 						) {
-							result = await runSora2ApiImageTask(c, userId, req, "gemini");
+							const reqForSora2Api = (() => {
+								const extras = (req.extras || {}) as Record<string, any>;
+								const mk = typeof extras.modelKey === "string" ? extras.modelKey.trim() : "";
+								if (/^nano-banana/i.test(mk)) {
+									const isPortrait = (() => {
+										if (typeof req.width === "number" && typeof req.height === "number") return req.height > req.width;
+										const ar = typeof extras.aspectRatio === "string" ? extras.aspectRatio.toLowerCase().trim() : "";
+										if (ar.includes("portrait")) return true;
+										if (ar.includes("landscape")) return false;
+										const ratio = ar.match(/(\d+(?:\.\d+)?)\s*[:x\/\*]\s*(\d+(?:\.\d+)?)/);
+										if (ratio) {
+											const w = Number(ratio[1]);
+											const h = Number(ratio[2]);
+											if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return h > w;
+										}
+										return false;
+									})();
+									const family = /^nano-banana-pro/i.test(mk) ? "gemini-3.0-pro-image" : "gemini-2.5-flash-image";
+									const mappedModelKey = family + "-" + (isPortrait ? "portrait" : "landscape");
+									return { ...req, extras: { ...extras, modelKey: mappedModelKey } };
+								}
+								return req;
+							})();
+							result = await runSora2ApiImageTask(c, userId, reqForSora2Api, "gemini");
 						} else {
 							throw err;
 						}

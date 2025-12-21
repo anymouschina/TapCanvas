@@ -21,6 +21,18 @@ function mergeOptions(base: ModelOption[], extra: ModelOption[]): ModelOption[] 
   return merged
 }
 
+const HIDDEN_IMAGE_MODEL_ID_RE = /^(gemini-.*-image(?:-(?:landscape|portrait))?|imagen-.*-(?:landscape|portrait))$/i
+
+function normalizeModelId(value: string): string {
+  if (!value) return ''
+  return value.startsWith('models/') ? value.slice(7) : value
+}
+
+function filterHiddenOptionsByKind(options: ModelOption[], kind?: NodeKind): ModelOption[] {
+  if (kind !== 'image' && kind !== 'mosaic') return options
+  return options.filter((opt) => !HIDDEN_IMAGE_MODEL_ID_RE.test(normalizeModelId(opt.value)))
+}
+
 function normalizeAvailableModels(items: AvailableModelDto[]): ModelOption[] {
   if (!Array.isArray(items)) return []
   return items
@@ -65,12 +77,12 @@ async function getAvailableModelOptions(): Promise<ModelOption[]> {
 
 export function useModelOptions(kind?: NodeKind): ModelOption[] {
   const baseOptions = useMemo(() => getAllowedModelsByKind(kind), [kind])
-  const [options, setOptions] = useState<ModelOption[]>(baseOptions)
+  const [options, setOptions] = useState<ModelOption[]>(filterHiddenOptionsByKind(baseOptions, kind))
   const [refreshSeq, setRefreshSeq] = useState(0)
 
   useEffect(() => {
-    setOptions(baseOptions)
-  }, [baseOptions])
+    setOptions(filterHiddenOptionsByKind(baseOptions, kind))
+  }, [baseOptions, kind])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -86,7 +98,7 @@ export function useModelOptions(kind?: NodeKind): ModelOption[] {
         if (canceled || !remote.length) return
         const filtered = filterRemoteOptionsByKind(remote, kind)
         if (!filtered.length) return
-        setOptions((prev) => mergeOptions(prev, filtered))
+        setOptions((prev) => filterHiddenOptionsByKind(mergeOptions(prev, filtered), kind))
       })
       .catch(() => {
         // ignore; fallback to static list
@@ -104,7 +116,7 @@ export function useModelOptions(kind?: NodeKind): ModelOption[] {
       .then((profiles) => {
         if (canceled || !profiles.length) return
         const mapped = normalizeProfiles(profiles)
-        setOptions((prev) => mergeOptions(prev, mapped))
+        setOptions((prev) => filterHiddenOptionsByKind(mergeOptions(prev, mapped), kind))
       })
       .catch(() => {})
     return () => {

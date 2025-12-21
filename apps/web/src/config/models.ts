@@ -31,17 +31,9 @@ export const IMAGE_MODELS: ModelOption[] = [
   { value: DEFAULT_IMAGE_MODEL_VALUE, label: 'Nano Banana Fast', vendor: 'gemini' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
   { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
   { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'sora2api' },
   { value: 'sora-image-landscape', label: 'Sora Image Landscape', vendor: 'sora2api' },
   { value: 'sora-image-portrait', label: 'Sora Image Portrait', vendor: 'sora2api' },
-  // Sora2API OpenAI-compatible: Gemini/Imagen image endpoints (via /v1/chat/completions)
-  { value: 'gemini-2.5-flash-image-landscape', label: 'Gemini 2.5 Flash Image (Landscape)', vendor: 'sora2api' },
-  { value: 'gemini-2.5-flash-image-portrait', label: 'Gemini 2.5 Flash Image (Portrait)', vendor: 'sora2api' },
-  { value: 'gemini-3.0-pro-image-landscape', label: 'Gemini 3.0 Pro Image (Landscape)', vendor: 'sora2api' },
-  { value: 'gemini-3.0-pro-image-portrait', label: 'Gemini 3.0 Pro Image (Portrait)', vendor: 'sora2api' },
-  { value: 'imagen-4.0-generate-preview-landscape', label: 'Imagen 4.0 Generate Preview (Landscape)', vendor: 'sora2api' },
-  { value: 'imagen-4.0-generate-preview-portrait', label: 'Imagen 4.0 Generate Preview (Portrait)', vendor: 'sora2api' },
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
