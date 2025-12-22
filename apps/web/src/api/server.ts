@@ -6,12 +6,62 @@ const viteEnv = ((import.meta as any).env || {}) as Record<string, any>
 export const API_BASE =
   (typeof viteEnv.VITE_API_BASE === 'string' && viteEnv.VITE_API_BASE.trim() ? viteEnv.VITE_API_BASE.trim() : null) ||
   (viteEnv.DEV ? 'http://localhost:8788' : '')
+const API_RETRY_WINDOW_MS = Number(viteEnv.VITE_API_RETRY_WINDOW_MS) || 8000
+const API_RETRY_BASE_DELAY_MS = Number(viteEnv.VITE_API_RETRY_BASE_DELAY_MS) || 400
+const API_RETRY_MAX_DELAY_MS = Number(viteEnv.VITE_API_RETRY_MAX_DELAY_MS) || 2000
 function withAuth(init?: RequestInit): RequestInit {
   const t = getAuthToken() || getAuthTokenFromCookie()
   return {
     credentials: init?.credentials ?? 'include',
     ...(init || {}),
     headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const isRetryableStatus = (status: number) =>
+  status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599)
+
+const hasNoRetryHeader = (headers?: HeadersInit) => {
+  if (!headers) return false
+  if (headers instanceof Headers) {
+    return headers.has('x-tap-no-retry') || headers.has('X-Tap-No-Retry')
+  }
+  if (Array.isArray(headers)) {
+    return headers.some(([k]) => /x-tap-no-retry/i.test(k))
+  }
+  return Object.keys(headers).some((k) => /x-tap-no-retry/i.test(k))
+}
+
+const isBodyRetryable = (body: RequestInit['body']) => {
+  if (!body) return true
+  return typeof (body as any).getReader !== 'function'
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const startedAt = Date.now()
+  const skipRetry = hasNoRetryHeader(init?.headers) || !isBodyRetryable(init?.body)
+  let attempt = 0
+  let lastResponse: Response | null = null
+
+  while (true) {
+    try {
+      const res = await fetch(input, init)
+      if (!isRetryableStatus(res.status) || skipRetry) return res
+      lastResponse = res
+    } catch (err) {
+      if (skipRetry) throw err
+      if (Date.now() - startedAt >= API_RETRY_WINDOW_MS) throw err
+    }
+
+    const elapsed = Date.now() - startedAt
+    if (elapsed >= API_RETRY_WINDOW_MS) return lastResponse as Response
+
+    const backoff = Math.min(API_RETRY_BASE_DELAY_MS * Math.pow(2, attempt), API_RETRY_MAX_DELAY_MS)
+    const jitter = Math.floor(Math.random() * 120)
+    attempt += 1
+    await sleep(backoff + jitter)
   }
 }
 
@@ -46,6 +96,45 @@ export type ProxyConfigDto = {
   hasApiKey: boolean
   createdAt?: string
   updatedAt?: string
+}
+
+export type WorkflowExecutionDto = {
+  id: string
+  flowId: string
+  flowVersionId: string
+  ownerId: string
+  status: 'queued' | 'running' | 'success' | 'failed' | 'canceled'
+  concurrency: number
+  trigger?: string | null
+  errorMessage?: string | null
+  createdAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export type WorkflowExecutionEventDto = {
+  id: string
+  executionId: string
+  seq: number
+  eventType: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  nodeId?: string | null
+  message?: string | null
+  data?: any
+  createdAt: string
+}
+
+export type WorkflowNodeRunDto = {
+  id: string
+  executionId: string
+  nodeId: string
+  status: 'queued' | 'running' | 'success' | 'failed' | 'skipped' | 'canceled'
+  attempt: number
+  errorMessage?: string | null
+  outputRefs?: any
+  createdAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
 }
 
 export type VideoHistoryRecord = {
@@ -201,13 +290,13 @@ export async function fetchPromptSamples(params?: { query?: string; nodeKind?: s
   if (params?.source) qs.set('source', params.source)
   const query = qs.toString()
   const url = query ? `${API_BASE}/ai/prompt-samples?${query}` : `${API_BASE}/ai/prompt-samples`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`fetch prompt samples failed: ${r.status}`)
   return r.json()
 }
 
 export async function parsePromptSample(payload: { rawPrompt: string; nodeKind?: string }): Promise<PromptSampleInput> {
-  const r = await fetch(`${API_BASE}/ai/prompt-samples/parse`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/prompt-samples/parse`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -217,7 +306,7 @@ export async function parsePromptSample(payload: { rawPrompt: string; nodeKind?:
 }
 
 export async function createPromptSample(payload: PromptSampleInput): Promise<PromptSampleDto> {
-  const r = await fetch(`${API_BASE}/ai/prompt-samples`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/prompt-samples`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -227,7 +316,7 @@ export async function createPromptSample(payload: PromptSampleInput): Promise<Pr
 }
 
 export async function listChatSessions(): Promise<ChatSessionSummaryDto[]> {
-  const r = await fetch(`${API_BASE}/ai/chat/sessions`, withAuth())
+  const r = await apiFetch(`${API_BASE}/ai/chat/sessions`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -253,7 +342,7 @@ export async function listChatSessions(): Promise<ChatSessionSummaryDto[]> {
 export async function getChatHistory(sessionId: string): Promise<ChatHistoryDto> {
   const qs = new URLSearchParams()
   qs.set('sessionId', sessionId)
-  const r = await fetch(`${API_BASE}/ai/chat/history?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/ai/chat/history?${qs.toString()}`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -289,7 +378,7 @@ export async function getChatHistory(sessionId: string): Promise<ChatHistoryDto>
 
 export async function renameChatSession(sessionId: string, title: string): Promise<ChatSessionSummaryDto> {
   const payload = { title }
-  const r = await fetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -316,7 +405,7 @@ export async function renameChatSession(sessionId: string, title: string): Promi
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/chat/sessions/${encodeURIComponent(sessionId)}`, withAuth({
     method: 'DELETE',
   }))
   if (!r.ok) {
@@ -345,7 +434,7 @@ export type DauPointDto = { day: string; activeUsers: number }
 export type DauSeriesDto = { days: number; series: DauPointDto[] }
 
 export async function getStats(): Promise<StatsDto> {
-  const r = await fetch(`${API_BASE}/stats`, withAuth())
+  const r = await apiFetch(`${API_BASE}/stats`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -365,7 +454,7 @@ export async function getStats(): Promise<StatsDto> {
 
 export async function getDailyActiveUsers(days = 30): Promise<DauSeriesDto> {
   const safeDays = Number.isFinite(days) ? Math.max(1, Math.min(365, Math.floor(days))) : 30
-  const r = await fetch(`${API_BASE}/stats/dau?days=${encodeURIComponent(String(safeDays))}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/stats/dau?days=${encodeURIComponent(String(safeDays))}`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -384,7 +473,7 @@ export async function getDailyActiveUsers(days = 30): Promise<DauSeriesDto> {
 }
 
 export async function getLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth())
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -399,7 +488,7 @@ export async function getLangGraphProjectThread(projectId: string): Promise<Lang
 }
 
 export async function getPublicLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
-  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/langgraph/thread`, {
+  const r = await apiFetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/langgraph/thread`, {
     headers: { 'Content-Type': 'application/json' },
   })
   let body: any = null
@@ -416,7 +505,7 @@ export async function getPublicLangGraphProjectThread(projectId: string): Promis
 }
 
 export async function setLangGraphProjectThread(projectId: string, threadId: string): Promise<{ threadId: string }> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId }),
@@ -435,7 +524,7 @@ export async function setLangGraphProjectThread(projectId: string, threadId: str
 }
 
 export async function clearLangGraphProjectThread(projectId: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/thread`, withAuth({
     method: 'DELETE',
   }))
   if (!r.ok) {
@@ -455,7 +544,7 @@ export type LangGraphProjectSnapshotDto = {
 }
 
 export async function getLangGraphProjectSnapshot(projectId: string): Promise<LangGraphProjectSnapshotDto> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth())
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -477,7 +566,7 @@ export async function getLangGraphProjectSnapshot(projectId: string): Promise<La
 }
 
 export async function setLangGraphProjectSnapshot(projectId: string, payload: { threadId?: string | null; messagesJson: string }): Promise<{ threadId: string | null }> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -497,7 +586,7 @@ export async function setLangGraphProjectSnapshot(projectId: string, payload: { 
 }
 
 export async function clearLangGraphProjectSnapshot(projectId: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth({
     method: 'DELETE',
   }))
   if (!r.ok) {
@@ -543,7 +632,7 @@ export type AgentContinueOutput = {
 }
 
 export async function agentContinue(payload: AgentContinueInput): Promise<AgentContinueOutput> {
-  const r = await fetch(`${API_BASE}/ai/agent/continue`, withAuth({
+  const r = await apiFetch(`${API_BASE}/ai/agent/continue`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -562,24 +651,24 @@ export async function agentContinue(payload: AgentContinueInput): Promise<AgentC
 }
 
 export async function deletePromptSample(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/ai/prompt-samples/${id}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/ai/prompt-samples/${id}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete prompt sample failed: ${r.status}`)
 }
 
 export async function listServerFlows(): Promise<FlowDto[]> {
-  const r = await fetch(`${API_BASE}/flows`, withAuth())
+  const r = await apiFetch(`${API_BASE}/flows`, withAuth())
   if (!r.ok) throw new Error(`list flows failed: ${r.status}`)
   return r.json()
 }
 
 export async function getServerFlow(id: string): Promise<FlowDto> {
-  const r = await fetch(`${API_BASE}/flows/${id}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/flows/${id}`, withAuth())
   if (!r.ok) throw new Error(`get flow failed: ${r.status}`)
   return r.json()
 }
 
 export async function saveServerFlow(payload: { id?: string; name: string; nodes: Node[]; edges: Edge[] }): Promise<FlowDto> {
-  const r = await fetch(`${API_BASE}/flows`, withAuth({
+  const r = await apiFetch(`${API_BASE}/flows`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: payload.id, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } })
@@ -589,12 +678,12 @@ export async function saveServerFlow(payload: { id?: string; name: string; nodes
 }
 
 export async function deleteServerFlow(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/flows/${id}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/flows/${id}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete flow failed: ${r.status}`)
 }
 
 export async function exchangeGithub(code: string): Promise<{ token: string; user: any }> {
-  const r = await fetch(`${API_BASE}/auth/github/exchange`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+  const r = await apiFetch(`${API_BASE}/auth/github/exchange`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new Error(`exchange failed: ${r.status} ${text}`.trim())
@@ -604,7 +693,7 @@ export async function exchangeGithub(code: string): Promise<{ token: string; use
 
 export async function createGuestSession(nickname?: string): Promise<{ token: string; user: any }> {
   const body = nickname ? { nickname } : {}
-  const r = await fetch(`${API_BASE}/auth/guest`, {
+  const r = await apiFetch(`${API_BASE}/auth/guest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -614,49 +703,78 @@ export async function createGuestSession(nickname?: string): Promise<{ token: st
 }
 
 export async function listFlowVersions(flowId: string): Promise<Array<{ id: string; createdAt: string; name: string }>> {
-  const r = await fetch(`${API_BASE}/flows/${flowId}/versions`, withAuth())
+  const r = await apiFetch(`${API_BASE}/flows/${flowId}/versions`, withAuth())
   if (!r.ok) throw new Error(`list versions failed: ${r.status}`)
   return r.json()
 }
 
 export async function rollbackFlow(flowId: string, versionId: string) {
-  const r = await fetch(`${API_BASE}/flows/${flowId}/rollback`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ versionId }) }))
+  const r = await apiFetch(`${API_BASE}/flows/${flowId}/rollback`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ versionId }) }))
   if (!r.ok) throw new Error(`rollback failed: ${r.status}`)
   return r.json()
 }
 export async function listProjects(): Promise<ProjectDto[]> {
-  const r = await fetch(`${API_BASE}/projects`, withAuth())
+  const r = await apiFetch(`${API_BASE}/projects`, withAuth())
   if (!r.ok) throw new Error(`list projects failed: ${r.status}`)
   return r.json()
 }
 
 export async function upsertProject(payload: { id?: string; name: string }): Promise<ProjectDto> {
-  const r = await fetch(`${API_BASE}/projects`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
+  const r = await apiFetch(`${API_BASE}/projects`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
   if (!r.ok) throw new Error(`save project failed: ${r.status}`)
   return r.json()
 }
 
 export async function listProjectFlows(projectId: string): Promise<FlowDto[]> {
-  const r = await fetch(`${API_BASE}/flows?projectId=${encodeURIComponent(projectId)}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/flows?projectId=${encodeURIComponent(projectId)}`, withAuth())
   if (!r.ok) throw new Error(`list flows failed: ${r.status}`)
   return r.json()
 }
 
 export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[] }): Promise<FlowDto> {
-  const r = await fetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } }) }))
+  const r = await apiFetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } }) }))
   if (!r.ok) throw new Error(`save flow failed: ${r.status}`)
+  return r.json()
+}
+
+export async function runWorkflowExecution(payload: { flowId: string; concurrency?: number }): Promise<WorkflowExecutionDto> {
+  const r = await apiFetch(`${API_BASE}/executions/run`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowId: payload.flowId, concurrency: payload.concurrency ?? 1, trigger: 'manual' }),
+  }))
+  if (!r.ok) throw new Error(`run execution failed: ${r.status}`)
+  return r.json()
+}
+
+export async function listWorkflowExecutions(payload: { flowId: string; limit?: number }): Promise<WorkflowExecutionDto[]> {
+  const limit = payload.limit ?? 30
+  const r = await apiFetch(`${API_BASE}/executions?flowId=${encodeURIComponent(payload.flowId)}&limit=${encodeURIComponent(String(limit))}`, withAuth())
+  if (!r.ok) throw new Error(`list executions failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getWorkflowExecution(executionId: string): Promise<WorkflowExecutionDto> {
+  const r = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}`, withAuth())
+  if (!r.ok) throw new Error(`get execution failed: ${r.status}`)
+  return r.json()
+}
+
+export async function listWorkflowNodeRuns(executionId: string): Promise<WorkflowNodeRunDto[]> {
+  const r = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}/node-runs`, withAuth())
+  if (!r.ok) throw new Error(`list node runs failed: ${r.status}`)
   return r.json()
 }
 
 // Public project APIs
 export async function listPublicProjects(): Promise<ProjectDto[]> {
-  const r = await fetch(`${API_BASE}/projects/public`, { headers: { 'Content-Type': 'application/json' } })
+  const r = await apiFetch(`${API_BASE}/projects/public`, { headers: { 'Content-Type': 'application/json' } })
   if (!r.ok) throw new Error(`list public projects failed: ${r.status}`)
   return r.json()
 }
 
 export async function cloneProject(projectId: string, newName?: string): Promise<ProjectDto> {
-  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/clone`, withAuth({
+  const r = await apiFetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/clone`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: newName })
@@ -666,7 +784,7 @@ export async function cloneProject(projectId: string, newName?: string): Promise
 }
 
 export async function toggleProjectPublic(projectId: string, isPublic: boolean): Promise<ProjectDto> {
-  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/public`, withAuth({
+  const r = await apiFetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/public`, withAuth({
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ isPublic })
@@ -676,25 +794,25 @@ export async function toggleProjectPublic(projectId: string, isPublic: boolean):
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete project failed: ${r.status}`)
 }
 
 export async function getPublicProjectFlows(projectId: string): Promise<FlowDto[]> {
-  const r = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/flows`, { headers: { 'Content-Type': 'application/json' } })
+  const r = await apiFetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/flows`, { headers: { 'Content-Type': 'application/json' } })
   if (!r.ok) throw new Error(`get public project flows failed: ${r.status}`)
   return r.json()
 }
 
 // Model provider & token APIs
 export async function listModelProviders(): Promise<ModelProviderDto[]> {
-  const r = await fetch(`${API_BASE}/models/providers`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/providers`, withAuth())
   if (!r.ok) throw new Error(`list providers failed: ${r.status}`)
   return r.json()
 }
 
 export async function upsertModelProvider(payload: { id?: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }): Promise<ModelProviderDto> {
-  const r = await fetch(`${API_BASE}/models/providers`, withAuth({
+  const r = await apiFetch(`${API_BASE}/models/providers`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -704,7 +822,7 @@ export async function upsertModelProvider(payload: { id?: string; name: string; 
 }
 
 export async function listModelTokens(providerId: string): Promise<ModelTokenDto[]> {
-  const r = await fetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/tokens`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/tokens`, withAuth())
   if (!r.ok) throw new Error(`list tokens failed: ${r.status}`)
   return r.json()
 }
@@ -718,7 +836,7 @@ export async function upsertModelToken(payload: {
   userAgent?: string | null
   shared?: boolean
 }): Promise<ModelTokenDto> {
-  const r = await fetch(`${API_BASE}/models/tokens`, withAuth({
+  const r = await apiFetch(`${API_BASE}/models/tokens`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -728,12 +846,12 @@ export async function upsertModelToken(payload: {
 }
 
 export async function deleteModelToken(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/models/tokens/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/models/tokens/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete token failed: ${r.status}`)
 }
 
 export async function listModelEndpoints(providerId: string): Promise<ModelEndpointDto[]> {
-  const r = await fetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/endpoints`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/endpoints`, withAuth())
   if (!r.ok) throw new Error(`list endpoints failed: ${r.status}`)
   return r.json()
 }
@@ -746,7 +864,7 @@ export async function upsertModelEndpoint(payload: {
   baseUrl: string
   shared?: boolean
 }): Promise<ModelEndpointDto> {
-  const r = await fetch(`${API_BASE}/models/endpoints`, withAuth({
+  const r = await apiFetch(`${API_BASE}/models/endpoints`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -756,7 +874,7 @@ export async function upsertModelEndpoint(payload: {
 }
 
 export async function getProxyConfig(vendor: string): Promise<ProxyConfigDto | null> {
-  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth())
   if (!r.ok) {
     if (r.status === 404) return null
     throw new Error(`get proxy config failed: ${r.status}`)
@@ -800,7 +918,7 @@ export async function upsertProxyConfig(
   if (typeof payload.apiKey !== 'undefined') {
     body.apiKey = payload.apiKey
   }
-  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth({
+  const r = await apiFetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -829,14 +947,14 @@ export async function upsertProxyConfig(
 }
 
 export async function getProxyCredits(vendor: string): Promise<{ credits: number }> {
-  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/credits`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/credits`, withAuth())
   if (!r.ok) throw new Error(`get proxy credits failed: ${r.status}`)
   return r.json()
 }
 
 export async function getProxyModelStatus(vendor: string, model: string): Promise<{ status: boolean; error?: string }> {
   const qs = new URLSearchParams({ model })
-  const r = await fetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/model-status?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/proxy/${encodeURIComponent(vendor)}/model-status?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`get proxy model status failed: ${r.status}`)
   return r.json()
 }
@@ -851,7 +969,7 @@ export async function listSoraVideoHistory(params?: {
   if (typeof params?.offset === 'number') qs.set('offset', String(params.offset))
   if (params?.status) qs.set('status', params.status)
   const url = `${API_BASE}/sora/video/history${qs.toString() ? `?${qs.toString()}` : ''}`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -876,7 +994,7 @@ export async function listModelProfiles(params?: { providerId?: string; kinds?: 
   }
   const query = qs.toString()
   const url = query ? `${API_BASE}/models/profiles?${query}` : `${API_BASE}/models/profiles`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`list profiles failed: ${r.status}`)
   return r.json()
 }
@@ -889,7 +1007,7 @@ export async function upsertModelProfile(payload: {
   modelKey: string
   settings?: any
 }): Promise<ModelProfileDto> {
-  const r = await fetch(`${API_BASE}/models/profiles`, withAuth({
+  const r = await apiFetch(`${API_BASE}/models/profiles`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -899,13 +1017,13 @@ export async function upsertModelProfile(payload: {
 }
 
 export async function deleteModelProfile(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/models/profiles/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/models/profiles/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete profile failed: ${r.status}`)
 }
 
 export async function listAvailableModels(vendor?: string): Promise<AvailableModelDto[]> {
   const qs = vendor ? `?vendor=${encodeURIComponent(vendor)}` : ''
-  const r = await fetch(`${API_BASE}/models/available${qs}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/models/available${qs}`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -943,7 +1061,7 @@ export async function listSoraDrafts(tokenId?: string | null, cursor?: string | 
   if (cursor) qs.set('cursor', cursor)
   const query = qs.toString()
   const url = query ? `${API_BASE}/sora/drafts?${query}` : `${API_BASE}/sora/drafts`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`list drafts failed: ${r.status}`)
   return r.json()
 }
@@ -954,7 +1072,7 @@ export async function publishSoraDraft(tokenId: string, draftId: string, postTex
 }
 
 export async function publishSoraVideo(tokenId: string, taskId: string, postText?: string, generationId?: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/sora/video/publish`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/video/publish`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tokenId, taskId, postText, generationId: generationId || taskId }),
@@ -964,7 +1082,7 @@ export async function publishSoraVideo(tokenId: string, taskId: string, postText
 
 export async function deleteSoraDraft(tokenId: string, draftId: string): Promise<void> {
   const qs = new URLSearchParams({ tokenId, draftId })
-  const r = await fetch(`${API_BASE}/sora/drafts/delete?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/sora/drafts/delete?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`delete draft failed: ${r.status}`)
 }
 
@@ -974,7 +1092,7 @@ export async function listSoraPublishedVideos(tokenId?: string | null, limit?: n
   if (typeof limit === 'number' && !Number.isNaN(limit)) qs.set('limit', String(limit))
   const query = qs.toString()
   const url = query ? `${API_BASE}/sora/published/me?${query}` : `${API_BASE}/sora/published/me`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`list published videos failed: ${r.status}`)
   return r.json()
 }
@@ -990,7 +1108,7 @@ export async function listSoraCharacters(
   if (typeof limit === 'number' && !Number.isNaN(limit)) qs.set('limit', String(limit))
   const query = qs.toString()
   const url = query ? `${API_BASE}/sora/characters?${query}` : `${API_BASE}/sora/characters`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -1008,7 +1126,7 @@ export async function listSoraCharacters(
 
 export async function deleteSoraCharacter(tokenId: string, characterId: string): Promise<void> {
   const qs = new URLSearchParams({ tokenId, characterId })
-  const r = await fetch(`${API_BASE}/sora/characters/delete?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/sora/characters/delete?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`delete sora character failed: ${r.status}`)
 }
 
@@ -1016,7 +1134,7 @@ export async function checkSoraCharacterUsername(
   tokenId: string | null,
   username: string,
 ): Promise<void> {
-  const r = await fetch(`${API_BASE}/sora/characters/check-username`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/characters/check-username`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tokenId: tokenId || undefined, username }),
@@ -1052,7 +1170,7 @@ export async function listSoraMentions(
   qs.set('intent', 'cameo')
   qs.set('limit', String(limit))
   if (tokenId) qs.set('tokenId', tokenId)
-  const r = await fetch(`${API_BASE}/sora/mentions?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/sora/mentions?${qs.toString()}`, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -1076,7 +1194,7 @@ export async function listSoraPendingVideos(
   const url = qs.toString()
     ? `${API_BASE}/sora/video/pending?${qs.toString()}`
     : `${API_BASE}/sora/video/pending`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -1120,7 +1238,7 @@ export async function getSoraVideoDraftByTask(
   if (tokenId) qs.set('tokenId', tokenId)
   const url = `${API_BASE}/sora/video/draft-by-task?${qs.toString()}`
   console.debug('[getSoraVideoDraftByTask] requesting', { url, taskId, tokenId })
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   let body: any = null
   try {
     body = await r.json()
@@ -1179,7 +1297,7 @@ export async function uploadSoraCharacterVideo(
   form.append('file', file)
   form.append('timestamps', `${start},${end}`)
 
-  const r = await fetch(`${API_BASE}/sora/characters/upload`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/characters/upload`, withAuth({
     method: 'POST',
     body: form,
   }))
@@ -1206,7 +1324,7 @@ export async function isSoraCameoInProgress(
   id: string,
 ): Promise<{ inProgress: boolean; progressPct: number | null }> {
   const qs = new URLSearchParams({ tokenId, id })
-  const r = await fetch(
+  const r = await apiFetch(
     `${API_BASE}/sora/cameos/in-progress?${qs.toString()}`,
     withAuth(),
   )
@@ -1247,7 +1365,7 @@ export async function finalizeSoraCharacter(payload: {
   display_name: string
   profile_asset_pointer: any
 }): Promise<any> {
-  const r = await fetch(`${API_BASE}/sora/characters/finalize`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/characters/finalize`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1335,7 +1453,7 @@ export async function createSoraVideo(payload: {
     body.title = payload.title
   }
 
-  const r = await fetch(`${API_BASE}/sora/video/create`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/video/create`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1370,7 +1488,7 @@ export async function setSoraCameoPublic(
   tokenId: string,
   cameoId: string,
 ): Promise<void> {
-  const r = await fetch(`${API_BASE}/sora/cameos/set-public`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/cameos/set-public`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tokenId, cameoId }),
@@ -1398,7 +1516,7 @@ export async function uploadSoraProfileAsset(
   form.append('tokenId', tokenId)
   form.append('file', file)
 
-  const r = await fetch(`${API_BASE}/sora/profile/upload`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/profile/upload`, withAuth({
     method: 'POST',
     body: form,
   }))
@@ -1428,7 +1546,7 @@ export async function uploadSoraImage(
   form.append('file', file)
   if (tokenId) form.append('tokenId', tokenId)
 
-  const r = await fetch(`${API_BASE}/sora/upload/image`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/upload/image`, withAuth({
     method: 'POST',
     body: form,
   }))
@@ -1457,7 +1575,7 @@ export async function updateSoraCharacter(payload: {
   display_name?: string | null
   profile_asset_pointer?: any
 }): Promise<any> {
-  const r = await fetch(`${API_BASE}/sora/characters/update`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/characters/update`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1485,7 +1603,7 @@ export async function suggestDraftPrompts(
   const qs = new URLSearchParams({ q: query })
   if (provider) qs.set('provider', provider)
   if (mode === 'semantic') qs.set('mode', 'semantic')
-  const r = await fetch(`${API_BASE}/drafts/suggest?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/drafts/suggest?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`suggest prompts failed: ${r.status}`)
   return r.json()
 }
@@ -1493,12 +1611,12 @@ export async function suggestDraftPrompts(
 export async function markDraftPromptUsed(prompt: string, provider = 'sora'): Promise<void> {
   const qs = new URLSearchParams({ prompt })
   if (provider) qs.set('provider', provider)
-  const r = await fetch(`${API_BASE}/drafts/mark-used?${qs.toString()}`, withAuth())
+  const r = await apiFetch(`${API_BASE}/drafts/mark-used?${qs.toString()}`, withAuth())
   if (!r.ok) throw new Error(`mark prompt used failed: ${r.status}`)
 }
 
 export async function generatePrompt(payload: PromptGeneratePayload): Promise<PromptGenerateResult> {
-  const r = await fetch(`${API_BASE}/prompt/generate`, withAuth({
+  const r = await apiFetch(`${API_BASE}/prompt/generate`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1523,25 +1641,25 @@ export async function listServerAssets(input?: { limit?: number; cursor?: string
   if (input?.limit) qs.set('limit', String(input.limit))
   if (input?.cursor) qs.set('cursor', input.cursor)
   const url = qs.toString() ? `${API_BASE}/assets?${qs.toString()}` : `${API_BASE}/assets`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`list assets failed: ${r.status}`)
   return r.json()
 }
 
 export async function createServerAsset(payload: { name: string; data: any }): Promise<ServerAssetDto> {
-  const r = await fetch(`${API_BASE}/assets`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
+  const r = await apiFetch(`${API_BASE}/assets`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
   if (!r.ok) throw new Error(`create asset failed: ${r.status}`)
   return r.json()
 }
 
 export async function renameServerAsset(id: string, name: string): Promise<ServerAssetDto> {
-  const r = await fetch(`${API_BASE}/assets/${id}`, withAuth({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }))
+  const r = await apiFetch(`${API_BASE}/assets/${id}`, withAuth({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }))
   if (!r.ok) throw new Error(`rename asset failed: ${r.status}`)
   return r.json()
 }
 
 export async function deleteServerAsset(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/assets/${id}`, withAuth({ method: 'DELETE' }))
+  const r = await apiFetch(`${API_BASE}/assets/${id}`, withAuth({ method: 'DELETE' }))
   if (!r.ok) throw new Error(`delete asset failed: ${r.status}`)
 }
 
@@ -1574,7 +1692,7 @@ export async function listPublicAssets(
   }
   const query = qs.toString()
   const url = query ? `${API_BASE}/assets/public?${query}` : `${API_BASE}/assets/public`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) throw new Error(`list public assets failed: ${r.status}`)
   return r.json()
 }
@@ -1628,7 +1746,7 @@ export type TaskProgressSnapshotDto = {
 }
 
 export async function runTask(profileId: string, request: TaskRequestDto): Promise<TaskResultDto> {
-  const r = await fetch(`${API_BASE}/tasks`, withAuth({
+  const r = await apiFetch(`${API_BASE}/tasks`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ profileId, request }),
@@ -1638,7 +1756,7 @@ export async function runTask(profileId: string, request: TaskRequestDto): Promi
 }
 
 export async function runTaskByVendor(vendor: string, request: TaskRequestDto): Promise<TaskResultDto> {
-  const r = await fetch(`${API_BASE}/tasks`, withAuth({
+  const r = await apiFetch(`${API_BASE}/tasks`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ vendor, request }),
@@ -1665,7 +1783,7 @@ export async function listPendingTasks(vendor?: string): Promise<TaskProgressSna
   const url = qs.toString()
     ? `${API_BASE}/tasks/pending?${qs.toString()}`
     : `${API_BASE}/tasks/pending`
-  const r = await fetch(url, withAuth())
+  const r = await apiFetch(url, withAuth())
   if (!r.ok) {
     throw new Error(`list pending tasks failed: ${r.status}`)
   }
@@ -1682,7 +1800,7 @@ export async function listPendingTasks(vendor?: string): Promise<TaskProgressSna
 }
 
 export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto> {
-  const r = await fetch(`${API_BASE}/tasks/veo/result`, withAuth({
+  const r = await apiFetch(`${API_BASE}/tasks/veo/result`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ taskId }),
@@ -1704,7 +1822,7 @@ export async function fetchSora2ApiTaskResult(
   taskId: string,
   prompt?: string | null,
 ): Promise<TaskResultDto> {
-  const r = await fetch(`${API_BASE}/tasks/sora2api/result`, withAuth({
+  const r = await apiFetch(`${API_BASE}/tasks/sora2api/result`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(
@@ -1727,7 +1845,7 @@ export async function fetchSora2ApiTaskResult(
 }
 
 export async function unwatermarkSoraVideo(url: string): Promise<{ downloadUrl: string; raw: any }> {
-  const r = await fetch(`${API_BASE}/sora/video/unwatermark`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/video/unwatermark`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -1754,7 +1872,7 @@ export async function uploadSora2ApiCharacter(input: {
   shutProgress?: boolean
   vendor?: 'sora2api' | 'grsai'
 }) {
-  const r = await fetch(`${API_BASE}/sora/sora2api/characters/upload`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/sora2api/characters/upload`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -1778,7 +1896,7 @@ export async function createSora2ApiCharacterFromPid(input: {
   webHook?: string
   shutProgress?: boolean
 }) {
-  const r = await fetch(`${API_BASE}/sora/sora2api/characters/create`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/sora2api/characters/create`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -1797,7 +1915,7 @@ export async function createSora2ApiCharacterFromPid(input: {
 }
 
 export async function fetchSora2ApiCharacterResult(taskId: string) {
-  const r = await fetch(`${API_BASE}/sora/sora2api/characters/result`, withAuth({
+  const r = await apiFetch(`${API_BASE}/sora/sora2api/characters/result`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ taskId }),

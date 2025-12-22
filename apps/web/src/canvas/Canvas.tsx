@@ -321,6 +321,35 @@ function CanvasInner(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    ;(window as any).__tcFocusNode = (nodeId: string) => {
+      try {
+        if (!nodeId) return
+        // ensure node is visible
+        useUIStore.getState().exitAllFocus()
+
+        useRFStore.setState((s) => ({
+          nodes: (s.nodes || []).map((n) => ({ ...n, selected: n.id === nodeId })),
+        }))
+
+        const node = useRFStore.getState().nodes.find((n) => n.id === nodeId)
+        if (!node) return
+        const x = (node.position?.x ?? 0) + 120
+        const y = (node.position?.y ?? 0) + 70
+        rf.setCenter?.(x, y, { zoom: Math.max((rf.getViewport?.().zoom ?? 1), 0.8), duration: 250 })
+      } catch {
+        // ignore
+      }
+    }
+    return () => {
+      try {
+        if ((window as any).__tcFocusNode) delete (window as any).__tcFocusNode
+      } catch {
+        // ignore
+      }
+    }
+  }, [rf])
+
   const onInit = useCallback(() => {
     rf.fitView?.({ padding: 0.2 })
     // 默认缩小 4 倍（更大全局视野），受 min/maxZoom 限制
@@ -1456,7 +1485,7 @@ function CanvasInner(): JSX.Element {
                 const { notifyAssetRefresh } = await import('../ui/assetEvents')
                 await createServerAsset({ name, data })
                 notifyAssetRefresh()
-              }}>创建资产</Button>
+              }}>生成工作流</Button>
               {!selectionPartialOverlaps && (
                 <Button size="xs" variant="subtle" onClick={()=>{
                   // 直接打组为父节点

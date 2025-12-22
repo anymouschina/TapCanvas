@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+
   if (command === 'build' && mode !== 'production') {
     throw new Error(
       `[tapcanvas] Dev build is disabled. Use \`vite build --mode production\` (current mode: ${mode}).`,
@@ -10,7 +12,6 @@ export default defineConfig(({ command, mode }) => {
   }
 
   if (command === 'build') {
-    const env = loadEnv(mode, process.cwd(), 'VITE_');
     const apiBase = (env.VITE_API_BASE || '').trim();
 
     if (!apiBase) {
@@ -26,6 +27,23 @@ export default defineConfig(({ command, mode }) => {
       );
     }
   }
+
+  const langGraphExplicit = (env.VITE_LANGGRAPH_API_URL || env.VITE_LANGGRAPH_API_BASE || '').trim();
+  const langGraphProxyTarget = (() => {
+    // Repo defaults:
+    // - docker compose langgraph profile exposes `http://localhost:8123`
+    // - `./scripts/dev.sh local --langgraph` sets VITE_LANGGRAPH_API_URL (usually `http://localhost:8123`)
+    if (!langGraphExplicit) return 'http://localhost:8123';
+    try {
+      const u = new URL(langGraphExplicit);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+      if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return null;
+      return u.origin;
+    } catch {
+      // relative url: don't proxy
+    }
+    return null;
+  })();
 
   return {
     plugins: [react()],
@@ -43,6 +61,20 @@ export default defineConfig(({ command, mode }) => {
             });
           },
         },
+        ...(langGraphProxyTarget
+          ? {
+              '/langgraph': {
+                target: langGraphProxyTarget,
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/langgraph/, ''),
+                configure: (proxy) => {
+                  proxy.on('proxyReq', (proxyReq) => {
+                    proxyReq.removeHeader('accept-encoding');
+                  });
+                },
+              },
+            }
+          : {}),
       },
     },
     build: {

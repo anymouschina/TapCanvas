@@ -103,6 +103,86 @@ function parseTapNodeRefsFromText(raw: string) {
   return { nodeIds: ids, cleanedText }
 }
 
+const isRemoteUrl = (value?: string | null) => {
+  if (!value) return false
+  const trimmed = value.trim()
+  return /^https?:\/\//i.test(trimmed)
+}
+
+const buildMessageContentWithNodeImages = (
+  input: string,
+  nodesById: Map<string, any>,
+): Message['content'] => {
+  const text = typeof input === 'string' ? input : String(input ?? '')
+  const parsed = parseTapNodeRefsFromText(text)
+  if (!parsed.nodeIds.length || !nodesById.size) return text
+
+  const urls: string[] = []
+  for (const id of parsed.nodeIds) {
+    const node = nodesById.get(String(id))
+    if (!node) continue
+    const media = pickPrimaryMediaFromNode(node)
+    const url = typeof media?.imageUrl === 'string' ? media.imageUrl.trim() : ''
+    if (!url || !isRemoteUrl(url) || urls.includes(url)) continue
+    urls.push(url)
+    if (urls.length >= 2) break
+  }
+
+  if (!urls.length) return text
+
+  const parts = [{ type: 'text', text }]
+  urls.forEach((url) => {
+    parts.push({ type: 'image_url', image_url: { url } })
+  })
+  return parts as Message['content']
+}
+
+const sanitizeUrlValue = (value: any) => {
+  if (typeof value !== 'string') return value
+  return isRemoteUrl(value) ? value.trim() : undefined
+}
+
+const sanitizeUrlArray = (value: any) => {
+  if (!Array.isArray(value)) return value
+  const hasUrlObjects = value.some((item) => item && typeof item === 'object' && 'url' in item)
+  if (!hasUrlObjects) return value
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const url = sanitizeUrlValue((item as any).url)
+      if (!url) return null
+      return { ...item, url }
+    })
+    .filter(Boolean)
+}
+
+const sanitizeNodeDataForSmallT = (data: any) => {
+  if (!data || typeof data !== 'object') return data
+  const next: any = { ...data }
+  if ('reverseImageData' in next) delete next.reverseImageData
+  for (const key of Object.keys(next)) {
+    const value = next[key]
+    if (Array.isArray(value)) {
+      const sanitized = sanitizeUrlArray(value)
+      if (sanitized !== value) next[key] = sanitized
+      continue
+    }
+    if (typeof value === 'string' && /url/i.test(key)) {
+      const sanitized = sanitizeUrlValue(value)
+      if (!sanitized) delete next[key]
+      else if (sanitized !== value) next[key] = sanitized
+    }
+  }
+  return next
+}
+
+const sanitizeNodesForSmallT = (nodes: any[]) =>
+  (nodes || []).map((node) => {
+    const data = sanitizeNodeDataForSmallT(node?.data)
+    if (data === node?.data) return node
+    return { ...node, data }
+  })
+
 type ToolCallPayload = {
   id?: string
   name?: string
@@ -1433,6 +1513,8 @@ function LangGraphChatOverlayInner({
   edges,
   onReset,
 }: LangGraphChatOverlayInnerProps) {
+  const STALLED_STREAM_MESSAGE =
+    'LangGraph 流连接长时间无输出（可能模型调用较慢或网络抖动）。不会中断运行，可稍等或点“重试”重新连接。'
   const { colorScheme } = useMantineColorScheme()
   const isLight = colorScheme === 'light'
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<ProcessedEvent[]>([])
@@ -1680,6 +1762,8 @@ function LangGraphChatOverlayInner({
     },
     onUpdateEvent: (event: any) => {
       lastStreamActivityAtRef.current = Date.now()
+      // Clear any prior "stalled stream" warning once we receive live events again.
+      setError((prev) => (prev === STALLED_STREAM_MESSAGE ? null : prev))
       let processedEvent: ProcessedEvent | null = null
       if (event?.generate_query) {
         processedEvent = {
@@ -1716,6 +1800,8 @@ function LangGraphChatOverlayInner({
   useEffect(() => {
     // Treat any message delta as stream activity (some server versions may not emit update events reliably).
     lastStreamActivityAtRef.current = Date.now()
+    // Clear "stalled stream" warning if messages are flowing again.
+    setError((prev) => (prev === STALLED_STREAM_MESSAGE ? null : prev))
   }, [thread.messages?.length])
 
   useEffect(() => {
@@ -1743,43 +1829,7 @@ function LangGraphChatOverlayInner({
     return () => window.clearTimeout(t)
   }, [thread.isLoading, thread.messages, thread, threadId])
 
-  useEffect(() => {
-    if (viewOnly) return
-    if (!projectId) return
-    if (!thread.isLoading) return
-
-    let cancelled = false
-    const intervalMs = 2500
-    const maxIdleMs = 20000
-
-    const t = window.setInterval(() => {
-      if (cancelled) return
-      if (!thread.isLoading) return
-      const idle = Date.now() - lastStreamActivityAtRef.current
-      if (idle < maxIdleMs) return
-
-      // Stream looks stalled; stop it and try to pull the latest snapshot so UI can recover.
-      void thread.stop()
-      setError('LangGraph 流连接长时间无响应，已停止。可点“重试”。')
-      void (async () => {
-        try {
-          const snap = await getLangGraphProjectSnapshot(projectId)
-          const parsed = snap?.messagesJson ? JSON.parse(snap.messagesJson) : null
-          const msgs = Array.isArray(parsed?.messages) ? (parsed.messages as Message[]) : []
-          if (msgs.length) setFrozenMessages(msgs)
-          const summary = parsed?.conversation_summary
-          conversationSummaryRef.current = typeof summary === 'string' ? summary : conversationSummaryRef.current
-        } catch {
-          // ignore
-        }
-      })()
-    }, intervalMs)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(t)
-    }
-  }, [projectId, thread, thread.isLoading, viewOnly])
+  // Intentionally no "idle timeout" watchdog: long-running models/tools may go silent for minutes.
 
   useEffect(() => {
     return () => {
@@ -1841,7 +1891,8 @@ function LangGraphChatOverlayInner({
             return
           }
 
-          const canvas_context = buildCanvasContext(nodes, edges)
+          const sanitizedNodes = sanitizeNodesForSmallT(nodes)
+          const canvas_context = buildCanvasContext(sanitizedNodes, edges)
           const retryValues = {
             ...latest,
             canvas_context,
@@ -2171,12 +2222,20 @@ function LangGraphChatOverlayInner({
 
       void (async () => {
         try {
-          const canvas_context = buildCanvasContext(nodes, edges)
+          const sanitizedNodes = sanitizeNodesForSmallT(nodes)
+          const canvas_context = buildCanvasContext(sanitizedNodes, edges)
           const focusNodeIds = parseTapNodeRefsFromText(renderContentText(next.message.content)).nodeIds
           const focusContext = (() => {
             if (!focusNodeIds.length) return undefined
             const set = new Set(focusNodeIds.map(String))
-            const focusNodes = (nodes || []).filter((n: any) => n && set.has(String(n.id)))
+            const focusNodes = (sanitizedNodes || [])
+              .filter((n: any) => n && set.has(String(n.id)))
+              .map((node: any) => {
+                const data = node?.data || undefined
+                if (!data) return node
+                const { reverseImageData, ...rest } = data
+                return { ...node, data: rest }
+              })
             const focusEdges = (edges || []).filter((e: any) => e && (set.has(String(e.source)) || set.has(String(e.target))))
             return { nodeIds: focusNodeIds, nodes: focusNodes, edges: focusEdges }
           })()
@@ -2247,7 +2306,7 @@ function LangGraphChatOverlayInner({
           if (thread.isLoading) {
             const msg: Message = {
               type: 'human',
-              content: input,
+              content: buildMessageContentWithNodeImages(input, nodesById),
               id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
             }
             setQueuedInputs((prev) => [...prev, { message: msg, effort }])
@@ -2282,7 +2341,7 @@ function LangGraphChatOverlayInner({
 	        ...baseForSubmit,
 	        {
 	          type: 'human',
-	          content: input,
+	          content: buildMessageContentWithNodeImages(input, nodesById),
 	          id: Date.now().toString(),
 	        },
 	      ]
@@ -2292,12 +2351,20 @@ function LangGraphChatOverlayInner({
         toolExecutionArmedRef.current = true
 	      void (async () => {
 	        try {
-	          const canvas_context = buildCanvasContext(nodes, edges)
+	          const sanitizedNodes = sanitizeNodesForSmallT(nodes)
+	          const canvas_context = buildCanvasContext(sanitizedNodes, edges)
             const focusNodeIds = parseTapNodeRefsFromText(input).nodeIds
             const focusContext = (() => {
               if (!focusNodeIds.length) return undefined
               const set = new Set(focusNodeIds.map(String))
-              const focusNodes = (nodes || []).filter((n: any) => n && set.has(String(n.id)))
+              const focusNodes = (sanitizedNodes || [])
+                .filter((n: any) => n && set.has(String(n.id)))
+                .map((node: any) => {
+                  const data = node?.data || undefined
+                  if (!data) return node
+                  const { reverseImageData, ...rest } = data
+                  return { ...node, data: rest }
+                })
               const focusEdges = (edges || []).filter((e: any) => e && (set.has(String(e.source)) || set.has(String(e.target))))
               return { nodeIds: focusNodeIds, nodes: focusNodes, edges: focusEdges }
             })()
@@ -2340,7 +2407,7 @@ function LangGraphChatOverlayInner({
 	        }
 	      })()
 	    },
-	    [blocked, edges, ensureLangGraphReady, frozenMessages, interactionMode, liveMessages, nodes, projectId, thread, threadId, viewOnly],
+	    [blocked, edges, ensureLangGraphReady, frozenMessages, interactionMode, liveMessages, nodes, nodesById, projectId, thread, threadId, viewOnly],
 	  )
 
   useEffect(() => {
@@ -2458,7 +2525,8 @@ function LangGraphChatOverlayInner({
             setError('LangGraph 服务未就绪（可能冷启动）。请稍后再试。')
             return
           }
-          const canvas_context = buildCanvasContext(nodes, edges)
+          const sanitizedNodes = sanitizeNodesForSmallT(nodes)
+          const canvas_context = buildCanvasContext(sanitizedNodes, edges)
           const lastMsg = prev.messages[prev.messages.length - 1]
           lastSubmittedHumanIdRef.current = lastMsg?.type === 'human' ? (lastMsg?.id ? String(lastMsg.id) : null) : null
           toolExecutionArmedRef.current = true
@@ -2797,8 +2865,23 @@ export function LangGraphChatOverlay() {
   const apiUrl = useMemo(() => {
     const env = (import.meta as any).env || {}
     const explicit = env?.VITE_LANGGRAPH_API_URL || env?.VITE_LANGGRAPH_API_BASE
-    if (explicit) return String(explicit)
-    return env?.DEV ? 'http://localhost:2024' : 'https://ai.beqlee.icu'
+    const origin =
+      typeof window !== 'undefined' && window.location && typeof window.location.origin === 'string'
+        ? window.location.origin
+        : ''
+    if (explicit) {
+      const value = String(explicit).trim()
+      if (env?.DEV) {
+        try {
+          const u = new URL(value)
+          if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return origin ? `${origin}/langgraph` : '/langgraph'
+        } catch {
+          // relative url: keep as-is
+        }
+      }
+      return value
+    }
+    return env?.DEV ? (origin ? `${origin}/langgraph` : '/langgraph') : 'https://ai.beqlee.icu'
   }, [])
 
   if (!token) {

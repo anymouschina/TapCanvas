@@ -1,9 +1,13 @@
 import { DateTime, Str } from "chanfana";
 import type { Context } from "hono";
 import { z } from "zod";
+import type { DurableObjectNamespace, Queue } from "@cloudflare/workers-types";
 
 export type WorkerEnv = Env & {
 	DB: D1Database;
+	// Workflow engine bindings (Cloudflare)
+	EXECUTION_DO?: DurableObjectNamespace;
+	WORKFLOW_NODE_QUEUE?: Queue;
 	JWT_SECRET: string;
 	GITHUB_CLIENT_ID?: string;
 	GITHUB_CLIENT_SECRET?: string;

@@ -13,11 +13,15 @@ import { draftRouter } from "./modules/draft/draft.routes";
 import { assetRouter } from "./modules/asset/asset.routes";
 import { taskRouter } from "./modules/task/task.routes";
 import { statsRouter } from "./modules/stats/stats.routes";
+import { executionRouter } from "./modules/execution/execution.routes";
 import { TaskCreate } from "./endpoints/taskCreate";
 import { TaskDelete } from "./endpoints/taskDelete";
 import { TaskFetch } from "./endpoints/taskFetch";
 import { TaskList } from "./endpoints/taskList";
 import type { AppEnv } from "./types";
+import type { MessageBatch } from "@cloudflare/workers-types";
+import { handleWorkflowNodeJob, type WorkflowNodeJob } from "./modules/execution/execution.queue";
+import { ExecutionDO } from "./modules/execution/execution.do";
 
 // Start a Hono app
 const app = new Hono<AppEnv>();
@@ -78,4 +82,22 @@ app.route("/stats", statsRouter);
 // Unified task routes (veo / sora2api for now)
 app.route("/tasks", taskRouter);
 
-export default app;
+// Workflow execution routes (n8n-like)
+app.route("/executions", executionRouter);
+
+export { ExecutionDO };
+
+export default {
+	fetch: app.fetch,
+	queue: async (batch: MessageBatch<WorkflowNodeJob>, env: any) => {
+		for (const msg of batch.messages) {
+			try {
+				await handleWorkflowNodeJob(env, msg.body as any);
+				msg.ack();
+			} catch (err) {
+				console.warn("[workflow-queue] job failed", err);
+				msg.retry();
+			}
+		}
+	},
+};

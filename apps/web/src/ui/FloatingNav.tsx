@@ -1,10 +1,11 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar } from '@tabler/icons-react'
-import WriteImage from '../../public/writer.png'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar, IconTerminal2 } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
+
+const WriteImage = '/writer.png'
 
 function ImmersiveCreateIcon({ size = 22 }: { size?: number }) {
   const stroke = 'rgba(245,247,255,0.95)'
@@ -166,6 +167,7 @@ export default function FloatingNav(): JSX.Element {
           <Item label={$('工作流')} icon={<IconTopologyStar3 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
           <Item label={$('我的资产')} icon={<IconListDetails size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
           <Item label={$('TapShow')} icon={<IconMovie size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }} />
+          <Item label={$('运行记录')} icon={<IconTerminal2 size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('runs') }} />
           {isAdmin && (
             <Tooltip label={$('看板（仅管理员）')} position="right" withArrow>
               <ActionIcon
