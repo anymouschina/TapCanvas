@@ -32,6 +32,9 @@ import { getHandleTypeLabel } from './utils/handleLabels'
 import { isImageEditModel } from '../config/models'
 import { subscribeTaskProgress, type TaskProgressEventMessage } from '../api/taskProgress'
 import { useAuth } from '../auth/store'
+import { uploadSoraImage } from '../api/server'
+import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
+import { CANVAS_CONFIG } from './utils/constants'
 
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
 const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | null) => {
@@ -111,6 +114,128 @@ function CanvasInner(): JSX.Element {
   const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const viewOnlyFormattedOnceRef = useRef(false)
   const soraSyncingRef = useRef<Set<string>>(new Set())
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const lastPointerScreenRef = useRef<{ x: number; y: number } | null>(null)
+  const imageUploadInputRef = useRef<HTMLInputElement | null>(null)
+  const pendingImageUploadScreenRef = useRef<{ x: number; y: number } | null>(null)
+
+  const isImageFile = (file: File) => Boolean(file?.type?.startsWith('image/'))
+
+  const deriveLabelFromFileName = (name: string): string => {
+    const trimmed = (name || '').trim()
+    if (!trimmed) return 'Image'
+    const base = trimmed.replace(/\.[a-z0-9]+$/i, '').trim()
+    return base || 'Image'
+  }
+
+  const getFallbackScreenPoint = useCallback((): { x: number; y: number } => {
+    const rect = rootRef.current?.getBoundingClientRect()
+    if (rect) return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    return { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  }, [])
+
+  const importImagesFromFiles = useCallback(async (files: File[], basePosFlow?: { x: number; y: number }) => {
+    if (viewOnly) return
+    if (langGraphChatOpen) return
+    const images = (files || []).filter(isImageFile)
+    if (!images.length) return
+
+    const MAX_BYTES = 30 * 1024 * 1024
+    const tooLarge = images.filter(f => (typeof f.size === 'number' ? f.size : 0) > MAX_BYTES)
+    if (tooLarge.length) {
+      toast(`有 ${tooLarge.length} 张图片超过 30MB，已跳过`, 'error')
+    }
+    const valid = images.filter(f => (typeof f.size === 'number' ? f.size : 0) <= MAX_BYTES)
+    if (!valid.length) return
+
+    const base = basePosFlow ?? rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
+    const cols = 3
+    const spacingX = CANVAS_CONFIG.NODE_SPACING_X + 60
+    const spacingY = CANVAS_CONFIG.NODE_SPACING_Y + 40
+    const snapshotGraph = (nodes: any[], edges: any[]) => JSON.parse(JSON.stringify({ nodes, edges })) as { nodes: any[]; edges: any[] }
+
+    const prepared = valid.map((file, idx) => {
+      const id = genTaskNodeId()
+      const label = deriveLabelFromFileName(file.name)
+      const localUrl = URL.createObjectURL(file)
+      const position = {
+        x: base.x + (idx % cols) * spacingX,
+        y: base.y + Math.floor(idx / cols) * spacingY,
+      }
+      return { id, file, label, localUrl, position }
+    })
+
+    useRFStore.setState((s) => {
+      const newNodes = prepared.map(({ id, label, localUrl, position }) => ({
+        id,
+        type: 'taskNode' as const,
+        position,
+        data: {
+          label,
+          kind: 'image',
+          imageUrl: localUrl,
+        },
+        selected: false,
+      }))
+      return { nodes: [...s.nodes, ...newNodes], nextId: s.nextId + newNodes.length }
+    })
+
+    const { updateNodeData } = useRFStore.getState()
+    let successCount = 0
+    for (const { id, file, localUrl } of prepared) {
+      let localDataUrl: string | undefined
+      try {
+        localDataUrl = await blobToDataUrl(file)
+      } catch {
+        localDataUrl = undefined
+      }
+      if (localDataUrl) {
+        updateNodeData(id, { reverseImageData: localDataUrl })
+      }
+
+      try {
+        const result: any = await uploadSoraImage(undefined, file)
+        const remoteUrl =
+          result?.url ||
+          result?.asset_pointer ||
+          result?.azure_asset_pointer ||
+          localUrl
+        updateNodeData(id, {
+          imageUrl: remoteUrl,
+          soraFileId: result?.file_id,
+          assetPointer: result?.asset_pointer,
+          reverseImageData: localDataUrl,
+        })
+        successCount += 1
+        if (remoteUrl !== localUrl) {
+          URL.revokeObjectURL(localUrl)
+        }
+      } catch (error) {
+        console.error('Failed to upload image:', error)
+        toast('上传图片失败，请稍后再试', 'error')
+      }
+    }
+
+    if (successCount > 0 && prepared.length > 1) {
+      useRFStore.setState((s) => {
+        const ids = new Set(prepared.map((p) => p.id))
+        const ordered = prepared.map((p, idx) => ({
+          id: p.id,
+          position: {
+            x: base.x + (idx % cols) * spacingX,
+            y: base.y + Math.floor(idx / cols) * spacingY,
+          },
+        }))
+        const posById = new Map(ordered.map((o) => [o.id, o.position] as const))
+        const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
+        return {
+          nodes: s.nodes.map((n) => (ids.has(n.id) ? { ...n, position: posById.get(n.id)! } : n)),
+          historyPast: past,
+          historyFuture: [],
+        }
+      })
+    }
+  }, [getFallbackScreenPoint, langGraphChatOpen, rf, viewOnly])
 
   const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
     if (!event || !event.nodeId) return
@@ -208,7 +333,8 @@ function CanvasInner(): JSX.Element {
 
   const onDragOver = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
-    evt.dataTransfer.dropEffect = 'move'
+    const hasFiles = Array.from(evt.dataTransfer.types || []).includes('Files')
+    evt.dataTransfer.dropEffect = hasFiles ? 'copy' : 'move'
   }, [])
 
   const onDrop = useCallback((evt: React.DragEvent) => {
@@ -217,6 +343,11 @@ function CanvasInner(): JSX.Element {
     const rfdata = evt.dataTransfer.getData('application/reactflow')
     const flowRef = evt.dataTransfer.getData('application/tapflow')
     const pos = rf.screenToFlowPosition({ x: evt.clientX, y: evt.clientY })
+    const imageFiles = Array.from(evt.dataTransfer.files || []).filter(isImageFile)
+    if (imageFiles.length) {
+      void importImagesFromFiles(imageFiles, pos)
+      return
+    }
     if (tplName) {
       applyTemplateAt(tplName, pos)
       return
@@ -246,7 +377,7 @@ function CanvasInner(): JSX.Element {
         return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
       })
     }
-  }, [rf])
+  }, [importImagesFromFiles, isImageFile, rf])
 
   const createsCycle = useCallback((proposed: { source?: string|null; target?: string|null }) => {
     const sId = proposed.source
@@ -1078,7 +1209,11 @@ function CanvasInner(): JSX.Element {
       data-connecting={connectingType || ''}
       data-connecting-active={connectingType ? 'true' : 'false'}
       data-dragging={dragging ? 'true' : 'false'}
-      onMouseMove={(e) => { if (connectingType) setMouse({ x: e.clientX, y: e.clientY }) }}
+      ref={rootRef}
+      onMouseMove={(e) => {
+        lastPointerScreenRef.current = { x: e.clientX, y: e.clientY }
+        if (connectingType) setMouse({ x: e.clientX, y: e.clientY })
+      }}
       onDrop={viewOnly ? undefined : onDrop}
       onDragOver={viewOnly ? undefined : onDragOver}
       onClick={viewOnly ? undefined : handleRootClick}
@@ -1119,7 +1254,49 @@ function CanvasInner(): JSX.Element {
         }
       }}
       tabIndex={0} // 使div可以接收键盘事件
+      onPaste={(e) => {
+        if (viewOnly || langGraphChatOpen) return
+        const isTextInputElement = (target: EventTarget | null) => {
+          if (!(target instanceof HTMLElement)) return false
+          const tagName = target.tagName
+          if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
+          if (target.getAttribute('contenteditable') === 'true') return true
+          if (target.closest('input') || target.closest('textarea')) return true
+          if (target.closest('[contenteditable="true"]')) return true
+          return false
+        }
+        if (isTextInputElement(e.target) || isTextInputElement(document.activeElement)) return
+        const filesFromClipboard: File[] = []
+        const items = Array.from(e.clipboardData?.items || [])
+        for (const item of items) {
+          if (item.kind !== 'file') continue
+          const f = item.getAsFile()
+          if (f && isImageFile(f)) filesFromClipboard.push(f)
+        }
+        if (!filesFromClipboard.length) return
+        e.preventDefault()
+        e.stopPropagation()
+        ;(window as any).__tcLastImagePasteAt = Date.now()
+        const pos = rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
+        void importImagesFromFiles(filesFromClipboard, pos)
+      }}
     >
+      <input
+        ref={imageUploadInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          const picked = Array.from(e.currentTarget.files || [])
+          e.currentTarget.value = ''
+          if (!picked.length) return
+          const screen = pendingImageUploadScreenRef.current
+          pendingImageUploadScreenRef.current = null
+          const pos = screen ? screenToFlow({ x: screen.x, y: screen.y }) : undefined
+          void importImagesFromFiles(picked, pos)
+        }}
+      />
       <ReactFlow
         nodes={focusFiltered.nodes}
         edges={viewEdges}
@@ -1301,6 +1478,16 @@ function CanvasInner(): JSX.Element {
             {menu.type === 'canvas' && (
               <>
                 <Button variant="subtle" onClick={() => { pasteFromClipboardAt(screenToFlow({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
+                <Button
+                  variant="subtle"
+                  onClick={() => {
+                    pendingImageUploadScreenRef.current = { x: menu.x, y: menu.y }
+                    imageUploadInputRef.current?.click()
+                    setMenu(null)
+                  }}
+                >
+                  上传图片（可多选）
+                </Button>
                 <Button variant="subtle" onClick={() => {
                   const input = document.createElement('input')
                   input.type = 'file'
