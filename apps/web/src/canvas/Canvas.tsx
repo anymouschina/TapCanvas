@@ -78,6 +78,9 @@ function CanvasInner(): JSX.Element {
   const enterGroupFocus = useUIStore(s => s.enterGroupFocus)
   const exitGroupFocus = useUIStore(s => s.exitGroupFocus)
   const exitAllFocus = useUIStore(s => s.exitAllFocus)
+  const setCanvasViewport = useUIStore(s => s.setCanvasViewport)
+  const restoreViewport = useUIStore(s => s.restoreViewport)
+  const setRestoreViewport = useUIStore(s => s.setRestoreViewport)
   const deleteNode = useRFStore(s => s.deleteNode)
   const deleteEdge = useRFStore(s => s.deleteEdge)
   const duplicateNode = useRFStore(s => s.duplicateNode)
@@ -115,6 +118,8 @@ function CanvasInner(): JSX.Element {
   const viewOnlyFormattedOnceRef = useRef(false)
   const soraSyncingRef = useRef<Set<string>>(new Set())
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const initialFitAppliedRef = useRef(false)
+  const restoreAppliedRef = useRef(false)
   const lastPointerScreenRef = useRef<{ x: number; y: number } | null>(null)
   const imageUploadInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImageUploadScreenRef = useRef<{ x: number; y: number } | null>(null)
@@ -350,15 +355,38 @@ function CanvasInner(): JSX.Element {
     }
   }, [rf])
 
-  const onInit = useCallback(() => {
-    rf.fitView?.({ padding: 0.2 })
-    // 默认缩小 4 倍（更大全局视野），受 min/maxZoom 限制
+  const applyDefaultZoom = useCallback(() => {
+    const afterFit = rf.getViewport?.().zoom ?? 1
+    const targetZoom = Math.max(Math.min(afterFit * DEFAULT_ZOOM_MULTIPLIER, MAX_ZOOM), MIN_ZOOM)
+    rf.zoomTo?.(targetZoom, { duration: 0 })
     requestAnimationFrame(() => {
-      const afterFit = rf.getViewport?.().zoom ?? 1
-      const targetZoom = Math.max(Math.min(afterFit * DEFAULT_ZOOM_MULTIPLIER, MAX_ZOOM), MIN_ZOOM)
-      rf.zoomTo?.(targetZoom, { duration: 0 })
+      const vp = rf.getViewport?.()
+      if (vp) setCanvasViewport(vp)
     })
-  }, [rf])
+  }, [rf, setCanvasViewport])
+
+  const onInit = useCallback(() => {
+    if (!nodes.length) {
+      requestAnimationFrame(() => {
+        applyDefaultZoom()
+      })
+      return
+    }
+    rf.fitView?.({ padding: 0.2 })
+    requestAnimationFrame(() => {
+      applyDefaultZoom()
+      initialFitAppliedRef.current = true
+    })
+  }, [applyDefaultZoom, nodes.length, rf])
+
+  useEffect(() => {
+    if (!restoreViewport) return
+    rf.setViewport?.(restoreViewport, { duration: 0 })
+    setCanvasViewport(restoreViewport)
+    setRestoreViewport(null)
+    restoreAppliedRef.current = true
+    initialFitAppliedRef.current = true
+  }, [restoreViewport, rf, setCanvasViewport, setRestoreViewport])
 
   const onDragOver = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
@@ -462,7 +490,7 @@ function CanvasInner(): JSX.Element {
   const NODE_SNAP_DISTANCE = 200
   const MIN_ZOOM = 0.02 // 允许比默认多缩小约 6 倍（默认 0.1）
   const MAX_ZOOM = 2 // 恢复更保守的放大上限
-  const DEFAULT_ZOOM_MULTIPLIER = 0.8 // 默认视图相对 fitView 再缩小 4 倍
+  const DEFAULT_ZOOM_MULTIPLIER = 0.5 // 默认视图相对 fitView 再缩小 4 倍
 
   const onConnectEnd = useCallback((_evt: any) => {
     const from = connectFromRef.current
@@ -686,7 +714,7 @@ function CanvasInner(): JSX.Element {
     setDragging(false)
   }, [])
 
-  // Note: auto-fit group size is disabled to avoid update loops in React Flow store; rely on NodeResizer + manual layout
+  // Note: group size auto-fits on node changes in the store to keep bounds synced with children.
 
   const handleNodesChange = useCallback((changes: any[]) => {
     const threshold = 6
@@ -1189,6 +1217,7 @@ function CanvasInner(): JSX.Element {
       return
     }
     if (viewOnlyFormattedOnceRef.current) return
+    if (restoreAppliedRef.current) return
     if (!nodes.length) return
     viewOnlyFormattedOnceRef.current = true
     useRFStore.getState().autoLayoutAllDagVertical()
@@ -1230,6 +1259,17 @@ function CanvasInner(): JSX.Element {
       rf.setCenter?.(centerX, centerY, { zoom: z, duration: 300 })
     })
   }, [langGraphChatOpen, rf, viewOnly])
+
+  useEffect(() => {
+    if (viewOnly) return
+    if (initialFitAppliedRef.current) return
+    if (!nodes.length) return
+    rf.fitView?.({ padding: 0.2 })
+    requestAnimationFrame(() => {
+      applyDefaultZoom()
+      initialFitAppliedRef.current = true
+    })
+  }, [applyDefaultZoom, nodes.length, rf, viewOnly])
 
 
   return (
@@ -1353,10 +1393,12 @@ function CanvasInner(): JSX.Element {
           }
         }}
 
-        onMove={(_evt, vp) => setViewport(vp)}
+        onMove={(_evt, vp) => {
+          setViewport(vp)
+          setCanvasViewport(vp)
+        }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        fitView
         onInit={onInit}
         selectionOnDrag={!viewOnly}
         // Edit mode: middle-button and right-button drag pan the canvas; left drag keeps selection box.
@@ -1384,14 +1426,14 @@ function CanvasInner(): JSX.Element {
         snapToGrid
         snapGrid={[16, 16]}
         defaultEdgeOptions={{
-          animated: true,
+          animated: false,
           type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-          style: { strokeWidth: 4.5 },
-          interactionWidth: 40,
+          style: { strokeWidth: 1.5 },
+          interactionWidth: 1,
           markerEnd: { type: MarkerType.ArrowClosed, color: edgeMarkerColor, width: 16, height: 16 },
         }}
         connectionLineType={ConnectionLineType.SmoothStep}
-        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 4.5 }}
+        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 1.5 }}
       >
         <MiniMap style={{ width: 160, height: 110 }} />
         <Controls position="bottom-left" />

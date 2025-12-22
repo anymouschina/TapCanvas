@@ -15,6 +15,9 @@ type TaskNodeHeaderProps = {
   iconBadgeShadow: string
   sleekChipBase: React.CSSProperties
   labelSingleLine?: boolean
+  showMeta?: boolean
+  showIcon?: boolean
+  showStatus?: boolean
   onLabelDraftChange: (value: string) => void
   onCommitLabel: () => void
   onCancelEdit: () => void
@@ -35,31 +38,62 @@ export function TaskNodeHeader({
   iconBadgeShadow,
   sleekChipBase,
   labelSingleLine,
+  showMeta = true,
+  showIcon = true,
+  showStatus = true,
   onLabelDraftChange,
   onCommitLabel,
   onCancelEdit,
   onStartEdit,
   labelInputRef,
 }: TaskNodeHeaderProps) {
+  if (!showMeta) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        {showIcon && (
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 14,
+              background: iconBadgeBackground,
+              boxShadow: iconBadgeShadow,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: '#fff',
+            }}
+            title={currentLabel}
+          >
+            <NodeIcon size={18} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 14,
-            background: iconBadgeBackground,
-            boxShadow: iconBadgeShadow,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            color: '#fff',
-          }}
-        >
-          <NodeIcon size={18} />
-        </div>
+        {showIcon && (
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 14,
+              background: iconBadgeBackground,
+              boxShadow: iconBadgeShadow,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: '#fff',
+            }}
+          >
+            <NodeIcon size={18} />
+          </div>
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           {editing ? (
             <TextInput
@@ -112,7 +146,7 @@ export function TaskNodeHeader({
           )}
         </div>
       </div>
-      {statusLabel?.trim() && (
+      {showStatus && statusLabel?.trim() && (
         <div
           style={{
             ...sleekChipBase,

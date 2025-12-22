@@ -65,7 +65,7 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   }
 }
 
-export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[] }; createdAt: string; updatedAt: string }
+export type FlowDto = { id: string; name: string; data: { nodes: Node[]; edges: Edge[]; viewport?: { x: number; y: number; zoom: number } | null }; createdAt: string; updatedAt: string }
 export type ProjectDto = { id: string; name: string; createdAt: string; updatedAt: string; isPublic?: boolean; owner?: string; ownerName?: string }
 export type ModelProviderDto = { id: string; name: string; vendor: string; baseUrl?: string | null; sharedBaseUrl?: boolean }
 export type ModelTokenDto = {
@@ -667,11 +667,11 @@ export async function getServerFlow(id: string): Promise<FlowDto> {
   return r.json()
 }
 
-export async function saveServerFlow(payload: { id?: string; name: string; nodes: Node[]; edges: Edge[] }): Promise<FlowDto> {
+export async function saveServerFlow(payload: { id?: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: { x: number; y: number; zoom: number } | null }): Promise<FlowDto> {
   const r = await apiFetch(`${API_BASE}/flows`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: payload.id, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } })
+    body: JSON.stringify({ id: payload.id, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges, viewport: payload.viewport ?? null } })
   }))
   if (!r.ok) throw new Error(`save flow failed: ${r.status}`)
   return r.json()
@@ -731,8 +731,8 @@ export async function listProjectFlows(projectId: string): Promise<FlowDto[]> {
   return r.json()
 }
 
-export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[] }): Promise<FlowDto> {
-  const r = await apiFetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges } }) }))
+export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: { x: number; y: number; zoom: number } | null }): Promise<FlowDto> {
+  const r = await apiFetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data: { nodes: payload.nodes, edges: payload.edges, viewport: payload.viewport ?? null } }) }))
   if (!r.ok) throw new Error(`save flow failed: ${r.status}`)
   return r.json()
 }

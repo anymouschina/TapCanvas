@@ -73,6 +73,10 @@ type UIState = {
   toggleEdgeRoute: () => void
   currentFlow: { id?: string|null; name: string; source: 'local'|'server' }
   setCurrentFlow: (patch: Partial<{ id?: string|null; name: string; source: 'local'|'server' }>) => void
+  canvasViewport: { x: number; y: number; zoom: number } | null
+  setCanvasViewport: (v: { x: number; y: number; zoom: number } | null) => void
+  restoreViewport: { x: number; y: number; zoom: number } | null
+  setRestoreViewport: (v: { x: number; y: number; zoom: number } | null) => void
   isDirty: boolean
   setDirty: (v: boolean) => void
   currentProject: { id?: string|null; name: string } | null
@@ -146,6 +150,10 @@ export const useUIStore = create<UIState>((set) => ({
   toggleEdgeRoute: () => set((s) => ({ edgeRoute: s.edgeRoute === 'smooth' ? 'orth' : 'smooth' })),
   currentFlow: { id: null, name: '未命名', source: 'local' },
   setCurrentFlow: (patch) => set((s) => ({ currentFlow: { ...s.currentFlow, ...(patch||{}) } })),
+  canvasViewport: null,
+  setCanvasViewport: (v) => set({ canvasViewport: v }),
+  restoreViewport: null,
+  setRestoreViewport: (v) => set({ restoreViewport: v }),
   isDirty: false,
   setDirty: (v) => set({ isDirty: v }),
   currentProject: null,

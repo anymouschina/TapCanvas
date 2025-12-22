@@ -25,8 +25,17 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
   const childIds = React.useMemo(() => new Set(nodes.filter(n => n.parentNode === id).map(n => n.id)), [nodes, id])
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: 'rgba(148,163,184,0.08)', border: selected ? '1.5px solid rgba(148,163,184,0.8)' : '1px solid rgba(148,163,184,0.35)', borderRadius: 12, boxShadow: '0 6px 18px rgba(0,0,0,0.25)', zIndex: 0 }}>
-      <NodeResizer isVisible={selected} minWidth={160} minHeight={90} handleStyle={{ width: 8, height: 8, borderRadius: 2, background: '#8b5cf6', border: '1px solid rgba(255,255,255,.2)' }} lineStyle={{ borderColor: 'rgba(148,163,184,0.35)' }} />
+    <div style={{
+      width: '100%',
+      height: '100%',
+      position: 'relative',
+      background: 'var(--canvas-group-bg)',
+      border: selected ? '1.5px solid var(--canvas-group-border-selected)' : '1px solid var(--canvas-group-border)',
+      borderRadius: 12,
+      boxShadow: '0 10px 24px rgba(0,0,0,0.25)',
+      zIndex: 0
+    }}>
+      <NodeResizer isVisible={selected} minWidth={160} minHeight={90} handleStyle={{ width: 8, height: 8, borderRadius: 2, background: 'var(--canvas-io-handle)', border: '1px solid rgba(255,255,255,.2)' }} lineStyle={{ borderColor: 'var(--canvas-group-border)' }} />
       {/* Toolbar pinned to top-left of the group (inside the node) */}
       <Paper withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: 8, top: -28, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
         <Group gap={6} style={{ flexWrap: 'nowrap' }}>

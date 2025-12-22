@@ -19,11 +19,12 @@ export function MosaicContent({
   onOpenModal,
   onSave,
 }: MosaicContentProps) {
+  const mediaSize = 300
   return (
     <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
       {imageResults.length ? (
         <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
-          <div style={{ position: 'relative', maxWidth: 300, maxHeight: 300, width: 'fit-content' }}>
+          <div style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
           <div
             style={{
               position: 'relative',
@@ -31,20 +32,17 @@ export function MosaicContent({
               overflow: 'hidden',
               boxShadow: '0 18px 36px rgba(0, 0, 0, 0.35)',
               background: 'rgba(0,0,0,0.12)',
-              display: 'inline-block',
-              maxWidth: 300,
-              maxHeight: 300,
+              width: '100%',
+              height: '100%',
             }}
           >
             <img
               src={imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''}
               alt="拼图结果"
               style={{
-                width: 'auto',
-                height: 'auto',
+                width: '100%',
+                height: '100%',
                 display: 'block',
-                maxWidth: 300,
-                maxHeight: 300,
                 objectFit: 'contain',
               }}
             />

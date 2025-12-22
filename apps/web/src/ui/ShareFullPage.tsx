@@ -131,7 +131,9 @@ export default function ShareFullPage(): JSX.Element {
     const data: any = f.data || {}
     const nodes = Array.isArray(data.nodes) ? data.nodes : []
     const edges = Array.isArray(data.edges) ? data.edges : []
+    const viewport = data?.viewport
     rfLoad(sanitizeReadonlyGraph({ nodes, edges }) as any)
+    useUIStore.getState().setRestoreViewport(viewport && typeof viewport.zoom === 'number' ? viewport : null)
     setCurrentProject({ id: projectId, name: project?.name || 'Shared Project' })
     setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
     openLangGraphChat()

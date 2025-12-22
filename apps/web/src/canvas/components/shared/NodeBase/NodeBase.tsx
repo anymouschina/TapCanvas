@@ -8,7 +8,7 @@ import { Handle, Position } from 'reactflow';
 import { NodeHeader } from './NodeHeader';
 import { NodeContent } from './NodeContent';
 import { NodeHandles } from './NodeHandles';
-import { getNodeBorderColor, getNodeDisplayText } from '../../../utils';
+import { getNodeDisplayText } from '../../../utils';
 import type { NodeBaseProps } from './NodeBase.types';
 
 /**
@@ -46,12 +46,14 @@ export const NodeBase: React.FC<NodeBaseProps> = ({
 
   // 节点样式
   const nodeStyle: React.CSSProperties = {
-    border: `2px solid ${getNodeBorderColor(selected, false, data.isGroup)}`,
-    borderRadius: '8px',
-    backgroundColor: '#ffffff',
+    border: selected
+      ? '1px solid var(--canvas-node-border-selected)'
+      : '1px solid var(--canvas-node-border)',
+    borderRadius: '10px',
+    backgroundColor: 'var(--canvas-node-bg)',
     boxShadow: selected
-      ? '0 4px 12px rgba(0, 0, 0, 0.15)'
-      : '0 2px 4px rgba(0, 0, 0, 0.1)',
+      ? '0 18px 38px rgba(0, 0, 0, 0.5)'
+      : 'var(--canvas-node-shadow)',
     transition: 'all 0.2s ease',
     cursor: dragging ? 'grabbing' : 'grab',
     minWidth: '200px',

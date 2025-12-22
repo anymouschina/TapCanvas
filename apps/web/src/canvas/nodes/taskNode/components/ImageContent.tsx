@@ -8,9 +8,15 @@ type ImageContentProps = {
   imageResults: ImageResult[]
   imagePrimaryIndex: number
   primaryImageUrl: string | null
+  imageExpanded: boolean
   fileRef: React.RefObject<HTMLInputElement | null>
   onUpload: (files: File[]) => Promise<void>
   connectToRight: (kind: string, label: string) => void
+  onSelectPrimary: (index: number, url: string) => void
+  showChrome: boolean
+  compact: boolean
+  showStateOverlay: boolean
+  stateLabel: string | null
   hovered: number | null
   setHovered: (value: number | null) => void
   quickActionBackgroundActive: string
@@ -35,9 +41,15 @@ export function ImageContent({
   imageResults,
   imagePrimaryIndex,
   primaryImageUrl,
+  imageExpanded,
   fileRef,
   onUpload,
   connectToRight,
+  onSelectPrimary,
+  showChrome,
+  compact,
+  showStateOverlay,
+  stateLabel,
   hovered,
   setHovered,
   quickActionBackgroundActive,
@@ -56,12 +68,14 @@ export function ImageContent({
   setImageExpanded,
   upstreamText,
 }: ImageContentProps) {
+  const mediaSize = 300
+  const [imageError, setImageError] = React.useState(false)
   const bindInputRef = React.useCallback((el: HTMLInputElement | null) => {
     ;(fileRef as any).current = el
   }, [fileRef])
 
   return (
-    <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
+    <div style={{ position: 'relative', marginTop: compact ? 0 : 6, padding: compact ? 0 : '0 6px' }}>
       {!hasPrimaryImage ? (
         <>
           <div
@@ -117,7 +131,7 @@ export function ImageContent({
         </>
       ) : (
         <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
-          <div style={{ position: 'relative', maxWidth: 300, maxHeight: 300, width: 'fit-content' }}>
+          <div style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
             {imageResults.length > 1 && (
               <>
                 <div
@@ -157,45 +171,55 @@ export function ImageContent({
               overflow: 'hidden',
               boxShadow: darkCardShadow,
               background: mediaFallbackSurface,
-              display: 'inline-block',
-              maxWidth: 300,
-              maxHeight: 300,
+              width: '100%',
+              height: '100%',
             }}
           >
             <img
               src={primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''}
               alt="主图"
               style={{
-                width: 'auto',
-                height: 'auto',
+                width: '100%',
+                height: '100%',
                 display: 'block',
-                maxWidth: 300,
-                maxHeight: 300,
                 objectFit: 'contain',
+                opacity: imageError ? 0 : 1,
               }}
+              onError={() => setImageError(true)}
             />
-            {soraFileId && (
+            {(showStateOverlay || imageError) && (
               <div
                 style={{
                   position: 'absolute',
-                  left: 8,
-                  top: 8,
-                  padding: '2px 6px',
-                  borderRadius: 4,
-                  background: 'rgba(34, 197, 94, 0.9)',
-                  color: themeWhite,
-                  fontSize: '10px',
-                  fontWeight: 500,
+                  inset: 0,
+                  borderRadius: 10,
+                  background:
+                    'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.18))',
+                  animation: 'soft-pulse 1.8s ease-in-out infinite',
+                  backdropFilter: 'blur(10px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  pointerEvents: 'none',
                 }}
-                title={`Sora File ID: ${soraFileId}`}
+                aria-hidden="true"
               >
-                ✓ Sora
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: mediaOverlayText,
+                    opacity: 0.8,
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  {imageError ? '资源不可用' : (stateLabel || '加载中')}
+                </div>
               </div>
             )}
             {imageResults.length > 1 && (
               <button
                 type="button"
-                onClick={() => setImageExpanded(true)}
+                onClick={() => setImageExpanded(!imageExpanded)}
                 style={{
                   position: 'absolute',
                   right: 12,
@@ -207,7 +231,7 @@ export function ImageContent({
                     'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(15,23,42,0.86))',
                   boxShadow:
                     '0 12px 32px rgba(0,0,0,0.65)',
-                  color: mediaOverlayText,
+                  color: themeWhite,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
@@ -222,6 +246,61 @@ export function ImageContent({
               </button>
             )}
           </div>
+          {imageResults.length > 1 && imageExpanded && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 'calc(100% + 12px)',
+                width: 240,
+                background: darkContentBackground,
+                borderRadius: 12,
+                boxShadow: '0 18px 36px rgba(0,0,0,0.45)',
+                padding: 10,
+                zIndex: 3,
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                    gap: 8,
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                  }}
+                >
+                {imageResults.map((img, idx) => {
+                  const isPrimary = idx === imagePrimaryIndex
+                  return (
+                    <button
+                      key={`${idx}-${img.url}`}
+                      type="button"
+                      onClick={() => {
+                        onSelectPrimary(idx, img.url)
+                        setImageExpanded(false)
+                      }}
+                      style={{
+                        padding: 0,
+                        border: isPrimary ? '1px solid rgba(125, 211, 252, 0.7)' : '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        background: mediaFallbackSurface,
+                        cursor: 'pointer',
+                      }}
+                      title={isPrimary ? '主图' : '设为主图'}
+                    >
+                      <img
+                        src={img.url}
+                        alt={`结果 ${idx + 1}`}
+                        style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }}
+                      />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
           <input
             ref={bindInputRef}
             type="file"
@@ -257,6 +336,12 @@ export function ImageContent({
           {upstreamText}
         </div>
       )}
+      <style>{`
+        @keyframes soft-pulse {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+      `}</style>
     </div>
   )
 }

@@ -106,6 +106,96 @@ function getNodeSizeForLayout(node: Node): TreeLayoutSize {
   return { w: measuredW ?? styleW ?? fallbackW, h: measuredH ?? styleH ?? fallbackH }
 }
 
+const GROUP_PADDING = 8
+const GROUP_MIN_WIDTH = 160
+const GROUP_MIN_HEIGHT = 90
+
+function autoFitGroupNodes(nodes: Node[]): Node[] {
+  const groupNodes = nodes.filter(n => n.type === 'groupNode')
+  if (!groupNodes.length) return nodes
+
+  const byId = new Map(nodes.map(n => [n.id, n] as const))
+  const updates = new Map<string, Node>()
+  let changed = false
+
+  const updateNode = (id: string, patch: Partial<Node>) => {
+    const base = updates.get(id) || byId.get(id)
+    if (!base) return
+    updates.set(id, { ...base, ...patch })
+    changed = true
+  }
+
+  for (const group of groupNodes) {
+    const children = nodes.filter(n => n.parentNode === group.id)
+    if (!children.length) continue
+
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+
+    for (const child of children) {
+      const { w, h } = getNodeSizeForLayout(child)
+      const cx = child.position?.x ?? 0
+      const cy = child.position?.y ?? 0
+      minX = Math.min(minX, cx)
+      minY = Math.min(minY, cy)
+      maxX = Math.max(maxX, cx + w)
+      maxY = Math.max(maxY, cy + h)
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) continue
+
+    const desiredPos = {
+      x: (group.position?.x ?? 0) + (minX - GROUP_PADDING),
+      y: (group.position?.y ?? 0) + (minY - GROUP_PADDING),
+    }
+    const desiredSize = {
+      w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
+      h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
+    }
+
+    const currentW =
+      typeof (group as any)?.width === 'number'
+        ? (group as any).width
+        : parseNumericStyle((group as any)?.style?.width) ?? desiredSize.w
+    const currentH =
+      typeof (group as any)?.height === 'number'
+        ? (group as any).height
+        : parseNumericStyle((group as any)?.style?.height) ?? desiredSize.h
+
+    const dx = desiredPos.x - (group.position?.x ?? 0)
+    const dy = desiredPos.y - (group.position?.y ?? 0)
+    const posChanged = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1
+    const sizeChanged = Math.abs(desiredSize.w - currentW) > 0.1 || Math.abs(desiredSize.h - currentH) > 0.1
+
+    if (!posChanged && !sizeChanged) continue
+
+    updateNode(group.id, {
+      position: { x: desiredPos.x, y: desiredPos.y },
+      style: {
+        ...(group.style || {}),
+        width: desiredSize.w,
+        height: desiredSize.h,
+      },
+    })
+
+    if (posChanged) {
+      for (const child of children) {
+        updateNode(child.id, {
+          position: {
+            x: (child.position?.x ?? 0) - dx,
+            y: (child.position?.y ?? 0) - dy,
+          },
+        })
+      }
+    }
+  }
+
+  if (!changed) return nodes
+  return nodes.map(n => updates.get(n.id) || n)
+}
+
 function computeTreeLayout(
   nodesInScope: Node[],
   edgesInScope: Edge[],
@@ -313,7 +403,7 @@ export const useRFStore = create<RFState>((set, get) => ({
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
-    const updated = applyNodeChanges(changes, s.nodes)
+    const updated = autoFitGroupNodes(applyNodeChanges(changes, s.nodes))
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),

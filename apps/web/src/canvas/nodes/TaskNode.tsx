@@ -61,7 +61,6 @@ import { CANVAS_CONFIG } from '../utils/constants'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 import { normalizeOrientation, type Orientation } from '../../utils/orientation'
 import { usePoseEditor } from './taskNode/PoseEditor'
-import { ImageResultModal } from './taskNode/ImageResultModal'
 import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
 import { TopToolbar } from './taskNode/components/TopToolbar'
 import { TaskNodeHeader } from './taskNode/components/TaskNodeHeader'
@@ -140,16 +139,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
   const accentPrimary = theme.colors.blue?.[isDarkUi ? 4 : 6] || '#4c6ef5'
   const accentSecondary = theme.colors.cyan?.[isDarkUi ? 4 : 5] || '#22d3ee'
-  const lightCards = ['rgba(255,255,255,0.96)', 'rgba(234,241,255,0.98)']
-  const darkCards = ['rgba(18,25,48,0.97)', 'rgba(7,11,26,0.95)']
-  const nodeShellBackground = isDarkUi
-    ? `linear-gradient(155deg, ${darkCards[0]}, ${darkCards[1]})`
-    : `linear-gradient(155deg, ${lightCards[0]}, ${lightCards[1]})`
-  const nodeShellBorder = 'none'
+  const nodeShellBackground = isDarkUi ? 'rgba(15,20,28,0.96)' : 'rgba(255,255,255,0.98)'
+  const nodeShellBorder = isDarkUi ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(15,23,42,0.08)'
   const nodeShellShadow = isDarkUi
-    ? '0 32px 60px rgba(0, 0, 0, 0.65)'
-    : '0 26px 55px rgba(15, 23, 42, 0.16)'
-  const nodeShellGlow = `0 0 50px ${rgba(accentPrimary, isDarkUi ? 0.28 : 0.35)}`
+    ? '0 18px 36px rgba(0, 0, 0, 0.5)'
+    : '0 16px 32px rgba(15, 23, 42, 0.12)'
+  const nodeShellGlow = '0 0 0 rgba(0, 0, 0, 0)'
   const nodeShellText = isDarkUi ? theme.white : (theme.colors.gray?.[9] || '#111321')
   const quickActionBackgroundActive = isDarkUi ? rgba(accentPrimary, 0.25) : rgba(accentPrimary, 0.12)
   const quickActionIconColor = rgba(nodeShellText, 0.55)
@@ -215,13 +210,11 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const galleryCardBackground = isDarkUi ? 'rgba(7,12,24,0.96)' : 'rgba(255,255,255,0.96)'
 
   const placeholderIconColor = nodeShellText
-  const iconBadgeBackground = isDarkUi
-    ? `linear-gradient(140deg, ${rgba(accentPrimary, 0.5)}, ${rgba(accentSecondary, 0.45)})`
-    : `linear-gradient(140deg, ${rgba(accentPrimary, 0.2)}, ${rgba(accentSecondary, 0.25)})`
-  const iconBadgeShadow = isDarkUi ? '0 14px 26px rgba(0,0,0,0.45)' : '0 16px 28px rgba(15,23,42,0.12)'
-  const darkContentBackground = isDarkUi ? 'rgba(5,8,16,0.92)' : 'rgba(244,247,255,0.94)'
-  const darkCardShadow = isDarkUi ? '0 18px 36px rgba(0, 0, 0, 0.55)' : '0 18px 36px rgba(15, 23, 42, 0.12)'
-  const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.4)' : 'rgba(227,235,255,0.8)'
+  const iconBadgeBackground = isDarkUi ? rgba(accentPrimary, 0.2) : rgba(accentPrimary, 0.12)
+  const iconBadgeShadow = isDarkUi ? '0 10px 20px rgba(0,0,0,0.35)' : '0 10px 20px rgba(15,23,42,0.1)'
+  const darkContentBackground = isDarkUi ? 'rgba(9,13,20,0.92)' : 'rgba(246,248,255,0.95)'
+  const darkCardShadow = isDarkUi ? '0 12px 24px rgba(0, 0, 0, 0.4)' : '0 12px 24px rgba(15, 23, 42, 0.1)'
+  const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.3)' : 'rgba(227,235,255,0.7)'
 
   const kind = data?.kind
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
@@ -2097,14 +2090,35 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     })
   }
 
+  const isImageNode = kind === 'image'
+  const hideImageMeta = isImageNode && !selected
+  const isImageExpired = Boolean((data as any)?.expired || (data as any)?.imageExpired)
+  const showImageStateOverlay = Boolean(isImageNode && (status === 'running' || status === 'queued' || isImageExpired))
+  const imageStateLabel = isImageExpired ? '已过期' : (status === 'running' || status === 'queued' ? '加载中' : null)
+
+  React.useEffect(() => {
+    if (hideImageMeta && imageExpanded) {
+      setImageExpanded(false)
+    }
+  }, [hideImageMeta, imageExpanded])
+
   const imageProps = {
     hasPrimaryImage,
     imageResults,
     imagePrimaryIndex,
     primaryImageUrl,
+    imageExpanded,
     fileRef,
     onUpload: handleImageUpload,
     connectToRight,
+    onSelectPrimary: (idx: number, url: string) => {
+      setImagePrimaryIndex(idx)
+      updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
+    },
+    showChrome: !hideImageMeta,
+    compact: hideImageMeta,
+    showStateOverlay: showImageStateOverlay,
+    stateLabel: imageStateLabel,
     hovered,
     setHovered,
     quickActionBackgroundActive,
@@ -2860,7 +2874,6 @@ const rewritePromptWithCharacters = React.useCallback(
   const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
   const subtitle = schema.label || defaultLabel
 
-  const isImageNode = kind === 'image'
   const visibleDefs = uniqueDefs
 
   const nodeWidth =
@@ -2868,18 +2881,23 @@ const rewritePromptWithCharacters = React.useCallback(
       ? Math.max(320, Math.min(720, Number((data as any)?.nodeWidth)))
       : (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard') ? 460 : 420
 
+  const shellBackground = 'transparent'
+  const shellBorder = 'none'
+  const shellShadowResolved = 'none'
+  const shellPadding = 0
+  const shellBackdrop = 'none'
+
   return (
     <div
       style={{
-        border: nodeShellBorder,
+        border: shellBorder,
         borderRadius: 22,
-        padding: '20px 22px 22px',
-        background: nodeShellBackground,
+        padding: shellPadding,
+        background: shellBackground,
         color: nodeShellText,
-        boxShadow: shellShadow,
-        backdropFilter: 'blur(18px)',
-        transition: 'box-shadow 180ms ease, transform 180ms ease',
-        transform: selected ? 'translateY(-2px)' : 'translateY(0)',
+        boxShadow: shellShadowResolved,
+        backdropFilter: shellBackdrop,
+        transition: 'box-shadow 180ms ease',
         position: 'relative',
         outline: shellOutline,
         boxSizing: 'border-box',
@@ -2887,28 +2905,33 @@ const rewritePromptWithCharacters = React.useCallback(
         maxWidth: 720,
       } as React.CSSProperties}
     >
-      <TaskNodeHeader
-        NodeIcon={NodeIcon}
-        editing={editing}
-        labelDraft={labelDraft}
-        currentLabel={currentLabel}
-        subtitle={subtitle}
-        statusLabel={statusLabel}
-        statusColor={color}
-        nodeShellText={nodeShellText}
-        iconBadgeBackground={iconBadgeBackground}
-        iconBadgeShadow={iconBadgeShadow}
-        sleekChipBase={sleekChipBase}
-        labelSingleLine={isImageNode}
-        onLabelDraftChange={setLabelDraft}
-        onCommitLabel={commitLabel}
-        onCancelEdit={() => {
-          setLabelDraft(currentLabel)
-          setEditing(false)
-        }}
-        onStartEdit={() => setEditing(true)}
-        labelInputRef={labelInputRef}
-      />
+      {!hideImageMeta && (
+        <TaskNodeHeader
+          NodeIcon={NodeIcon}
+          editing={editing}
+          labelDraft={labelDraft}
+          currentLabel={currentLabel}
+          subtitle={subtitle}
+          statusLabel={statusLabel}
+          statusColor={color}
+          nodeShellText={nodeShellText}
+          iconBadgeBackground={iconBadgeBackground}
+          iconBadgeShadow={iconBadgeShadow}
+          sleekChipBase={sleekChipBase}
+          labelSingleLine={isImageNode}
+        showMeta={false}
+        showIcon={false}
+        showStatus={false}
+          onLabelDraftChange={setLabelDraft}
+          onCommitLabel={commitLabel}
+          onCancelEdit={() => {
+            setLabelDraft(currentLabel)
+            setEditing(false)
+          }}
+          onStartEdit={() => setEditing(true)}
+          labelInputRef={labelInputRef}
+        />
+      )}
       <TopToolbar
         isVisible={!!selected}
         selectedCount={selectedCount}
@@ -3567,31 +3590,6 @@ const rewritePromptWithCharacters = React.useCallback(
       )}
 
       {hasImageResults && !isMosaicNode && poseEditorModal}
-
-      {hasImageResults && !isMosaicNode && imageResults.length > 1 && (
-        <ImageResultModal
-          opened={imageExpanded}
-          onClose={() => setImageExpanded(false)}
-          images={imageResults}
-          primaryIndex={imagePrimaryIndex}
-          onSelectPrimary={(idx, url) => {
-            setImagePrimaryIndex(idx)
-            updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
-            setImageExpanded(false)
-          }}
-          onPreview={(url) => {
-            if (!url) return
-            const openPreview = useUIStore.getState().openPreview
-            openPreview({
-              url,
-              kind: 'image',
-              name: data?.label || 'Image',
-            })
-          }}
-          galleryCardBackground={galleryCardBackground}
-          mediaFallbackSurface={mediaFallbackSurface}
-        />
-      )}
 
       {isVideoNode && videoExpanded && (
         <VideoResultModal

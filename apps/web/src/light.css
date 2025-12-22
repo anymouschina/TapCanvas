@@ -7,6 +7,35 @@
   --mantine-color-gray-6: #dbe2f4;
   --mantine-color-gray-7: #f2f5ff;
   --mantine-color-anchor: #2563eb;
+
+  --canvas-node-bg: #ffffff;
+  --canvas-node-border: rgba(15, 23, 42, 0.08);
+  --canvas-node-border-selected: rgba(59, 130, 246, 0.45);
+  --canvas-node-shadow: 0 16px 30px rgba(15, 23, 42, 0.12);
+  --canvas-node-text: #0f172a;
+  --canvas-node-subtext: #64748b;
+  --canvas-node-header-bg: rgba(248, 250, 255, 0.95);
+  --canvas-node-header-border: rgba(15, 23, 42, 0.06);
+  --canvas-node-chip-bg: rgba(15, 23, 42, 0.05);
+  --canvas-node-chip-text: #475569;
+  --canvas-node-action-bg: rgba(15, 23, 42, 0.04);
+  --canvas-node-action-border: rgba(15, 23, 42, 0.08);
+  --canvas-node-action-text: #0f172a;
+  --canvas-node-action-hover-bg: rgba(59, 130, 246, 0.08);
+  --canvas-node-action-primary-bg: #2563eb;
+  --canvas-node-action-primary-hover-bg: #1d4ed8;
+  --canvas-node-action-primary-text: #ffffff;
+  --canvas-node-action-muted-text: #64748b;
+
+  --canvas-io-bg: rgba(248, 250, 255, 0.95);
+  --canvas-io-border: rgba(148, 163, 184, 0.45);
+  --canvas-io-border-selected: rgba(59, 130, 246, 0.55);
+  --canvas-io-text: #475569;
+  --canvas-io-handle: #3b82f6;
+
+  --canvas-group-bg: rgba(148, 163, 184, 0.12);
+  --canvas-group-border: rgba(148, 163, 184, 0.4);
+  --canvas-group-border-selected: rgba(59, 130, 246, 0.55);
 }
 
 :root[data-mantine-color-scheme="light"] .mantine-AppShell-main {

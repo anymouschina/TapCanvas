@@ -80,9 +80,9 @@ export const NodeContent: React.FC<NodeContentProps> = ({
     padding: '4px 8px',
     fontSize: '12px',
     borderRadius: '4px',
-    border: '1px solid #e5e7eb',
-    backgroundColor: '#ffffff',
-    color: '#374151',
+    border: '1px solid var(--canvas-node-action-border)',
+    backgroundColor: 'var(--canvas-node-action-bg)',
+    color: 'var(--canvas-node-action-text)',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
     display: 'flex',
@@ -92,27 +92,27 @@ export const NodeContent: React.FC<NodeContentProps> = ({
 
   const buttonHoverStyle: React.CSSProperties = {
     ...buttonStyle,
-    backgroundColor: '#f9fafb',
-    borderColor: '#d1d5db',
+    backgroundColor: 'var(--canvas-node-action-hover-bg)',
+    borderColor: 'var(--canvas-node-action-border)',
   };
 
   const primaryButtonStyle: React.CSSProperties = {
     ...buttonStyle,
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
-    color: '#ffffff',
+    backgroundColor: 'var(--canvas-node-action-primary-bg)',
+    borderColor: 'var(--canvas-node-action-primary-bg)',
+    color: 'var(--canvas-node-action-primary-text)',
   };
 
   const primaryButtonHoverStyle: React.CSSProperties = {
     ...primaryButtonStyle,
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: 'var(--canvas-node-action-primary-hover-bg)',
+    borderColor: 'var(--canvas-node-action-primary-hover-bg)',
   };
 
   // 描述文本样式
   const descriptionStyle: React.CSSProperties = {
     fontSize: '12px',
-    color: '#6b7280',
+    color: 'var(--canvas-node-subtext)',
     lineHeight: '1.4',
     margin: 0,
     flex: 1,
@@ -158,10 +158,11 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                     <span
                       key={key}
                       style={{
-                        backgroundColor: '#f3f4f6',
+                        backgroundColor: 'var(--canvas-node-chip-bg)',
                         padding: '2px 6px',
                         borderRadius: '2px',
                         fontSize: '10px',
+                        color: 'var(--canvas-node-chip-text)',
                       }}
                       title={`${key}: ${value}`}
                     >
@@ -177,7 +178,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
             {isRunning && (
               <div style={{
                 fontSize: '11px',
-                color: '#3b82f6',
+                color: 'var(--canvas-node-action-primary-bg)',
                 marginTop: '4px',
                 display: 'flex',
                 alignItems: 'center',
@@ -187,7 +188,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  backgroundColor: '#3b82f6',
+                  backgroundColor: 'var(--canvas-node-action-primary-bg)',
                   animation: 'pulse 1.5s infinite',
                 }} />
                 Running...
@@ -198,7 +199,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
             {data.progress !== null && data.progress !== undefined && data.progress > 0 && (
               <div style={{
                 fontSize: '11px',
-                color: '#6b7280',
+                color: 'var(--canvas-node-action-muted-text)',
                 marginTop: '4px',
               }}>
                 Progress: {data.progress}%

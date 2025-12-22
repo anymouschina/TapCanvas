@@ -61,10 +61,10 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '8px 12px',
-    borderBottom: selected ? '1px solid #e5e7eb' : '1px solid #f3f4f6',
-    backgroundColor: isGroup ? '#f8fafc' : '#ffffff',
-    borderTopLeftRadius: '6px',
-    borderTopRightRadius: '6px',
+    borderBottom: `1px solid var(--canvas-node-header-border)`,
+    backgroundColor: 'var(--canvas-node-header-bg)',
+    borderTopLeftRadius: '10px',
+    borderTopRightRadius: '10px',
     minHeight: '32px',
   };
 
@@ -83,22 +83,22 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
     flex: 1,
     fontSize: '14px',
     fontWeight: '600',
-    color: '#111827',
+    color: 'var(--canvas-node-text)',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     cursor: editable ? 'text' : 'default',
-    border: isEditing ? '1px solid #3b82f6' : 'none',
+    border: isEditing ? '1px solid rgba(59, 130, 246, 0.6)' : 'none',
     padding: isEditing ? '2px 4px' : '0',
     borderRadius: isEditing ? '4px' : '0',
     outline: 'none',
-    backgroundColor: isEditing ? '#ffffff' : 'transparent',
+    backgroundColor: isEditing ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
   };
 
   // 副标题样式
   const subtitleStyle: React.CSSProperties = {
     fontSize: '12px',
-    color: '#6b7280',
+    color: 'var(--canvas-node-subtext)',
     marginLeft: '16px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',

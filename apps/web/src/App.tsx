@@ -558,15 +558,18 @@ function CanvasApp(): JSX.Element {
         if (list.length > 0) {
           const f = list[0]
           const data: any = f.data || {}
+          const viewport = data?.viewport
           useRFStore.setState({
             nodes: Array.isArray(data.nodes) ? data.nodes : [],
             edges: Array.isArray(data.edges) ? data.edges : [],
           })
+          useUIStore.getState().setRestoreViewport(viewport && typeof viewport.zoom === 'number' ? viewport : null)
           setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
           setDirty(false)
         } else {
           // empty project -> clear canvas
           useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
+          useUIStore.getState().setRestoreViewport(null)
           setCurrentFlow({ id: null, name: currentProject?.name || '未命名', source: 'server' })
           setDirty(false)
         }
@@ -599,11 +602,12 @@ function CanvasApp(): JSX.Element {
     const flowName = proj!.name || '未命名'
     const nodes = useRFStore.getState().nodes
     const edges = useRFStore.getState().edges
+    const viewport = useUIStore.getState().canvasViewport
     const nid = 'saving-' + Date.now()
     notifications.show({ id: nid, title: $('保存中'), message: $('正在保存当前项目…'), loading: true, autoClose: false, withCloseButton: false })
     setSaving(true)
     try {
-      const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges })
+      const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges, viewport })
       setCurrentFlow({ id: saved.id, name: flowName, source: 'server' })
       setDirty(false)
       notifications.update({ id: nid, title: $('已保存'), message: $t('项目「{{name}}」已保存', { name: proj!.name }), loading: false, autoClose: 1500, color: 'green' })
@@ -662,9 +666,10 @@ function CanvasApp(): JSX.Element {
     const flowName = proj!.name || '未命名'
     const nodes = useRFStore.getState().nodes
     const edges = useRFStore.getState().edges
+    const viewport = useUIStore.getState().canvasViewport
 
     try {
-      const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges })
+      const saved = await saveProjectFlow({ id: currentFlow.id || undefined, projectId: proj!.id!, name: flowName, nodes, edges, viewport })
       setCurrentFlow({ id: saved.id, name: flowName, source: 'server' })
       setDirty(false)
     } catch {

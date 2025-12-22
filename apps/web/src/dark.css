@@ -1,18 +1,47 @@
 :root[data-mantine-color-scheme="dark"] {
-  --mantine-color-body: #03060f;
-  --mantine-color-text: #f1f4ff;
-  --mantine-color-dimmed: #8c95c1;
-  --mantine-color-default: #0b1120;
-  --mantine-color-default-hover: #141c34;
-  --mantine-color-gray-6: #1c2440;
-  --mantine-color-gray-7: #0d1325;
-  --mantine-color-anchor: #8ac6ff;
+  --mantine-color-body: #0b0f14;
+  --mantine-color-text: #e5e7eb;
+  --mantine-color-dimmed: #9aa4b2;
+  --mantine-color-default: #0f141b;
+  --mantine-color-default-hover: #161c25;
+  --mantine-color-gray-6: #1f2633;
+  --mantine-color-gray-7: #141a24;
+  --mantine-color-anchor: #7dd3fc;
+
+  --canvas-node-bg: rgba(15, 20, 28, 0.96);
+  --canvas-node-border: rgba(255, 255, 255, 0.06);
+  --canvas-node-border-selected: rgba(148, 163, 184, 0.7);
+  --canvas-node-shadow: 0 16px 34px rgba(0, 0, 0, 0.45);
+  --canvas-node-text: #e5e7eb;
+  --canvas-node-subtext: #9aa4b2;
+  --canvas-node-header-bg: rgba(12, 16, 23, 0.92);
+  --canvas-node-header-border: rgba(255, 255, 255, 0.06);
+  --canvas-node-chip-bg: rgba(255, 255, 255, 0.05);
+  --canvas-node-chip-text: #cbd5e1;
+  --canvas-node-action-bg: rgba(255, 255, 255, 0.03);
+  --canvas-node-action-border: rgba(255, 255, 255, 0.08);
+  --canvas-node-action-text: #e5e7eb;
+  --canvas-node-action-hover-bg: rgba(255, 255, 255, 0.08);
+  --canvas-node-action-primary-bg: #2563eb;
+  --canvas-node-action-primary-hover-bg: #1d4ed8;
+  --canvas-node-action-primary-text: #ffffff;
+  --canvas-node-action-muted-text: #9aa4b2;
+
+  --canvas-io-bg: rgba(16, 22, 32, 0.92);
+  --canvas-io-border: rgba(148, 163, 184, 0.4);
+  --canvas-io-border-selected: rgba(148, 163, 184, 0.75);
+  --canvas-io-text: #cbd5e1;
+  --canvas-io-handle: #38bdf8;
+
+  --canvas-group-bg: rgba(148, 163, 184, 0.08);
+  --canvas-group-border: rgba(148, 163, 184, 0.35);
+  --canvas-group-border-selected: rgba(148, 163, 184, 0.75);
 }
 
 :root[data-mantine-color-scheme="dark"] .mantine-AppShell-main {
   background:
-    radial-gradient(circle at 20% 20%, rgba(59,130,246,0.12), transparent 50%),
-    radial-gradient(circle at 80% 0%, rgba(14,165,233,0.14), transparent 45%),
+    radial-gradient(circle at 10% 10%, rgba(255,255,255,0.02), transparent 45%),
+    radial-gradient(circle at 90% 0%, rgba(14,165,233,0.05), transparent 50%),
     var(--mantine-color-body) !important;
 }
 
