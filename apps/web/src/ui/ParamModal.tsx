@@ -1,13 +1,17 @@
 import React, { useEffect } from 'react'
-import { Modal, TextInput, Textarea, NumberInput, Select, Button, Group } from '@mantine/core'
+import { Modal, TextInput, Textarea, NumberInput, Select, Button, Group, ActionIcon, Tooltip } from '@mantine/core'
+import { IconSparkles } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { defaultsFor } from '../inspector/forms'
+import { prefillLangGraphChatWithRefs } from '../ai/langgraph-chat/submitEvent'
 
 export default function ParamModal(): JSX.Element {
   const nodeId = useUIStore(s => s.paramNodeId)
   const close = useUIStore(s => s.closeParam)
+  const viewOnly = useUIStore(s => s.viewOnly)
   const nodes = useRFStore(s => s.nodes)
+  const edges = useRFStore(s => s.edges)
   const update = useRFStore(s => s.updateNodeData)
   const runSelected = useRFStore(s => s.runSelected)
   const n = nodes.find(n => n.id === nodeId)
@@ -22,6 +26,14 @@ export default function ParamModal(): JSX.Element {
 
   const setField = (k: string, v: any) => setForm((f:any)=>({ ...f, [k]: v }))
   const saveRun = () => { if (!n) return; update(n.id, form); runSelected(); close() }
+
+  const sendToLittleT = () => {
+    if (!n || !nodeId) return
+    if (viewOnly) return
+
+    prefillLangGraphChatWithRefs({ nodeIds: [nodeId] })
+    close()
+  }
 
   return (
     <Modal opened={!!nodeId} onClose={close} title="参数" centered>
@@ -55,9 +67,18 @@ export default function ParamModal(): JSX.Element {
               <Textarea mt={8} label="字幕文本" autosize minRows={4} value={form.transcript||''} onChange={(e)=>setField('transcript', e.currentTarget.value)} />
             </>
           )}
-          <Group justify="flex-end" mt={12}>
-            <Button variant="subtle" onClick={close}>取消</Button>
-            <Button onClick={saveRun}>保存并执行</Button>
+          <Group justify="space-between" mt={12}>
+            <Group gap="xs">
+              <Tooltip label="发给小T" withArrow>
+                <ActionIcon variant="light" disabled={viewOnly} aria-label="发给小T" onClick={() => sendToLittleT()}>
+                  <IconSparkles size={18} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+            <Group gap="xs">
+              <Button variant="subtle" onClick={close}>取消</Button>
+              <Button onClick={saveRun}>保存并执行</Button>
+            </Group>
           </Group>
         </div>
       )}
