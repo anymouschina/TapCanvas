@@ -1209,6 +1209,7 @@ function CanvasInner(): JSX.Element {
       data-connecting={connectingType || ''}
       data-connecting-active={connectingType ? 'true' : 'false'}
       data-dragging={dragging ? 'true' : 'false'}
+      data-tour="canvas"
       ref={rootRef}
       onMouseMove={(e) => {
         lastPointerScreenRef.current = { x: e.clientX, y: e.clientY }

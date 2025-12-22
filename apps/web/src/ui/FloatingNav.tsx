@@ -119,7 +119,7 @@ export default function FloatingNav(): JSX.Element {
   )
 
   return (
-    <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 300 }} data-ux-floating>
+    <div style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 300 }} data-ux-floating data-tour="floating-nav">
       <Paper withBorder shadow="sm" radius="xl" className="glass" p={6} data-ux-floating>
         <Stack align="center" gap={6}>
           <ActionIcon
@@ -136,7 +136,8 @@ export default function FloatingNav(): JSX.Element {
                 setPanelAnchorY(r.top + r.height/2);
                 setActivePanel('add')
               }}
-              data-ux-floating>
+              data-ux-floating
+              data-tour="add-button">
               <IconPlus size={18} />
             </ActionIcon>
           <div style={{ height: 6 }} />
@@ -157,6 +158,7 @@ export default function FloatingNav(): JSX.Element {
                 setActivePanel(null)
                 openLangGraphChat()
               }}
+              data-tour="immersive-create"
             >
               <img src={WriteImage} style={{width:'36px',height:'36px'}} alt="" />
             </ActionIcon>
