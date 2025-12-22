@@ -1,7 +1,7 @@
 import React from 'react'
 import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image, Modal } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle } from '@tabler/icons-react'
+import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle, IconHelpCircle } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { useRFStore } from './canvas/store'
@@ -51,6 +51,7 @@ import StatsFullPage from './ui/StatsFullPage'
 import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
+import { FeatureTour, type FeatureTourStep } from './ui/tour/FeatureTour'
 
 function CanvasApp(): JSX.Element {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
@@ -63,6 +64,7 @@ function CanvasApp(): JSX.Element {
   const clearCharacterCreatorRequest = useUIStore(s => s.clearCharacterCreatorRequest)
   const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const [refresh, setRefresh] = React.useState(0)
+  const [featureTourOpen, setFeatureTourOpen] = React.useState(false)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const { currentFlow, isDirty } = useUIStore()
   const currentProject = useUIStore(s => s.currentProject)
@@ -632,6 +634,77 @@ function CanvasApp(): JSX.Element {
     }
   }, [saving, currentFlow, currentProject, isGrsaiProxyActive, fetchGrsaiCredits])
 
+  React.useEffect(() => {
+    if (langGraphChatOpen) setFeatureTourOpen(false)
+  }, [langGraphChatOpen])
+
+  const tourSeenKey = React.useMemo(() => {
+    const sub = auth.user?.sub
+    if (sub === undefined || sub === null) return null
+    return `tapcanvas-feature-tour-seen:${String(sub)}`
+  }, [auth.user?.sub])
+
+  React.useEffect(() => {
+    if (!auth.user) return
+    if (langGraphChatOpen) return
+    if (!tourSeenKey) return
+    try {
+      const seen = localStorage.getItem(tourSeenKey) === '1'
+      if (!seen) setFeatureTourOpen(true)
+    } catch {
+      setFeatureTourOpen(true)
+    }
+  }, [auth.user?.sub, langGraphChatOpen, tourSeenKey])
+
+  const closeFeatureTour = React.useCallback(() => {
+    setFeatureTourOpen(false)
+    if (!tourSeenKey) return
+    try {
+      localStorage.setItem(tourSeenKey, '1')
+    } catch {
+      // ignore
+    }
+  }, [tourSeenKey])
+
+  const featureTourSteps: FeatureTourStep[] = React.useMemo(() => ([
+    {
+      id: 'floating-nav',
+      target: 'floating-nav',
+      title: $('浮动菜单'),
+      description: $('左侧是主要入口：把鼠标移到图标上会展开对应面板。点击“+”可以快速添加节点。'),
+    },
+    {
+      id: 'add-node',
+      target: 'add-button',
+      title: $('添加节点'),
+      description: $('悬停“+”打开添加面板，先加 image / 视频 / 角色等节点，然后在画布上连线组合成工作流。'),
+    },
+    {
+      id: 'canvas',
+      target: 'canvas',
+      title: $('画布操作'),
+      description: $('拖拽移动节点，拖出连线建立依赖。框选多个节点后按 ⌘/Ctrl+G 打组，按 ⌘/Ctrl+Enter 运行选中。'),
+    },
+    {
+      id: 'project',
+      target: 'project-name',
+      title: $('项目保存'),
+      description: $('右上角可以修改项目名并手动保存。测试阶段你可以随时打开引导，不区分新老用户。'),
+    },
+    {
+      id: 'immersive',
+      target: 'immersive-create',
+      title: $('沉浸式创作'),
+      description: $('点“小T”直接用自然语言描述需求：它会帮你自动创建/连接节点并执行，适合快速产出第一版。'),
+    },
+    {
+      id: 'help',
+      target: 'help-tour',
+      title: $('随时重开引导'),
+      description: $('点右上角“帮助”图标可随时重新打开本引导浮层。'),
+    },
+  ]), [currentLang])
+
   const headerHeight = langGraphChatOpen ? 0 : 56
 
   return (
@@ -652,8 +725,16 @@ function CanvasApp(): JSX.Element {
             {isDirty && (<Badge color="red" variant="light">{$('未保存')}</Badge>)}
           </Group>
           <Group gap="xs">
-            <TextInput size="xs" placeholder={$('项目名')} value={currentProject?.name || ''} onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })} style={{ width: 260 }} onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }} />
-            <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving}>{$('保存')}</Button>
+            <TextInput
+              size="xs"
+              placeholder={$('项目名')}
+              value={currentProject?.name || ''}
+              onChange={(e)=> setCurrentProject({ ...(currentProject||{}), name: e.currentTarget.value })}
+              style={{ width: 260 }}
+              onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }}
+              data-tour="project-name"
+            />
+            <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving} data-tour="save-button">{$('保存')}</Button>
             {isGrsaiProxyActive && (
               <Group gap={4} align="center">
                 <Badge color="grape" variant="light" size="sm">
@@ -801,6 +882,14 @@ function CanvasApp(): JSX.Element {
             >
               <IconLanguage size={18} />
             </ActionIcon>
+            <ActionIcon
+              variant="subtle"
+              aria-label={$('帮助')}
+              onClick={() => setFeatureTourOpen(true)}
+              data-tour="help-tour"
+            >
+              <IconHelpCircle size={18} />
+            </ActionIcon>
             <ActionIcon component="a" href="https://github.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer" variant="subtle" aria-label="GitHub">
               <IconBrandGithub size={18} />
             </ActionIcon>
@@ -916,6 +1005,7 @@ function CanvasApp(): JSX.Element {
         </Stack>
       </Modal>
       <ToastHost />
+      <FeatureTour opened={featureTourOpen && !langGraphChatOpen} steps={featureTourSteps} onClose={closeFeatureTour} />
       <FloatingNav />
       <AddNodePanel />
       <TemplatePanel />
