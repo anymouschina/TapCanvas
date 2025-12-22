@@ -78,8 +78,15 @@ export default function KeyboardShortcuts() {
       }
       // Paste (skip when focused in an input/textarea/contenteditable)
       if (mod && e.key.toLowerCase() === 'v' && !isTextInput) {
-        e.preventDefault()
-        pasteFromClipboard()
+        const downAt = Date.now()
+        // Let "paste" event handlers (e.g. image paste) run first, then fallback to node paste.
+        window.setTimeout(() => {
+          const lastImagePasteAt = (window as any).__tcLastImagePasteAt
+          if (typeof lastImagePasteAt === 'number' && lastImagePasteAt >= downAt && lastImagePasteAt - downAt < 800) {
+            return
+          }
+          pasteFromClipboard()
+        }, 0)
       }
       // Import Workflow from JSON (skip when focused in an input/textarea/contenteditable)
       if (mod && e.shiftKey && e.key.toLowerCase() === 'v' && !isTextInput) {

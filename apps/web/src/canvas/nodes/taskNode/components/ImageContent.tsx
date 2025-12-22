@@ -9,7 +9,7 @@ type ImageContentProps = {
   imagePrimaryIndex: number
   primaryImageUrl: string | null
   fileRef: React.RefObject<HTMLInputElement | null>
-  onUpload: (file: File) => Promise<void>
+  onUpload: (files: File[]) => Promise<void>
   connectToRight: (kind: string, label: string) => void
   hovered: number | null
   setHovered: (value: number | null) => void
@@ -56,6 +56,10 @@ export function ImageContent({
   setImageExpanded,
   upstreamText,
 }: ImageContentProps) {
+  const bindInputRef = React.useCallback((el: HTMLInputElement | null) => {
+    ;(fileRef as any).current = el
+  }, [fileRef])
+
   return (
     <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
       {!hasPrimaryImage ? (
@@ -97,14 +101,16 @@ export function ImageContent({
               )
             })}
             <input
-              ref={fileRef}
+              ref={bindInputRef}
               type="file"
               accept="image/*"
+              multiple
               hidden
               onChange={async (e) => {
-                const f = e.currentTarget.files?.[0]
-                if (!f) return
-                await onUpload(f)
+                const files = Array.from(e.currentTarget.files || [])
+                e.currentTarget.value = ''
+                if (!files.length) return
+                await onUpload(files)
               }}
             />
           </div>
@@ -217,14 +223,16 @@ export function ImageContent({
             )}
           </div>
           <input
-            ref={fileRef}
+            ref={bindInputRef}
             type="file"
             accept="image/*"
+            multiple
             hidden
             onChange={async (e) => {
-              const f = e.currentTarget.files?.[0]
-              if (!f) return
-              await onUpload(f)
+              const files = Array.from(e.currentTarget.files || [])
+              e.currentTarget.value = ''
+              if (!files.length) return
+              await onUpload(files)
             }}
           />
           </div>
