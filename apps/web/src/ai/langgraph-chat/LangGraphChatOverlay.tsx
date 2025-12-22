@@ -52,6 +52,8 @@ import { functionHandlers } from '../canvasService'
 import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
 import { useAuth } from '../../auth/store'
+import { LANGGRAPH_SUBMIT_EVENT, type LangGraphChatEventDetail } from './submitEvent'
+import { buildNodeRefTokenFromNode } from './buildNodeIntentPrompt'
 import {
   clearLangGraphProjectSnapshot,
   getLangGraphProjectSnapshot,
@@ -83,6 +85,22 @@ const getProcessingLine = (events: ProcessedEvent[]) => {
           })()
   const combined = [title, data].filter(Boolean).join(': ')
   return combined || '处理中…'
+}
+
+function parseTapNodeRefsFromText(raw: string) {
+  const text = typeof raw === 'string' ? raw : ''
+  const ids: string[] = []
+  const re = /\[\[tap\.node:([^\]|]+)(?:\|[^\]]+)?\]\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    const id = (m[1] || '').trim()
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  const cleanedText = text
+    .replace(re, '')
+    .replace(/^\s*\n+/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+  return { nodeIds: ids, cleanedText }
 }
 
 type ToolCallPayload = {
@@ -568,11 +586,12 @@ function MessageBubble({
   onPickQuickReply: (input: string) => void
 }) {
   const text = renderContentText(message.content)
+  const parsedNodeRefs = useMemo(() => parseTapNodeRefsFromText(text), [text])
   const { colorScheme } = useMantineColorScheme()
   const isLight = colorScheme === 'light'
   const isHuman = message.type === 'human'
-  const parsedTapActions = useMemo(() => parseTapcanvasActionsFromText(text), [text])
-  const displayText = parsedTapActions?.cleanedText ?? text
+  const parsedTapActions = useMemo(() => parseTapcanvasActionsFromText(parsedNodeRefs.cleanedText), [parsedNodeRefs.cleanedText])
+  const displayText = parsedTapActions?.cleanedText ?? parsedNodeRefs.cleanedText
   const bubbleBg = isHuman
     ? isLight
       ? 'rgba(15,23,42,0.04)'
@@ -692,6 +711,56 @@ function MessageBubble({
           wordBreak: 'break-word',
         }}
       >
+        {parsedNodeRefs.nodeIds.length > 0 && (
+          <Group gap={8} mb="sm" wrap="nowrap" style={{ overflowX: 'auto' }}>
+            {parsedNodeRefs.nodeIds.slice(0, 1).map((id) => {
+              const node = nodesById.get(String(id))
+              const media = node ? pickPrimaryMediaFromNode(node) : null
+              const thumb = media?.videoThumbnailUrl || media?.imageUrl || ''
+              const openUrl = media?.videoUrl || media?.imageUrl || ''
+              const kind = typeof (node?.data as any)?.kind === 'string' ? String((node.data as any).kind) : 'node'
+              const label = typeof (node?.data as any)?.label === 'string' ? String((node.data as any).label) : String(id)
+              const title = `${kind}-${label}`
+              return (
+                <Tooltip key={id} label={title} withArrow>
+                  <div
+                    style={{
+                      width: 88,
+                      height: 50,
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      background: isLight ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.06)',
+                      border: isLight ? '1px solid rgba(15,23,42,0.10)' : '1px solid rgba(255,255,255,0.10)',
+                      flex: '0 0 auto',
+                      cursor: openUrl ? 'pointer' : 'default',
+                    }}
+                    onClick={() => {
+                      if (!openUrl) return
+                      try {
+                        window.open(openUrl, '_blank', 'noopener,noreferrer')
+                      } catch {
+                        window.location.href = openUrl
+                      }
+                    }}
+                  >
+                    {thumb ? (
+                      <img
+                        src={thumb}
+                        alt=""
+                        loading="lazy"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                        <IconPhoto size={18} />
+                      </div>
+                    )}
+                  </div>
+                </Tooltip>
+              )
+            })}
+          </Group>
+        )}
         {activity && activity.length > 0 && (
           <Paper
             p="sm"
@@ -896,59 +965,61 @@ function MessageBubble({
             </Collapse>
           </Paper>
         )}
-        <ReactMarkdown
-          components={{
-            h1: ({ children }) => <Title order={3}>{children}</Title>,
-            h2: ({ children }) => <Title order={4}>{children}</Title>,
-            p: ({ children }) => (
-              <Text size="sm" fw={400} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-                {children}
-              </Text>
-            ),
-            ul: ({ children }) => <Stack gap={4} style={{ paddingLeft: 16, maxWidth: '100%' }}>{children}</Stack>,
-            li: ({ children }) => (
-              <Text size="sm" component="div" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-                • {children}
-              </Text>
-            ),
-            a: ({ children, href }) => (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  color: isLight ? 'var(--mantine-color-anchor)' : '#8ad1ff',
-                  overflowWrap: 'anywhere',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {children}
-              </a>
-            ),
-            code: ({ children }) => (
-              <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-                {children}
-              </code>
-            ),
-            pre: ({ children }) => (
-              <pre
-                style={{
-                  maxWidth: '100%',
-                  overflowX: 'auto',
-                  margin: '8px 0',
-                  padding: 12,
-                  borderRadius: 10,
-                  background: isLight ? 'rgba(15,23,42,0.04)' : 'rgba(255,255,255,0.05)',
-                  border: isLight ? '1px solid rgba(15,23,42,0.08)' : '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                {children}
-              </pre>
-            ),
-          }}
-        >
-          {displayText || '…'}
-        </ReactMarkdown>
+        {(displayText.trim() || parsedNodeRefs.nodeIds.length === 0) && (
+          <ReactMarkdown
+            components={{
+              h1: ({ children }) => <Title order={3}>{children}</Title>,
+              h2: ({ children }) => <Title order={4}>{children}</Title>,
+              p: ({ children }) => (
+                <Text size="sm" fw={400} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                  {children}
+                </Text>
+              ),
+              ul: ({ children }) => <Stack gap={4} style={{ paddingLeft: 16, maxWidth: '100%' }}>{children}</Stack>,
+              li: ({ children }) => (
+                <Text size="sm" component="div" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                  • {children}
+                </Text>
+              ),
+              a: ({ children, href }) => (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    color: isLight ? 'var(--mantine-color-anchor)' : '#8ad1ff',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {children}
+                </a>
+              ),
+              code: ({ children }) => (
+                <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                  {children}
+                </code>
+              ),
+              pre: ({ children }) => (
+                <pre
+                  style={{
+                    maxWidth: '100%',
+                    overflowX: 'auto',
+                    margin: '8px 0',
+                    padding: 12,
+                    borderRadius: 10,
+                    background: isLight ? 'rgba(15,23,42,0.04)' : 'rgba(255,255,255,0.05)',
+                    border: isLight ? '1px solid rgba(15,23,42,0.08)' : '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  {children}
+                </pre>
+              ),
+            }}
+          >
+            {displayText.trim() ? displayText : '…'}
+          </ReactMarkdown>
+        )}
         {!isHuman && parsedTapActions?.payload?.actions?.length ? (
           <Group gap="xs" mt="sm" wrap="wrap">
             {parsedTapActions.payload.actions
@@ -1070,6 +1141,11 @@ function InputForm({
   hasHistory,
   blocked,
   prefill,
+  refNodeIds,
+  refTokens,
+  onRemoveRefNodeId,
+  onClearRefs,
+  nodesById,
   readOnly,
   retryDisabled,
 }: {
@@ -1080,6 +1156,11 @@ function InputForm({
   hasHistory: boolean
   blocked?: boolean
   prefill?: string | null
+  refNodeIds?: string[]
+  refTokens?: string[]
+  onRemoveRefNodeId?: (id: string) => void
+  onClearRefs?: () => void
+  nodesById?: Map<string, any>
   readOnly?: boolean
   retryDisabled?: boolean
 }) {
@@ -1100,16 +1181,92 @@ function InputForm({
 
   const disabled = !!blocked || !!readOnly || !value.trim()
 
+  const getThumb = useCallback(
+    (id: string) => {
+      const n = nodesById?.get(String(id))
+      if (!n) return null
+      const d: any = n.data || {}
+      const kind = typeof d.kind === 'string' ? d.kind : 'node'
+      const label = typeof d.label === 'string' && d.label.trim() ? d.label.trim() : String(id)
+      const imgs = Array.isArray(d.imageResults) ? d.imageResults : []
+      const img0 = imgs.find((x: any) => typeof x?.url === 'string' && x.url.trim())?.url
+      const img = typeof d.imageUrl === 'string' && d.imageUrl.trim() ? d.imageUrl : ''
+      const videoThumb = typeof d.videoThumbnailUrl === 'string' && d.videoThumbnailUrl.trim() ? d.videoThumbnailUrl : ''
+      const video = typeof d.videoUrl === 'string' && d.videoUrl.trim() ? d.videoUrl : ''
+      const src = img0 || img || videoThumb || video || ''
+      return { src, title: `${kind}-${label}` }
+    },
+    [nodesById],
+  )
+
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     if (disabled) return
-    onSubmit(value, effort)
+    const prefix = Array.isArray(refTokens) && refTokens.length ? `${refTokens.join('\n')}\n\n` : ''
+    onSubmit(`${prefix}${value}`, effort)
     setValue('')
+    onClearRefs?.()
   }
 
   return (
     <form onSubmit={handleSubmit}>
       <Stack gap="xs">
+        {!!(refNodeIds && refNodeIds.length) && (
+          <Group gap={8} wrap="wrap">
+            {refNodeIds.map((id) => {
+              const info = getThumb(id)
+              const title = info?.title || '引用节点'
+              return (
+                <Tooltip key={id} label={title} withArrow>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="移除引用"
+                    onClick={() => onRemoveRefNodeId?.(id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') onRemoveRefNodeId?.(id)
+                    }}
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 14,
+                      overflow: 'hidden',
+                      position: 'relative',
+                      background: 'rgba(0,0,0,0.35)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {info?.src ? (
+                      <img
+                        src={info.src}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                        <IconPhoto size={18} />
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        background: 'linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0))',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                    <div style={{ position: 'absolute', top: 4, right: 4, pointerEvents: 'none' }}>
+                      <ActionIcon size="xs" variant="filled" color="dark" aria-label="移除引用">
+                        <IconX size={10} />
+                      </ActionIcon>
+                    </div>
+                  </div>
+                </Tooltip>
+              )
+            })}
+          </Group>
+        )}
         <Group align="flex-start" gap="sm">
           <Textarea
             ref={textareaRef}
@@ -1291,6 +1448,7 @@ function LangGraphChatOverlayInner({
   const blocked = false
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [prefill, setPrefill] = useState<string | null>(null)
+  const [prefillRefNodeIds, setPrefillRefNodeIds] = useState<string[]>([])
   const [quickStartOpen, setQuickStartOpen] = useState(false)
   const lastSubmitValuesRef = useRef<any | null>(null)
   const recoveringThreadRef = useRef(false)
@@ -1332,6 +1490,21 @@ function LangGraphChatOverlayInner({
     })
     return map
   }, [nodes])
+
+  const refTokens = useMemo(() => {
+    if (!prefillRefNodeIds.length) return []
+    return prefillRefNodeIds
+      .map((id) => {
+        const n = nodesById.get(String(id))
+        if (!n) return ''
+        try {
+          return buildNodeRefTokenFromNode(n)
+        } catch {
+          return ''
+        }
+      })
+      .filter(Boolean)
+  }, [nodesById, prefillRefNodeIds])
 
   const updateAtBottom = useCallback(() => {
     const el = scrollViewportRef.current
@@ -1999,11 +2172,20 @@ function LangGraphChatOverlayInner({
       void (async () => {
         try {
           const canvas_context = buildCanvasContext(nodes, edges)
+          const focusNodeIds = parseTapNodeRefsFromText(renderContentText(next.message.content)).nodeIds
+          const focusContext = (() => {
+            if (!focusNodeIds.length) return undefined
+            const set = new Set(focusNodeIds.map(String))
+            const focusNodes = (nodes || []).filter((n: any) => n && set.has(String(n.id)))
+            const focusEdges = (edges || []).filter((e: any) => e && (set.has(String(e.source)) || set.has(String(e.target))))
+            return { nodeIds: focusNodeIds, nodes: focusNodes, edges: focusEdges }
+          })()
           const values = {
             messages: newMessages,
             initial_search_query_count,
             max_research_loops,
             canvas_context,
+            focus_context: focusContext,
             conversation_summary: conversationSummaryRef.current || undefined,
             interaction_mode: interactionMode,
           }
@@ -2111,11 +2293,20 @@ function LangGraphChatOverlayInner({
 	      void (async () => {
 	        try {
 	          const canvas_context = buildCanvasContext(nodes, edges)
+            const focusNodeIds = parseTapNodeRefsFromText(input).nodeIds
+            const focusContext = (() => {
+              if (!focusNodeIds.length) return undefined
+              const set = new Set(focusNodeIds.map(String))
+              const focusNodes = (nodes || []).filter((n: any) => n && set.has(String(n.id)))
+              const focusEdges = (edges || []).filter((e: any) => e && (set.has(String(e.source)) || set.has(String(e.target))))
+              return { nodeIds: focusNodeIds, nodes: focusNodes, edges: focusEdges }
+            })()
 	          const values = {
 	            messages: newMessages,
 	            initial_search_query_count,
 	            max_research_loops,
 	            canvas_context,
+              focus_context: focusContext,
               conversation_summary: conversationSummaryRef.current || undefined,
               interaction_mode: interactionMode,
 	          }
@@ -2151,6 +2342,35 @@ function LangGraphChatOverlayInner({
 	    },
 	    [blocked, edges, ensureLangGraphReady, frozenMessages, interactionMode, liveMessages, nodes, projectId, thread, threadId, viewOnly],
 	  )
+
+  useEffect(() => {
+    const onExternalSubmit = (evt: Event) => {
+      try {
+        const anyEvt = evt as CustomEvent<LangGraphChatEventDetail>
+        const action = anyEvt?.detail?.action || 'submit'
+        const input = typeof anyEvt?.detail?.input === 'string' ? anyEvt.detail.input : ''
+        const refs = Array.isArray(anyEvt?.detail?.refs) ? anyEvt.detail.refs : []
+        const refNodeIds = refs
+          .filter((r) => r?.type === 'node' && typeof (r as any)?.id === 'string')
+          .map((r) => String((r as any).id))
+          .filter(Boolean)
+        useUIStore.getState().openLangGraphChat()
+        if (action === 'prefill') {
+          setPrefill(input || '')
+          setPrefillRefNodeIds(refNodeIds)
+          return
+        }
+        if (!input.trim()) return
+        const effort = (anyEvt?.detail?.effort || 'medium') as string
+        handleSubmit(input, effort)
+      } catch {
+        // ignore
+      }
+    }
+
+    window.addEventListener(LANGGRAPH_SUBMIT_EVENT, onExternalSubmit as EventListener)
+    return () => window.removeEventListener(LANGGRAPH_SUBMIT_EVENT, onExternalSubmit as EventListener)
+  }, [handleSubmit])
 
   const handleCancel = useCallback(() => {
     void thread.stop()
@@ -2536,6 +2756,11 @@ function LangGraphChatOverlayInner({
                 hasHistory={displayMessages.length > 0}
                 blocked={blocked}
                 prefill={prefill}
+                refNodeIds={prefillRefNodeIds}
+                refTokens={refTokens}
+                nodesById={nodesById}
+                onRemoveRefNodeId={(id) => setPrefillRefNodeIds((prev) => prev.filter((x) => x !== id))}
+                onClearRefs={() => setPrefillRefNodeIds([])}
                 readOnly={viewOnly}
                 retryDisabled={
                   !!blocked || !!viewOnly || thread.isLoading || !displayMessages.length || !lastHumanInput.trim()

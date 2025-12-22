@@ -9,6 +9,7 @@ import {
   IconAdjustments,
   IconPhotoSearch,
   IconRefresh,
+  IconSparkles,
   IconUsers,
   IconTrash,
 } from '@tabler/icons-react'
@@ -36,6 +37,7 @@ import {
 } from './storyboardUtils'
 import { getTaskNodeSchema } from './taskNodeSchema'
 import { buildTaskNodeFeatureFlags, type TaskNodeFeatureFlags } from './taskNode/features'
+import { prefillLangGraphChatWithRefs } from '../../ai/langgraph-chat/submitEvent'
 import {
   applyMentionFallback,
   blobToDataUrl,
@@ -210,19 +212,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       fontSize: 16,
     },
   }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
-  const toolbarTextButtonStyle = React.useMemo(() => ({
-    borderRadius: 999,
-    background: isDarkUi ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.02)',
-    color: nodeShellText,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '4px 12px',
-    fontSize: 12,
-    fontWeight: 600,
-    height: 30,
-    cursor: 'pointer',
-  }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
   const galleryCardBackground = isDarkUi ? 'rgba(7,12,24,0.96)' : 'rgba(255,255,255,0.96)'
 
   const placeholderIconColor = nodeShellText
@@ -325,12 +314,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const openVideoTrimModal = useUIStore(s => s.openVideoTrimModal)
   const edgeRoute = useUIStore(s => s.edgeRoute)
   const openCharacterCreatorModal = useUIStore(s => s.openCharacterCreatorModal)
+  const openLangGraphChat = useUIStore(s => s.openLangGraphChat)
+  const viewOnly = useUIStore(s => s.viewOnly)
   const runSelected = useRFStore(s => s.runSelected)
   const cancelNodeExecution = useRFStore(s => s.cancelNode)
   const setNodeStatus = useRFStore(s => s.setNodeStatus)
   const updateNodeData = useRFStore(s => s.updateNodeData)
   const addNode = useRFStore(s => s.addNode)
   const allNodes = useRFStore(s => s.nodes)
+  const allEdges = useRFStore(s => s.edges)
   const rawPrompt = (data as any)?.prompt as string | undefined
   const [prompt, setPrompt] = React.useState<string>(rawPrompt || '')
 
@@ -915,8 +907,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [characterRewriteLoading, setCharacterRewriteLoading] = React.useState(false)
   const [characterRewriteError, setCharacterRewriteError] = React.useState<string | null>(null)
   const [hovered, setHovered] = React.useState<number|null>(null)
-  const [showMore, setShowMore] = React.useState(false)
-  const moreRef = React.useRef<HTMLDivElement|null>(null)
 
   const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
   const [promptSuggestions, setPromptSuggestions] = React.useState<string[]>([])
@@ -2607,26 +2597,45 @@ const rewritePromptWithCharacters = React.useCallback(
     fetchCharacters({ cursor: characterCursor, append: true })
   }, [characterCursor, fetchCharacters, selectedCharacterTokenId])
 
+  const insertRefToLittleT = React.useCallback(
+    () => {
+      if (viewOnly) return
+      prefillLangGraphChatWithRefs({ nodeIds: [id] })
+      openLangGraphChat()
+    },
+    [id, openLangGraphChat, viewOnly],
+  )
+
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
+    const askDefs: { key: string; label: string; icon: JSX.Element; onClick: () => void }[] = viewOnly
+      ? []
+      : [
+          { key: 'askT', label: '发给小T', icon: <IconSparkles size={16} />, onClick: () => insertRefToLittleT() },
+        ]
     if (isCharacterNode) {
       return [
+        ...askDefs,
         { key: 'assets', label: '角色库', icon: <IconUsers size={16} />, onClick: () => setActivePanel('assets') },
         { key: 'refresh', label: '刷新', icon: <IconRefresh size={16} />, onClick: () => refreshCharacters() },
+        { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
       ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
     }
     if (isMosaicNode) {
       return [
+        ...askDefs,
         {
           key: 'mosaic',
           label: '拼图设置',
           icon: <IconAdjustments size={16} />,
           onClick: () => setMosaicModalOpen(true),
         },
+        { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
       ]
     }
     if (hasImageResults) {
       const tools: { key: string; label: string; icon: JSX.Element; onClick: () => void }[] = [
+        ...askDefs,
         {
           key: 'pose',
           label: '调整姿势',
@@ -2642,14 +2651,16 @@ const rewritePromptWithCharacters = React.useCallback(
           onClick: () => onReversePrompt(),
         })
       }
+      tools.push({ key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) })
       return tools
     }
     // default tools for other node kinds (kept minimal)
     return [
+      ...askDefs,
       { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
       { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [hasImageResults, id, isCharacterNode, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt])
+  }, [hasImageResults, id, insertRefToLittleT, isCharacterNode, isMosaicNode, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt, viewOnly])
 
   type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
   const veoCandidateImages = useRFStore((s) => {
@@ -2744,21 +2755,6 @@ const rewritePromptWithCharacters = React.useCallback(
     if (!selectedCharacterTokenId) return
     fetchCharacters()
   }, [fetchCharacters, isCharacterNode, selectedCharacterTokenId])
-
-  React.useEffect(() => {
-    if (!selected || selectedCount !== 1) setShowMore(false)
-  }, [selected, selectedCount])
-
-  React.useEffect(() => {
-    const onDown = (ev: MouseEvent) => {
-      if (!showMore) return
-      const root = (moreRef.current || document.querySelector('[data-more-root]')) as HTMLElement | null
-      if (root && ev.target instanceof HTMLElement && root.contains(ev.target)) return
-      setShowMore(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [showMore])
 
   React.useEffect(() => {
     if (!suggestionsAllowed && suggestionsEnabled) {
@@ -2865,13 +2861,7 @@ const rewritePromptWithCharacters = React.useCallback(
   const subtitle = schema.label || defaultLabel
 
   const isImageNode = kind === 'image'
-
-  const maxTools = 5
-  const commonLen = 2
-  const reserveForMore = uniqueDefs.length > (maxTools - commonLen) ? 1 : 0
-  const maxUniqueVisible = Math.max(0, maxTools - commonLen - reserveForMore)
-  const visibleDefs = uniqueDefs.slice(0, maxUniqueVisible)
-  const extraDefs = uniqueDefs.slice(maxUniqueVisible)
+  const visibleDefs = uniqueDefs
 
   const nodeWidth =
     typeof (data as any)?.nodeWidth === 'number' && Number.isFinite((data as any)?.nodeWidth)
@@ -2923,16 +2913,11 @@ const rewritePromptWithCharacters = React.useCallback(
         isVisible={!!selected}
         selectedCount={selectedCount}
         hasContent={hasContent}
-        moreRef={moreRef}
-        showMore={showMore}
-        setShowMore={setShowMore}
         toolbarBackground={toolbarBackground}
         toolbarShadow={toolbarShadow}
         toolbarActionIconStyles={toolbarActionIconStyles}
-        toolbarTextButtonStyle={toolbarTextButtonStyle}
         inlineDividerColor={inlineDividerColor}
         visibleDefs={visibleDefs}
-        extraDefs={extraDefs}
         onPreview={handlePreview}
         onDownload={handleDownload}
       />
