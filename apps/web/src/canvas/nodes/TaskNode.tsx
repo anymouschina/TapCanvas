@@ -42,6 +42,7 @@ import {
   clampCharacterClipWindow,
   computeHandleLayout,
   extractTextFromTaskResult,
+  genTaskNodeId,
   isDynamicHandlesConfig,
   isStaticHandlesConfig,
   MAX_VEO_REFERENCE_IMAGES,
@@ -54,6 +55,7 @@ import {
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
+import { CANVAS_CONFIG } from '../utils/constants'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 import { normalizeOrientation, type Orientation } from '../../utils/orientation'
 import { usePoseEditor } from './taskNode/PoseEditor'
@@ -1939,26 +1941,77 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     onSave: handleMosaicSave,
   }
 
-  const handleImageUpload = React.useCallback(async (file: File) => {
+  const handleImageUpload = React.useCallback(async (files: File[]) => {
     if (!supportsImageUpload) return
 
     try {
       setUploading(true)
 
-      const localUrl = URL.createObjectURL(file)
-      let localDataUrl: string | undefined
-      try {
-        localDataUrl = await blobToDataUrl(file)
-      } catch {
-        localDataUrl = undefined
+      const picked = (files || []).filter((f): f is File => Boolean(f))
+      if (!picked.length) return
+
+      const MAX_BYTES = 30 * 1024 * 1024
+      const tooLarge = picked.filter(f => (typeof f.size === 'number' ? f.size : 0) > MAX_BYTES)
+      if (tooLarge.length) toast(`有 ${tooLarge.length} 张图片超过 30MB，已跳过`, 'error')
+      const valid = picked.filter(f => (typeof f.size === 'number' ? f.size : 0) <= MAX_BYTES)
+      if (!valid.length) return
+
+      const allNodes = useRFStore.getState().nodes
+      const self = allNodes.find((n) => n.id === id) as any
+      const basePos = self?.position || { x: 0, y: 0 }
+      const parentNode = self?.parentNode as string | undefined
+      const extent = self?.extent as any
+
+      const spacingX = CANVAS_CONFIG.NODE_SPACING_X + 60
+      const spacingY = CANVAS_CONFIG.NODE_SPACING_Y + 40
+      const cols = 3
+
+      const extraFiles = valid.slice(1)
+      const extraPrepared = extraFiles.map((file, idx) => {
+        const newId = genTaskNodeId()
+        const localUrl = URL.createObjectURL(file)
+        const col = idx % cols
+        const row = Math.floor(idx / cols)
+        const position = {
+          x: basePos.x + spacingX * (col + 1),
+          y: basePos.y + spacingY * row,
+        }
+        return { id: newId, file, localUrl, position }
+      })
+
+      if (extraPrepared.length) {
+        useRFStore.setState((s: any) => {
+          const newNodes = extraPrepared.map((p) => ({
+            id: p.id,
+            type: 'taskNode' as const,
+            position: p.position,
+            parentNode,
+            extent,
+            data: { label: 'Image', kind: 'image', imageUrl: p.localUrl },
+            selected: false,
+          }))
+          return { nodes: [...s.nodes, ...newNodes], nextId: s.nextId + newNodes.length }
+        })
       }
-      updateNodeData(id, { imageUrl: localUrl, reverseImageData: localDataUrl })
 
-      const result = await uploadImageWithRetry(file)
+      const uploadIntoNode = async (nodeId: string, file: File, localUrl: string): Promise<boolean> => {
+        let localDataUrl: string | undefined
+        try {
+          localDataUrl = await blobToDataUrl(file)
+        } catch {
+          localDataUrl = undefined
+        }
+        updateNodeData(nodeId, { imageUrl: localUrl, reverseImageData: localDataUrl })
 
-      if (result.file_id) {
-        const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer || localUrl
-        updateNodeData(id, {
+        const result: any = await uploadImageWithRetry(file)
+        if (!result?.file_id) return false
+
+        const remoteUrl =
+          result.url ||
+          result.asset_pointer ||
+          result.azure_asset_pointer ||
+          localUrl
+        updateNodeData(nodeId, {
           imageUrl: remoteUrl,
           soraFileId: result.file_id,
           assetPointer: result.asset_pointer,
@@ -1971,6 +2024,48 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         if ((window as any).silentSaveProject) {
           (window as any).silentSaveProject()
         }
+        return true
+      }
+
+      let successCount = 0
+      const firstFile = valid[0]
+      const firstLocalUrl = URL.createObjectURL(firstFile)
+      try {
+        if (await uploadIntoNode(id, firstFile, firstLocalUrl)) successCount += 1
+      } catch (error) {
+        console.error('Failed to upload image to Sora:', error)
+        toast('上传图片到 Sora 失败，请稍后再试', 'error')
+      }
+
+      for (const p of extraPrepared) {
+        try {
+          if (await uploadIntoNode(p.id, p.file, p.localUrl)) successCount += 1
+        } catch (error) {
+          console.error('Failed to upload image to Sora:', error)
+          toast('上传图片到 Sora 失败，请稍后再试', 'error')
+        }
+      }
+
+      if (successCount > 0 && extraPrepared.length) {
+        useRFStore.setState((s: any) => {
+          const ids = new Set(extraPrepared.map((p) => p.id))
+          const posById = new Map(
+            extraPrepared.map((p, idx) => {
+              const col = idx % cols
+              const row = Math.floor(idx / cols)
+              return [
+                p.id,
+                { x: basePos.x + spacingX * (col + 1), y: basePos.y + spacingY * row },
+              ] as const
+            }),
+          )
+          const past = [...s.historyPast, JSON.parse(JSON.stringify({ nodes: s.nodes, edges: s.edges }))].slice(-50)
+          return {
+            nodes: s.nodes.map((n: any) => (ids.has(n.id) ? { ...n, position: posById.get(n.id)! } : n)),
+            historyPast: past,
+            historyFuture: [],
+          }
+        })
       }
     } catch (error) {
       console.error('Failed to upload image to Sora:', error)
@@ -2018,7 +2113,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     imagePrimaryIndex,
     primaryImageUrl,
     fileRef,
-    onUpload: supportsImageUpload ? handleImageUpload : undefined,
+    onUpload: handleImageUpload,
     connectToRight,
     hovered,
     setHovered,
