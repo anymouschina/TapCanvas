@@ -108,7 +108,7 @@ case "$cmd" in
     if [ "$start_langgraph" = "1" ]; then
       if [ -f "apps/ai-fullstack/backend/scripts/dev-langgraph.sh" ] && [ -f "apps/ai-fullstack/backend/.venv/bin/langgraph" ]; then
         langgraph_mode="local"
-        langgraph_url="http://localhost:8001"
+        langgraph_url="http://localhost:8123"
       else
         langgraph_mode="docker"
         langgraph_url="http://localhost:8123"
@@ -156,7 +156,7 @@ case "$cmd" in
     fi
 
     if [ "$start_langgraph" = "1" ] && [ "$langgraph_mode" = "local" ]; then
-      (cd apps/ai-fullstack/backend && bash ./scripts/dev-langgraph.sh) &
+      (cd apps/ai-fullstack/backend && LANGGRAPH_PORT=8123 bash ./scripts/dev-langgraph.sh) &
       pids+=("$!")
       echo "[dev.sh] LangGraph dev on ${langgraph_url}" >&2
     fi
@@ -175,14 +175,16 @@ case "$cmd" in
       cd apps/web
       extra_vite_env=()
       if [ "$start_langgraph" = "1" ]; then
-        if [ -z "${VITE_LANGGRAPH_API_URL:-}" ] \
-          && ! has_env_key ".env" "VITE_LANGGRAPH_API_URL" \
-          && ! has_env_key ".env.local" "VITE_LANGGRAPH_API_URL" \
-          && ! has_env_key ".env.development" "VITE_LANGGRAPH_API_URL" \
-          && ! has_env_key ".env.development.local" "VITE_LANGGRAPH_API_URL"; then
-          if [ -n "${langgraph_url:-}" ]; then
-            extra_vite_env+=(VITE_LANGGRAPH_API_URL="$langgraph_url")
-          fi
+        # If you opt into starting LangGraph, force-enable it for this web dev process
+        # unless the user explicitly set VITE_LANGGRAPH_ENABLED in the shell.
+        if [ -z "${VITE_LANGGRAPH_ENABLED:-}" ]; then
+          extra_vite_env+=(VITE_LANGGRAPH_ENABLED="1")
+        fi
+
+        # Force the correct local URL so Vite proxy points to the LangGraph instance
+        # started by this script, even if apps/web/.env contains a stale value.
+        if [ -z "${VITE_LANGGRAPH_API_URL:-}" ] && [ -n "${langgraph_url:-}" ]; then
+          extra_vite_env+=(VITE_LANGGRAPH_API_URL="$langgraph_url")
         fi
       fi
 

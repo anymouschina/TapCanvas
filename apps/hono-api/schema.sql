@@ -79,6 +79,67 @@ CREATE TABLE IF NOT EXISTS flow_versions (
 CREATE INDEX IF NOT EXISTS idx_flow_versions_flow_id ON flow_versions(flow_id);
 CREATE INDEX IF NOT EXISTS idx_flow_versions_user_id ON flow_versions(user_id);
 
+-- Workflow executions (n8n-like: each run binds to an immutable flow_version snapshot)
+CREATE TABLE IF NOT EXISTS workflow_executions (
+	id TEXT PRIMARY KEY,
+	flow_id TEXT NOT NULL,
+	flow_version_id TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	status TEXT NOT NULL, -- queued | running | success | failed | canceled
+	concurrency INTEGER NOT NULL DEFAULT 1,
+	trigger TEXT, -- manual | api | schedule | agent
+	error_message TEXT,
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	finished_at TEXT,
+	FOREIGN KEY (flow_id) REFERENCES flows(id),
+	FOREIGN KEY (flow_version_id) REFERENCES flow_versions(id),
+	FOREIGN KEY (owner_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_owner_id ON workflow_executions(owner_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_flow_id ON workflow_executions(flow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_flow_version_id ON workflow_executions(flow_version_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_status ON workflow_executions(status);
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_created_at ON workflow_executions(created_at);
+
+-- Node runs (one row per node per execution; fail-fast => if any node_run fails, execution fails)
+CREATE TABLE IF NOT EXISTS workflow_node_runs (
+	id TEXT PRIMARY KEY,
+	execution_id TEXT NOT NULL,
+	node_id TEXT NOT NULL,
+	status TEXT NOT NULL, -- queued | running | success | failed | canceled | skipped
+	attempt INTEGER NOT NULL DEFAULT 1,
+	error_message TEXT,
+	output_refs TEXT, -- JSON: asset refs / URLs / metadata
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	finished_at TEXT,
+	FOREIGN KEY (execution_id) REFERENCES workflow_executions(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_node_runs_execution_node ON workflow_node_runs(execution_id, node_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_execution_id ON workflow_node_runs(execution_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_status ON workflow_node_runs(status);
+
+-- Execution events / logs (append-only; ordered by seq)
+CREATE TABLE IF NOT EXISTS workflow_execution_events (
+	id TEXT PRIMARY KEY,
+	execution_id TEXT NOT NULL,
+	seq INTEGER NOT NULL,
+	event_type TEXT NOT NULL, -- execution_started | node_started | node_log | node_succeeded | node_failed | execution_failed | execution_succeeded
+	level TEXT NOT NULL DEFAULT 'info', -- debug | info | warn | error
+	node_id TEXT, -- optional: bind log to a node
+	message TEXT,
+	data TEXT, -- JSON payload (optional)
+	created_at TEXT NOT NULL,
+	FOREIGN KEY (execution_id) REFERENCES workflow_executions(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_execution_events_execution_seq ON workflow_execution_events(execution_id, seq);
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_events_execution_id ON workflow_execution_events(execution_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_events_node_id ON workflow_execution_events(node_id);
+
 -- Model providers (Sora / OpenAI / etc.)
 CREATE TABLE IF NOT EXISTS model_providers (
 	id TEXT PRIMARY KEY,

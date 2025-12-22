@@ -284,7 +284,7 @@ const enTranslations = {
   '宫格布局': 'Grid Layout',
   '水平布局': 'Horizontal Layout',
   '保存为资产名称：': 'Save as asset name:',
-  '创建资产': 'Create Asset',
+  '生成工作流': 'Create Asset',
   '打组': 'Group',
   '在此粘贴': 'Paste Here',
   '自动布局（全图）': 'Auto Layout (All)',

@@ -1,7 +1,7 @@
 import React from 'react'
 import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image, Modal } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle, IconHelpCircle } from '@tabler/icons-react'
+import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle, IconHelpCircle, IconPlayerPlay } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { useRFStore } from './canvas/store'
@@ -15,6 +15,7 @@ import {
   listModelEndpoints,
   upsertModelProvider,
   saveProjectFlow,
+  runWorkflowExecution,
   listProjects,
   upsertProject,
   listProjectFlows,
@@ -43,6 +44,7 @@ import { CharacterCreatorModal } from './ui/CharacterCreatorModal'
 import { VideoTrimModalHost } from './ui/VideoTrimModalHost'
 import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
+import ExecutionPanel from './ui/ExecutionPanel'
 import ParamModal from './ui/ParamModal'
 import PreviewModal from './ui/PreviewModal'
 import TapshowFullPage from './ui/TapshowFullPage'
@@ -52,6 +54,7 @@ import { runNodeRemote } from './runner/remoteRunner'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
 import { FeatureTour, type FeatureTourStep } from './ui/tour/FeatureTour'
+import { ExecutionLogModal } from './ui/ExecutionLogModal'
 
 function CanvasApp(): JSX.Element {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
@@ -65,6 +68,9 @@ function CanvasApp(): JSX.Element {
   const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const [refresh, setRefresh] = React.useState(0)
   const [featureTourOpen, setFeatureTourOpen] = React.useState(false)
+  const [execLogOpen, setExecLogOpen] = React.useState(false)
+  const [execId, setExecId] = React.useState<string | null>(null)
+  const [execStarting, setExecStarting] = React.useState(false)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const { currentFlow, isDirty } = useUIStore()
   const currentProject = useUIStore(s => s.currentProject)
@@ -116,6 +122,23 @@ function CanvasApp(): JSX.Element {
     })
     return Array.from(map.entries()).map(([group, models]) => ({ group, models }))
   }, [])
+
+  const nodeLabelById = React.useMemo(() => {
+    const map: Record<string, string> = {}
+    const nodes: any[] = (rfState as any)?.nodes
+    if (Array.isArray(nodes)) {
+      for (const node of nodes) {
+        const data: any = node?.data || {}
+        const label =
+          (typeof data.label === 'string' && data.label.trim()) ||
+          (typeof data.name === 'string' && data.name.trim()) ||
+          (typeof node?.type === 'string' && node.type) ||
+          ''
+        if (node?.id && label) map[node.id] = label
+      }
+    }
+    return map
+  }, [(rfState as any)?.nodes])
 
   React.useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -591,6 +614,32 @@ function CanvasApp(): JSX.Element {
     }
   }
 
+  const handleRunWorkflow = async () => {
+    if (execStarting || saving) return
+    setExecStarting(true)
+    try {
+      if (isDirty || !useUIStore.getState().currentFlow.id) {
+        await doSave()
+      }
+      const flowId = useUIStore.getState().currentFlow.id
+      if (!flowId) {
+        notifications.show({ title: '无法运行', message: '请先保存当前项目', color: 'red' })
+        return
+      }
+
+      const nid = `exec-${Date.now()}`
+      notifications.show({ id: nid, title: '开始运行', message: '正在启动工作流执行…', loading: true, autoClose: false, withCloseButton: false })
+      const exec = await runWorkflowExecution({ flowId, concurrency: 1 })
+      setExecId(exec.id)
+      setExecLogOpen(true)
+      notifications.update({ id: nid, title: '已启动', message: '运行日志已打开', loading: false, autoClose: 1200, color: 'green' })
+    } catch (e: any) {
+      notifications.show({ title: '启动失败', message: e?.message || '网络或服务器错误', color: 'red' })
+    } finally {
+      setExecStarting(false)
+    }
+  }
+
   // 静默保存函数，不显示通知
   const silentSave = async () => {
     if (saving) return
@@ -735,6 +784,17 @@ function CanvasApp(): JSX.Element {
               data-tour="project-name"
             />
             <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving} data-tour="save-button">{$('保存')}</Button>
+            <Tooltip label="运行工作流">
+              <ActionIcon
+                size="lg"
+                variant="subtle"
+                aria-label="运行工作流"
+                onClick={handleRunWorkflow}
+                disabled={execStarting || saving}
+              >
+                {execStarting ? <Loader size="sm" /> : <IconPlayerPlay size={18} />}
+              </ActionIcon>
+            </Tooltip>
             {isGrsaiProxyActive && (
               <Group gap={4} align="center">
                 <Badge color="grape" variant="light" size="sm">
@@ -1005,6 +1065,7 @@ function CanvasApp(): JSX.Element {
         </Stack>
       </Modal>
       <ToastHost />
+      <ExecutionLogModal opened={execLogOpen} executionId={execId} nodeLabelById={nodeLabelById} onClose={() => setExecLogOpen(false)} />
       <FeatureTour opened={featureTourOpen && !langGraphChatOpen} steps={featureTourSteps} onClose={closeFeatureTour} />
       <FloatingNav />
       <AddNodePanel />
@@ -1015,6 +1076,22 @@ function CanvasApp(): JSX.Element {
       <TapshowPanel />
       <ModelPanel />
       <HistoryPanel />
+      <ExecutionPanel
+        onOpenLog={(id) => {
+          setExecId(id)
+          setExecLogOpen(true)
+        }}
+        onRun={handleRunWorkflow}
+        onFocusNode={(nodeId) => {
+          try {
+            const fn = (window as any).__tcFocusNode as undefined | ((id: string) => void)
+            fn?.(nodeId)
+          } catch {
+            // ignore
+          }
+        }}
+        nodeLabelById={nodeLabelById}
+      />
       <ParamModal />
       <PreviewModal />
       <CharacterCreatorModal />
