@@ -600,6 +600,7 @@ function ActivityTimeline({
   const items = events.length ? events : []
   return (
     <Timeline
+      className="tc-lg-timeline"
       bulletSize={18}
       lineWidth={2}
       color="gray"
@@ -610,11 +611,12 @@ function ActivityTimeline({
     >
       {items.map((item, index) => (
         <Timeline.Item
+          className="tc-lg-timeline__item"
           key={`${item.title}-${index}`}
           title={item.title}
           bullet={<IconCircleCheck size={14} />}
         >
-          <Text size="xs" c="dimmed">
+          <Text className="tc-lg-timeline__text" size="xs" c="dimmed">
             {typeof item.data === 'string'
               ? item.data
               : Array.isArray(item.data)
@@ -625,10 +627,11 @@ function ActivityTimeline({
       ))}
       {isLoading && (
         <Timeline.Item
+          className="tc-lg-timeline__item"
           title={items.length ? '继续分析' : '准备中'}
-          bullet={<Loader size={12} type="dots" color="gray" />}
+          bullet={<Loader className="tc-lg-timeline__loader" size={12} type="dots" color="gray" />}
         >
-          <Text size="xs" c="dimmed">
+          <Text className="tc-lg-timeline__text" size="xs" c="dimmed">
             研究进行中…
           </Text>
         </Timeline.Item>
@@ -750,23 +753,25 @@ function MessageBubble({
   }, [isHuman, nodeIdByLabel, nodesById, toolCallBindings, toolCalls])
 
   return (
-    <Stack align={align === 'right' ? 'flex-end' : 'flex-start'} gap={6} w="100%">
-      <Group gap="xs" justify={align === 'right' ? 'flex-end' : 'flex-start'}>
-        <Text size="xs" c="dimmed">
+    <Stack className="tc-lg-message" align={align === 'right' ? 'flex-end' : 'flex-start'} gap={6} w="100%">
+      <Group className="tc-lg-message__meta" gap="xs" justify={align === 'right' ? 'flex-end' : 'flex-start'}>
+        <Text className="tc-lg-message__meta-label" size="xs" c="dimmed">
           {isHuman ? '你' : '助手'}
         </Text>
         {isHuman && queued && (
-          <Badge color="gray" variant="light" size="xs">
+          <Badge className="tc-lg-message__meta-badge" color="gray" variant="light" size="xs">
             待发送
           </Badge>
         )}
         {!isHuman && roleMeta.roleName && (
           <Tooltip
+            className="tc-lg-message__meta-tooltip"
             label={roleMeta.roleReason || roleMeta.roleId || ''}
             disabled={!roleMeta.roleReason && !roleMeta.roleId}
             withArrow
           >
             <Badge
+              className="tc-lg-message__meta-badge"
               color="grape"
               variant="light"
               size="xs"
@@ -778,6 +783,7 @@ function MessageBubble({
         )}
       </Group>
       <Paper
+        className="tc-lg-message__bubble"
         p="md"
         radius="lg"
         shadow="md"
@@ -793,7 +799,7 @@ function MessageBubble({
         }}
       >
         {parsedNodeRefs.nodeIds.length > 0 && (
-          <Group gap={8} mb="sm" wrap="nowrap" style={{ overflowX: 'auto' }}>
+          <Group className="tc-lg-message__refs" gap={8} mb="sm" wrap="nowrap" style={{ overflowX: 'auto' }}>
             {parsedNodeRefs.nodeIds.slice(0, 1).map((id) => {
               const node = nodesById.get(String(id))
               const media = node ? pickPrimaryMediaFromNode(node) : null
@@ -803,8 +809,8 @@ function MessageBubble({
               const label = typeof (node?.data as any)?.label === 'string' ? String((node.data as any).label) : String(id)
               const title = `${kind}-${label}`
               return (
-                <Tooltip key={id} label={title} withArrow>
-                  <div
+                <Tooltip className="tc-lg-message__ref-tooltip" key={id} label={title} withArrow>
+                  <div className="tc-lg-message__ref-card"
                     style={{
                       width: 88,
                       height: 50,
@@ -826,14 +832,15 @@ function MessageBubble({
                   >
                     {thumb ? (
                       <img
+                        className="tc-lg-message__ref-image"
                         src={thumb}
                         alt=""
                         loading="lazy"
                         style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       />
                     ) : (
-                      <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
-                        <IconPhoto size={18} />
+                      <div className="tc-lg-message__ref-empty" style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                        <IconPhoto className="tc-lg-message__ref-icon" size={18} />
                       </div>
                     )}
                   </div>
@@ -844,21 +851,23 @@ function MessageBubble({
         )}
         {activity && activity.length > 0 && (
           <Paper
+            className="tc-lg-message__panel"
             p="sm"
             radius="md"
             mb="sm"
             style={{ background: subPanelBg, border: subPanelBorder }}
           >
-            <Group gap="xs" justify="space-between">
-              <Group gap={6}>
-                <IconBrain size={14} />
-                <Text size="xs" fw={600}>
+            <Group className="tc-lg-message__panel-header" gap="xs" justify="space-between">
+              <Group className="tc-lg-message__panel-title" gap={6}>
+                <IconBrain className="tc-lg-message__panel-icon" size={14} />
+                <Text className="tc-lg-message__panel-label" size="xs" fw={600}>
                   研究进展
                 </Text>
               </Group>
-              <Group gap={6}>
-                {isLive && isLoading && <Loader size="xs" color="gray" type="dots" />}
+              <Group className="tc-lg-message__panel-actions" gap={6}>
+                {isLive && isLoading && <Loader className="tc-lg-message__panel-loader" size="xs" color="gray" type="dots" />}
                 <ActionIcon
+                  className="tc-lg-message__panel-toggle"
                   size="sm"
                   variant="subtle"
                   color="gray"
@@ -870,34 +879,36 @@ function MessageBubble({
               </Group>
             </Group>
             {!activityOpen && (
-              <Text size="xs" c="dimmed" lineClamp={1}>
+              <Text className="tc-lg-message__panel-preview" size="xs" c="dimmed" lineClamp={1}>
                 {activityPreview || '—'}
               </Text>
             )}
-            <Collapse in={activityOpen} transitionDuration={150}>
+            <Collapse className="tc-lg-message__panel-body" in={activityOpen} transitionDuration={150}>
               <ActivityTimeline events={activity} isLoading={isLive && isLoading} />
             </Collapse>
           </Paper>
         )}
         {!isHuman && toolCalls.length > 0 && (
           <Paper
+            className="tc-lg-message__panel"
             p="sm"
             radius="md"
             mb="sm"
             style={{ background: subPanelBgTight, border: subPanelBorder }}
           >
-            <Group gap="xs" justify="space-between" mb={6}>
-              <Group gap={6}>
-                <IconBolt size={14} />
-                <Text size="xs" fw={600}>
+            <Group className="tc-lg-message__panel-header" gap="xs" justify="space-between" mb={6}>
+              <Group className="tc-lg-message__panel-title" gap={6}>
+                <IconBolt className="tc-lg-message__panel-icon" size={14} />
+                <Text className="tc-lg-message__panel-label" size="xs" fw={600}>
                   画布操作
                 </Text>
               </Group>
-              <Group gap={6}>
-                <Badge size="xs" variant="light" color="blue">
+              <Group className="tc-lg-message__panel-actions" gap={6}>
+                <Badge className="tc-lg-message__panel-badge" size="xs" variant="light" color="blue">
                   {toolCalls.length}
                 </Badge>
                 <ActionIcon
+                  className="tc-lg-message__panel-toggle"
                   size="sm"
                   variant="subtle"
                   color="gray"
@@ -910,13 +921,14 @@ function MessageBubble({
             </Group>
             {!toolsOpen && (
               <>
-                <Text size="xs" c="dimmed" lineClamp={1}>
+                <Text className="tc-lg-message__panel-preview" size="xs" c="dimmed" lineClamp={1}>
                   {toolsPreview || '—'}
                 </Text>
                 {toolPreviewMedia.length > 0 && (
-                  <Group gap={8} mt={6} wrap="nowrap">
+                  <Group className="tc-lg-message__panel-media" gap={8} mt={6} wrap="nowrap">
                     {toolPreviewMedia.map((m) => (
                       <img
+                        className="tc-lg-message__panel-thumb"
                         key={m.url}
                         src={m.url}
                         alt=""
@@ -942,8 +954,8 @@ function MessageBubble({
                 )}
               </>
             )}
-            <Collapse in={toolsOpen} transitionDuration={150}>
-              <Stack gap={8}>
+            <Collapse className="tc-lg-message__panel-body" in={toolsOpen} transitionDuration={150}>
+              <Stack className="tc-lg-message__panel-list" gap={8}>
                 {toolCalls.map((call, idx) => {
                   const args = parseJsonIfNeeded(call.arguments) || {}
                   const name = call.name || 'tool'
@@ -970,47 +982,50 @@ function MessageBubble({
 
                   return (
                     <Paper
+                      className="tc-lg-message__tool-card"
                       key={`${call.id || name}-${idx}`}
                       p="xs"
                       radius="md"
                       style={{ background: subPanelBgThin, border: subPanelBorderThin }}
                     >
-                      <Group gap="xs" justify="space-between">
-                        <Group gap="xs">
-                          <Badge size="xs" color="grape" variant="light">
+                      <Group className="tc-lg-message__tool-header" gap="xs" justify="space-between">
+                        <Group className="tc-lg-message__tool-title" gap="xs">
+                          <Badge className="tc-lg-message__tool-badge" size="xs" color="grape" variant="light">
                             {name}
                           </Badge>
                           {displayTitle && (
-                            <Text size="xs" c="dimmed">
+                            <Text className="tc-lg-message__tool-subtitle" size="xs" c="dimmed">
                               {displayTitle}
                             </Text>
                           )}
                         </Group>
                         {hasPrompt && (
-                          <Tooltip label={copied ? '已复制' : '复制提示词'}>
+                          <Tooltip className="tc-lg-message__tool-tooltip" label={copied ? '已复制' : '复制提示词'}>
                             <ActionIcon
+                              className="tc-lg-message__tool-action"
                               variant="subtle"
                               color="gray"
                               onClick={() => onCopy(String(prompt), call.id)}
                             >
-                              <IconCopy size={14} />
+                              <IconCopy className="tc-lg-message__tool-icon" size={14} />
                             </ActionIcon>
                           </Tooltip>
                         )}
                       </Group>
                       {hasPrompt && (
-                        <Text size="xs" mt={6} style={{ whiteSpace: 'pre-wrap', opacity: 0.95 }}>
+                        <Text className="tc-lg-message__tool-text" size="xs" mt={6} style={{ whiteSpace: 'pre-wrap', opacity: 0.95 }}>
                           {String(prompt)}
                         </Text>
                       )}
 	                      {hasNegative && (
-	                        <Text size="xs" mt={6} c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+	                        <Text className="tc-lg-message__tool-text" size="xs" mt={6} c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
 	                          负面：{String(negativePrompt)}
 	                        </Text>
 	                      )}
 	                      {hasMedia && media && (
-	                        <div style={{ marginTop: 8 }}>
+	                        <div className="tc-lg-message__tool-media" style={{ marginTop: 8 }}>
 	                          <img
+	                            className="tc-lg-message__tool-media-image"
 	                            src={media.videoThumbnailUrl || media.imageUrl || ''}
 	                            alt=""
 	                            loading="lazy"
@@ -1033,7 +1048,7 @@ function MessageBubble({
 	                            }}
 	                          />
 	                          {media.videoUrl && (
-	                            <Text size="xs" c="dimmed" mt={6} lineClamp={1}>
+	                            <Text className="tc-lg-message__tool-media-caption" size="xs" c="dimmed" mt={6} lineClamp={1}>
 	                              视频已生成
 	                            </Text>
 	                          )}
@@ -1049,16 +1064,16 @@ function MessageBubble({
         {(displayText.trim() || parsedNodeRefs.nodeIds.length === 0) && (
           <ReactMarkdown
             components={{
-              h1: ({ children }) => <Title order={3}>{children}</Title>,
-              h2: ({ children }) => <Title order={4}>{children}</Title>,
+              h1: ({ children }) => <Title className="tc-lg-message__markdown-title" order={3}>{children}</Title>,
+              h2: ({ children }) => <Title className="tc-lg-message__markdown-title" order={4}>{children}</Title>,
               p: ({ children }) => (
-                <Text size="sm" fw={400} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                <Text className="tc-lg-message__markdown-text" size="sm" fw={400} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                   {children}
                 </Text>
               ),
-              ul: ({ children }) => <Stack gap={4} style={{ paddingLeft: 16, maxWidth: '100%' }}>{children}</Stack>,
+              ul: ({ children }) => <Stack className="tc-lg-message__markdown-list" gap={4} style={{ paddingLeft: 16, maxWidth: '100%' }}>{children}</Stack>,
               li: ({ children }) => (
-                <Text size="sm" component="div" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                <Text className="tc-lg-message__markdown-text" size="sm" component="div" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                   • {children}
                 </Text>
               ),
@@ -1102,7 +1117,7 @@ function MessageBubble({
           </ReactMarkdown>
         )}
         {!isHuman && parsedTapActions?.payload?.actions?.length ? (
-          <Group gap="xs" mt="sm" wrap="wrap">
+          <Group className="tc-lg-message__quick-actions" gap="xs" mt="sm" wrap="wrap">
             {parsedTapActions.payload.actions
               .map((a) => ({
                 label: typeof a?.label === 'string' ? a.label.trim() : '',
@@ -1112,6 +1127,7 @@ function MessageBubble({
               .slice(0, 8)
               .map((a) => (
                 <Button
+                  className="tc-lg-message__quick-action"
                   key={a.label}
                   size="xs"
                   variant="light"
@@ -1124,9 +1140,10 @@ function MessageBubble({
           </Group>
         ) : null}
         {!isHuman && quickReplies.length > 0 && (
-          <Group gap="xs" mt="sm" wrap="wrap">
+          <Group className="tc-lg-message__quick-actions" gap="xs" mt="sm" wrap="wrap">
             {quickReplies.map((qr) => (
               <Button
+                className="tc-lg-message__quick-action"
                 key={qr.label}
                 size="xs"
                 variant="light"
@@ -1137,15 +1154,16 @@ function MessageBubble({
             ))}
           </Group>
         )}
-        <Group justify="flex-end" gap="xs" mt="xs">
-          <Tooltip label={copied ? '已复制' : '复制'}>
+        <Group className="tc-lg-message__footer" justify="flex-end" gap="xs" mt="xs">
+          <Tooltip className="tc-lg-message__footer-tooltip" label={copied ? '已复制' : '复制'}>
             <ActionIcon
+              className="tc-lg-message__footer-action"
               variant="subtle"
               size="sm"
               aria-label="复制"
               onClick={() => onCopy(text, message.id)}
             >
-              {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+              {copied ? <IconCheck className="tc-lg-message__footer-icon" size={14} /> : <IconCopy className="tc-lg-message__footer-icon" size={14} />}
             </ActionIcon>
           </Tooltip>
         </Group>

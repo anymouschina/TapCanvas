@@ -1,4 +1,4 @@
-import type { Node, Edge } from 'reactflow'
+import type { Node, Edge } from '@xyflow/react'
 
 export type Port = { id: string; label: string; type: 'image'|'audio'|'subtitle'|'video'|'any' }
 export type FlowIO = { inputs: Port[]; outputs: Port[] }

@@ -4,7 +4,7 @@
  */
 
 import { CANVAS_CONFIG } from './constants';
-import type { Node, Edge } from 'reactflow';
+import type { Node, Edge } from '@xyflow/react';
 
 /**
  * 布局配置接口

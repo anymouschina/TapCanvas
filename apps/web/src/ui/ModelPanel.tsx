@@ -1010,14 +1010,15 @@ const handleApplyVeoHost = React.useCallback((host: string) => {
       })),
     ]
     return (
-      <Stack gap={4} mt="xs">
-        <Group justify="flex-end" align="center">
-          <Button size="xs" variant="subtle" onClick={() => openProfileModal(provider)}>
+      <Stack className="tc-model-panel__profiles" gap={4} mt="xs">
+        <Group className="tc-model-panel__profiles-actions" justify="flex-end" align="center">
+          <Button className="tc-model-panel__profiles-action" size="xs" variant="subtle" onClick={() => openProfileModal(provider)}>
             新增模型
           </Button>
         </Group>
         {selectOptions.length > 0 && (
           <Select
+            className="tc-model-panel__profiles-select"
             size="xs"
             placeholder="选择模型快速引用"
             data={selectOptions}
@@ -1046,33 +1047,34 @@ const handleApplyVeoHost = React.useCallback((host: string) => {
           />
         )}
         {list.length === 0 ? (
-          <Text size="xs" c="dimmed">
+          <Text className="tc-model-panel__profiles-empty" size="xs" c="dimmed">
             尚未配置模型 ID。
           </Text>
         ) : (
           list.map((profile) => (
             <Group
+              className="tc-model-panel__profiles-row"
               key={profile.id}
               justify="space-between"
               align="center"
               style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '6px 8px' }}
             >
-              <div>
-                <Group gap={6}>
-                  <Text size="sm">{profile.name}</Text>
-                  <Badge size="xs" color="blue">
+              <div className="tc-model-panel__profiles-row-text">
+                <Group className="tc-model-panel__profiles-row-title" gap={6}>
+                  <Text className="tc-model-panel__profiles-row-name" size="sm">{profile.name}</Text>
+                  <Badge className="tc-model-panel__badge" size="xs" color="blue">
                     {PROFILE_KIND_LABELS[profile.kind] || profile.kind}
                   </Badge>
                 </Group>
-                <Text size="xs" c="dimmed">
+                <Text className="tc-model-panel__profiles-row-meta" size="xs" c="dimmed">
                   {profile.modelKey}
                 </Text>
               </div>
-              <Group gap={4}>
-                <Button size="xs" variant="subtle" onClick={() => openProfileModal(provider, profile)}>
+              <Group className="tc-model-panel__profiles-row-actions" gap={4}>
+                <Button className="tc-model-panel__profiles-row-action" size="xs" variant="subtle" onClick={() => openProfileModal(provider, profile)}>
                   编辑
                 </Button>
-                <Button size="xs" variant="light" color="red" onClick={() => handleDeleteProfile(provider.id, profile.id)}>
+                <Button className="tc-model-panel__profiles-row-action" size="xs" variant="light" color="red" onClick={() => handleDeleteProfile(provider.id, profile.id)}>
                   删除
                 </Button>
               </Group>
@@ -1232,15 +1234,15 @@ const handleCloseProxyModal = () => {
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
+    <div className="tc-model-panel" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
       <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="tc-model-panel__transition" style={styles}>
             <Paper
               withBorder
               shadow="md"
               radius="lg"
-              className="glass"
+              className="tc-model-panel__card glass"
               p="md"
               style={{
                 width: 420,
@@ -1253,11 +1255,12 @@ const handleCloseProxyModal = () => {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
-                <Title order={6}>模型配置</Title>
-                <Group gap={4}>
+              <div className="tc-model-panel__arrow panel-arrow" />
+              <Group className="tc-model-panel__header" justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
+                <Title className="tc-model-panel__title" order={6}>模型配置</Title>
+                <Group className="tc-model-panel__header-actions" gap={4}>
                   <input
+                    className="tc-model-panel__import-input"
                     id="import-model-config"
                     type="file"
                     accept=".json"
@@ -1271,17 +1274,19 @@ const handleCloseProxyModal = () => {
                     }}
                     style={{ display: 'none' }}
                   />
-                  <Tooltip label="导出配置">
+                  <Tooltip className="tc-model-panel__tooltip" label="导出配置">
                     <ActionIcon
+                      className="tc-model-panel__icon-button"
                       size={24}
                       variant="light"
                       onClick={handleExport}
                     >
-                      <IconDownload size={16} />
+                      <IconDownload className="tc-model-panel__icon" size={16} />
                     </ActionIcon>
                   </Tooltip>
-                  <Tooltip label="导入配置">
+                  <Tooltip className="tc-model-panel__tooltip" label="导入配置">
                     <ActionIcon
+                      className="tc-model-panel__icon-button"
                       size={24}
                       variant="light"
                       onClick={() => {
@@ -1304,11 +1309,12 @@ const handleCloseProxyModal = () => {
                         }
                       }}
                     >
-                      <IconUpload size={16} />
+                      <IconUpload className="tc-model-panel__icon" size={16} />
                     </ActionIcon>
                   </Tooltip>
-                  <Tooltip label="一键清空所有模型配置">
+                  <Tooltip className="tc-model-panel__tooltip" label="一键清空所有模型配置">
                     <Button
+                      className="tc-model-panel__header-action"
                       size="xs"
                       variant="light"
                       color="red"
@@ -1318,24 +1324,25 @@ const handleCloseProxyModal = () => {
                       清空
                     </Button>
                   </Tooltip>
-                  <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
+                  <Button className="tc-model-panel__header-action" size="xs" variant="light" onClick={() => setActivePanel(null)}>
                     关闭
                   </Button>
                 </Group>
               </Group>
-              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
-                <Stack gap="sm">
-                  <Paper withBorder radius="md" p="sm">
-                    <Group justify="space-between" align="center">
-                      <div>
-                        <Text size="sm" fw={500}>
+              <div className="tc-model-panel__content" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+                <Stack className="tc-model-panel__stack" gap="sm">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm">
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="center">
+                      <div className="tc-model-panel__section-text">
+                        <Text className="tc-model-panel__section-title" size="sm" fw={500}>
                           TapCanvas 持久化
                         </Text>
-                        <Text size="xs" c="dimmed">
+                        <Text className="tc-model-panel__section-desc" size="xs" c="dimmed">
                           控制是否将生成的图片 / 视频结果持久化到 TapCanvas（资产 / TapShow）。
                         </Text>
                       </div>
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="sm"
                         checked={assetPersistenceEnabled}
                         label={assetPersistenceEnabled ? '已启用' : '已关闭'}
@@ -1343,133 +1350,134 @@ const handleCloseProxyModal = () => {
                       />
                     </Group>
                   </Paper>
-                  <Paper withBorder radius="md" p="sm">
-                    <Group justify="space-between" align="flex-start">
-                      <div>
-                        <Group gap={6} mb={4} align="center">
-                          <Title order={6}>代理服务</Title>
-                          {proxyLoading && <Badge size="xs" color="gray">加载中</Badge>}
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm">
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start">
+                      <div className="tc-model-panel__section-text">
+                        <Group className="tc-model-panel__section-title-row" gap={6} mb={4} align="center">
+                          <Title className="tc-model-panel__section-title" order={6}>代理服务</Title>
+                          {proxyLoading && <Badge className="tc-model-panel__badge" size="xs" color="gray">加载中</Badge>}
                           {proxyConfig?.enabled && !proxyLoading && (
-                            <Badge size="xs" color="grape">已启用</Badge>
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape">已启用</Badge>
                           )}
                         </Group>
-                        <Text size="xs" c="dimmed">
+                        <Text className="tc-model-panel__section-desc" size="xs" c="dimmed">
                           使用 grsai API Key 统一代理 Sora / Veo 等厂商的调用，稳定访问海外接口。
                         </Text>
                         {proxyConfig?.enabled && proxyVendorLabels.length > 0 ? (
-                          <Group gap={6} mt={6} wrap="wrap">
-                            <Badge size="xs" color="grape" variant="light">
+                          <Group className="tc-model-panel__section-meta" gap={6} mt={6} wrap="wrap">
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape" variant="light">
                               厂商：{proxyVendorLabels.join('、')}
                             </Badge>
                             {proxyConfig.baseUrl && (
-                              <Text size="xs" c="dimmed">
+                              <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                                 Host: {proxyConfig.baseUrl}
                               </Text>
                             )}
                           </Group>
                         ) : (
-                          <Text size="xs" c="dimmed" mt={6}>
+                          <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed" mt={6}>
                             当前未启用代理服务
                           </Text>
                         )}
                       </div>
-                      <Button size="xs" variant="light" onClick={handleOpenProxyModal}>
+                      <Button className="tc-model-panel__section-action" size="xs" variant="light" onClick={handleOpenProxyModal}>
                         配置
                       </Button>
                     </Group>
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Sora</Title>
-                        <Badge color="blue" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Sora</Title>
+                        <Badge className="tc-model-panel__badge" color="blue" size="xs">
                           Beta
                         </Badge>
                         {isSoraProxyActive && (
-                          <Badge color="grape" size="xs">grsai 代理</Badge>
+                          <Badge className="tc-model-panel__badge" color="grape" size="xs">grsai 代理</Badge>
                         )}
                       </Group>
-                      <Group spacing="xs">
-                        <Button size="xs" onClick={openModalForNew}>
+                      <Group className="tc-model-panel__section-actions" spacing="xs">
+                        <Button className="tc-model-panel__section-action" size="xs" onClick={openModalForNew}>
                           管理密钥
                         </Button>
                       </Group>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={2}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={2}>
                       配置多个 Sora API Token，共享同一厂商额度
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{tokens.length}
                     </Text>
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Sora2API（自建）</Title>
-                        <Badge color="teal" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Sora2API（自建）</Title>
+                        <Badge className="tc-model-panel__badge" color="teal" size="xs">
                           Local
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openSora2ApiModalForNew}>
+                      <Button className="tc-model-panel__section-action" size="xs" onClick={openSora2ApiModalForNew}>
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={6}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={6}>
                       通过自建 Sora2API 服务（OpenAI 兼容接口）生成视频/图片，适合本地或私有部署。
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{sora2apiTokens.length}
                     </Text>
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Gemini</Title>
-                        <Badge color="blue" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Gemini</Title>
+                        <Badge className="tc-model-panel__badge" color="blue" size="xs">
                           Beta
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openGeminiModalForNew}>
+                      <Button className="tc-model-panel__section-action" size="xs" onClick={openGeminiModalForNew}>
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={2}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={2}>
                       配置 Gemini API Key（Google AI Studio / Vertex AI）
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{geminiTokens.length}
                     </Text>
                     {renderProviderProfiles(geminiProvider)}
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>OpenAI / Codex</Title>
-                        <Badge color="teal" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>OpenAI / Codex</Title>
+                        <Badge className="tc-model-panel__badge" color="teal" size="xs">
                           New
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openOpenAIModalForNew}>
+                      <Button className="tc-model-panel__section-action" size="xs" onClick={openOpenAIModalForNew}>
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={2}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={2}>
                       配置 OpenAI 或 right.codes Codex API Key，支持 GPT-4o / GPT-5.2 等模型，可自定义 Base URL。
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{openaiTokens.length}
                     </Text>
                     {renderProviderProfiles(openaiProvider)}
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Anthropic/GLM</Title>
-                        <Badge color="yellow" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Anthropic/GLM</Title>
+                        <Badge className="tc-model-panel__badge" color="yellow" size="xs">
                           New
                         </Badge>
                       </Group>
                       <Button
+                        className="tc-model-panel__section-action"
                         size="xs"
                         onClick={() => {
                           setAnthropicEditingToken(null)
@@ -1482,51 +1490,52 @@ const handleCloseProxyModal = () => {
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={2}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={2}>
                       配置 Claude API Key，支持 3.5 Sonnet / Haiku 等模型，可选自定义代理地址。
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{anthropicTokens.length}
                     </Text>
                     {renderProviderProfiles(anthropicProvider)}
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Qwen</Title>
-                        <Badge color="teal" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Qwen</Title>
+                        <Badge className="tc-model-panel__badge" color="teal" size="xs">
                           Beta
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openQwenModalForNew}>
+                      <Button className="tc-model-panel__section-action" size="xs" onClick={openQwenModalForNew}>
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={2}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={2}>
                       配置 DashScope API Key（qwen-image-plus 等）
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{qwenTokens.length}
                     </Text>
                     {renderProviderProfiles(qwenProvider)}
                   </Paper>
-                  <Paper withBorder radius="md" p="sm" style={{ position: 'relative' }}>
-                    <Group justify="space-between" align="flex-start" mb={4}>
-                      <Group gap={6}>
-                        <Title order={6}>Veo (GRSAI)</Title>
-                        <Badge color="violet" size="xs">
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm" style={{ position: 'relative' }}>
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start" mb={4}>
+                      <Group className="tc-model-panel__section-title-row" gap={6}>
+                        <Title className="tc-model-panel__section-title" order={6}>Veo (GRSAI)</Title>
+                        <Badge className="tc-model-panel__badge" color="violet" size="xs">
                           New
                         </Badge>
                       </Group>
-                      <Button size="xs" onClick={openVeoModalForNew}>
+                      <Button className="tc-model-panel__section-action" size="xs" onClick={openVeoModalForNew}>
                         管理密钥
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed" mb={6}>
+                    <Text className="tc-model-panel__section-desc" size="xs" c="dimmed" mb={6}>
                       支持海外 `https://api.grsai.com` 与国内直连 `https://grsai.dakka.com.cn`，可自定义 Host。
                     </Text>
-                    <Group gap="xs" align="flex-end" mb={8}>
+                    <Group className="tc-model-panel__section-actions" gap="xs" align="flex-end" mb={8}>
                       <TextInput
+                        className="tc-model-panel__input"
                         label="API Host"
                         placeholder="https://api.grsai.com"
                         value={veoBaseUrl}
@@ -1534,14 +1543,14 @@ const handleCloseProxyModal = () => {
                         onBlur={() => handlePersistVeoBaseUrl(veoBaseUrl)}
                         style={{ flex: 1 }}
                       />
-                      <Button size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://api.grsai.com')}>
+                      <Button className="tc-model-panel__section-action" size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://api.grsai.com')}>
                         海外
                       </Button>
-                      <Button size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://grsai.dakka.com.cn')}>
+                      <Button className="tc-model-panel__section-action" size="compact-xs" variant="light" onClick={() => handleApplyVeoHost('https://grsai.dakka.com.cn')}>
                         国内
                       </Button>
                     </Group>
-                    <Text size="xs" c="dimmed">
+                    <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
                       已配置密钥：{veoTokens.length}
                     </Text>
                     {renderProviderProfiles(veoProvider)}
@@ -1550,6 +1559,7 @@ const handleCloseProxyModal = () => {
               </div>
             </Paper>
                       <Modal
+              className="tc-model-panel__modal"
               opened={anthropicModalOpen}
               onClose={() => setAnthropicModalOpen(false)}
               fullScreen
@@ -1572,13 +1582,14 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       配置 Claude / Anthropic API Key，可任选官方或自建代理 Base URL，支持 3.5 Sonnet / Haiku 等模型。
                     </Text>
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -1588,9 +1599,10 @@ const handleCloseProxyModal = () => {
                       获取 API Key
                     </Button>
                   </Group>
-                  <Stack gap="xs">
-                    <div>
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="Anthropic 代理 Base URL"
                         placeholder="例如：https://api.anthropic.com"
                         value={anthropicBaseUrl}
@@ -1611,6 +1623,7 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="xs"
                         mt={4}
                         label="将此 Base URL 作为共享配置（团队可复用同一代理域名）"
@@ -1639,43 +1652,44 @@ const handleCloseProxyModal = () => {
                       />
                     </div>
                   </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 Claude Key</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的 Claude Key</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {anthropicTokens.length > 0 && (
                         <>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(true)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(true)}>
                             全部共享
                           </Button>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(false)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllAnthropicTokens(false)}>
                             取消全部共享
                           </Button>
                         </>
                       )}
-                      <Button size="xs" onClick={openAnthropicModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" onClick={openAnthropicModalForNew}>
                         新增密钥
                       </Button>
                     </Group>
                   </Group>
-                  {anthropicTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
+                  {anthropicTokens.length === 0 && <Text className="tc-model-panel__modal-empty" size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {anthropicTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Group className="tc-model-panel__modal-row-title" gap={6}>
+                            <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
                             {t.shared && (
-                              <Badge size="xs" color="grape">
+                              <Badge className="tc-model-panel__badge" size="xs" color="grape">
                                 共享
                               </Badge>
                             )}
                           </Group>
-                          <Text size="xs" c="dimmed">
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -1688,7 +1702,7 @@ const handleCloseProxyModal = () => {
                           >
                             编辑
                           </Button>
-                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteAnthropicToken(t.id)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="light" color="red" onClick={() => handleDeleteAnthropicToken(t.id)}>
                             删除
                           </Button>
                         </Group>
@@ -1696,32 +1710,35 @@ const handleCloseProxyModal = () => {
                     ))}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{anthropicEditingToken ? '编辑密钥' : '新增密钥'}</Title>
-                    <TextInput label="名称" placeholder="例如：Claude 主账号 Key" value={anthropicLabel} onChange={(e) => setAnthropicLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{anthropicEditingToken ? '编辑密钥' : '新增密钥'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：Claude 主账号 Key" value={anthropicLabel} onChange={(e) => setAnthropicLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Key"
                       placeholder={anthropicEditingToken ? '留空则不修改已有密钥' : '粘贴你的 Anthropic API Key'}
                       value={anthropicSecret}
                       onChange={(e) => setAnthropicSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
                       checked={anthropicShared}
                       onChange={(e) => setAnthropicShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setAnthropicModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setAnthropicModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveAnthropicToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveAnthropicToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
               </div>
             </Modal>
                       <Modal
+              className="tc-model-panel__modal"
               opened={geminiModalOpen}
               onClose={() => setGeminiModalOpen(false)}
               fullScreen
@@ -1744,13 +1761,14 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       在这里配置 Gemini API Key（Google AI Studio / Vertex AI）。目前用于文案优化和图片生成。
                     </Text>
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -1760,9 +1778,10 @@ const handleCloseProxyModal = () => {
                       获取 API Key
                     </Button>
                   </Group>
-                  <Stack gap="xs">
-                    <div>
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="Base URL（可选，一般保持默认）"
                         placeholder="例如：https://generativelanguage.googleapis.com"
                         value={geminiBaseUrl}
@@ -1779,35 +1798,36 @@ const handleCloseProxyModal = () => {
                       />
                     </div>
                   </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 Gemini Key</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的 Gemini Key</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {geminiTokens.length > 0 && (
                         <>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(true)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(true)}>
                             全部共享
                           </Button>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(false)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllGeminiTokens(false)}>
                             取消全部共享
                           </Button>
                         </>
                       )}
-                      <Button size="xs" onClick={openGeminiModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" onClick={openGeminiModalForNew}>
                         新增 Key
                       </Button>
                     </Group>
                   </Group>
-                  <Stack gap="xs">
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {geminiTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Text size="sm">{t.label}</Text>
-                          <Text size="xs" c="dimmed">
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.shared ? '共享' : '仅自己可见'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="light"
                             onClick={() => {
@@ -1820,45 +1840,48 @@ const handleCloseProxyModal = () => {
                           >
                             编辑
                           </Button>
-                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" color="red" onClick={() => handleDeleteGeminiToken(t.id)}>
                             删除
                           </Button>
                         </Group>
                       </Group>
                     ))}
                     {geminiTokens.length === 0 && (
-                      <Text size="xs" c="dimmed">
+                      <Text className="tc-model-panel__modal-empty" size="xs" c="dimmed">
                         暂无已保存的 Gemini Key。
                       </Text>
                     )}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{geminiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
-                    <TextInput label="名称" placeholder="例如：主账号 Key" value={geminiLabel} onChange={(e) => setGeminiLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{geminiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：主账号 Key" value={geminiLabel} onChange={(e) => setGeminiLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Key"
                       placeholder={geminiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 Gemini API Key'}
                       value={geminiSecret}
                       onChange={(e) => setGeminiSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
                       checked={geminiShared}
                       onChange={(e) => setGeminiShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setGeminiModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setGeminiModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveGeminiToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveGeminiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
               </div>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={openaiModalOpen}
               onClose={() => setOpenaiModalOpen(false)}
               fullScreen
@@ -1881,14 +1904,15 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       配置 OpenAI 或 right.codes Codex API Key，可自定义 Base URL 访问代理（如 https://www.right.codes/codex）。
                     </Text>
-                    <Group gap="xs">
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       <Button
+                        className="tc-model-panel__modal-link"
                         size="xs"
                         variant="outline"
                         onClick={() => window.open('https://platform.openai.com/account/api-keys', '_blank', 'noopener')}
@@ -1896,6 +1920,7 @@ const handleCloseProxyModal = () => {
                         获取 OpenAI Key
                       </Button>
                       <Button
+                        className="tc-model-panel__modal-link"
                         size="xs"
                         variant="outline"
                         onClick={() => window.open('https://www.right.codes/register?aff=21f6040a', '_blank', 'noopener')}
@@ -1904,9 +1929,10 @@ const handleCloseProxyModal = () => {
                       </Button>
                     </Group>
                   </Group>
-                  <Stack gap="xs">
-                    <div>
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="OpenAI / Codex Base URL"
                         placeholder="例如：https://api.openai.com 或 https://www.right.codes/codex"
                         value={openaiBaseUrl}
@@ -1931,6 +1957,7 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="xs"
                         mt={4}
                         label="将 Base URL 作为共享配置（团队复用同一代理域名）"
@@ -1959,43 +1986,44 @@ const handleCloseProxyModal = () => {
                       />
                     </div>
                   </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 OpenAI Key</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的 OpenAI Key</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {openaiTokens.length > 0 && (
                         <>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(true)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(true)}>
                             全部共享
                           </Button>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(false)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllOpenAITokens(false)}>
                             取消全部共享
                           </Button>
                         </>
                       )}
-                      <Button size="xs" onClick={openOpenAIModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" onClick={openOpenAIModalForNew}>
                         新增 Key
                       </Button>
                     </Group>
                   </Group>
-                  {openaiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
+                  {openaiTokens.length === 0 && <Text className="tc-model-panel__modal-empty" size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {openaiTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Group className="tc-model-panel__modal-row-title" gap={6}>
+                            <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
                             {t.shared && (
-                              <Badge size="xs" color="grape">
+                              <Badge className="tc-model-panel__badge" size="xs" color="grape">
                                 共享
                               </Badge>
                             )}
                           </Group>
-                          <Text size="xs" c="dimmed">
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -2008,7 +2036,7 @@ const handleCloseProxyModal = () => {
                           >
                             编辑
                           </Button>
-                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteOpenAIToken(t.id)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="light" color="red" onClick={() => handleDeleteOpenAIToken(t.id)}>
                             删除
                           </Button>
                         </Group>
@@ -2016,32 +2044,35 @@ const handleCloseProxyModal = () => {
                     ))}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{openaiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
-                    <TextInput label="名称" placeholder="例如：OpenAI 主账号 Key" value={openaiLabel} onChange={(e) => setOpenaiLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{openaiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：OpenAI 主账号 Key" value={openaiLabel} onChange={(e) => setOpenaiLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Key"
                       placeholder={openaiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 OpenAI / Codex API Key'}
                       value={openaiSecret}
                       onChange={(e) => setOpenaiSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
                       checked={openaiShared}
                       onChange={(e) => setOpenaiShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setOpenaiModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setOpenaiModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveOpenAIToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveOpenAIToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
               </div>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={sessionModalOpen}
               onClose={() => {
                 setSessionModalOpen(false)
@@ -2052,26 +2083,28 @@ const handleCloseProxyModal = () => {
               withinPortal
               zIndex={8200}
             >
-              <Stack>
-                <Text size="sm" c="dimmed">
+              <Stack className="tc-model-panel__modal-stack">
+                <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                   将 https://sora.chatgpt.com/api/auth/session 返回的 JSON 粘贴到下方，系统会自动提取 accessToken 作为新的 Sora Token。
                 </Text>
                 <Textarea
+                  className="tc-model-panel__textarea"
                   minRows={6}
                   value={sessionJson}
                   onChange={(e) => setSessionJson(e.currentTarget.value)}
                   placeholder='{"user": {...}, "accessToken":"..."}'
                 />
                 {sessionError && (
-                  <Text size="xs" c="red">
+                  <Text className="tc-model-panel__modal-error" size="xs" c="red">
                     {sessionError}
                   </Text>
                 )}
-                <Group position="right" spacing="sm">
-                  <Button variant="subtle" size="xs" onClick={() => setSessionModalOpen(false)}>
+                <Group className="tc-model-panel__modal-actions" position="right" spacing="sm">
+                  <Button className="tc-model-panel__modal-action" variant="subtle" size="xs" onClick={() => setSessionModalOpen(false)}>
                     取消
                   </Button>
                   <Button
+                    className="tc-model-panel__modal-action"
                     size="xs"
                     onClick={() => {
                       try {
@@ -2099,6 +2132,7 @@ const handleCloseProxyModal = () => {
               </Stack>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={qwenModalOpen}
               onClose={() => setQwenModalOpen(false)}
               fullScreen
@@ -2121,13 +2155,14 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       在这里配置 DashScope API Key，用于调用 Qwen 图片模型（如 qwen-image-plus）。
                     </Text>
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -2137,35 +2172,36 @@ const handleCloseProxyModal = () => {
                       获取 API Key
                     </Button>
                   </Group>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 Qwen Key</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的 Qwen Key</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {qwenTokens.length > 0 && (
                         <>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(true)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(true)}>
                             全部共享
                           </Button>
-                          <Button size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(false)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllQwenTokens(false)}>
                             取消全部共享
                           </Button>
                         </>
                       )}
-                      <Button size="xs" onClick={openQwenModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" onClick={openQwenModalForNew}>
                         新增 Key
                       </Button>
                     </Group>
                   </Group>
-                  <Stack gap="xs">
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {qwenTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Text size="sm">{t.label}</Text>
-                          <Text size="xs" c="dimmed">
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.shared ? '共享' : '仅自己可见'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="light"
                             onClick={() => {
@@ -2178,39 +2214,41 @@ const handleCloseProxyModal = () => {
                           >
                             编辑
                           </Button>
-                          <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteQwenToken(t.id)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" color="red" onClick={() => handleDeleteQwenToken(t.id)}>
                             删除
                           </Button>
                         </Group>
                       </Group>
                     ))}
                     {qwenTokens.length === 0 && (
-                      <Text size="xs" c="dimmed">
+                      <Text className="tc-model-panel__modal-empty" size="xs" c="dimmed">
                         暂无已保存的 Qwen Key。
                       </Text>
                     )}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{qwenEditingToken ? '编辑 Key' : '新增 Key'}</Title>
-                    <TextInput label="名称" placeholder="例如：Qwen 主账号 Key" value={qwenLabel} onChange={(e) => setQwenLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{qwenEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：Qwen 主账号 Key" value={qwenLabel} onChange={(e) => setQwenLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="DashScope API Key"
                       placeholder={qwenEditingToken ? '留空则不修改已有 Key' : '粘贴你的 DashScope API Key'}
                       value={qwenSecret}
                       onChange={(e) => setQwenSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此 Key 作为共享配置（其他未配置或超额的用户可复用）"
                       checked={qwenShared}
                       onChange={(e) => setQwenShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setQwenModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setQwenModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveQwenToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveQwenToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
@@ -2239,13 +2277,14 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       配置 GRSAI Veo API Key，支持 Host：`https://api.grsai.com`（海外）或 `https://grsai.dakka.com.cn`（国内）。
                     </Text>
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -2255,36 +2294,37 @@ const handleCloseProxyModal = () => {
                       查看文档
                     </Button>
                   </Group>
-                  <Stack gap="xs">
-                    <Group justify="space-between">
-                      <Title order={5}>已保存的 Veo Key</Title>
-                      <Group gap="xs">
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <Group className="tc-model-panel__modal-header" justify="space-between">
+                      <Title className="tc-model-panel__modal-title" order={5}>已保存的 Veo Key</Title>
+                      <Group className="tc-model-panel__modal-actions" gap="xs">
                         {veoTokens.length > 0 && (
                           <>
-                            <Button size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(true)}>
+                            <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(true)}>
                               全部共享
                             </Button>
-                            <Button size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(false)}>
+                            <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" onClick={() => handleShareAllVeoTokens(false)}>
                               取消全部共享
                             </Button>
                           </>
                         )}
-                        <Button size="xs" onClick={openVeoModalForNew}>
+                        <Button className="tc-model-panel__modal-action" size="xs" onClick={openVeoModalForNew}>
                           新增 Key
                         </Button>
                       </Group>
                     </Group>
-                    <Stack gap="xs">
+                    <Stack className="tc-model-panel__modal-stack" gap="xs">
                       {veoTokens.map((t) => (
-                        <Group key={t.id} justify="space-between">
-                          <div>
-                            <Text size="sm">{t.label}</Text>
-                            <Text size="xs" c="dimmed">
+                        <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                          <div className="tc-model-panel__modal-row-text">
+                            <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
+                            <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                               {t.shared ? '共享' : '仅自己可见'}
                             </Text>
                           </div>
-                          <Group gap="xs">
+                          <Group className="tc-model-panel__modal-row-actions" gap="xs">
                             <Button
+                              className="tc-model-panel__modal-action"
                               size="xs"
                               variant="light"
                               onClick={() => {
@@ -2297,40 +2337,42 @@ const handleCloseProxyModal = () => {
                             >
                               编辑
                             </Button>
-                            <Button size="xs" variant="subtle" color="red" onClick={() => handleDeleteVeoToken(t.id)}>
+                            <Button className="tc-model-panel__modal-action" size="xs" variant="subtle" color="red" onClick={() => handleDeleteVeoToken(t.id)}>
                               删除
                             </Button>
                           </Group>
                         </Group>
                       ))}
                       {veoTokens.length === 0 && (
-                        <Text size="xs" c="dimmed">
+                        <Text className="tc-model-panel__modal-empty" size="xs" c="dimmed">
                           暂无 Veo Key。
                         </Text>
                       )}
                     </Stack>
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{veoEditingToken ? '编辑 Key' : '新增 Key'}</Title>
-                    <TextInput label="名称" placeholder="例如：Veo 主账号 Key" value={veoLabel} onChange={(e) => setVeoLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{veoEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：Veo 主账号 Key" value={veoLabel} onChange={(e) => setVeoLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Key"
                       placeholder={veoEditingToken ? '留空则不修改已有 Key' : '粘贴你的 GRSAI API Key'}
                       value={veoSecret}
                       onChange={(e) => setVeoSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此 Key 作为共享配置（其他成员可复用）"
                       checked={veoShared}
                       onChange={(e) => setVeoShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setVeoModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setVeoModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveVeoToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveVeoToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
@@ -2359,13 +2401,14 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Group spacing="xs">
-                    <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Group className="tc-model-panel__modal-intro" spacing="xs">
+                    <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                       连接自建的 Sora2API 服务（OpenAI 兼容接口），通过模型面板统一管理 API Host 与密钥。
                     </Text>
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -2375,9 +2418,10 @@ const handleCloseProxyModal = () => {
                       查看项目
                     </Button>
                   </Group>
-                  <Stack gap="xs">
-                    <div>
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="Sora2API Base URL"
                         placeholder="例如：http://127.0.0.1:8000"
                         value={sora2apiBaseUrl}
@@ -2402,12 +2446,13 @@ const handleCloseProxyModal = () => {
                       />
                     </div>
                   </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的 Sora2API Key</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的 Sora2API Key</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {sora2apiTokens.length > 0 && (
                         <>
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -2436,6 +2481,7 @@ const handleCloseProxyModal = () => {
                             全部共享
                           </Button>
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -2465,30 +2511,31 @@ const handleCloseProxyModal = () => {
                           </Button>
                         </>
                       )}
-                      <Button size="xs" onClick={openSora2ApiModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" onClick={openSora2ApiModalForNew}>
                         新增 Key
                       </Button>
                     </Group>
                   </Group>
-                  {sora2apiTokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
+                  {sora2apiTokens.length === 0 && <Text className="tc-model-panel__modal-empty" size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {sora2apiTokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Group className="tc-model-panel__modal-row-title" gap={6}>
+                            <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
                             {t.shared && (
-                              <Badge size="xs" color="grape">
+                              <Badge className="tc-model-panel__badge" size="xs" color="grape">
                                 共享
                               </Badge>
                             )}
                           </Group>
-                          <Text size="xs" c="dimmed">
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -2502,6 +2549,7 @@ const handleCloseProxyModal = () => {
                             编辑
                           </Button>
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="light"
                             color="red"
@@ -2514,37 +2562,41 @@ const handleCloseProxyModal = () => {
                     ))}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{sora2apiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{sora2apiEditingToken ? '编辑 Key' : '新增 Key'}</Title>
                     <TextInput
+                      className="tc-model-panel__input"
                       label="名称"
                       placeholder="例如：Sora2API 主账号 Key"
                       value={sora2apiLabel}
                       onChange={(e) => setSora2apiLabel(e.currentTarget.value)}
                     />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Key"
                       placeholder={sora2apiEditingToken ? '留空则不修改已有 Key' : '粘贴你的 Sora2API API Key'}
                       value={sora2apiSecret}
                       onChange={(e) => setSora2apiSecret(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此 Key 作为共享配置（其他成员可复用）"
                       checked={sora2apiShared}
                       onChange={(e) => setSora2apiShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setSora2apiModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setSora2apiModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveSora2ApiToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveSora2ApiToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>
               </div>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={!!profileModal}
               onClose={() => {
                 setProfileModal(null)
@@ -2556,32 +2608,36 @@ const handleCloseProxyModal = () => {
               zIndex={200}
               title={profileModal?.profile ? '编辑模型' : '新增模型'}
             >
-              <Stack gap="sm">
+              <Stack className="tc-model-panel__modal-stack" gap="sm">
                 {profileModal?.provider && (
-                  <Text size="sm" c="dimmed">
+                  <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                     {profileModal.provider.name} · {profileModal.provider.vendor}
                   </Text>
                 )}
                 <TextInput
+                  className="tc-model-panel__input"
                   label="显示名称"
                   placeholder="例如：GPT-4o-mini 自定义"
                   value={profileName}
                   onChange={(e) => setProfileName(e.currentTarget.value)}
                 />
                 <TextInput
+                  className="tc-model-panel__input"
                   label="模型 ID"
                   placeholder="例如：gpt-4.1-mini"
                   value={profileModelKey}
                   onChange={(e) => setProfileModelKey(e.currentTarget.value)}
                 />
                 <Select
+                  className="tc-model-panel__select"
                   label="模型类型"
                   data={PROFILE_KIND_OPTIONS}
                   value={profileKind}
                   onChange={(value) => value && setProfileKind(value as ProfileKind)}
                 />
-                <Group justify="flex-end" mt="sm">
+                <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
                   <Button
+                    className="tc-model-panel__modal-action"
                     variant="default"
                     onClick={() => {
                       setProfileModal(null)
@@ -2592,31 +2648,33 @@ const handleCloseProxyModal = () => {
                   >
                     取消
                   </Button>
-                  <Button onClick={handleSaveProfile} loading={profileSaving} disabled={!profileModelKey.trim()}>
+                  <Button className="tc-model-panel__modal-action" onClick={handleSaveProfile} loading={profileSaving} disabled={!profileModelKey.trim()}>
                     保存
                   </Button>
                 </Group>
               </Stack>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={proxyModalOpen}
               onClose={handleCloseProxyModal}
               title="代理服务（grsai）"
               centered
               size="lg"
             >
-              <Stack gap="sm">
-                <Text size="sm" c="dimmed">
+              <Stack className="tc-model-panel__modal-stack" gap="sm">
+                <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                   配置一次 grsai API Key 和 Host，即可让选定的厂商走该代理，无需逐个粘贴密钥。
                 </Text>
-                <Group gap="xs">
+                <Group className="tc-model-panel__modal-actions" gap="xs">
                   {PROXY_HOST_PRESETS.map((preset) => (
-                    <Button key={preset.value} size="xs" variant="light" onClick={() => setProxyHost(preset.value)}>
+                    <Button className="tc-model-panel__modal-action" key={preset.value} size="xs" variant="light" onClick={() => setProxyHost(preset.value)}>
                       {preset.label}
                     </Button>
                   ))}
                 </Group>
                 <TextInput
+                  className="tc-model-panel__input"
                   label="代理 Host"
                   placeholder="例如：https://api.grsai.com"
                   value={proxyHost}
@@ -2624,6 +2682,7 @@ const handleCloseProxyModal = () => {
                   required
                 />
                 <TextInput
+                  className="tc-model-panel__input"
                   label="grsai API Key"
                   placeholder={proxyConfig?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 grsai 提供的 API Key'}
                   type="password"
@@ -2633,8 +2692,9 @@ const handleCloseProxyModal = () => {
                     setProxyApiKeyTouched(true)
                   }}
                 />
-                <Group justify="flex-end" gap="xs">
+                <Group className="tc-model-panel__modal-actions" justify="flex-end" gap="xs">
                   <Button
+                    className="tc-model-panel__modal-action"
                     size="compact-xs"
                     variant="light"
                     onClick={() => window.open('https://grsai.com/zh/dashboard/api-keys', '_blank', 'noopener')}
@@ -2643,34 +2703,37 @@ const handleCloseProxyModal = () => {
                   </Button>
                 </Group>
                 <Switch
+                  className="tc-model-panel__toggle"
                   label="启用代理服务"
                   checked={proxyEnabled}
                   onChange={(event) => setProxyEnabled(event.currentTarget.checked)}
                 />
                 <Checkbox.Group
+                  className="tc-model-panel__checkbox-group"
                   label="选择需要走代理的厂商"
                   description="至少勾选一个厂商，未勾选的厂商仍走官方接口"
                   value={proxyEnabledVendors}
                   onChange={setProxyEnabledVendors}
                   disabled={!proxyEnabled}
                 >
-                  <Stack gap={4} pt={4}>
+                  <Stack className="tc-model-panel__checkbox-list" gap={4} pt={4}>
                     {PROXY_TARGET_OPTIONS.map((opt) => (
-                      <Checkbox key={opt.value} value={opt.value} label={opt.label} disabled={!proxyEnabled} />
+                      <Checkbox className="tc-model-panel__checkbox" key={opt.value} value={opt.value} label={opt.label} disabled={!proxyEnabled} />
                     ))}
                   </Stack>
                 </Checkbox.Group>
-                <Group justify="flex-end" mt="sm">
-                  <Button variant="default" onClick={handleCloseProxyModal}>
+                <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                  <Button className="tc-model-panel__modal-action" variant="default" onClick={handleCloseProxyModal}>
                     取消
                   </Button>
-                  <Button onClick={handleSaveProxyConfig} loading={proxySaving}>
+                  <Button className="tc-model-panel__modal-action" onClick={handleSaveProxyConfig} loading={proxySaving}>
                     保存
                   </Button>
                 </Group>
               </Stack>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={modalOpen}
               onClose={() => setModalOpen(false)}
               fullScreen
@@ -2693,18 +2756,19 @@ const handleCloseProxyModal = () => {
                 },
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Stack gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
-                  <Text size="sm" c="dimmed">
+              <div className="tc-model-panel__modal-frame" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Stack className="tc-model-panel__modal-stack" gap="md" style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
+                  <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
                     你可以为 Sora 添加多个 Token，类似 n8n 的身份配置。它们将共用同一厂商额度。
                   </Text>
                   {isSoraProxyActive && (
-                    <Alert color="grape" title="已启用 grsai 代理" radius="md">
+                    <Alert className="tc-model-panel__modal-alert" color="grape" title="已启用 grsai 代理" radius="md">
                       当前视频任务会通过 {proxyConfig?.baseUrl || 'grsai'} 中转，无需公开 Sora 官方接口，代理结果会自动同步到节点。
                     </Alert>
                   )}
-                  <Group spacing="xs">
+                  <Group className="tc-model-panel__modal-actions" spacing="xs">
                     <Button
+                      className="tc-model-panel__modal-link"
                       size="xs"
                       variant="outline"
                       onClick={() =>
@@ -2713,13 +2777,14 @@ const handleCloseProxyModal = () => {
                     >
                       获取 session
                     </Button>
-                    <Button size="xs" variant="light" onClick={() => setSessionModalOpen(true)}>
+                    <Button className="tc-model-panel__modal-action" size="xs" variant="light" onClick={() => setSessionModalOpen(true)}>
                       导入 session
                     </Button>
                   </Group>
-                  <Stack gap="xs">
-                    <div>
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="videos 域名（例如长视频 API）"
                         placeholder="例如：https://videos.sora.example.com"
                         value={videosUrl}
@@ -2737,8 +2802,9 @@ const handleCloseProxyModal = () => {
                           setVideosEndpoint(saved)
                           useUIStore.getState().setSoraVideoBaseUrl(saved.baseUrl || null)
                         }}
-            />
+                      />
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="xs"
                         mt={4}
                         label="将 videos 域名作为共享配置"
@@ -2766,8 +2832,9 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                     </div>
-                    <div>
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="video 域名（例如任务接口）"
                         placeholder="例如：https://video.sora.example.com"
                         value={videoUrl}
@@ -2786,6 +2853,7 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="xs"
                         mt={4}
                         label="将 video 域名作为共享配置"
@@ -2813,8 +2881,9 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                     </div>
-                    <div>
+                    <div className="tc-model-panel__modal-section">
                       <TextInput
+                        className="tc-model-panel__input"
                         label="sora 域名（通用控制 API）"
                         placeholder="例如：https://sora.sora.example.com"
                         value={soraUrl}
@@ -2833,6 +2902,7 @@ const handleCloseProxyModal = () => {
                         }}
                       />
                       <Switch
+                        className="tc-model-panel__toggle"
                         size="xs"
                         mt={4}
                         label="将 sora 域名作为共享配置"
@@ -2861,12 +2931,13 @@ const handleCloseProxyModal = () => {
                       />
                     </div>
                   </Stack>
-                  <Group justify="space-between">
-                    <Title order={5}>已保存的密钥</Title>
-                    <Group gap="xs">
+                  <Group className="tc-model-panel__modal-header" justify="space-between">
+                    <Title className="tc-model-panel__modal-title" order={5}>已保存的密钥</Title>
+                    <Group className="tc-model-panel__modal-actions" gap="xs">
                       {tokens.length > 0 && (
                         <>
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => handleShareAllTokens(true)}
@@ -2874,6 +2945,7 @@ const handleCloseProxyModal = () => {
                             全部共享
                           </Button>
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => handleShareAllTokens(false)}
@@ -2882,30 +2954,31 @@ const handleCloseProxyModal = () => {
                           </Button>
                         </>
                       )}
-                      <Button size="xs" variant="light" onClick={openModalForNew}>
+                      <Button className="tc-model-panel__modal-action" size="xs" variant="light" onClick={openModalForNew}>
                         新增密钥
                       </Button>
                     </Group>
                   </Group>
-                  {tokens.length === 0 && <Text size="sm">暂无密钥，请先新增一个。</Text>}
-                  <Stack gap="xs">
+                  {tokens.length === 0 && <Text className="tc-model-panel__modal-empty" size="sm">暂无密钥，请先新增一个。</Text>}
+                  <Stack className="tc-model-panel__modal-stack" gap="xs">
                     {tokens.map((t) => (
-                      <Group key={t.id} justify="space-between">
-                        <div>
-                          <Group gap={6}>
-                            <Text size="sm">{t.label}</Text>
+                      <Group className="tc-model-panel__modal-row" key={t.id} justify="space-between">
+                        <div className="tc-model-panel__modal-row-text">
+                          <Group className="tc-model-panel__modal-row-title" gap={6}>
+                            <Text className="tc-model-panel__modal-row-label" size="sm">{t.label}</Text>
                             {t.shared && (
-                              <Badge size="xs" color="grape">
+                              <Badge className="tc-model-panel__badge" size="xs" color="grape">
                                 共享
                               </Badge>
                             )}
                           </Group>
-                          <Text size="xs" c="dimmed">
+                          <Text className="tc-model-panel__modal-row-meta" size="xs" c="dimmed">
                             {t.secretToken ? t.secretToken.slice(0, 4) + '••••' : '已保存的密钥'}
                           </Text>
                         </div>
-                        <Group gap="xs">
+                        <Group className="tc-model-panel__modal-row-actions" gap="xs">
                           <Button
+                            className="tc-model-panel__modal-action"
                             size="xs"
                             variant="subtle"
                             onClick={() => {
@@ -2919,7 +2992,7 @@ const handleCloseProxyModal = () => {
                           >
                             编辑
                           </Button>
-                          <Button size="xs" variant="light" color="red" onClick={() => handleDeleteToken(t.id)}>
+                          <Button className="tc-model-panel__modal-action" size="xs" variant="light" color="red" onClick={() => handleDeleteToken(t.id)}>
                             删除
                           </Button>
                         </Group>
@@ -2927,32 +3000,35 @@ const handleCloseProxyModal = () => {
                     ))}
                   </Stack>
                 </Stack>
-                <Paper withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={6}>{editingToken ? '编辑密钥' : '新增密钥'}</Title>
-                    <TextInput label="名称" placeholder="例如：主账号 Token" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
+                <Paper className="tc-model-panel__modal-footer" withBorder radius="md" p="md">
+                  <Stack className="tc-model-panel__modal-stack" gap="sm">
+                    <Title className="tc-model-panel__modal-title" order={6}>{editingToken ? '编辑密钥' : '新增密钥'}</Title>
+                    <TextInput className="tc-model-panel__input" label="名称" placeholder="例如：主账号 Token" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="API Token"
                       placeholder={editingToken ? '留空则不修改已有密钥' : '粘贴你的 Sora API Token'}
                       value={secret}
                       onChange={(e) => setSecret(e.currentTarget.value)}
                     />
                     <TextInput
+                      className="tc-model-panel__input"
                       label="User-Agent"
                       placeholder="例如：TapCanvas/1.0 (user@example.com)"
                       value={userAgent}
                       onChange={(e) => setUserAgent(e.currentTarget.value)}
                     />
                     <Switch
+                      className="tc-model-panel__toggle"
                       label="将此密钥作为共享配置（其他未配置或超额的用户可复用）"
                       checked={shared}
                       onChange={(e) => setShared(e.currentTarget.checked)}
                     />
-                    <Group justify="flex-end" mt="sm">
-                      <Button variant="default" onClick={() => setModalOpen(false)}>
+                    <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                      <Button className="tc-model-panel__modal-action" variant="default" onClick={() => setModalOpen(false)}>
                         取消
                       </Button>
-                      <Button onClick={handleSaveToken}>保存</Button>
+                      <Button className="tc-model-panel__modal-action" onClick={handleSaveToken}>保存</Button>
                     </Group>
                   </Stack>
                 </Paper>

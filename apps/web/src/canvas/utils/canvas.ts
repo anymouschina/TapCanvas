@@ -4,7 +4,7 @@
  */
 
 import { CANVAS_CONFIG, HANDLE_PREFIXES } from './constants';
-import type { Node, Edge, Position } from 'reactflow';
+import type { Node, Edge, Position } from '@xyflow/react';
 
 /**
  * 生成唯一ID

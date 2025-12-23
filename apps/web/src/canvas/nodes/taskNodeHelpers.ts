@@ -1,5 +1,5 @@
 import type React from 'react'
-import { Position } from 'reactflow'
+import { Position } from '@xyflow/react'
 import type { TaskNodeHandlesConfig } from './taskNodeSchema'
 import type { TaskResultDto } from '../../api/server'
 import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'

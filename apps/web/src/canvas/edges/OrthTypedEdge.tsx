@@ -1,7 +1,7 @@
 import React from 'react'
 import { ActionIcon } from '@mantine/core'
 import { IconTrash } from '@tabler/icons-react'
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { useEdgeVisuals } from './useEdgeVisuals'

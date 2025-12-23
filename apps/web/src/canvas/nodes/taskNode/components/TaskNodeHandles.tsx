@@ -1,5 +1,5 @@
 import React from 'react'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position } from '@xyflow/react'
 import { getHandleTypeLabel } from '../../../utils/handleLabels'
 import { buildHandleStyle, getHandlePositionName, HANDLE_HORIZONTAL_OFFSET } from '../../taskNodeHelpers'
 

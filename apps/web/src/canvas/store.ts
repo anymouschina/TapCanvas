@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from 'reactflow'
-import { addEdge, applyEdgeChanges, applyNodeChanges } from 'reactflow'
+import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from '@xyflow/react'
+import { addEdge, applyEdgeChanges, applyNodeChanges } from '@xyflow/react'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeRemote } from '../runner/remoteRunner'
 import { runFlowDag } from '../runner/dag'

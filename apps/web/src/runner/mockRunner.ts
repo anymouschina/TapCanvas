@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import type { Node } from 'reactflow'
+import type { Node } from '@xyflow/react'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void

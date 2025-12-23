@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Tooltip } from '@mantine/core'
-import { NodeToolbar, Position } from 'reactflow'
+import { NodeToolbar, Position } from '@xyflow/react'
 import { IconDownload, IconMaximize } from '@tabler/icons-react'
 
 type ToolbarAction = { key: string; label: string; icon: JSX.Element; onClick: () => void }
