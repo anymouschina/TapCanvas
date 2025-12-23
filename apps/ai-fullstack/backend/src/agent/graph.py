@@ -37,6 +37,8 @@ from agent.roles import DEFAULT_ROLE_ID, normalize_role_id, role_map, roles_prom
 
 load_dotenv()
 
+REQUEST_TIMEOUT_SECONDS = 600
+
 ROLE_ALLOWED_CANVAS_TOOLS: dict[str, set[str]] = {
     # Creative operators
     "storyboard_artist": {"createNode", "updateNode", "connectNodes", "runNode"},
@@ -552,13 +554,22 @@ def _collect_stream_text(stream) -> str:
     return "".join(parts)
 
 
-def _collect_stream_text_and_tools(stream) -> tuple[str, list[dict]]:
+def _collect_stream_text_and_tools(
+    stream,
+    *,
+    max_seconds: int | None = None,
+) -> tuple[str, list[dict], bool]:
     """Collect text and any tool calls from streaming Responses API iterator."""
     parts: list[str] = []
     tool_calls_by_id: dict[str, dict] = {}
     alias_to_call_id: dict[str, str] = {}
+    timed_out = False
+    start = time.monotonic()
     try:
         for chunk in stream:
+            if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
+                timed_out = True
+                break
             # tool calls (Responses API streaming events)
             ev_type = getattr(chunk, "type", None)
             if ev_type == "response.output_item.added" or ev_type == "response.output_item.done":
@@ -669,7 +680,7 @@ def _collect_stream_text_and_tools(stream) -> tuple[str, list[dict]]:
             except Exception:
                 parsed_args = args
         tool_calls.append({"id": call.get("id"), "name": name, "arguments": parsed_args})
-    return "".join(parts), tool_calls
+    return "".join(parts), tool_calls, timed_out
 
 
 def _to_chat_completions_tools(response_api_tools: list[dict] | None) -> list[dict]:
@@ -799,6 +810,31 @@ def _get_last_user_text(state: dict) -> str:
     except Exception:
         pass
     return ""
+
+
+def _compress_autorag_text(text: str, max_chars: int) -> str:
+    if not isinstance(text, str):
+        return ""
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[:max_chars].rstrip() + "…"
+
+
+def _build_autorag_query(state: OverallState) -> str:
+    summary = state.get("conversation_summary")
+    last_user = _get_last_user_text(state)
+    parts: list[str] = []
+    if isinstance(summary, str) and summary.strip():
+        parts.append(f"摘要: {_compress_autorag_text(summary.strip(), 800)}")
+    if isinstance(last_user, str) and last_user.strip():
+        parts.append(f"用户问题: {_compress_autorag_text(last_user.strip(), 400)}")
+    if not parts:
+        topic = get_research_topic(_tail_messages(state.get("messages") or [], 6))
+        if isinstance(topic, str) and topic.strip():
+            parts.append(_compress_autorag_text(topic.strip(), 600))
+    query = "\n".join([p for p in parts if p])
+    return _compress_autorag_text(query, 1200)
 
 
 def _canvas_label_index(canvas_context_obj: dict | None) -> dict[str, dict]:
@@ -1455,6 +1491,9 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     """Pick the active assistant role based on the latest conversation."""
     configurable = Configuration.from_runnable_config(config)
     llm_provider = resolve_llm_provider(configurable.llm_provider)
+    request_started_at = state.get("request_started_at")
+    if not isinstance(request_started_at, (int, float)):
+        request_started_at = time.monotonic()
     interaction_mode = state.get("interaction_mode")
     if interaction_mode not in ("agent", "agent_max", "plan"):
         interaction_mode = "agent"
@@ -1595,6 +1634,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
         "interaction_mode": interaction_mode,
         "active_intent": intent or "",
         "active_tool_tier": tool_tier,
+        "request_started_at": request_started_at,
         **{k: v for k, v in defaults.items() if k not in state},
     }
 
@@ -1650,6 +1690,35 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     tool_calls_payload: list[dict] = []
     llm_error_payload: dict | None = None
     quick_replies_payload: list[dict] | None = None
+
+    def _apply_timeout_fallback(text: str) -> str:
+        base = (text or "").strip()
+        if base:
+            return (
+                base
+                + "\n\n结论：生成超时，先给出当前可用结论。如需更完整细节，请让我继续。"
+            )
+        summary = ""
+        for s in state.get("web_research_result") or []:
+            if isinstance(s, str) and s.strip():
+                summary = s.strip()
+                break
+        if summary:
+            summary = " ".join(summary.split())
+            if len(summary) > 400:
+                summary = summary[:400].rstrip() + "…"
+            return (
+                f"结论：{summary}\n\n（生成超时，先给结论。如需更完整细节，请让我继续。）"
+            )
+        topic = _get_research_topic_with_summary(state, tail=8).strip()
+        if topic:
+            topic = " ".join(topic.split())
+            if len(topic) > 240:
+                topic = topic[:240].rstrip() + "…"
+            return (
+                f"结论：{topic}\n\n（生成超时，先给结论。如需更完整细节，请让我继续。）"
+            )
+        return "结论：生成超时，先给结论。当前信息不足，建议拆分问题或补充关键细节后继续。"
 
     def _extract_tapcanvas_actions(text: str) -> tuple[str, list[dict] | None]:
         if not isinstance(text, str):
@@ -1823,7 +1892,13 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             try:
                 completion = get_openai_client().responses.create(**kwargs)
                 debug_openai_response("finalize_answer", completion)
-                result_text, tool_calls_payload = _collect_stream_text_and_tools(completion)
+                result_text, tool_calls_payload, timed_out = _collect_stream_text_and_tools(
+                    completion,
+                    max_seconds=600,
+                )
+                if timed_out:
+                    result_text = _apply_timeout_fallback(result_text)
+                    tool_calls_payload = []
                 tool_calls_payload = _normalize_tool_calls_payload(tool_calls_payload)
                 tool_calls_payload = _filter_tool_calls_by_role(tool_calls_payload, resolved_id, allow_canvas_tools)
             except Exception as exc:
@@ -3002,16 +3077,13 @@ def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
     requested_tier = (state.get("active_tool_tier") or "").strip().lower()
     if requested_tier != "rag":
         return {}
+    started_at = state.get("request_started_at")
+    if isinstance(started_at, (int, float)):
+        if (time.monotonic() - started_at) >= REQUEST_TIMEOUT_SECONDS:
+            return {}
 
-    # Use the latest user message as the query (avoid echoing full thread history).
-    query = ""
-    try:
-        for m in reversed(state.get("messages") or []):
-            if getattr(m, "type", None) == "human" or getattr(m, "role", None) == "user":
-                query = str(getattr(m, "content", "") or "").strip()
-                break
-    except Exception:
-        query = ""
+    # Build a compact summary query to avoid sending full thread history.
+    query = _build_autorag_query(state).strip()
     if not query:
         return {}
 
