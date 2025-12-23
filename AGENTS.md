@@ -52,6 +52,9 @@
 - UI aesthetic: keep components borderless for a clean, frameless look.
 - Filenames: React components PascalCase (`TaskNode.tsx`), utilities kebab/camel case (`mock-runner.ts`, `useCanvasStore.ts`).
 - Types/interfaces PascalCase; variables/functions camelCase.
+- Readability & maintainability first: prefer small, focused modules and consistent naming; avoid hidden side effects.
+- Prefer curried functions where it improves reuse/composability, and favor pure functions over side-effectful logic.
+- JSX/TSX: every tag must include a descriptive, named `className` for easier targeting and debugging.
 - Keep modules focused; colocate component styles in `apps/web/src`.
 
 ## Modularity & Performance

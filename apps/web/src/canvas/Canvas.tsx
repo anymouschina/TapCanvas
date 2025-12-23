@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   Controls,
   MiniMap,
@@ -9,8 +10,8 @@ import ReactFlow, {
   ReactFlowProvider,
   EdgeTypes,
   MarkerType,
-} from 'reactflow'
-import 'reactflow/dist/style.css'
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
 
 import TaskNode from './nodes/TaskNode'
 import GroupNode from './nodes/GroupNode'
@@ -35,28 +36,11 @@ import { useAuth } from '../auth/store'
 import { uploadSoraImage } from '../api/server'
 import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
 import { CANVAS_CONFIG } from './utils/constants'
+import { buildEdgeValidator, isImageKind } from './utils/edgeRules'
+import { buildCanvasThemeColors } from './utils/canvasTheme'
 
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
-const isValidEdgeByType = (sourceKind?: string | null, targetKind?: string | null) => {
-  if (!sourceKind || !targetKind) return true
-  const allow: Record<string, string[]> = {
-    textToImage: ['composeVideo', 'storyboard', 'video', 'image'],
-    image: ['composeVideo', 'storyboard', 'video', 'image'],
-    video: ['composeVideo', 'storyboard', 'video'],
-    composeVideo: ['composeVideo', 'storyboard', 'video'],
-    storyboard: ['composeVideo', 'storyboard', 'video'],
-    tts: ['composeVideo', 'video'],
-    subtitleAlign: ['composeVideo', 'video', 'storyboard'],
-    character: ['composeVideo', 'storyboard', 'video', 'character'],
-    subflow: ['composeVideo', 'storyboard', 'video', 'image', 'character', 'subflow'],
-  }
-  const targets = allow[sourceKind]
-  if (!targets) return true
-  return targets.includes(targetKind)
-}
-
-const isImageKind = (kind?: string | null) =>
-  kind === 'image' || kind === 'textToImage' || kind === 'mosaic'
+const isValidEdgeByType = buildEdgeValidator()
 
 const nodeTypes: NodeTypes = {
   taskNode: TaskNode,
@@ -69,7 +53,13 @@ const edgeTypes: EdgeTypes = {
   orth: OrthTypedEdge,
 }
 
-function CanvasInner(): JSX.Element {
+const joinClassNames = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' ')
+
+type CanvasInnerProps = {
+  className?: string
+}
+
+function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore()
   const focusStack = useUIStore(s => s.focusStack)
   const focusGroupId = focusStack.length ? focusStack[focusStack.length - 1] : null
@@ -93,15 +83,14 @@ function CanvasInner(): JSX.Element {
   const theme = useMantineTheme()
   const { colorScheme } = useMantineColorScheme()
   const isDarkCanvas = colorScheme === 'dark'
-  const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
-  const backgroundGridColor = isDarkCanvas ? theme.colors.dark[5] : theme.colors.gray[2]
-  const connectionStrokeColor =
-    theme.colors[theme.primaryColor]?.[isDarkCanvas ? 4 : 6] ||
-    theme.colors.blue[isDarkCanvas ? 4 : 6]
-  const edgeMarkerColor = isDarkCanvas ? theme.colors.gray[6] : theme.colors.gray[5]
-  const emptyGuideBackground = isDarkCanvas ? rgba(theme.colors.dark[7], 0.9) : rgba(theme.white, 0.95)
-  const emptyGuideTextColor = isDarkCanvas ? theme.white : theme.colors.dark[6]
-  const selectionBorderColor = rgba(isDarkCanvas ? theme.white : theme.colors.gray[6], isDarkCanvas ? 0.35 : 0.5)
+  const {
+    backgroundGridColor,
+    connectionStrokeColor,
+    edgeMarkerColor,
+    emptyGuideBackground,
+    emptyGuideTextColor,
+    selectionBorderColor,
+  } = buildCanvasThemeColors(theme, colorScheme)
   const [connectingType, setConnectingType] = useState<string | null>(null)
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
@@ -1273,7 +1262,7 @@ function CanvasInner(): JSX.Element {
 
 
   return (
-    <div
+    <div className={joinClassNames('tc-canvas', className)}
       style={{ height: '100%', width: '100%', position: 'relative' }}
       data-connecting={connectingType || ''}
       data-connecting-active={connectingType ? 'true' : 'false'}
@@ -1374,7 +1363,7 @@ function CanvasInner(): JSX.Element {
         if (!handled) return
       }}
     >
-      <input
+      <input className="tc-canvas__image-input"
         ref={imageUploadInputRef}
         type="file"
         accept="image/*"
@@ -1390,7 +1379,7 @@ function CanvasInner(): JSX.Element {
           void importImagesFromFiles(picked, pos)
         }}
       />
-      <ReactFlow
+      <ReactFlow className="tc-canvas__flow"
         nodes={focusFiltered.nodes}
         edges={viewEdges}
         onNodesChange={viewOnly ? undefined : handleNodesChange}
@@ -1458,42 +1447,43 @@ function CanvasInner(): JSX.Element {
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 1.5 }}
       >
-        <MiniMap style={{ width: 160, height: 110 }} />
-        <Controls position="bottom-left" />
-        <Background gap={16} size={1} color={backgroundGridColor} />
+        <MiniMap className="tc-canvas__minimap" style={{ width: 160, height: 110 }} />
+        <Controls className="tc-canvas__controls" position="bottom-left" />
+        <Background className="tc-canvas__background" gap={16} size={1} color={backgroundGridColor} />
       </ReactFlow>
       {/* Focus mode breadcrumb with hierarchy */}
       {!viewOnly && focusGroupId && (
-        <Paper withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>
-          <Group gap={8} style={{ flexWrap: 'nowrap' }}>
+        <Paper className="tc-canvas__breadcrumb" withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>
+          <Group className="tc-canvas__breadcrumb-group" gap={8} style={{ flexWrap: 'nowrap' }}>
             {focusStack.map((gid, idx) => {
               const n = nodes.find(nn => nn.id === gid)
               const label = (n?.data as any)?.label || $('组')
               const isLast = idx === focusStack.length - 1
               return (
-                <Group key={gid} gap={6} style={{ flexWrap: 'nowrap' }}>
-                  <Button size="xs" variant={isLast ? 'filled' : 'subtle'} onClick={() => {
+                <Group className="tc-canvas__breadcrumb-item" key={gid} gap={6} style={{ flexWrap: 'nowrap' }}>
+                  <Button className="tc-canvas__breadcrumb-button" size="xs" variant={isLast ? 'filled' : 'subtle'} onClick={() => {
                     useUIStore.setState(s => ({ focusStack: s.focusStack.slice(0, idx + 1) }))
                     setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50)
                   }}>{label}</Button>
-                  {!isLast && <Text size="sm" c="dimmed">/</Text>}
+                  {!isLast && <Text className="tc-canvas__breadcrumb-sep" size="sm" c="dimmed">/</Text>}
                 </Group>
               )
             })}
-            <Divider orientation="vertical" style={{ height: 16 }} />
-            <Button size="xs" variant="subtle" onClick={()=>{ exitGroupFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>
-            <Button size="xs" variant="subtle" onClick={()=>{ exitAllFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>
+            <Divider className="tc-canvas__breadcrumb-divider" orientation="vertical" style={{ height: 16 }} />
+            <Button className="tc-canvas__breadcrumb-action" size="xs" variant="subtle" onClick={()=>{ exitGroupFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>
+            <Button className="tc-canvas__breadcrumb-action" size="xs" variant="subtle" onClick={()=>{ exitAllFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>
           </Group>
         </Paper>
       )}
       {/* Empty canvas guide */}
       {!viewOnly && nodes.length === 0 && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-          <Paper withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: emptyGuideBackground, color: emptyGuideTextColor }}>
-            <Stack gap={8} style={{ color: emptyGuideTextColor }}>
-              <Text c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
-              <Group gap={8} style={{ flexWrap: 'nowrap' }}>
+        <div className="tc-canvas__empty-guide" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+          <Paper className="tc-canvas__empty-guide-card" withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: emptyGuideBackground, color: emptyGuideTextColor }}>
+            <Stack className="tc-canvas__empty-guide-stack" gap={8} style={{ color: emptyGuideTextColor }}>
+              <Text className="tc-canvas__empty-guide-title" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
+              <Group className="tc-canvas__empty-guide-actions" gap={8} style={{ flexWrap: 'nowrap' }}>
                 <Button
+                  className="tc-canvas__empty-guide-button"
                   size="sm"
                   variant="light"
                   onClick={() => {
@@ -1505,6 +1495,7 @@ function CanvasInner(): JSX.Element {
                   {$('创建示例工作流')}
                 </Button>
                 <Button
+                  className="tc-canvas__empty-guide-button"
                   size="sm"
                   variant="subtle"
                   onClick={() => window.open('https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b', '_blank', 'noopener')}
@@ -1512,7 +1503,7 @@ function CanvasInner(): JSX.Element {
                   {$('了解更多')}
                 </Button>
               </Group>
-              <Text size="xs" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.8 }}>提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
+              <Text className="tc-canvas__empty-guide-tip" size="xs" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.8 }}>提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
             </Stack>
           </Paper>
         </div>
@@ -1522,6 +1513,7 @@ function CanvasInner(): JSX.Element {
         <>
           {/* Selection outline in screen space to avoid transform artifacts */}
           <div
+            className="tc-canvas__group-selection"
             style={{
               position: 'absolute',
               left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
@@ -1534,12 +1526,12 @@ function CanvasInner(): JSX.Element {
               pointerEvents: 'none'
             }}
           />
-          <Paper withBorder shadow="sm" radius="xl" className="glass" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
-              <Group gap={6} style={{ flexWrap: 'nowrap' }}>
-                <Text size="xs" c="dimmed">新建组</Text>
-                <Divider orientation="vertical" style={{ height: 16 }} />
-              <Button size="xs" variant="subtle" onClick={() => formatTree()}>{$('格式化')}</Button>
-              <Button size="xs" variant="subtle" onClick={async ()=>{
+          <Paper className="tc-canvas__group-toolbar glass" withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
+              <Group className="tc-canvas__group-toolbar-group" gap={6} style={{ flexWrap: 'nowrap' }}>
+                <Text className="tc-canvas__group-toolbar-title" size="xs" c="dimmed">新建组</Text>
+                <Divider className="tc-canvas__group-toolbar-divider" orientation="vertical" style={{ height: 16 }} />
+              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => formatTree()}>{$('格式化')}</Button>
+              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={async ()=>{
                 const name = prompt('保存为资产名称：')?.trim(); if (!name) return;
                 const sel = nodes.filter(n=>n.selected)
                 const setIds = new Set(sel.map(n=>n.id))
@@ -1552,7 +1544,7 @@ function CanvasInner(): JSX.Element {
                 notifyAssetRefresh()
               }}>生成工作流</Button>
               {!selectionPartialOverlaps && (
-                <Button size="xs" variant="subtle" onClick={()=>{
+                <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={()=>{
                   // 直接打组为父节点
                   useRFStore.getState().addGroupForSelection(undefined)
                 }}>打组</Button>
@@ -1562,18 +1554,19 @@ function CanvasInner(): JSX.Element {
         </>
       )}
       {guides?.vx !== undefined && (
-        <div style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
+        <div className="tc-canvas__guide-vertical" style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
       )}
       {guides?.hy !== undefined && (
-        <div style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
+        <div className="tc-canvas__guide-horizontal" style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
       )}
       {menu?.show && (
-        <Paper withBorder shadow="md" onMouseLeave={() => setMenu(null)} style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 60, minWidth: 200 }}>
-          <Stack gap={4} p="xs">
+        <Paper className="tc-canvas__context-menu" withBorder shadow="md" onMouseLeave={() => setMenu(null)} style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 60, minWidth: 200 }}>
+          <Stack className="tc-canvas__context-menu-stack" gap={4} p="xs">
             {menu.type === 'canvas' && (
               <>
-                <Button variant="subtle" onClick={() => { pasteFromClipboardAt(screenToFlow({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { pasteFromClipboardAt(screenToFlow({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
                 <Button
+                  className="tc-canvas__context-menu-action"
                   variant="subtle"
                   onClick={() => {
                     pendingImageUploadScreenRef.current = { x: menu.x, y: menu.y }
@@ -1583,7 +1576,7 @@ function CanvasInner(): JSX.Element {
                 >
                   上传图片（可多选）
                 </Button>
-                <Button variant="subtle" onClick={() => {
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => {
                   const input = document.createElement('input')
                   input.type = 'file'
                   input.accept = '.json'
@@ -1606,15 +1599,15 @@ function CanvasInner(): JSX.Element {
                   }
                   input.click()
                 }}>导入工作流 JSON</Button>
-                <Button variant="subtle" onClick={() => { formatTree(); setMenu(null) }}>{$('格式化')}</Button>
-                <Button variant="subtle" onClick={() => { useUIStore.getState().toggleEdgeRoute(); setMenu(null) }}>切换边线（当前：{edgeRoute==='orth'?'正交':'平滑'}）</Button>
-                {focusGroupId && <Button variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
-                {focusGroupId && <Button variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
-                <Divider my={2} />
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'image', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建图像</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'mosaic', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建拼图</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'composeVideo', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建视频</Button>
-                <Button variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'character', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建角色</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { formatTree(); setMenu(null) }}>{$('格式化')}</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useUIStore.getState().toggleEdgeRoute(); setMenu(null) }}>切换边线（当前：{edgeRoute==='orth'?'正交':'平滑'}）</Button>
+                {focusGroupId && <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
+                {focusGroupId && <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
+                <Divider className="tc-canvas__context-menu-divider" my={2} />
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'image', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建图像</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'mosaic', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建拼图</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'composeVideo', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建视频</Button>
+                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'character', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建角色</Button>
               </>
             )}
             {menu.type === 'node' && menu.id && (() => {
@@ -1624,26 +1617,26 @@ function CanvasInner(): JSX.Element {
                 const childIds = new Set(nodes.filter(n => n.parentNode === target!.id).map(n=>n.id))
                 return (
                   <>
-                    <Button variant="subtle" onClick={async () => { await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds }); setMenu(null) }}>运行该组</Button>
-                    <Button variant="subtle" onClick={() => { useRFStore.getState().autoLayoutForParent(target!.id); setMenu(null) }}>{$('格式化')}</Button>
-                    <Button variant="subtle" onClick={() => { enterGroupFocus(target!.id); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>进入组</Button>
-                    <Button variant="subtle" onClick={() => { useRFStore.getState().renameSelectedGroup(); setMenu(null) }}>重命名</Button>
-                    <Button variant="subtle" color="red" onClick={() => { useRFStore.getState().ungroupGroupNode(target!.id); setMenu(null) }}>解组</Button>
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={async () => { await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds }); setMenu(null) }}>运行该组</Button>
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().autoLayoutForParent(target!.id); setMenu(null) }}>{$('格式化')}</Button>
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { enterGroupFocus(target!.id); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>进入组</Button>
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().renameSelectedGroup(); setMenu(null) }}>重命名</Button>
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { useRFStore.getState().ungroupGroupNode(target!.id); setMenu(null) }}>解组</Button>
                   </>
                 )
               }
               return (
                 <>
-                  <Button variant="subtle" onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</Button>
-                  <Button variant="subtle" color="red" onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</Button>
-                  <Divider my={2} />
-                  <Button variant="subtle" onClick={() => { runSelected(); setMenu(null) }}>运行该节点</Button>
-                  <Button variant="subtle" onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</Button>
+                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</Button>
+                  <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</Button>
+                  <Divider className="tc-canvas__context-menu-divider" my={2} />
+                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { runSelected(); setMenu(null) }}>运行该节点</Button>
+                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</Button>
                 </>
               )
             })()}
             {menu.type === 'edge' && menu.id && (
-              <Button variant="subtle" color="red" onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</Button>
+              <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</Button>
             )}
           </Stack>
         </Paper>
@@ -1655,6 +1648,7 @@ function CanvasInner(): JSX.Element {
 
         return (
           <Paper
+            className="tc-canvas__insert-menu"
             withBorder
             shadow="md"
             style={{
@@ -1666,13 +1660,14 @@ function CanvasInner(): JSX.Element {
             }}
             onMouseLeave={closeInsertMenu}
           >
-            <Stack gap={4} p="xs">
-              <Text size="xs" c="dimmed">
+            <Stack className="tc-canvas__insert-menu-stack" gap={4} p="xs">
+              <Text className="tc-canvas__insert-menu-title" size="xs" c="dimmed">
                 {isFromImage ? '从图片继续' : '从文本继续'}
               </Text>
               {isFromImage ? (
                 <>
                   <Button
+                    className="tc-canvas__insert-menu-action"
                     variant="subtle"
                     size="xs"
                     onClick={() => {
@@ -1687,6 +1682,7 @@ function CanvasInner(): JSX.Element {
                     图生视频
                   </Button>
                   <Button
+                    className="tc-canvas__insert-menu-action"
                     variant="subtle"
                     size="xs"
                     onClick={() => {
@@ -1704,6 +1700,7 @@ function CanvasInner(): JSX.Element {
               ) : (
                 <>
                   <Button
+                    className="tc-canvas__insert-menu-action"
                     variant="subtle"
                     size="xs"
                     onClick={() => {
@@ -1718,6 +1715,7 @@ function CanvasInner(): JSX.Element {
                     文生图
                   </Button>
                   <Button
+                    className="tc-canvas__insert-menu-action"
                     variant="subtle"
                     size="xs"
                     onClick={() => {
@@ -1738,7 +1736,7 @@ function CanvasInner(): JSX.Element {
         )
       })()}
       {connectingType && (
-        <div style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6 }}>
+        <div className="tc-canvas__connecting-tooltip" style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6 }}>
           {$t('连接类型: {type}，拖到兼容端口', { type: getHandleTypeLabel(connectingType) })}
         </div>
       )}
@@ -1746,10 +1744,13 @@ function CanvasInner(): JSX.Element {
   )
 }
 
+const ReactFlowProviderWithClass =
+  ReactFlowProvider as unknown as React.FC<React.PropsWithChildren<{ className?: string }>>
+
 export default function Canvas(): JSX.Element {
   return (
-    <ReactFlowProvider>
-      <CanvasInner />
-    </ReactFlowProvider>
+    <ReactFlowProviderWithClass className="tc-canvas-provider">
+      <CanvasInner className="tc-canvas-inner" />
+    </ReactFlowProviderWithClass>
   )
 }

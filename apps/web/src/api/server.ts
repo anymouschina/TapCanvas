@@ -1,4 +1,4 @@
-import type { Edge, Node } from 'reactflow'
+import type { Edge, Node } from '@xyflow/react'
 import { getAuthToken, getAuthTokenFromCookie } from '../auth/store'
 // self-import guard: only used for type re-export in the same module
 

@@ -5,7 +5,7 @@
 
 import { NODE_TYPES, NODE_KINDS, DEFAULTS, VALIDATION } from './constants';
 import { generateId } from './canvas';
-import type { Node } from 'reactflow';
+import type { Node } from '@xyflow/react';
 
 /**
  * 节点数据接口

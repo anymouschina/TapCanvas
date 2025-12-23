@@ -21,6 +21,7 @@
     "@mantine/modals": "^8.3.8",
     "@mantine/notifications": "^7.13.1",
     "@tabler/icons-react": "^3.19.0",
+    "@xyflow/react": "^12.10.0",
     "ai": "^5.0.97",
     "framer-motion": "^12.23.24",
     "nanoid": "^5.0.7",
@@ -29,7 +30,6 @@
     "react-hook-form": "^7.53.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.6",
-    "reactflow": "^11.10.4",
     "zod": "^3.25.76",
     "zustand": "^4.5.4"
   },

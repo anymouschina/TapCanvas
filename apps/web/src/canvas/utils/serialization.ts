@@ -4,7 +4,7 @@
  */
 
 import { STORAGE_KEYS } from './constants';
-import type { Node, Edge } from 'reactflow';
+import type { Node, Edge } from '@xyflow/react';
 
 export interface SerializedCanvas {
   version: string;

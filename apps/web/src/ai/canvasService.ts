@@ -1,4 +1,4 @@
-import type { Connection, Node } from 'reactflow'
+import type { Connection, Node } from '@xyflow/react'
 import { useRFStore } from '../canvas/store'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeRemote } from '../runner/remoteRunner'

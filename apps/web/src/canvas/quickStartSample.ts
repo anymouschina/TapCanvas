@@ -1,4 +1,4 @@
-import type { Edge, Node } from 'reactflow'
+import type { Edge, Node } from '@xyflow/react'
 
 const flow: { nodes: Node[]; edges: Edge[] } = {
   nodes: [

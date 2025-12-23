@@ -1,4 +1,4 @@
-import type { Node } from 'reactflow'
+import type { Node } from '@xyflow/react'
 import { toast } from '../ui/toast'
 import { isRemoteUrl } from '../canvas/nodes/taskNode/utils'
 

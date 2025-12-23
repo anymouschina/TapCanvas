@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import { create } from 'zustand'
 import { notifications } from '@mantine/notifications'
 
@@ -34,11 +34,10 @@ export function toast(message: string, type?: 'info'|'success'|'error') {
 
 export function ToastHost(): JSX.Element {
   const items = useToastStore((s) => s.items)
-  useEffect(() => {}, [items])
   return (
-    <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 50 }}>
+    <div className="tc-toast-host" style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 50 }}>
       {items.map(i => (
-        <div key={i.id} style={{
+        <div className="tc-toast-host__item" key={i.id} style={{
           padding: '8px 12px',
           borderRadius: 8,
           border: '1px solid rgba(127,127,127,.25)',

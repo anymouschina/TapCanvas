@@ -1,6 +1,6 @@
 import React from 'react'
-import type { NodeProps } from 'reactflow'
-import { Handle, Position } from 'reactflow'
+import type { NodeProps } from '@xyflow/react'
+import { Handle, Position } from '@xyflow/react'
 
 type Data = { label?: string; kind: 'io-in' | 'io-out'; types?: string[] }
 

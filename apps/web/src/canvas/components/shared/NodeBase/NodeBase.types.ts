@@ -3,7 +3,7 @@
  * 参考雅虎军规：类型定义独立文件，便于维护
  */
 
-import type { Position } from 'reactflow';
+import type { Position } from '@xyflow/react';
 
 export interface NodeBaseProps {
   /** 节点数据 */
