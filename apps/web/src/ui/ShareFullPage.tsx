@@ -1,8 +1,8 @@
 import React from 'react'
 import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
-import { IconArrowLeft, IconCopy, IconFileText, IconMessageCircle, IconRefresh } from '@tabler/icons-react'
+import { IconArrowLeft, IconCopy, IconCopyPlus, IconFileText, IconMessageCircle, IconRefresh } from '@tabler/icons-react'
 import Canvas from '../canvas/Canvas'
-import { getPublicProjectFlows, listPublicProjects, type FlowDto, type ProjectDto } from '../api/server'
+import { cloneProject, getPublicProjectFlows, listPublicProjects, type FlowDto, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
 import { useUIStore } from './uiStore'
 import { toast } from './toast'
@@ -79,6 +79,7 @@ export default function ShareFullPage(): JSX.Element {
   const [flows, setFlows] = React.useState<FlowDto[]>([])
   const [selectedFlowId, setSelectedFlowId] = React.useState<string | null>(flowId)
   const [promptModalOpen, setPromptModalOpen] = React.useState(false)
+  const [cloning, setCloning] = React.useState(false)
 
   React.useEffect(() => {
     setViewOnly(true)
@@ -152,6 +153,34 @@ export default function ShareFullPage(): JSX.Element {
       toast('复制失败，请手动复制地址栏链接', 'error')
     }
   }, [projectId, selectedFlowId])
+
+  const handleCloneProject = React.useCallback(async () => {
+    if (!projectId) return
+    if (cloning) return
+    setCloning(true)
+    try {
+      const baseName = project?.name ? `克隆 - ${project.name}` : '克隆项目'
+      const cloned = await cloneProject(projectId, baseName)
+      toast('已复制到我的项目', 'success')
+      if (cloned?.id) {
+        try {
+          const url = new URL(window.location.href)
+          url.pathname = '/'
+          url.search = ''
+          url.hash = ''
+          url.searchParams.set('projectId', cloned.id)
+          window.location.href = url.toString()
+        } catch {
+          window.location.href = `/?projectId=${encodeURIComponent(cloned.id)}`
+        }
+      }
+    } catch (err: any) {
+      console.error(err)
+      toast(err?.message || '复制项目失败', 'error')
+    } finally {
+      setCloning(false)
+    }
+  }, [cloning, project?.name, projectId])
 
   if (!projectId) {
     return (
@@ -269,6 +298,18 @@ export default function ShareFullPage(): JSX.Element {
               w={220}
               disabled={loading || !flowOptions.length}
             />
+            <Tooltip label="复制到我的项目" withArrow>
+              <Button
+                size="xs"
+                variant="light"
+                leftSection={<IconCopyPlus size={14} />}
+                onClick={handleCloneProject}
+                loading={cloning}
+                disabled={!projectId}
+              >
+                复制项目
+              </Button>
+            </Tooltip>
             <Tooltip label="查看提示词" withArrow>
               <ActionIcon
                 variant="light"

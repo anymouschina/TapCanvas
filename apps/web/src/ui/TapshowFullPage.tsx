@@ -636,7 +636,7 @@ function TapshowFullPageInner(): JSX.Element {
                   variant="subtle"
                   onClick={() => {
                     if (typeof window === 'undefined') return
-                    window.location.href = '/share'
+                    window.open('/share', '_blank', 'noopener,noreferrer')
                   }}
                 >
                   查看全部
@@ -681,7 +681,7 @@ function TapshowFullPageInner(): JSX.Element {
                     item={item}
                     onOpen={(it) => {
                       const url = `/share/${encodeURIComponent(it.project.id)}/${encodeURIComponent(it.cover.flowId)}`
-                      if (typeof window !== 'undefined') window.location.href = url
+                      if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer')
                     }}
                   />
                 ))}

@@ -1701,7 +1701,6 @@ function LangGraphChatOverlayInner({
   useEffect(() => {
     if (!open) return
     if (!projectId) return
-    if (viewOnly) return
     let cancelled = false
     void (async () => {
       try {
@@ -1731,18 +1730,17 @@ function LangGraphChatOverlayInner({
     return () => {
       cancelled = true
     }
-  }, [open, projectId, viewOnly])
+  }, [open, projectId])
 
   useEffect(() => {
     if (!open) return
     if (!projectId) return
-    if (viewOnly) return
     if (lastSubmitValuesRef.current) return
     const restored = loadLastSubmit(projectId)
     if (!restored) return
     if (!Array.isArray(restored?.messages) || restored.messages.length === 0) return
     lastSubmitValuesRef.current = restored
-  }, [open, projectId, viewOnly])
+  }, [open, projectId])
 
   const thread = useStream<{
     messages: Message[]
@@ -2650,6 +2648,11 @@ function LangGraphChatOverlayInner({
             <Group gap="sm">
               <IconSparkles size={18} />
               <Text fw={700}>小T</Text>
+              {viewOnly && (
+                <Badge size="xs" variant="light" color="gray">
+                  只读
+                </Badge>
+              )}
               {!viewOnly && projectId && (
                 <SegmentedControl
                   size="xs"
@@ -2739,6 +2742,13 @@ function LangGraphChatOverlayInner({
             }}
           >
             <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
+              {viewOnly && (
+                <Paper withBorder radius="md" p="sm" style={{ borderStyle: 'dashed' }}>
+                  <Text size="sm" c="dimmed">
+                    分享只读模式：可以查看小T内容，但无法发送新消息或执行工具。
+                  </Text>
+                </Paper>
+              )}
               {!viewOnly && (
                 <Collapse in={quickStartOpen} transitionDuration={150}>
                   <WelcomeCard onPickWorkflow={(prompt) => setPrefill(prompt)} />
@@ -2853,6 +2863,16 @@ export function LangGraphChatOverlay() {
   const nodes = useRFStore((s) => s.nodes)
   const edges = useRFStore((s) => s.edges)
   const [resetCounter, setResetCounter] = useState(0)
+  const { colorScheme } = useMantineColorScheme()
+  const isLight = colorScheme === 'light'
+  const modalStyles = {
+    content: {
+      background: isLight ? 'rgba(255,255,255,0.98)' : 'rgba(10, 10, 12, 0.92)',
+      border: isLight ? '1px solid rgba(15,23,42,0.12)' : '1px solid rgba(255,255,255,0.08)',
+    },
+    header: { background: 'transparent' },
+    title: { width: '100%' },
+  }
 
   const langGraphEnabled = useMemo(() => {
     const env = (import.meta as any).env || {}
@@ -2884,7 +2904,7 @@ export function LangGraphChatOverlay() {
     return env?.DEV ? (origin ? `${origin}/langgraph` : '/langgraph') : 'https://ai.beqlee.icu'
   }, [])
 
-  if (!token) {
+  if (!token && !viewOnly) {
     if (!open) return null
     return (
       <Modal
@@ -2893,11 +2913,7 @@ export function LangGraphChatOverlay() {
         centered
         title={<Text fw={700}>沉浸式创作（小T）</Text>}
         size="lg"
-        styles={{
-          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
-          header: { background: 'transparent' },
-          title: { width: '100%' },
-        }}
+        styles={modalStyles}
       >
         <Stack gap="sm">
           <Title order={5}>请先登录</Title>
@@ -2914,7 +2930,7 @@ export function LangGraphChatOverlay() {
     )
   }
 
-  if (viewOnly) {
+  if (!langGraphEnabled && !viewOnly) {
     if (!open) return null
     return (
       <Modal
@@ -2923,41 +2939,7 @@ export function LangGraphChatOverlay() {
         centered
         title={<Text fw={700}>沉浸式创作（小T）</Text>}
         size="lg"
-        styles={{
-          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
-          header: { background: 'transparent' },
-          title: { width: '100%' },
-        }}
-      >
-        <Stack gap="sm">
-          <Title order={5}>当前为只读模式</Title>
-          <Text c="dimmed" size="sm">
-            分享/只读模式下无法运行沉浸式创作（小T）。
-          </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={close}>
-              关闭
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    )
-  }
-
-  if (!langGraphEnabled) {
-    if (!open) return null
-    return (
-      <Modal
-        opened={open}
-        onClose={close}
-        centered
-        title={<Text fw={700}>沉浸式创作（小T）</Text>}
-        size="lg"
-        styles={{
-          content: { background: 'rgba(10, 10, 12, 0.92)', border: '1px solid rgba(255,255,255,0.08)' },
-          header: { background: 'transparent' },
-          title: { width: '100%' },
-        }}
+        styles={modalStyles}
       >
         <Stack gap="sm">
           <Title order={5}>当前未启用 LangGraph</Title>

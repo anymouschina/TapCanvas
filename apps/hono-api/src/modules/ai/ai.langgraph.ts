@@ -388,3 +388,44 @@ export async function getLangGraphThreadIdForPublicProject(
 	);
 	return row?.thread_id ?? null;
 }
+
+export async function getLangGraphSnapshotForPublicProject(
+	c: AppContext,
+	projectId: string,
+): Promise<{ threadId: string | null; messagesJson: string } | null> {
+	const project = await getProjectById(c.env.DB, projectId);
+	if (!project) {
+		throw new AppError("Project not found", {
+			status: 400,
+			code: "project_not_found",
+		});
+	}
+	if (project.is_public !== 1) {
+		throw new AppError("Project is not public", {
+			status: 403,
+			code: "project_not_public",
+		});
+	}
+
+	const ownerId = project.owner_id;
+	if (!ownerId) return null;
+
+	try {
+		const row = await queryOne<
+			Pick<LangGraphProjectSnapshotRow, "thread_id" | "messages_json">
+		>(
+			c.env.DB,
+			`SELECT thread_id, messages_json FROM langgraph_project_snapshots WHERE user_id = ? AND project_id = ? LIMIT 1`,
+			[ownerId, projectId],
+		);
+		if (!row?.messages_json) return null;
+		return {
+			threadId: row.thread_id ?? null,
+			messagesJson: row.messages_json,
+		};
+	} catch (err) {
+		// Deploy safety: allow shipping code before the D1 migration lands.
+		if (isMissingLangGraphSnapshotTable(err)) return null;
+		throw err;
+	}
+}
