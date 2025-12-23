@@ -18,6 +18,14 @@ function withAuth(init?: RequestInit): RequestInit {
   }
 }
 
+function withoutAuth(init?: RequestInit): RequestInit {
+  return {
+    credentials: init?.credentials ?? 'omit',
+    ...(init || {}),
+    headers: { ...(init?.headers || {}) },
+  }
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const isRetryableStatus = (status: number) =>
@@ -545,6 +553,31 @@ export type LangGraphProjectSnapshotDto = {
 
 export async function getLangGraphProjectSnapshot(projectId: string): Promise<LangGraphProjectSnapshotDto> {
   const r = await apiFetch(`${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get langgraph snapshot failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const snap = body?.snapshot
+  if (!snap) return { snapshot: null }
+  return {
+    snapshot: {
+      threadId: typeof snap?.threadId === 'string' ? snap.threadId : null,
+      messagesJson: typeof snap?.messagesJson === 'string' ? snap.messagesJson : '',
+    },
+  }
+}
+
+export async function getLangGraphProjectSnapshotPublic(projectId: string): Promise<LangGraphProjectSnapshotDto> {
+  const r = await apiFetch(
+    `${API_BASE}/ai/langgraph/projects/${encodeURIComponent(projectId)}/snapshot`,
+    withoutAuth(),
+  )
   let body: any = null
   try {
     body = await r.json()
