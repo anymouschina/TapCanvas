@@ -83,6 +83,7 @@ export default function ShareFullPage(): JSX.Element {
 
   React.useEffect(() => {
     setViewOnly(true)
+    closeLangGraphChat()
     return () => {
       setViewOnly(false)
       closeLangGraphChat()
@@ -140,8 +141,7 @@ export default function ShareFullPage(): JSX.Element {
     useUIStore.getState().setRestoreViewport(viewport && typeof viewport.zoom === 'number' ? viewport : null)
     setCurrentProject({ id: projectId, name: project?.name || 'Shared Project' })
     setCurrentFlow({ id: f.id, name: f.name, source: 'server' })
-    openLangGraphChat()
-  }, [flows, openLangGraphChat, project?.name, projectId, rfLoad, selectedFlowId, setCurrentFlow, setCurrentProject])
+  }, [flows, project?.name, projectId, rfLoad, selectedFlowId, setCurrentFlow, setCurrentProject])
 
   const handleCopyLink = React.useCallback(async () => {
     const url = buildShareUrl(projectId, selectedFlowId)
