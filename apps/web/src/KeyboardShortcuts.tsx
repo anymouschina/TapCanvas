@@ -82,7 +82,11 @@ export default function KeyboardShortcuts() {
         // Let "paste" event handlers (e.g. image paste) run first, then fallback to node paste.
         window.setTimeout(() => {
           const lastImagePasteAt = (window as any).__tcLastImagePasteAt
+          const lastWorkflowPasteAt = (window as any).__tcLastWorkflowPasteAt
           if (typeof lastImagePasteAt === 'number' && lastImagePasteAt >= downAt && lastImagePasteAt - downAt < 800) {
+            return
+          }
+          if (typeof lastWorkflowPasteAt === 'number' && lastWorkflowPasteAt >= downAt && lastWorkflowPasteAt - downAt < 800) {
             return
           }
           pasteFromClipboard()

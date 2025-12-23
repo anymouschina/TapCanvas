@@ -1343,12 +1343,35 @@ function CanvasInner(): JSX.Element {
           const f = item.getAsFile()
           if (f && isImageFile(f)) filesFromClipboard.push(f)
         }
-        if (!filesFromClipboard.length) return
-        e.preventDefault()
-        e.stopPropagation()
-        ;(window as any).__tcLastImagePasteAt = Date.now()
         const pos = rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
-        void importImagesFromFiles(filesFromClipboard, pos)
+        let handled = false
+        if (filesFromClipboard.length) {
+          e.preventDefault()
+          e.stopPropagation()
+          ;(window as any).__tcLastImagePasteAt = Date.now()
+          void importImagesFromFiles(filesFromClipboard, pos)
+          toast(`已导入 ${filesFromClipboard.length} 张图片`, 'success')
+          handled = true
+        }
+        const text = e.clipboardData?.getData('text/plain')?.trim()
+        if (text) {
+          try {
+            const data = JSON.parse(text)
+            if (data?.nodes && Array.isArray(data.nodes) && data?.edges && Array.isArray(data.edges)) {
+              e.preventDefault()
+              e.stopPropagation()
+              ;(window as any).__tcLastWorkflowPasteAt = Date.now()
+              importWorkflow(data, pos)
+              toast('已导入工作流', 'success')
+              handled = true
+            }
+          } catch {
+            if (!handled && (text.startsWith('{') || text.startsWith('['))) {
+              toast('剪贴板不是有效的工作流 JSON', 'error')
+            }
+          }
+        }
+        if (!handled) return
       }}
     >
       <input
