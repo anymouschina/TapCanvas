@@ -1,6 +1,6 @@
 import React from 'react'
-import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Select, Stack, Text, Title, Tooltip } from '@mantine/core'
-import { IconArrowLeft, IconCopy, IconMessageCircle, IconRefresh } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { IconArrowLeft, IconCopy, IconFileText, IconMessageCircle, IconRefresh } from '@tabler/icons-react'
 import Canvas from '../canvas/Canvas'
 import { getPublicProjectFlows, listPublicProjects, type FlowDto, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
@@ -69,6 +69,8 @@ export default function ShareFullPage(): JSX.Element {
   const openLangGraphChat = useUIStore((s) => s.openLangGraphChat)
   const closeLangGraphChat = useUIStore((s) => s.closeLangGraphChat)
   const rfLoad = useRFStore((s) => s.load)
+  const { colorScheme } = useMantineColorScheme()
+  const isDark = colorScheme === 'dark'
 
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
@@ -76,6 +78,7 @@ export default function ShareFullPage(): JSX.Element {
   const [project, setProject] = React.useState<ProjectDto | null>(null)
   const [flows, setFlows] = React.useState<FlowDto[]>([])
   const [selectedFlowId, setSelectedFlowId] = React.useState<string | null>(flowId)
+  const [promptModalOpen, setPromptModalOpen] = React.useState(false)
 
   React.useEffect(() => {
     setViewOnly(true)
@@ -201,10 +204,40 @@ export default function ShareFullPage(): JSX.Element {
 
   const flowOptions = flows.map((f) => ({ value: f.id, label: f.name || f.id }))
   const selectedFlow = selectedFlowId ? flows.find((f) => f.id === selectedFlowId) : null
+  const promptEntries = React.useMemo(() => {
+    if (!selectedFlow) return []
+    const data: any = selectedFlow.data || {}
+    const nodes = Array.isArray(data.nodes) ? data.nodes : []
+    return nodes
+      .map((node: any) => {
+        const nodeData = node?.data || {}
+        const label = (nodeData.label || nodeData.name || node.id || '未命名节点') as string
+        const items: { label: string; value: string }[] = []
+        const prompt = typeof nodeData.prompt === 'string' ? nodeData.prompt.trim() : ''
+        if (prompt) items.push({ label: '提示词', value: prompt })
+        const videoPrompt = typeof nodeData.videoPrompt === 'string' ? nodeData.videoPrompt.trim() : ''
+        if (videoPrompt && videoPrompt !== prompt) items.push({ label: '视频提示词', value: videoPrompt })
+        const systemPrompt = typeof nodeData.systemPrompt === 'string' ? nodeData.systemPrompt.trim() : ''
+        if (systemPrompt) items.push({ label: '系统提示词', value: systemPrompt })
+        const storyboard = typeof nodeData.storyboard === 'string' ? nodeData.storyboard.trim() : ''
+        if (storyboard && storyboard !== prompt) items.push({ label: '分镜脚本', value: storyboard })
+        if (!items.length) return null
+        return { id: String(node?.id || label), label, items }
+      })
+      .filter(Boolean) as { id: string; label: string; items: { label: string; value: string }[] }[]
+  }, [selectedFlow])
 
   return (
     <Box className="tapcanvas-viewonly" style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}>
-      <Box style={{ flex: '0 0 auto', padding: 12, borderBottom: '1px solid rgba(148, 163, 184, 0.15)' }}>
+      <Box
+        style={{
+          flex: '0 0 auto',
+          padding: 12,
+          borderBottom: isDark ? '1px solid rgba(148, 163, 184, 0.15)' : '1px solid rgba(15, 23, 42, 0.08)',
+          background: isDark ? 'rgba(2, 6, 23, 0.66)' : 'rgba(255, 255, 255, 0.9)',
+          backdropFilter: 'blur(8px)',
+        }}
+      >
         <Group justify="space-between" align="center" gap="sm">
           <Group gap="sm" align="center">
             <Tooltip label="返回主页" withArrow>
@@ -236,6 +269,16 @@ export default function ShareFullPage(): JSX.Element {
               w={220}
               disabled={loading || !flowOptions.length}
             />
+            <Tooltip label="查看提示词" withArrow>
+              <ActionIcon
+                variant="light"
+                onClick={() => setPromptModalOpen(true)}
+                aria-label="查看提示词"
+                disabled={!selectedFlow}
+              >
+                <IconFileText size={16} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label="打开创作过程（只读）" withArrow>
               <ActionIcon variant="light" onClick={() => openLangGraphChat()} aria-label="打开创作过程">
                 <IconMessageCircle size={16} />
@@ -271,6 +314,40 @@ export default function ShareFullPage(): JSX.Element {
           <Canvas />
         )}
       </Box>
+      <Modal
+        opened={promptModalOpen}
+        onClose={() => setPromptModalOpen(false)}
+        title="提示词"
+        size="lg"
+        centered
+      >
+        <ScrollArea h={480} type="auto">
+          <Stack gap="md">
+            {promptEntries.length === 0 ? (
+              <Text size="sm" c="dimmed">当前工作流暂无可展示的提示词。</Text>
+            ) : (
+              promptEntries.map((entry) => (
+                <Paper key={entry.id} withBorder radius="md" p="md">
+                  <Group justify="space-between" mb="xs" gap="xs">
+                    <Text size="sm" fw={600}>{entry.label}</Text>
+                    <Badge size="xs" variant="light" color="gray">
+                      {entry.items.length} 条
+                    </Badge>
+                  </Group>
+                  <Stack gap="xs">
+                    {entry.items.map((item) => (
+                      <div key={`${entry.id}-${item.label}`}>
+                        <Text size="xs" c="dimmed">{item.label}</Text>
+                        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{item.value}</Text>
+                      </div>
+                    ))}
+                  </Stack>
+                </Paper>
+              ))
+            )}
+          </Stack>
+        </ScrollArea>
+      </Modal>
     </Box>
   )
 }

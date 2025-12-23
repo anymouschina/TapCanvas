@@ -1257,14 +1257,9 @@ async function runVideoTask(ctx: RunnerContext) {
       const inboundImages = inbound
         .map((edge) => nodes.find((n: Node) => n.id === edge.source))
         .filter((n): n is Node => Boolean(n && IMAGE_NODE_KINDS.has((n.data as any)?.kind)))
-      const upstreamPrompts = inboundImages
-        .map((n) => (n.data as any)?.prompt as string | undefined)
-        .filter((p): p is string => Boolean(p && p.trim().length > 0))
       const refNote = '参考上游图片风格。'
       if (!finalPrompt) {
         finalPrompt = refNote
-      } else if (!finalPrompt.includes(refNote)) {
-        finalPrompt = `${finalPrompt}\n${refNote}`
       }
     }
 
