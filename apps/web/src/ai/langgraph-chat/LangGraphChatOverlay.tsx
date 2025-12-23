@@ -57,6 +57,7 @@ import { buildNodeRefTokenFromNode } from './buildNodeIntentPrompt'
 import {
   clearLangGraphProjectSnapshot,
   getLangGraphProjectSnapshot,
+  getLangGraphProjectSnapshotPublic,
   setLangGraphProjectSnapshot,
 } from '../../api/server'
 
@@ -1513,6 +1514,7 @@ function LangGraphChatOverlayInner({
   edges,
   onReset,
 }: LangGraphChatOverlayInnerProps) {
+  const authToken = useAuth((s) => s.token)
   const STALLED_STREAM_MESSAGE =
     'LangGraph 流连接长时间无输出（可能模型调用较慢或网络抖动）。不会中断运行，可稍等或点“重试”重新连接。'
   const { colorScheme } = useMantineColorScheme()
@@ -1704,7 +1706,10 @@ function LangGraphChatOverlayInner({
     let cancelled = false
     void (async () => {
       try {
-        const res = await getLangGraphProjectSnapshot(projectId)
+        const res =
+          viewOnly && !authToken
+            ? await getLangGraphProjectSnapshotPublic(projectId)
+            : await getLangGraphProjectSnapshot(projectId)
         if (cancelled) return
         const snapThreadId = typeof res?.snapshot?.threadId === 'string' ? res.snapshot.threadId : null
         if (snapThreadId && !threadId) setThreadId(snapThreadId)
@@ -1724,13 +1729,13 @@ function LangGraphChatOverlayInner({
         }
       } catch {
         // Server-only persistence: do not silently show an empty chat when history load fails.
-        setError('会话历史加载失败：请检查登录状态或服务端快照接口是否正常。')
+        setError(viewOnly ? '会话历史加载失败：分享未公开或快照不存在。' : '会话历史加载失败：请检查登录状态或服务端快照接口是否正常。')
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [open, projectId])
+  }, [authToken, open, projectId, viewOnly])
 
   useEffect(() => {
     if (!open) return
