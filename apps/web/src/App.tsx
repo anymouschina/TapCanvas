@@ -51,6 +51,7 @@ import TapshowFullPage from './ui/TapshowFullPage'
 import ShareFullPage from './ui/ShareFullPage'
 import StatsFullPage from './ui/StatsFullPage'
 import { runNodeRemote } from './runner/remoteRunner'
+import { downloadUrl } from './utils/download'
 import { Background } from 'reactflow'
 import { GRSAI_PROXY_VENDOR, GRSAI_PROXY_UPDATED_EVENT, GRSAI_STATUS_MODELS, type GrsaiStatusModel } from './constants/grsai'
 import { FeatureTour, type FeatureTourStep } from './ui/tour/FeatureTour'
@@ -1054,12 +1055,12 @@ function CanvasApp(): JSX.Element {
                   variant="light"
                   onClick={() => {
                     if (!unwatermarkResult) return
-                    const a = document.createElement('a')
-                    a.href = unwatermarkResult
-                    a.download = `sora-video-${Date.now()}.mp4`
-                    document.body.appendChild(a)
-                    a.click()
-                    a.remove()
+                    void downloadUrl({
+                      url: unwatermarkResult,
+                      filename: `sora-video-${Date.now()}.mp4`,
+                      preferBlob: true,
+                      fallbackTarget: '_blank',
+                    })
                   }}
                 >
                   下载视频

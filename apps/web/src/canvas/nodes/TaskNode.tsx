@@ -59,6 +59,7 @@ import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { CANVAS_CONFIG } from '../utils/constants'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
+import { downloadUrl } from '../../utils/download'
 import { normalizeOrientation, type Orientation } from '../../utils/orientation'
 import { usePoseEditor } from './taskNode/PoseEditor'
 import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
@@ -2170,12 +2171,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
 
   const handleDownload = React.useCallback(() => {
     if (!toolbarPreview.url) return
-    const a = document.createElement('a')
-    a.href = toolbarPreview.url
-    a.download = `${(data?.label || kind || 'node')}-${Date.now()}`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    void downloadUrl({
+      url: toolbarPreview.url,
+      filename: `${(data?.label || kind || 'node')}-${Date.now()}`,
+      preferBlob: true,
+      fallbackTarget: '_blank',
+    })
   }, [data?.label, kind, toolbarPreview])
 
   const featureBlocks = renderFeatureBlocks(schema.features, {
