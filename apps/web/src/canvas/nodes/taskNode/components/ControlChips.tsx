@@ -9,6 +9,7 @@ type ControlChipsProps = {
   summaryDuration: string
   summaryResolution: string
   summaryExec: string
+  showModelMenu: boolean
   modelList: { value: string; label: string; vendor?: string | null }[]
   onModelChange: (value: string) => void
   showTimeMenu: boolean
@@ -22,6 +23,7 @@ type ControlChipsProps = {
   showOrientationMenu: boolean
   orientation: 'portrait' | 'landscape'
   onOrientationChange: (value: 'portrait' | 'landscape') => void
+  showSampleMenu: boolean
   sampleOptions: number[]
   sampleCount: number
   onSampleChange: (value: number) => void
@@ -38,6 +40,7 @@ export function ControlChips({
   summaryDuration,
   summaryResolution,
   summaryExec,
+  showModelMenu,
   modelList,
   onModelChange,
   showTimeMenu,
@@ -51,6 +54,7 @@ export function ControlChips({
   showOrientationMenu,
   orientation,
   onOrientationChange,
+  showSampleMenu,
   sampleOptions,
   sampleCount,
   onSampleChange,
@@ -61,33 +65,35 @@ export function ControlChips({
 }: ControlChipsProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <Menu withinPortal position="bottom-start" transition="pop-top-left">
-        <Menu.Target>
-          <Button
-            type="button"
-            variant="transparent"
-            radius={0}
-            size="compact-sm"
-            style={{
-              ...summaryChipStyles,
-              minWidth: 0,
-              maxWidth: 220,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-            title={`模型 · ${summaryModelLabel}`}
-          >
-            <span style={controlValueStyle}>{summaryModelLabel}</span>
-          </Button>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {modelList.map((option) => (
-            <Menu.Item key={option.value} onClick={() => onModelChange(option.value)}>
-              {option.label}
-            </Menu.Item>
-          ))}
-        </Menu.Dropdown>
-      </Menu>
+      {showModelMenu && (
+        <Menu withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target>
+            <Button
+              type="button"
+              variant="transparent"
+              radius={0}
+              size="compact-sm"
+              style={{
+                ...summaryChipStyles,
+                minWidth: 0,
+                maxWidth: 220,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              title={`模型 · ${summaryModelLabel}`}
+            >
+              <span style={controlValueStyle}>{summaryModelLabel}</span>
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {modelList.map((option) => (
+              <Menu.Item key={option.value} onClick={() => onModelChange(option.value)}>
+                {option.label}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      )}
       {showTimeMenu && (
         <Menu withinPortal position="bottom-start" transition="pop-top-left">
           <Menu.Target>
@@ -189,30 +195,32 @@ export function ControlChips({
           </Menu.Dropdown>
         </Menu>
       )}
-      <Menu withinPortal position="bottom-start" transition="pop-top-left">
-        <Menu.Target>
-          <Button
-            type="button"
-            variant="transparent"
-            radius={0}
-            size="compact-sm"
-            style={{
-              ...summaryChipStyles,
-              minWidth: 0,
-            }}
-            title="生成次数"
-          >
-            <span style={controlValueStyle}>{summaryExec}</span>
-          </Button>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {sampleOptions.map((value) => (
-            <Menu.Item key={value} onClick={() => onSampleChange(value)}>
-              {value}x
-            </Menu.Item>
-          ))}
-        </Menu.Dropdown>
-      </Menu>
+      {showSampleMenu && (
+        <Menu withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target>
+            <Button
+              type="button"
+              variant="transparent"
+              radius={0}
+              size="compact-sm"
+              style={{
+                ...summaryChipStyles,
+                minWidth: 0,
+              }}
+              title="生成次数"
+            >
+              <span style={controlValueStyle}>{summaryExec}</span>
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {sampleOptions.map((value) => (
+              <Menu.Item key={value} onClick={() => onSampleChange(value)}>
+                {value}x
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      )}
       {!isCharacterNode && (
         <>
           {isRunning && (

@@ -1,14 +1,17 @@
 import React from 'react'
-import { Button, Group, Modal, Stack, Text, Textarea, Badge, Tooltip } from '@mantine/core'
+import { Button, Group, Modal, Stack, Text, Textarea, Badge, Tooltip, SegmentedControl } from '@mantine/core'
 import { IconAdjustments } from '@tabler/icons-react'
 
-import { uploadSoraImage } from '../../../api/server'
+import { runTaskByVendor, uploadSoraImage } from '../../../api/server'
 import { toast } from '../../../ui/toast'
+import { useUIStore } from '../../../ui/uiStore'
+import { extractTextFromTaskResult, tryParseJsonLike } from '../taskNodeHelpers'
 import { isRemoteUrl } from './utils'
 
 export type PosePoint = { name: string; x: number; y: number }
 
-export const POSE_CANVAS_SIZE = { width: 360, height: 360 }
+export const POSE_CANVAS_SIZE = { width: 260, height: 260 }
+const EDIT_PANEL_HEIGHT = POSE_CANVAS_SIZE.height + 220
 
 export const createDefaultPosePoints = (): PosePoint[] => {
   const w = POSE_CANVAS_SIZE.width
@@ -56,7 +59,7 @@ type UsePoseEditorOptions = {
   poseReferenceImages?: string[]
   poseStickmanUrl?: string
   onPoseSaved?: (payload: {
-    poseStickmanUrl: string
+    poseStickmanUrl: string | null
     poseReferenceImages: string[]
     baseImageUrl: string
     maskUrl?: string | null
@@ -80,6 +83,10 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
   const [maskDrawing, setMaskDrawing] = React.useState(false)
   const [maskDirty, setMaskDirty] = React.useState(false)
   const [promptInput, setPromptInput] = React.useState(() => options.promptValue || '')
+  const [editMode, setEditMode] = React.useState<'pose' | 'depth'>('pose')
+  const [depthPrompt, setDepthPrompt] = React.useState('')
+  const [depthLoading, setDepthLoading] = React.useState(false)
+  const [depthError, setDepthError] = React.useState<string | null>(null)
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const maskCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const maskCtxRef = React.useRef<CanvasRenderingContext2D | null>(null)
@@ -96,13 +103,23 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
     setPoints(createDefaultPosePoints())
     setPromptInput(options.promptValue || '')
     setMaskDirty(false)
+    setDepthPrompt('')
+    setDepthError(null)
     setOpen(true)
   }, [options.hasImages, options.promptValue])
 
   React.useEffect(() => {
     if (!open) return
     setPromptInput(options.promptValue || '')
+    setDepthPrompt((prev) => prev || options.promptValue || '')
+    setDepthError(null)
   }, [open, options.promptValue])
+
+  React.useEffect(() => {
+    if (!open) return
+    if (editMode !== 'depth') return
+    setDepthPrompt((prev) => prev || options.promptValue || '')
+  }, [editMode, open, options.promptValue])
 
   const lines = React.useMemo(() => POSE_LINES, [])
 
@@ -151,6 +168,19 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
     })
     return () => cancelAnimationFrame(frame)
   }, [open, drawPoseCanvas])
+
+  React.useEffect(() => {
+    if (!open) return
+    if (editMode !== 'pose') return
+    let frame = requestAnimationFrame(function paint() {
+      if (!canvasRef.current) {
+        frame = requestAnimationFrame(paint)
+        return
+      }
+      drawPoseCanvas()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [drawPoseCanvas, editMode, open])
 
   const initMaskCanvas = React.useCallback(() => {
     const canvas = maskCanvasRef.current
@@ -270,29 +300,32 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
     const canvas = canvasRef.current
     if (!canvas) return
     if (!isRemoteUrl(options.baseImageUrl)) {
-      toast('主图不是在线地址，将仅上传姿势/圈选，推荐先上传到可访问的链接', 'warning')
+      toast('主图不是在线地址，将仅上传参考图/圈选，推荐先上传到可访问的链接', 'warning')
     }
     setUploading(true)
     try {
-      const mergedPrompt = (promptInput || '').trim() || (options.promptValue || '')
-      if (mergedPrompt && options.onPromptSave) {
+      const mergedPrompt = (editMode === 'depth' ? depthPrompt : promptInput).trim() || (options.promptValue || '')
+      if (mergedPrompt && options.onPromptSave && editMode === 'pose') {
         options.onPromptSave(mergedPrompt)
       }
-      const blob: Blob = await new Promise((resolve, reject) => {
-        canvas.toBlob((b) => {
-          if (b) resolve(b)
-          else reject(new Error('生成姿势图失败'))
-        }, 'image/png')
-      })
-      const file = new File([blob], 'pose-stickman.png', { type: 'image/png' })
-      const result = await uploadSoraImage(undefined, file)
-      const remoteUrl =
-        result?.url ||
-        (result as any)?.asset_pointer ||
-        (result as any)?.azure_asset_pointer ||
-        null
-      if (!remoteUrl || !isRemoteUrl(remoteUrl)) {
-        throw new Error('上传姿势参考失败，请稍后重试')
+      let remoteUrl: string | null = null
+    if (editMode === 'pose') {
+        const blob: Blob = await new Promise((resolve, reject) => {
+          canvas.toBlob((b) => {
+            if (b) resolve(b)
+            else reject(new Error('生成参考图失败'))
+          }, 'image/png')
+        })
+        const file = new File([blob], 'pose-stickman.png', { type: 'image/png' })
+        const result = await uploadSoraImage(undefined, file)
+        remoteUrl =
+          result?.url ||
+          (result as any)?.asset_pointer ||
+          (result as any)?.azure_asset_pointer ||
+          null
+        if (!remoteUrl || !isRemoteUrl(remoteUrl)) {
+          throw new Error('上传参考图失败，请稍后重试')
+        }
       }
 
       let maskUrl: string | null = null
@@ -317,7 +350,7 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
           [
             maskUrl?.trim() || null,
             options.baseImageUrl.trim(),
-            remoteUrl.trim(),
+            remoteUrl?.trim() || null,
             ...(options.poseReferenceImages || []).filter(isRemoteUrl),
           ].filter(Boolean),
         ),
@@ -336,32 +369,109 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
           prompt: mergedPrompt,
         })
       }
-      toast('姿势参考已保存，将作为 Nano Banana 图像编辑参考', 'success')
+      toast('图片编辑参考已保存，将作为 Nano Banana 图像编辑参考', 'success')
       setOpen(false)
     } catch (err: any) {
       console.error('handleApplyPose error', err)
-      toast(err?.message || '姿势参考保存失败', 'error')
+      toast(err?.message || '图片编辑参考保存失败', 'error')
     } finally {
       setUploading(false)
     }
-  }, [options.baseImageUrl, options.nodeId, options.poseReferenceImages, options.updateNodeData, options.onPoseSaved, options.onPromptSave, options.promptValue, maskDirty, promptInput])
+  }, [options.baseImageUrl, options.nodeId, options.poseReferenceImages, options.updateNodeData, options.onPoseSaved, options.onPromptSave, options.promptValue, maskDirty, promptInput, editMode, depthPrompt])
+
+  const handleGenerateDepth = React.useCallback(async () => {
+    if (!isRemoteUrl(options.baseImageUrl)) {
+      toast('请先上传主图到可访问的链接再进行深度调整', 'error')
+      return
+    }
+    setDepthLoading(true)
+    setDepthError(null)
+    try {
+      const persist = useUIStore.getState().assetPersistenceEnabled
+      const task = await runTaskByVendor('openai', {
+        kind: 'image_to_prompt',
+        prompt: '请从输入图像中智能、全面地提取视觉风格信息，并将结果以严格有效的 JSON 格式输出。字段数量不做限制，可根据图像特征灵活增减，但需保持结构清晰、语义明确、分类合理。以下为建议的通用结构，请在此基础上根据实际情况动态调整、增删字段。',
+        extras: {
+          imageUrl: options.baseImageUrl,
+          nodeId: options.nodeId,
+          persistAssets: persist,
+        },
+      })
+      const rawText = extractTextFromTaskResult(task)
+      const parsed = tryParseJsonLike(rawText)
+      const baseText = parsed ? JSON.stringify(parsed, null, 2) : (rawText || '')
+      if (!baseText.trim()) {
+        throw new Error('未返回可用的 JSON 数据')
+      }
+      const refinePrompt = parsed
+        ? [
+            '请将下面的 JSON 进行更细维度的拆分与归类，保持严格有效的 JSON 输出。',
+            '字段数量不做限制，但要结构清晰、语义明确、分类合理。',
+            '只输出 JSON，不要额外文字或代码块。',
+            '原始 JSON：',
+            baseText,
+          ].join('\n')
+        : [
+            '请将下面的描述转换为结构化的 JSON（严格有效）。',
+            '字段数量不做限制，但要结构清晰、语义明确、分类合理。',
+            '只输出 JSON，不要额外文字或代码块。',
+            '原始描述：',
+            baseText,
+          ].join('\n')
+
+      const refineTask = await runTaskByVendor('openai', {
+        kind: 'prompt_refine',
+        prompt: refinePrompt,
+        extras: {
+          nodeId: options.nodeId,
+          persistAssets: persist,
+        },
+      })
+      const refinedText = extractTextFromTaskResult(refineTask)
+      const refinedParsed = tryParseJsonLike(refinedText)
+      const nextText = refinedParsed ? JSON.stringify(refinedParsed, null, 2) : baseText
+      setDepthPrompt(nextText)
+    } catch (err: any) {
+      const message = err?.message || '深度调整失败'
+      setDepthError(message)
+      toast(message, 'error')
+    } finally {
+      setDepthLoading(false)
+    }
+  }, [options.baseImageUrl, options.nodeId])
 
   const modal = open ? (
     <Modal
       opened={open}
       onClose={() => setOpen(false)}
-      title="姿势调整（火柴人参考）"
+      title={(
+        <Group gap={10} align="center" justify="space-between" wrap="nowrap">
+          <Text size="md" fw={700}>编辑模式</Text>
+          <SegmentedControl
+            size="sm"
+            value={editMode}
+            onChange={(value) => setEditMode(value as 'pose' | 'depth')}
+            data={[
+              { value: 'pose', label: '姿势调整' },
+              { value: 'depth', label: '深度调整' },
+            ]}
+            styles={{
+              label: { color: options.isDarkUi ? '#e2e8f0' : '#0f172a' },
+            }}
+          />
+        </Group>
+      )}
       centered
-      size="xl"
+      size={1100}
       withinPortal
       zIndex={320}
     >
       <Stack gap="sm">
         <Text size="xs" c="dimmed">
-          拖动节点调整火柴人姿势。可在右侧原图上用画笔圈选主体，补充提示词。保存后，主图、火柴人图与圈选蒙版会作为参考图传给 Nano Banana 进行图像编辑（需主图为在线 URL）。
+          使用方法：可拖动火柴人调整姿势，或只用圈选 + 提示词编辑局部。保存后会生成图片编辑参考，影响后续的出图效果。
         </Text>
         <Group align="flex-start" gap="md" grow>
-          <Stack gap={8}>
+          <Stack gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
             <Group gap={8} align="center">
               <Text size="sm" fw={600}>原图圈选（可选）</Text>
               <Badge size="xs" variant="outline" color="orange">
@@ -420,58 +530,113 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
               </Button>
             </Group>
           </Stack>
-          <Stack gap={8}>
-            <Group gap={8} align="center">
-              <Text size="sm" fw={600}>姿势火柴人 + 提示词</Text>
-              <Badge size="xs" variant="light">必选</Badge>
-            </Group>
-            <canvas
-              ref={canvasRef}
-              width={POSE_CANVAS_SIZE.width}
-              height={POSE_CANVAS_SIZE.height}
-              style={{
-                borderRadius: 12,
-                border: `1px solid ${options.inlineDividerColor}`,
-                background: options.isDarkUi ? 'rgba(5,8,16,0.92)' : 'rgba(245,248,255,0.95)',
-                cursor: draggingIndex !== null ? 'grabbing' : 'grab',
-              }}
-              onMouseDown={(e) => handlePointer(e, 'down')}
-              onMouseMove={(e) => handlePointer(e, 'move')}
-              onMouseUp={(e) => handlePointer(e, 'up')}
-              onMouseLeave={(e) => handlePointer(e, 'up')}
-            />
-            <Textarea
-              label="补充提示词"
-              placeholder="示例：保持原衣着，只调整手部动作；光影延续原图"
-              autosize
-              minRows={2}
-              maxRows={4}
-              value={promptInput}
-              onChange={(e) => setPromptInput(e.currentTarget.value)}
-            />
-            <Group gap={6}>
-              <Button
-                variant="subtle"
-                size="xs"
-                onClick={() => setPoints(createDefaultPosePoints())}
-              >
-                重置姿势
-              </Button>
-              <Tooltip label="保存姿势、圈选和提示词，并创建引用节点">
-                <Button
-                  size="xs"
-                  leftSection={<IconAdjustments size={14} />}
-                  onClick={handleApply}
-                  loading={uploading}
-                >
-                  保存并生成
-                </Button>
-              </Tooltip>
-            </Group>
-          </Stack>
+          <Stack gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
+              {editMode === 'pose' ? (
+                <>
+                  <Stack gap={8}>
+                    <Group gap={8} align="center">
+                      <Text size="sm" fw={600}>火柴人参考（必选）</Text>
+                      <Badge size="xs" variant="light">必选</Badge>
+                    </Group>
+                    <canvas
+                      ref={canvasRef}
+                      width={POSE_CANVAS_SIZE.width}
+                      height={POSE_CANVAS_SIZE.height}
+                      style={{
+                        width: POSE_CANVAS_SIZE.width,
+                        height: POSE_CANVAS_SIZE.height,
+                        borderRadius: 12,
+                        border: `1px solid ${options.inlineDividerColor}`,
+                        background: options.isDarkUi ? 'rgba(5,8,16,0.92)' : 'rgba(245,248,255,0.95)',
+                        cursor: draggingIndex !== null ? 'grabbing' : 'grab',
+                      }}
+                      onMouseDown={(e) => handlePointer(e, 'down')}
+                      onMouseMove={(e) => handlePointer(e, 'move')}
+                      onMouseUp={(e) => handlePointer(e, 'up')}
+                      onMouseLeave={(e) => handlePointer(e, 'up')}
+                    />
+                    <Textarea
+                      label="补充提示词"
+                      placeholder="示例：保持原衣着，只调整手部动作；光影延续原图"
+                      autosize
+                      minRows={2}
+                      maxRows={4}
+                      value={promptInput}
+                      onChange={(e) => setPromptInput(e.currentTarget.value)}
+                    />
+                  </Stack>
+                  <div style={{ flex: 1 }} />
+                  <Group gap={6}>
+                    <Button
+                      variant="subtle"
+                      size="xs"
+                      onClick={() => setPoints(createDefaultPosePoints())}
+                    >
+                      重置火柴人
+                    </Button>
+                    <Tooltip label="保存参考图、圈选和提示词，并创建引用节点">
+                      <Button
+                        size="xs"
+                        leftSection={<IconAdjustments size={14} />}
+                        onClick={handleApply}
+                        loading={uploading}
+                      >
+                        保存并生成
+                      </Button>
+                    </Tooltip>
+                  </Group>
+                </>
+              ) : (
+                <>
+                  <Stack gap={8}>
+                    <Text size="sm" fw={600}>深度描述（JSON，可编辑）</Text>
+                    <Text
+                      size="xs"
+                      c="dimmed"
+                      style={{ color: options.isDarkUi ? 'rgba(226,232,240,0.7)' : '#475569' }}
+                    >
+                      先生成 JSON，再按需要修改内容；保存后会作为 prompt 使用。
+                    </Text>
+                    <Group gap={6}>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        loading={depthLoading}
+                        onClick={handleGenerateDepth}
+                      >
+                        生成深度描述
+                      </Button>
+                      {depthError && <Text size="xs" c="red">{depthError}</Text>}
+                    </Group>
+                    <Textarea
+                      label="JSON 内容"
+                      placeholder="点击“生成深度描述”后在此编辑"
+                      autosize
+                      minRows={4}
+                      maxRows={7}
+                      value={depthPrompt}
+                      onChange={(e) => setDepthPrompt(e.currentTarget.value)}
+                    />
+                  </Stack>
+                  <div style={{ flex: 1 }} />
+                  <Group gap={6}>
+                    <Tooltip label="保存参考图、圈选和深度描述，并创建引用节点">
+                      <Button
+                        size="xs"
+                        leftSection={<IconAdjustments size={14} />}
+                        onClick={handleApply}
+                        loading={uploading}
+                      >
+                        保存并生成
+                      </Button>
+                    </Tooltip>
+                  </Group>
+                </>
+              )}
+            </Stack>
         </Group>
-        <Text size="xs" c="dimmed">
-          主图：{poseReady ? options.baseImageUrl : '未找到在线主图（需上传到在线地址）'}
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
+          效果：参考区域与提示词会被模型优先遵循，未圈选区域尽量保持原样。
         </Text>
       </Stack>
     </Modal>
