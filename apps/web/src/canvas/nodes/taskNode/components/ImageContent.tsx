@@ -70,9 +70,14 @@ export function ImageContent({
 }: ImageContentProps) {
   const mediaSize = 300
   const [imageError, setImageError] = React.useState(false)
+  const activeImageUrl = primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''
   const bindInputRef = React.useCallback((el: HTMLInputElement | null) => {
     ;(fileRef as any).current = el
   }, [fileRef])
+
+  React.useEffect(() => {
+    setImageError(false)
+  }, [activeImageUrl])
 
   return (
     <div style={{ position: 'relative', marginTop: compact ? 0 : 6, padding: compact ? 0 : '0 6px' }}>
@@ -132,38 +137,6 @@ export function ImageContent({
       ) : (
         <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
           <div style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
-            {imageResults.length > 1 && (
-              <>
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 8,
-                    top: 10,
-                    width: '100%',
-                    height: '100%',
-                    borderRadius: 14,
-                    background: darkContentBackground,
-                    transform: 'translate(8px, 10px)',
-                    opacity: 0.5,
-                    zIndex: 0,
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 4,
-                    top: 6,
-                    width: '100%',
-                    height: '100%',
-                    borderRadius: 12,
-                    background: darkContentBackground,
-                    transform: 'translate(4px, 5px)',
-                    opacity: 0.7,
-                    zIndex: 0,
-                  }}
-                />
-              </>
-            )}
           <div
             style={{
               position: 'relative',
@@ -176,7 +149,7 @@ export function ImageContent({
             }}
           >
             <img
-              src={primaryImageUrl || imageResults[imagePrimaryIndex]?.url || ''}
+              src={activeImageUrl}
               alt="主图"
               style={{
                 width: '100%',
@@ -219,7 +192,11 @@ export function ImageContent({
             {imageResults.length > 1 && (
               <button
                 type="button"
-                onClick={() => setImageExpanded(!imageExpanded)}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setImageExpanded(!imageExpanded)
+                }}
                 style={{
                   position: 'absolute',
                   right: 12,
@@ -276,7 +253,9 @@ export function ImageContent({
                     <button
                       key={`${idx}-${img.url}`}
                       type="button"
-                      onClick={() => {
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
                         onSelectPrimary(idx, img.url)
                         setImageExpanded(false)
                       }}
