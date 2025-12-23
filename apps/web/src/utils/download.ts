@@ -6,6 +6,11 @@ type DownloadOptions = {
    * Falls back to a normal <a download> click when CORS/streaming prevents blob download.
    */
   preferBlob?: boolean
+  /**
+   * Target for the fallback <a> click if blob download fails.
+   * Defaults to opening a new tab to avoid losing unsaved work.
+   */
+  fallbackTarget?: '_blank' | '_self'
 }
 
 function guessFilenameFromUrl(url: string): string | null {
@@ -19,23 +24,27 @@ function guessFilenameFromUrl(url: string): string | null {
   }
 }
 
-function clickDownload(href: string, filename: string) {
+function clickDownload(href: string, filename: string, target: '_blank' | '_self' = '_self') {
   const a = document.createElement('a')
   a.href = href
   a.download = filename
   a.rel = 'noopener noreferrer'
-  // Keep in current tab; some browsers default to opening a new tab for cross-origin downloads.
-  a.target = '_self'
+  a.target = target
   document.body.appendChild(a)
   a.click()
   a.remove()
 }
 
-export async function downloadUrl({ url, filename, preferBlob = true }: DownloadOptions) {
+export async function downloadUrl({
+  url,
+  filename,
+  preferBlob = true,
+  fallbackTarget = '_blank',
+}: DownloadOptions) {
   const fallbackName = filename || guessFilenameFromUrl(url) || `tapcanvas-${Date.now()}`
 
   if (!preferBlob) {
-    clickDownload(url, fallbackName)
+    clickDownload(url, fallbackName, fallbackTarget)
     return
   }
 
@@ -45,14 +54,13 @@ export async function downloadUrl({ url, filename, preferBlob = true }: Download
     const blob = await res.blob()
     const objectUrl = URL.createObjectURL(blob)
     try {
-      clickDownload(objectUrl, fallbackName)
+      clickDownload(objectUrl, fallbackName, '_self')
     } finally {
       URL.revokeObjectURL(objectUrl)
     }
   } catch {
     // Fallback: best-effort direct download. If browser ignores download attr for cross-origin,
-    // it may navigate; but we avoid forcing a new tab here.
-    clickDownload(url, fallbackName)
+    // it may navigate; open a new tab by default to preserve the current page.
+    clickDownload(url, fallbackName, fallbackTarget)
   }
 }
-
