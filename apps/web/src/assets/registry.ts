@@ -1,4 +1,4 @@
-import type { Node, Edge } from 'reactflow'
+import type { Node, Edge } from '@xyflow/react'
 
 export type AssetRecord = { id: string; name: string; nodes: Node[]; edges: Edge[]; updatedAt: number }
 const KEY = 'tapcanvas-assets'

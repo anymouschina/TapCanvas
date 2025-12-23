@@ -5,7 +5,7 @@
 
 import { EDGE_TYPES, HANDLE_PREFIXES } from './constants';
 import { generateId } from './canvas';
-import type { Edge } from 'reactflow';
+import type { Edge } from '@xyflow/react';
 
 /**
  * 边数据接口

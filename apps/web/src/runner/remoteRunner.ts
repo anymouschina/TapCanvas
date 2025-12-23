@@ -1,4 +1,4 @@
-import type { Node } from 'reactflow'
+import type { Node } from '@xyflow/react'
 import type { TaskKind, TaskResultDto } from '../api/server'
 import {
   runTaskByVendor,

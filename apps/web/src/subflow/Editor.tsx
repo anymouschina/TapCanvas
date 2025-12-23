@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from 'reactflow'
-import 'reactflow/dist/style.css'
+import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
 import { useRFStore } from '../canvas/store'
 import { Button, Group, Title } from '@mantine/core'

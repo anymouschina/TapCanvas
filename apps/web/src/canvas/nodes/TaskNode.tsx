@@ -1,6 +1,6 @@
 import React from 'react'
-import type { NodeProps } from 'reactflow'
-import { Position, NodeToolbar } from 'reactflow'
+import type { NodeProps } from '@xyflow/react'
+import { Position, NodeToolbar } from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Button, Text, Stack, TextInput, Select, Loader, Badge, useMantineColorScheme, useMantineTheme } from '@mantine/core'
@@ -74,45 +74,11 @@ import { VeoImageModal } from './taskNode/components/VeoImageModal'
 import { VideoResultModal } from './taskNode/VideoResultModal'
 import { StoryboardEditor } from './taskNode/StoryboardEditor'
 import { renderFeatureBlocks } from './taskNode/featureRenderers'
-import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
+import { REMOTE_IMAGE_URL_REGEX, normalizeClipRange } from './taskNode/utils'
 import { runNodeRemote } from '../../runner/remoteRunner'
+import { BASE_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION } from './taskNode/constants'
+import type { CharacterCard, FrameSample } from './taskNode/types'
 
-const BASE_DURATION_OPTIONS = [
-  { value: '10', label: '10s' },
-  { value: '15', label: '15s' },
-]
-const STORYBOARD_DURATION_OPTION = { value: '25', label: '25s' }
-
-const SAMPLE_OPTIONS = [1, 2, 3, 4, 5]
-
-type FrameSample = {
-  url: string
-  time: number
-  blob: Blob | null
-  remoteUrl?: string | null
-  description?: string | null
-  describing?: boolean
-}
-
-type CharacterCard = {
-  id: string
-  name: string
-  summary?: string
-  tags?: string[]
-  frames: Array<{ time: number; desc: string }>
-  startFrame?: { time: number; url: string }
-  endFrame?: { time: number; url: string }
-  clipRange?: { start: number; end: number }
-}
-
-function normalizeClipRange(val: any): { start: number; end: number } | null {
-  if (!val || typeof val !== 'object') return null
-  const start = Number((val as any)?.start)
-  const end = Number((val as any)?.end)
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-  if (end <= start) return null
-  return { start, end }
-}
 type Data = {
   label: string
   kind?: string
@@ -2889,6 +2855,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
   return (
     <div
+      className="tc-task-node"
       style={{
         border: shellBorder,
         borderRadius: 22,
@@ -2955,33 +2922,34 @@ const rewritePromptWithCharacters = React.useCallback(
       {/* Content Area for Character/Image/Video/Text kinds */}
       {featureBlocks}
       {isVideoNode && resolvedVideoVendor === 'veo' && (
-        <Paper radius="md" withBorder p="sm" style={{ marginTop: 8, width: '100%' }}>
-          <Stack gap="xs">
-            <Group justify="space-between" gap={6}>
-              <Text size="sm" fw={500}>
+        <Paper className="tc-task-node__veo-panel" radius="md" withBorder p="sm" style={{ marginTop: 8, width: '100%' }}>
+          <Stack className="tc-task-node__veo-stack" gap="xs">
+            <Group className="tc-task-node__veo-header" justify="space-between" gap={6}>
+              <Text className="tc-task-node__veo-title" size="sm" fw={500}>
                 Veo 图像控制
               </Text>
-              <Badge size="xs" color="grape">
+              <Badge className="tc-task-node__veo-badge" size="xs" color="grape">
                 Veo3
               </Badge>
             </Group>
             <TextInput
+              className="tc-task-node__veo-input"
               label="首帧图片 URL"
               placeholder="https://example.com/first.png"
               value={veoFirstFrameUrl}
               onChange={(e) => handleSetFirstFrameUrl(e.currentTarget.value)}
               description="设置后会优先使用该图像作为第一帧，且无法再选择参考图"
               rightSection={
-                <Button size="compact-xs" variant="light" onClick={() => openVeoModal('first')}>
+                <Button className="tc-task-node__veo-input-action" size="compact-xs" variant="light" onClick={() => openVeoModal('first')}>
                   选择
                 </Button>
               }
               rightSectionWidth={70}
             />
             {trimmedFirstFrameUrl && (
-              <Paper radius="md" withBorder p="xs">
-                <Group gap={8} align="flex-start">
-                  <div
+              <Paper className="tc-task-node__veo-preview" radius="md" withBorder p="xs">
+                <Group className="tc-task-node__veo-preview-row" gap={8} align="flex-start">
+                  <div className="tc-task-node__veo-preview-thumb"
                     style={{
                       width: 72,
                       height: 72,
@@ -2991,13 +2959,13 @@ const rewritePromptWithCharacters = React.useCallback(
                       background: mediaFallbackSurface,
                     }}
                   >
-                      <img src={trimmedFirstFrameUrl} alt="首帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img className="tc-task-node__veo-preview-image" src={trimmedFirstFrameUrl} alt="首帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    <Group gap={4} style={{ flex: 1 }}>
-                      <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('first')}>
+                    <Group className="tc-task-node__veo-preview-actions" gap={4} style={{ flex: 1 }}>
+                      <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" onClick={() => openVeoModal('first')}>
                         更换
                       </Button>
-                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleSetFirstFrameUrl('')}>
+                      <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" color="red" onClick={() => handleSetFirstFrameUrl('')}>
                         清除
                       </Button>
                     </Group>
@@ -3005,22 +2973,23 @@ const rewritePromptWithCharacters = React.useCallback(
               </Paper>
             )}
             <TextInput
+              className="tc-task-node__veo-input"
               label="尾帧图片 URL"
               placeholder="https://example.com/last.png"
               value={veoLastFrameUrl}
               onChange={(e) => handleSetLastFrameUrl(e.currentTarget.value)}
               disabled={!firstFrameLocked}
               rightSection={
-                <Button size="compact-xs" variant="light" onClick={() => openVeoModal('last')}>
+                <Button className="tc-task-node__veo-input-action" size="compact-xs" variant="light" onClick={() => openVeoModal('last')}>
                   选择
                 </Button>
               }
               rightSectionWidth={70}
             />
             {trimmedLastFrameUrl && (
-              <Paper radius="md" withBorder p="xs">
-                <Group gap={8} align="flex-start">
-                  <div
+              <Paper className="tc-task-node__veo-preview" radius="md" withBorder p="xs">
+                <Group className="tc-task-node__veo-preview-row" gap={8} align="flex-start">
+                  <div className="tc-task-node__veo-preview-thumb"
                     style={{
                       width: 72,
                       height: 72,
@@ -3030,45 +2999,46 @@ const rewritePromptWithCharacters = React.useCallback(
                       background: mediaFallbackSurface,
                     }}
                   >
-                      <img src={trimmedLastFrameUrl} alt="尾帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img className="tc-task-node__veo-preview-image" src={trimmedLastFrameUrl} alt="尾帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    <Group gap={4} style={{ flex: 1 }}>
-                      <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('last')}>
+                    <Group className="tc-task-node__veo-preview-actions" gap={4} style={{ flex: 1 }}>
+                      <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" onClick={() => openVeoModal('last')}>
                         更换
                       </Button>
-                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleSetLastFrameUrl('')}>
+                      <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" color="red" onClick={() => handleSetLastFrameUrl('')}>
                         清除
                       </Button>
                     </Group>
                 </Group>
               </Paper>
             )}
-            <Group gap={6} align="center">
-              <Text size="xs" c="dimmed">
+            <Group className="tc-task-node__veo-ref-header" gap={6} align="center">
+              <Text className="tc-task-node__veo-ref-label" size="xs" c="dimmed">
                 参考图片（最多 {MAX_VEO_REFERENCE_IMAGES} 张）
               </Text>
-              <Badge size="xs" color="gray" variant="light">
+              <Badge className="tc-task-node__veo-ref-count" size="xs" color="gray" variant="light">
                 {veoReferenceImages.length}/{MAX_VEO_REFERENCE_IMAGES}
               </Badge>
-              <Button size="compact-xs" variant="subtle" onClick={() => openVeoModal('reference')}>
+              <Button className="tc-task-node__veo-ref-action" size="compact-xs" variant="subtle" onClick={() => openVeoModal('reference')}>
                 管理
               </Button>
             </Group>
             {veoReferenceImages.length === 0 ? (
-              <Text size="xs" c="dimmed">
+              <Text className="tc-task-node__veo-ref-empty" size="xs" c="dimmed">
                 未选择参考图。
               </Text>
             ) : (
-              <Group gap={6} wrap="wrap">
+              <Group className="tc-task-node__veo-ref-grid" gap={6} wrap="wrap">
                 {veoReferenceImages.map((url) => (
                   <Paper
+                    className="tc-task-node__veo-ref-card"
                     key={url}
                     radius="md"
                     p="xs"
                     withBorder
                     style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: 220 }}
                   >
-                    <div
+                    <div className="tc-task-node__veo-ref-thumb"
                       style={{
                         width: 48,
                         height: 48,
@@ -3078,9 +3048,9 @@ const rewritePromptWithCharacters = React.useCallback(
                         background: mediaFallbackSurface,
                       }}
                     >
-                      <img src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img className="tc-task-node__veo-ref-image" src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    <ActionIcon size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
+                    <ActionIcon className="tc-task-node__veo-ref-remove" size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
                       <IconTrash size={12} />
                     </ActionIcon>
                   </Paper>
@@ -3093,13 +3063,13 @@ const rewritePromptWithCharacters = React.useCallback(
             {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
       {status === 'running' && (
-        <div style={{ marginTop: 6, height: 6, background: 'rgba(127,127,127,.25)', borderRadius: 4 }}>
-          <div style={{ width: `${Math.min(100, Math.max(0, data?.progress ?? 0))}%`, height: '100%', background: color, borderRadius: 4 }} />
+        <div className="tc-task-node__progress" style={{ marginTop: 6, height: 6, background: 'rgba(127,127,127,.25)', borderRadius: 4 }}>
+          <div className="tc-task-node__progress-bar" style={{ width: `${Math.min(100, Math.max(0, data?.progress ?? 0))}%`, height: '100%', background: color, borderRadius: 4 }} />
         </div>
       )}
       {/* Bottom detail panel near node */}
-      <NodeToolbar isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
-        <div
+      <NodeToolbar className="tc-task-node__toolbar" isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
+        <div className="tc-task-node__toolbar-frame"
           style={{
             width: 380,
             maxHeight: '60vh',
@@ -3108,7 +3078,7 @@ const rewritePromptWithCharacters = React.useCallback(
             transformOrigin: 'top center',
           }}
         >
-          <div
+          <div className="tc-task-node__toolbar-content"
             style={{
               display: 'flex',
               flexDirection: 'column',
@@ -3177,9 +3147,9 @@ const rewritePromptWithCharacters = React.useCallback(
             />
           </div>
           {isCharacterNode ? (
-            <Text size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
+            <Text className="tc-task-node__panel-hint" size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
           ) : (
-            <Text size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : ''}</Text>
+            <Text className="tc-task-node__panel-hint" size="xs" c="dimmed" mb={6}>{isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : ''}</Text>
           )}
 
           {!isCharacterNode && (
@@ -3187,8 +3157,9 @@ const rewritePromptWithCharacters = React.useCallback(
           )}
 
           {isCharacterNode ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="tc-task-node__character-panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <Select
+                className="tc-task-node__character-select"
                 label="Sora Token"
                 placeholder={characterTokensLoading ? '正在加载 Token...' : characterTokens.length === 0 ? '暂无可用 Token' : '选择 Token'}
                 data={characterTokens.map((t) => ({
@@ -3207,15 +3178,16 @@ const rewritePromptWithCharacters = React.useCallback(
                 disabled={characterTokensLoading}
               />
               {characterTokenError && (
-                <Text size="xs" c="red">
+                <Text className="tc-task-node__character-error" size="xs" c="red">
                   {characterTokenError}
                 </Text>
               )}
-              <Group gap={6}>
-                <Button size="xs" variant="light" onClick={() => setActivePanel('assets')}>
+              <Group className="tc-task-node__character-actions" gap={6}>
+                <Button className="tc-task-node__character-action" size="xs" variant="light" onClick={() => setActivePanel('assets')}>
                   打开资产面板
                 </Button>
                 <Button
+                  className="tc-task-node__character-action"
                   size="xs"
                   variant="subtle"
                   onClick={refreshCharacters}
@@ -3226,9 +3198,9 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Button>
               </Group>
               {selectedCharacter ? (
-                <Paper radius="md" p="xs">
+                <Paper className="tc-task-node__character-card" radius="md" p="xs">
                   {selectedCharacter.cover && (
-                    <div
+                    <div className="tc-task-node__character-cover"
                       style={{
                         borderRadius: 8,
                         overflow: 'hidden',
@@ -3238,38 +3210,41 @@ const rewritePromptWithCharacters = React.useCallback(
                       }}
                     >
                       <img
+                        className="tc-task-node__character-cover-image"
                         src={selectedCharacter.cover}
                         alt={selectedCharacter.displayName}
                         style={{ width: '100%', height: 120, objectFit: 'cover' }}
                       />
                     </div>
                   )}
-                  <Group gap={8} align="flex-start">
+                  <Group className="tc-task-node__character-meta" gap={8} align="flex-start">
                     {selectedCharacter.avatar && (
                       <img
+                        className="tc-task-node__character-avatar"
                         src={selectedCharacter.avatar}
                         alt={selectedCharacter.displayName}
                         style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
                       />
                     )}
-                    <div style={{ flex: 1 }}>
-                      <Text size="sm" fw={600}>
+                    <div className="tc-task-node__character-meta-text" style={{ flex: 1 }}>
+                      <Text className="tc-task-node__character-name" size="sm" fw={600}>
                         {selectedCharacter.displayName}
                       </Text>
                       {selectedCharacter.username && (
-                        <Text size="xs" c="dimmed">
+                        <Text className="tc-task-node__character-username" size="xs" c="dimmed">
                           @{selectedCharacter.username}
                         </Text>
                       )}
                     </div>
                   </Group>
                   {selectedCharacter.description && (
-                    <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+                    <Text className="tc-task-node__character-desc" size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
                       {selectedCharacter.description}
                     </Text>
                   )}
-                  <Group gap={6} mt={8}>
+                  <Group className="tc-task-node__character-card-actions" gap={6} mt={8}>
                     <Button
+                      className="tc-task-node__character-card-action"
                       size="xs"
                       variant="subtle"
                       onClick={() => handleCopyCharacterMention(selectedCharacter.username)}
@@ -3277,35 +3252,35 @@ const rewritePromptWithCharacters = React.useCallback(
                     >
                       复制 @ 引用
                     </Button>
-                    <Button size="xs" variant="light" color="red" onClick={handleClearCharacter}>
+                    <Button className="tc-task-node__character-card-action" size="xs" variant="light" color="red" onClick={handleClearCharacter}>
                       清除
                     </Button>
                   </Group>
                 </Paper>
               ) : (
-                <Text size="xs" c="dimmed">
+                <Text className="tc-task-node__character-empty" size="xs" c="dimmed">
                   尚未选择角色，先选择 Token，再从下方列表或资产面板中添加。
                 </Text>
               )}
-              <div>
-                <Group justify="space-between" mb={4}>
-                  <Text size="xs" fw={500}>
+              <div className="tc-task-node__character-list">
+                <Group className="tc-task-node__character-list-header" justify="space-between" mb={4}>
+                  <Text className="tc-task-node__character-list-title" size="xs" fw={500}>
                     可用角色
                   </Text>
-                  {characterLoading && <Loader size="xs" />}
+                  {characterLoading && <Loader className="tc-task-node__character-list-loader" size="xs" />}
                 </Group>
                 {!selectedCharacterTokenId && (
-                  <Text size="xs" c="dimmed">
+                  <Text className="tc-task-node__character-list-hint" size="xs" c="dimmed">
                     请选择 Sora Token 以加载角色。
                   </Text>
                 )}
                 {selectedCharacterTokenId && !characterLoading && characterList.length === 0 && (
-                  <Text size="xs" c="dimmed">
+                  <Text className="tc-task-node__character-list-hint" size="xs" c="dimmed">
                     暂无角色，可前往资产面板创建。
                   </Text>
                 )}
                 {selectedCharacterTokenId && characterList.length > 0 && (
-                  <div
+                  <div className="tc-task-node__character-grid"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
@@ -3318,6 +3293,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       const isActive = Boolean(selectedCharacter?.id && meta.id && selectedCharacter.id === meta.id)
                       return (
                         <Paper
+                          className="tc-task-node__character-grid-card"
                           key={meta.id || meta.username || idx}
                           radius="md"
                           p="xs"
@@ -3329,7 +3305,7 @@ const rewritePromptWithCharacters = React.useCallback(
                           onClick={() => handleSelectCharacter(char)}
                         >
                           {meta.cover && (
-                            <div
+                            <div className="tc-task-node__character-grid-cover"
                               style={{
                                 borderRadius: 6,
                                 overflow: 'hidden',
@@ -3339,26 +3315,28 @@ const rewritePromptWithCharacters = React.useCallback(
                               }}
                             >
                               <img
+                                className="tc-task-node__character-grid-cover-image"
                                 src={meta.cover}
                                 alt={meta.displayName}
                                 style={{ width: '100%', height: 70, objectFit: 'cover' }}
                               />
                             </div>
                           )}
-                          <Text size="xs" fw={500} lineClamp={1}>
+                          <Text className="tc-task-node__character-grid-name" size="xs" fw={500} lineClamp={1}>
                             {meta.displayName || '未命名角色'}
                           </Text>
                           {meta.username && (
-                            <Text size="xs" c="dimmed" lineClamp={1}>
+                            <Text className="tc-task-node__character-grid-username" size="xs" c="dimmed" lineClamp={1}>
                               @{meta.username}
                             </Text>
                           )}
                           {meta.description && (
-                            <Text size="xs" c="dimmed" lineClamp={2} mt={4}>
+                            <Text className="tc-task-node__character-grid-desc" size="xs" c="dimmed" lineClamp={2} mt={4}>
                               {meta.description}
                             </Text>
                           )}
                           <Button
+                            className="tc-task-node__character-grid-action"
                             size="xs"
                             variant={isActive ? 'filled' : 'subtle'}
                             fullWidth
@@ -3376,12 +3354,12 @@ const rewritePromptWithCharacters = React.useCallback(
                   </div>
                 )}
                 {characterCursor && (
-                  <Button size="xs" variant="light" mt={8} onClick={loadMoreCharacters} loading={characterLoadingMore}>
+                  <Button className="tc-task-node__character-more" size="xs" variant="light" mt={8} onClick={loadMoreCharacters} loading={characterLoadingMore}>
                     加载更多
                   </Button>
                 )}
                 {characterError && (
-                  <Text size="xs" c="red" mt={4}>
+                  <Text className="tc-task-node__character-error" size="xs" c="red" mt={4}>
                     {characterError}
                   </Text>
                 )}
@@ -3390,9 +3368,9 @@ const rewritePromptWithCharacters = React.useCallback(
           ) : (
             <>
               {isComposerNode && (upstreamImageUrl || upstreamText) && (
-                <div style={{ marginBottom: 8 }}>
+                <div className="tc-task-node__composer-upstream" style={{ marginBottom: 8 }}>
                   {upstreamImageUrl && (
-                    <div
+                    <div className="tc-task-node__composer-upstream-media"
                       style={{
                         position: 'relative',
                         width: '100%',
@@ -3405,6 +3383,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       }}
                     >
                       <img
+                        className="tc-task-node__composer-upstream-image"
                         src={upstreamImageUrl}
                         alt="上游图片素材"
                         style={{
@@ -3417,7 +3396,7 @@ const rewritePromptWithCharacters = React.useCallback(
                         }}
                       />
                       {upstreamSoraFileId && (
-                        <div
+                        <div className="tc-task-node__composer-upstream-tag"
                           style={{
                             position: 'absolute',
                             left: 8,
@@ -3438,6 +3417,7 @@ const rewritePromptWithCharacters = React.useCallback(
                   )}
                   {upstreamText && (
                     <Text
+                      className="tc-task-node__composer-upstream-text"
                       size="xs"
                       c="dimmed"
                       lineClamp={1}
@@ -3450,18 +3430,19 @@ const rewritePromptWithCharacters = React.useCallback(
               )}
 
               {connectedCharacterOptions.length > 0 && (
-                <Paper radius="md" p="xs" mb="xs">
-                  <Text size="xs" fw={500} mb={4}>
+                <Paper className="tc-task-node__character-summary" radius="md" p="xs" mb="xs">
+                  <Text className="tc-task-node__character-summary-title" size="xs" fw={500} mb={4}>
                     {isUsingWorkflowCharacters ? '可用角色：' : '已连接角色：'}
                     {connectedCharacterOptions.map((opt) => `@${opt.username}`).join('、')}
                   </Text>
                   {isUsingWorkflowCharacters && (
-                    <Text size="xs" c="dimmed" mb={4}>
+                    <Text className="tc-task-node__character-summary-hint" size="xs" c="dimmed" mb={4}>
                       当前节点未直接连接角色，已自动引用同一工作流中的全部角色。
                     </Text>
                   )}
-                  <Group align="flex-end" gap="xs" wrap="wrap">
+                  <Group className="tc-task-node__character-summary-actions" align="flex-end" gap="xs" wrap="wrap">
                     <Select
+                      className="tc-task-node__character-summary-select"
                       label="替换模型"
                       size="xs"
                       withinPortal
@@ -3471,6 +3452,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       style={{ minWidth: 180 }}
                     />
                     <Button
+                      className="tc-task-node__character-summary-action"
                       size="xs"
                       variant="light"
                       loading={characterRewriteLoading}
@@ -3480,7 +3462,7 @@ const rewritePromptWithCharacters = React.useCallback(
                     </Button>
                   </Group>
                   {characterRewriteError && (
-                    <Text size="xs" c="red" mt={4}>
+                    <Text className="tc-task-node__character-summary-error" size="xs" c="red" mt={4}>
                       {characterRewriteError}
                     </Text>
                   )}

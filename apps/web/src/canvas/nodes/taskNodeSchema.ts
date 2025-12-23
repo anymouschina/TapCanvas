@@ -11,7 +11,7 @@ import {
   IconBox,
   IconLayoutGrid,
 } from '@tabler/icons-react'
-import { Position } from 'reactflow'
+import { Position } from '@xyflow/react'
 
 export type TaskNodeFeature =
   | 'prompt'

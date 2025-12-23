@@ -6,7 +6,7 @@ import {
   EdgeLabelRenderer,
   getSmoothStepPath,
   type EdgeProps,
-} from 'reactflow'
+} from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { useEdgeVisuals } from './useEdgeVisuals'

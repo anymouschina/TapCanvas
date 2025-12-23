@@ -1,4 +1,4 @@
-import type { Edge, Node } from 'reactflow'
+import type { Edge, Node } from '@xyflow/react'
 import { useRFStore } from './canvas/store'
 
 export type FlowData = { nodes: Node[]; edges: Edge[] }

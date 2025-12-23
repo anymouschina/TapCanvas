@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Handle, Position } from 'reactflow';
+import { Handle, Position } from '@xyflow/react';
 import { getEdgeColorForType, HANDLE_PREFIXES } from '../../../utils';
 import type { NodeHandlesProps } from './NodeBase.types';
 

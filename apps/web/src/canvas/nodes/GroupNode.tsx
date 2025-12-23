@@ -1,10 +1,10 @@
 import React from 'react'
-import type { NodeProps } from 'reactflow'
+import type { NodeProps } from '@xyflow/react'
 import { Paper, Group, Button, Divider, Text, TextInput } from '@mantine/core'
 import { useRFStore, persistToLocalStorage } from '../store'
 import { toast } from '../../ui/toast'
 import { runFlowDag } from '../../runner/dag'
-import { NodeResizer } from 'reactflow'
+import { NodeResizer } from '@xyflow/react'
 
 type Data = { label?: string; editing?: boolean }
 
