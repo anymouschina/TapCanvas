@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import { ActionIcon, Group, Paper, Title, Portal } from '@mantine/core'
 import { IconX, IconDownload } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
+import { downloadUrl } from '../utils/download'
 
 export default function PreviewModal(): JSX.Element | null {
   const preview = useUIStore(s => s.preview)
@@ -16,12 +17,12 @@ export default function PreviewModal(): JSX.Element | null {
   if (!preview) return null
   const { url, kind, name } = preview
   const download = () => {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name || `tapcanvas-${kind}-${Date.now()}`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    void downloadUrl({
+      url,
+      filename: name || `tapcanvas-${kind}-${Date.now()}`,
+      preferBlob: true,
+      fallbackTarget: '_blank',
+    })
   }
 
   return (
