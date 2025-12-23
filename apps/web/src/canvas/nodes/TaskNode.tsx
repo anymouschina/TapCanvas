@@ -1226,7 +1226,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isSoraVideoVendor = resolvedVideoVendor === 'sora' || resolvedVideoVendor === 'sora2api'
   const isSoraVideoNode = isVideoNode && isSoraVideoVendor
   const handlePoseSaved = React.useCallback(
-    ({ poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, maskUrl, prompt: posePrompt }: { poseStickmanUrl: string; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string }) => {
+    ({ poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, maskUrl, prompt: posePrompt }: { poseStickmanUrl: string | null; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string }) => {
     const stateBefore = useRFStore.getState()
     const beforeIds = new Set(stateBefore.nodes.map((n) => n.id))
     const targetKind = kind === 'textToImage' ? 'textToImage' : 'image'
@@ -1243,7 +1243,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       sampleCount,
       imageModel: editableModel,
       imageModelVendor: editableVendor,
-      poseStickmanUrl: stickmanUrl,
+      poseStickmanUrl: stickmanUrl || null,
       poseReferenceImages: normalizedRefs,
       ...(maskUrl ? { poseMaskUrl: maskUrl } : {}),
     })
@@ -1251,7 +1251,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       const afterAdd = useRFStore.getState()
       const newNode = afterAdd.nodes.find((n) => !beforeIds.has(n.id))
       if (!newNode) {
-        toast('姿势已保存，但未能创建新图像节点', 'error')
+        toast('图片编辑已保存，但未能创建新图像节点', 'error')
         return
       }
 
@@ -1272,13 +1272,13 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       })
 
       if (!effectivePrompt) {
-        toast('已创建新姿势图节点，请填写提示词后再运行', 'info')
+        toast('已创建新图片编辑节点，请填写提示词后再运行', 'info')
         return
       }
 
       runNodeRemote(newNode.id, useRFStore.getState, useRFStore.setState).catch((err) => {
         console.error('auto run pose image failed', err)
-        toast(err?.message || '新姿势图生成启动失败', 'error')
+        toast(err?.message || '新图片编辑生成启动失败', 'error')
       })
     },
     [addNode, aspect, data, findVendorForModel, id, imageModel, kind, prompt, sampleCount],
@@ -2652,7 +2652,7 @@ const rewritePromptWithCharacters = React.useCallback(
         ...askDefs,
         {
           key: 'pose',
-          label: '调整姿势',
+          label: '图片编辑',
           icon: <IconAdjustments size={16} />,
           onClick: () => openPoseEditor(),
         },
@@ -2665,7 +2665,6 @@ const rewritePromptWithCharacters = React.useCallback(
           onClick: () => onReversePrompt(),
         })
       }
-      tools.push({ key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) })
       return tools
     }
     // default tools for other node kinds (kept minimal)
@@ -3122,6 +3121,7 @@ const rewritePromptWithCharacters = React.useCallback(
               summaryDuration={summaryDuration}
               summaryResolution={summaryResolution}
               summaryExec={summaryExec}
+              showModelMenu={hasModelSelect}
               modelList={modelList}
               onModelChange={(value) => {
                 setModelKey(value)
@@ -3162,6 +3162,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 setOrientation(normalized)
                 updateNodeData(id, { orientation: normalized })
               }}
+              showSampleMenu={hasSampleCount}
               sampleOptions={SAMPLE_OPTIONS}
               sampleCount={sampleCount}
               onSampleChange={(value) => {
