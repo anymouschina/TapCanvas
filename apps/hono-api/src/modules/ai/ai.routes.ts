@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../types";
-import { authMiddleware } from "../../middleware/auth";
+import { authMiddleware, resolveAuth } from "../../middleware/auth";
+import { AppError } from "../../middleware/error";
 import {
 	PromptSampleSchema,
 	PromptSampleInputSchema,
@@ -17,11 +18,41 @@ import {
 	getLangGraphThreadIdForProject,
 	clearLangGraphSnapshotForProject,
 	getLangGraphSnapshotForProject,
+	getLangGraphSnapshotForPublicProject,
 	setLangGraphThreadIdForProject,
 	upsertLangGraphSnapshotForProject,
 } from "./ai.langgraph";
 
 export const aiRouter = new Hono<AppEnv>();
+
+// ---- LangGraph durable chat snapshot (per project) ----
+// Public read: allow unauthenticated access for public projects.
+aiRouter.get("/langgraph/projects/:projectId/snapshot", async (c) => {
+	const projectId = (c.req.param("projectId") || "").trim();
+	if (!projectId) {
+		return c.json(
+			{ error: "projectId is required", code: "project_id_required" },
+			400,
+		);
+	}
+
+	const auth = await resolveAuth(c);
+	const userId = auth?.payload?.sub || null;
+
+	if (userId) {
+		try {
+			const snapshot = await getLangGraphSnapshotForProject(c, userId, projectId);
+			return c.json({ snapshot });
+		} catch (err) {
+			if (!(err instanceof AppError) || err.code !== "project_not_found") {
+				throw err;
+			}
+		}
+	}
+
+	const snapshot = await getLangGraphSnapshotForPublicProject(c, projectId);
+	return c.json({ snapshot });
+});
 
 aiRouter.use("*", authMiddleware);
 
@@ -118,22 +149,6 @@ aiRouter.delete("/langgraph/projects/:projectId/thread", async (c) => {
 	}
 	await clearLangGraphThreadForProject(c, userId, projectId);
 	return c.body(null, 204);
-});
-
-// ---- LangGraph durable chat snapshot (per project) ----
-
-aiRouter.get("/langgraph/projects/:projectId/snapshot", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const projectId = (c.req.param("projectId") || "").trim();
-	if (!projectId) {
-		return c.json(
-			{ error: "projectId is required", code: "project_id_required" },
-			400,
-		);
-	}
-	const snapshot = await getLangGraphSnapshotForProject(c, userId, projectId);
-	return c.json({ snapshot });
 });
 
 aiRouter.put("/langgraph/projects/:projectId/snapshot", async (c) => {

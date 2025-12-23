@@ -916,6 +916,8 @@ function CanvasApp(): JSX.Element {
               variant="subtle"
               component="a"
               href="/tapshow"
+              target="_blank"
+              rel="noopener noreferrer"
             >
               TapShow
             </Button>
