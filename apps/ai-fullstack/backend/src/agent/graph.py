@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
+from langsmith import traceable
 
 from agent.state import (
     OverallState,
@@ -1190,6 +1191,7 @@ def _build_storyboard_prompt(story_text: str, *, style: str, duration_seconds: i
     return prompt, negative
 
 
+@traceable(run_type="llm")
 def _call_openai_structured(model: str, prompt: str, schema_model):
     """Call OpenAI Responses API and parse into Pydantic model."""
     client: OpenAI | None = None
@@ -1487,6 +1489,7 @@ def _get_research_topic_with_summary(state: OverallState, *, tail: int = 16) -> 
 
 
 # Nodes
+@traceable
 def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
     """Pick the active assistant role based on the latest conversation."""
     configurable = Configuration.from_runnable_config(config)
@@ -1640,6 +1643,7 @@ def select_role(state: OverallState, config: RunnableConfig) -> OverallState:
 
 
 # Nodes
+@traceable
 def finalize_answer(state: OverallState, config: RunnableConfig):
     """LangGraph node that finalizes the research summary.
 
@@ -3070,6 +3074,7 @@ def direct_answer(state: OverallState, config: RunnableConfig):
     state.setdefault("sources_gathered", [])
     return finalize_answer(state, config)
 
+@traceable
 def kb_retrieve(state: OverallState, config: RunnableConfig) -> OverallState:
     """Optional knowledge-base retrieval (e.g. Cloudflare AutoRAG) to ground the answer."""
     configurable = Configuration.from_runnable_config(config)
@@ -3105,6 +3110,7 @@ builder.add_node("direct_answer", direct_answer)
 builder.add_node("kb_retrieve", kb_retrieve)
 
 
+@traceable
 def summarize_memory(state: OverallState, config: RunnableConfig) -> OverallState:
     """Best-effort conversation summarization to keep long threads compact.
 
