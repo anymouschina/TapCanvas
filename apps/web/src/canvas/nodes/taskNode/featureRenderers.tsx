@@ -35,7 +35,14 @@ export const renderFeatureBlocks = (features: TaskNodeFeature[], ctx: FeatureRen
     const renderer = featureRenderers[canonical as TaskNodeFeature]
     if (!renderer) return
     const node = renderer(ctx)
-    if (node) rendered.push(node)
+    if (node) {
+      const key = `feature-${canonical}`
+      if (React.isValidElement(node)) {
+        rendered.push(React.cloneElement(node, { key }))
+      } else {
+        rendered.push(<React.Fragment key={key}>{node}</React.Fragment>)
+      }
+    }
     seen.add(canonical as TaskNodeFeature)
   })
   return rendered

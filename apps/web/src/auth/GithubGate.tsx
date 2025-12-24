@@ -196,7 +196,13 @@ export default function GithubGate({ children, className }: { children: React.Re
 
   const gateClassName = ['github-gate', className].filter(Boolean).join(' ')
 
-  if (token) return <div className={gateClassName}>{children}</div>
+  if (token) {
+    return (
+      <div className={gateClassName} style={{ height: '100%', width: '100%' }}>
+        {children}
+      </div>
+    )
+  }
 
   return (
     <div className={gateClassName} style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
