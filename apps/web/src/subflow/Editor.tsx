@@ -25,18 +25,19 @@ export default function SubflowEditor({ nodeId, onClose }: Props) {
 
   if (!open) return null
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: '88%', height: '88%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', border: '1px solid rgba(127,127,127,.25)' }}>
-        <div style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Title order={5}>编辑子工作流 - {node?.data?.label || nodeId}</Title>
-          <Group gap="xs">
-            <Button size="xs" onClick={save}>保存</Button>
-            <Button size="xs" variant="light" onClick={onClose}>关闭</Button>
+    <div className="tc-subflow-editor" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="tc-subflow-editor__panel" style={{ width: '88%', height: '88%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', border: '1px solid rgba(127,127,127,.25)' }}>
+        <div className="tc-subflow-editor__header" style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Title className="tc-subflow-editor__title" order={5}>编辑子工作流 - {node?.data?.label || nodeId}</Title>
+          <Group className="tc-subflow-editor__actions" gap="xs">
+            <Button className="tc-subflow-editor__action" size="xs" onClick={save}>保存</Button>
+            <Button className="tc-subflow-editor__action" size="xs" variant="light" onClick={onClose}>关闭</Button>
           </Group>
         </div>
-        <div style={{ height: 'calc(100% - 44px)' }}>
+        <div className="tc-subflow-editor__canvas" style={{ height: 'calc(100% - 44px)' }}>
           <ReactFlowProvider>
             <ReactFlow
+              className="tc-subflow-editor__flow"
               nodes={nodes}
               edges={edges}
               onNodesChange={onNodesChange}
@@ -46,9 +47,9 @@ export default function SubflowEditor({ nodeId, onClose }: Props) {
               fitView
               connectionLineType={ConnectionLineType.SmoothStep}
             >
-              <MiniMap />
-              <Controls position="bottom-left" />
-              <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
+              <MiniMap className="tc-subflow-editor__minimap" />
+              <Controls className="tc-subflow-editor__controls" position="bottom-left" />
+              <Background className="tc-subflow-editor__background" gap={16} size={1} color="#2a2f3a" variant="dots" />
             </ReactFlow>
           </ReactFlowProvider>
         </div>

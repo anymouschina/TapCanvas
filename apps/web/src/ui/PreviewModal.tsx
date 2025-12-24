@@ -4,7 +4,7 @@ import { IconX, IconDownload } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { downloadUrl } from '../utils/download'
 
-export default function PreviewModal(): JSX.Element | null {
+export default function PreviewModal({ className }: { className?: string }): JSX.Element | null {
   const preview = useUIStore(s => s.preview)
   const close = useUIStore(s => s.closePreview)
 
@@ -25,9 +25,12 @@ export default function PreviewModal(): JSX.Element | null {
     })
   }
 
+  const overlayClassName = ['preview-modal', className].filter(Boolean).join(' ')
+
   return (
-    <Portal zIndex={400}>
+    <Portal className="preview-modal-portal" zIndex={400}>
       <div
+        className={overlayClassName}
         style={{
           position: 'fixed',
           inset: 0,
@@ -39,6 +42,7 @@ export default function PreviewModal(): JSX.Element | null {
         }}
       >
         <div
+          className="preview-modal-header"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -46,27 +50,30 @@ export default function PreviewModal(): JSX.Element | null {
             padding: 10,
           }}
         >
-          <Title order={5} style={{ color: '#e5e7eb' }}>
+          <Title className="preview-modal-title" order={5} style={{ color: '#e5e7eb' }}>
             {name || '预览'}
           </Title>
-          <Group gap={6}>
-            <ActionIcon variant="light" onClick={download} title="下载">
-              <IconDownload size={16} />
+          <Group className="preview-modal-actions" gap={6}>
+            <ActionIcon className="preview-modal-download" variant="light" onClick={download} title="下载">
+              <IconDownload className="preview-modal-download-icon" size={16} />
             </ActionIcon>
-            <ActionIcon variant="light" onClick={close} title="关闭">
-              <IconX size={16} />
+            <ActionIcon className="preview-modal-close" variant="light" onClick={close} title="关闭">
+              <IconX className="preview-modal-close-icon" size={16} />
             </ActionIcon>
           </Group>
         </div>
         <div
+          className="preview-modal-body"
           style={{ display: 'grid', placeItems: 'center', padding: 12 }}
           onClick={close}
         >
           <div
+            className="preview-modal-content"
             onClick={(e) => e.stopPropagation()}
           >
             {kind === 'image' && (
               <img
+                className="preview-modal-image"
                 src={url}
                 alt={name || 'preview'}
                 style={{
@@ -80,6 +87,7 @@ export default function PreviewModal(): JSX.Element | null {
             )}
             {kind === 'video' && (
               <video
+                className="preview-modal-video"
                 src={url}
                 controls
                 autoPlay
@@ -93,7 +101,7 @@ export default function PreviewModal(): JSX.Element | null {
               />
             )}
             {kind === 'audio' && (
-              <audio src={url} controls style={{ width: '60vw' }} />
+              <audio className="preview-modal-audio" src={url} controls style={{ width: '60vw' }} />
             )}
           </div>
         </div>

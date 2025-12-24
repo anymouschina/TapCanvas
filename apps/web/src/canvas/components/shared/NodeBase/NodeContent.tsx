@@ -134,16 +134,16 @@ export const NodeContent: React.FC<NodeContentProps> = ({
 
         {/* 默认描述内容 */}
         {!children && (
-          <div style={{ flex: 1 }}>
+          <div className="node-content-body" style={{ flex: 1 }}>
             {/* 节点描述 */}
-            <div style={descriptionStyle}>
+            <div className="node-content-description" style={descriptionStyle}>
               {data.config?.description ||
                getNodeDisplayText({ id: data.id, data, type: nodeType, position: { x: 0, y: 0 } } as any)}
             </div>
 
             {/* 配置信息 */}
             {data.config && Object.keys(data.config).length > 0 && (
-              <div style={{
+              <div className="node-content-config" style={{
                 fontSize: '11px',
                 color: '#9ca3af',
                 marginTop: '4px',
@@ -156,6 +156,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                   .slice(0, 3)
                   .map(([key, value]) => (
                     <span
+                      className="node-content-config-chip"
                       key={key}
                       style={{
                         backgroundColor: 'var(--canvas-node-chip-bg)',
@@ -176,7 +177,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
 
             {/* 运行状态信息 */}
             {isRunning && (
-              <div style={{
+              <div className="node-content-running" style={{
                 fontSize: '11px',
                 color: 'var(--canvas-node-action-primary-bg)',
                 marginTop: '4px',
@@ -184,7 +185,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                 alignItems: 'center',
                 gap: '4px',
               }}>
-                <div style={{
+                <div className="node-content-running-dot" style={{
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
@@ -197,7 +198,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
 
             {/* 进度信息 */}
             {data.progress !== null && data.progress !== undefined && data.progress > 0 && (
-              <div style={{
+              <div className="node-content-progress" style={{
                 fontSize: '11px',
                 color: 'var(--canvas-node-action-muted-text)',
                 marginTop: '4px',
@@ -209,16 +210,17 @@ export const NodeContent: React.FC<NodeContentProps> = ({
         )}
 
         {/* 操作按钮 */}
-        <div style={actionsStyle}>
+        <div className="node-content-actions" style={actionsStyle}>
           {/* 运行按钮 */}
           {showRunButton && nodeType === 'taskNode' && (
             <button
+              className="node-content-run"
               style={isRunning ? buttonHoverStyle : primaryButtonStyle}
               onClick={handleRunClick}
               disabled={isRunning || data.status === 'running'}
               title={isRunning ? 'Running...' : 'Run Node'}
             >
-              <span>{isRunning ? '⏸' : '▶'}</span>
+              <span className="node-content-run-icon">{isRunning ? '⏸' : '▶'}</span>
               {isRunning ? 'Running' : 'Run'}
             </button>
           )}
@@ -226,11 +228,12 @@ export const NodeContent: React.FC<NodeContentProps> = ({
           {/* 配置按钮 */}
           {showConfigButton && (
             <button
+              className="node-content-config-action"
               style={buttonStyle}
               onClick={handleConfigClick}
               title="Configure Node"
             >
-              <span>⚙</span>
+              <span className="node-content-config-icon">⚙</span>
               Config
             </button>
           )}
@@ -240,6 +243,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
       {/* 配置模态框 */}
       {configModalOpen && (
         <NodeConfigModal
+          className="node-content-config-modal"
           open={configModalOpen}
           nodeData={data}
           onConfirm={handleConfigConfirm}
@@ -249,7 +253,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
       )}
 
       {/* 样式定义 */}
-      <style jsx>{`
+      <style className="node-content-style" jsx>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }

@@ -36,6 +36,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
   return (
     <>
       <BaseEdge
+        className="typed-edge-path"
         id={props.id}
         path={edgePath}
         style={{ ...edgeStyle, ...(props.style || {}) }}
@@ -43,9 +44,10 @@ export default function TypedEdge(props: EdgeProps<any>) {
         markerStart={props.markerStart}
         interactionWidth={props.interactionWidth}
       />
-      <EdgeLabelRenderer>
+      <EdgeLabelRenderer className="typed-edge-label-root">
         {!viewOnly && showDelete && (
           <div
+            className="typed-edge-label"
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
@@ -55,6 +57,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
             onMouseLeave={() => useUIStore.getState().unhoverEdgeSoon()}
           >
             <ActionIcon
+              className="typed-edge-delete"
               size="sm"
               radius="xl"
               variant="light"
@@ -67,7 +70,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
                 deleteEdge(props.id)
               }}
             >
-              <IconTrash size={14} />
+              <IconTrash className="typed-edge-delete-icon" size={14} />
             </ActionIcon>
           </div>
         )}

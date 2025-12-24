@@ -3,7 +3,7 @@ import { ActionIcon, Text, TextInput } from '@mantine/core'
 import { IconBrush } from '@tabler/icons-react'
 
 type TaskNodeHeaderProps = {
-  NodeIcon: (props: { size?: number }) => JSX.Element
+  NodeIcon: (props: { size?: number; className?: string }) => JSX.Element
   editing: boolean
   labelDraft: string
   currentLabel: string
@@ -49,9 +49,10 @@ export function TaskNodeHeader({
 }: TaskNodeHeaderProps) {
   if (!showMeta) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+      <div className="task-node-header task-node-header--compact" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         {showIcon && (
           <div
+            className="task-node-header-icon"
             style={{
               width: 40,
               height: 40,
@@ -66,7 +67,7 @@ export function TaskNodeHeader({
             }}
             title={currentLabel}
           >
-            <NodeIcon size={18} />
+            <NodeIcon className="task-node-header-icon-svg" size={18} />
           </div>
         )}
       </div>
@@ -74,10 +75,11 @@ export function TaskNodeHeader({
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+    <div className="task-node-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+      <div className="task-node-header-main" style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
         {showIcon && (
           <div
+            className="task-node-header-icon"
             style={{
               width: 40,
               height: 40,
@@ -91,12 +93,13 @@ export function TaskNodeHeader({
               color: '#fff',
             }}
           >
-            <NodeIcon size={18} />
+            <NodeIcon className="task-node-header-icon-svg" size={18} />
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="task-node-header-content" style={{ flex: 1, minWidth: 0 }}>
           {editing ? (
             <TextInput
+              className="task-node-header-input"
               ref={labelInputRef}
               size="xs"
               value={labelDraft}
@@ -113,8 +116,9 @@ export function TaskNodeHeader({
             />
           ) : (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div className="task-node-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Text
+                  className="task-node-header-title"
                   size="sm"
                   fw={600}
                   style={{
@@ -135,11 +139,11 @@ export function TaskNodeHeader({
                 >
                   {currentLabel}
                 </Text>
-                <ActionIcon size="sm" variant="subtle" color="gray" title="重命名" onClick={onStartEdit}>
-                  <IconBrush size={12} />
+                <ActionIcon className="task-node-header-rename" size="sm" variant="subtle" color="gray" title="重命名" onClick={onStartEdit}>
+                  <IconBrush className="task-node-header-rename-icon" size={12} />
                 </ActionIcon>
               </div>
-              <Text size="xs" c="dimmed" style={{ marginTop: 2 }}>
+              <Text className="task-node-header-subtitle" size="xs" c="dimmed" style={{ marginTop: 2 }}>
                 {subtitle}
               </Text>
             </>
@@ -148,14 +152,15 @@ export function TaskNodeHeader({
       </div>
       {showStatus && statusLabel?.trim() && (
         <div
+          className="task-node-header-status"
           style={{
             ...sleekChipBase,
             color: statusColor,
             fontSize: 12,
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, display: 'inline-block' }} />
-          <span>{statusLabel}</span>
+          <span className="task-node-header-status-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, display: 'inline-block' }} />
+          <span className="task-node-header-status-text">{statusLabel}</span>
         </div>
       )}
     </div>

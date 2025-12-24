@@ -20,9 +20,10 @@ export function CharacterContent({
   tokenReady,
 }: CharacterContentProps) {
   return (
-    <div style={{ position: 'relative', marginTop: 6 }}>
+    <div className="task-node-character__root" style={{ position: 'relative', marginTop: 6 }}>
       {characterPrimaryImage ? (
         <div
+          className="task-node-character__image-card"
           style={{
             borderRadius: 10,
             overflow: 'hidden',
@@ -32,11 +33,13 @@ export function CharacterContent({
           }}
         >
           <img
+            className="task-node-character__image"
             src={characterPrimaryImage}
             alt={selectedCharacter?.displayName || 'Sora 角色'}
             style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }}
           />
           <div
+            className="task-node-character__overlay"
             style={{
               position: 'absolute',
               left: 0,
@@ -47,16 +50,17 @@ export function CharacterContent({
               color: '#fff',
             }}
           >
-            <Text size="sm" fw={600} style={{ marginBottom: 2 }}>
+            <Text className="task-node-character__name" size="sm" fw={600} style={{ marginBottom: 2 }}>
               {selectedCharacter?.displayName || 'Sora 角色'}
             </Text>
             {selectedCharacter?.username && (
-              <Text size="xs" c="dimmed">
+              <Text className="task-node-character__username" size="xs" c="dimmed">
                 @{selectedCharacter.username}
               </Text>
             )}
           </div>
           <Button
+            className="task-node-character__manage"
             size="xs"
             variant="light"
             style={{ position: 'absolute', top: 8, right: 8 }}
@@ -67,6 +71,7 @@ export function CharacterContent({
         </div>
       ) : (
         <Paper
+          className="task-node-character__empty"
           radius="md"
           p="md"
           style={{
@@ -79,15 +84,21 @@ export function CharacterContent({
             textAlign: 'center',
           }}
         >
-          <IconUsers size={28} style={{ color: placeholderColor }} />
-          <Text size="sm" c="dimmed">
+          <IconUsers className="task-node-character__empty-icon" size={28} style={{ color: placeholderColor }} />
+          <Text className="task-node-character__empty-text" size="sm" c="dimmed">
             选择一个 Sora 角色，封面将显示在此处并可连接到视频节点。
           </Text>
-          <Group gap={6}>
-            <Button size="xs" variant="light" onClick={onOpenAssets}>
+          <Group className="task-node-character__actions" gap={6}>
+            <Button className="task-node-character__action" size="xs" variant="light" onClick={onOpenAssets}>
               打开资产面板
             </Button>
-            <Button size="xs" variant="subtle" onClick={onRefresh} disabled={!tokenReady}>
+            <Button
+              className="task-node-character__action"
+              size="xs"
+              variant="subtle"
+              onClick={onRefresh}
+              disabled={!tokenReady}
+            >
               刷新角色
             </Button>
           </Group>

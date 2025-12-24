@@ -25,7 +25,7 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
   const childIds = React.useMemo(() => new Set(nodes.filter(n => n.parentNode === id).map(n => n.id)), [nodes, id])
 
   return (
-    <div style={{
+    <div className="group-node" style={{
       width: '100%',
       height: '100%',
       position: 'relative',
@@ -35,12 +35,13 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
       boxShadow: '0 10px 24px rgba(0,0,0,0.25)',
       zIndex: 0
     }}>
-      <NodeResizer isVisible={selected} minWidth={160} minHeight={90} handleStyle={{ width: 8, height: 8, borderRadius: 2, background: 'var(--canvas-io-handle)', border: '1px solid rgba(255,255,255,.2)' }} lineStyle={{ borderColor: 'var(--canvas-group-border)' }} />
+      <NodeResizer className="group-node-resizer" isVisible={selected} minWidth={160} minHeight={90} handleStyle={{ width: 8, height: 8, borderRadius: 2, background: 'var(--canvas-io-handle)', border: '1px solid rgba(255,255,255,.2)' }} lineStyle={{ borderColor: 'var(--canvas-group-border)' }} />
       {/* Toolbar pinned to top-left of the group (inside the node) */}
-      <Paper withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: 8, top: -28, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
-        <Group gap={6} style={{ flexWrap: 'nowrap' }}>
+      <Paper className="group-node-toolbar" withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: 8, top: -28, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
+        <Group className="group-node-toolbar-row" gap={6} style={{ flexWrap: 'nowrap' }}>
           {editing ? (
             <TextInput
+              className="group-node-title-input"
               size="xs"
               autoFocus
               value={name}
@@ -50,17 +51,17 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
               styles={{ input: { height: 22, paddingTop: 0, paddingBottom: 0 } }}
             />
           ) : (
-            <Text size="xs" c="dimmed" onDoubleClick={()=>{ setEditing(true); updateNodeData(id, { editing: true }) }} title="双击重命名">{label}</Text>
+            <Text className="group-node-title" size="xs" c="dimmed" onDoubleClick={()=>{ setEditing(true); updateNodeData(id, { editing: true }) }} title="双击重命名">{label}</Text>
           )}
-          <Divider orientation="vertical" style={{ height: 16 }} />
-          <Button size="xs" color="blue" onClick={async () => {
+          <Divider className="group-node-divider" orientation="vertical" style={{ height: 16 }} />
+          <Button className="group-node-run" size="xs" color="blue" onClick={async () => {
             await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds })
           }}>▶ 一键执行</Button>
           {/* 服务器持久化：本地保存入口移除，避免与项目保存冲突 */}
-          <Button size="xs" variant="subtle" onClick={()=> setEditing(true)}>重命名</Button>
-          <Button size="xs" variant="subtle" color="red" onClick={() => ungroup(id)}>解组</Button>
+          <Button className="group-node-rename" size="xs" variant="subtle" onClick={()=> setEditing(true)}>重命名</Button>
+          <Button className="group-node-ungroup" size="xs" variant="subtle" color="red" onClick={() => ungroup(id)}>解组</Button>
           {/* Aggregated status */}
-          <Group gap={4} style={{ flexWrap: 'nowrap' }}>
+          <Group className="group-node-summary" gap={4} style={{ flexWrap: 'nowrap' }}>
             <GroupSummary childIds={childIds} />
           </Group>
         </Group>
@@ -84,14 +85,14 @@ function GroupSummary({ childIds }: { childIds: Set<string> }) {
   const queued = counts['queued'] || 0
   const pct = Math.round((success / total) * 100)
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ width: 80, height: 6, background: 'rgba(148,163,184,0.25)', borderRadius: 999, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: '#16a34a' }} />
+    <div className="group-node-summary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <div className="group-node-summary-track" style={{ width: 80, height: 6, background: 'rgba(148,163,184,0.25)', borderRadius: 999, overflow: 'hidden' }}>
+        <div className="group-node-summary-fill" style={{ width: `${pct}%`, height: '100%', background: '#16a34a' }} />
       </div>
-      <span style={{ fontSize: 11, color: '#9ca3af' }}>{success}/{total} 成功</span>
-      {running > 0 && <span style={{ fontSize: 11, color: '#8b5cf6' }}>运行 {running}</span>}
-      {queued > 0 && <span style={{ fontSize: 11, color: '#f59e0b' }}>排队 {queued}</span>}
-      {error > 0 && <span style={{ fontSize: 11, color: '#ef4444' }}>失败 {error}</span>}
+      <span className="group-node-summary-text" style={{ fontSize: 11, color: '#9ca3af' }}>{success}/{total} 成功</span>
+      {running > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#8b5cf6' }}>运行 {running}</span>}
+      {queued > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#f59e0b' }}>排队 {queued}</span>}
+      {error > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#ef4444' }}>失败 {error}</span>}
     </div>
   )
 }

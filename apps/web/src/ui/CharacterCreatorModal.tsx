@@ -91,6 +91,7 @@ export function CharacterCreatorModal(): JSX.Element | null {
 
   return (
     <Modal
+      className="character-creator-modal"
       opened={open}
       onClose={close}
       title="一键创建角色"
@@ -98,20 +99,20 @@ export function CharacterCreatorModal(): JSX.Element | null {
       withinPortal
       zIndex={14000}
     >
-      <Stack gap="sm">
-        <div>
-          <Text size="sm" fw={500}>{buildTitle(payload)}</Text>
+      <Stack className="character-creator-body" gap="sm">
+        <div className="character-creator-summary">
+          <Text className="character-creator-title" size="sm" fw={500}>{buildTitle(payload)}</Text>
           {payload.summary && (
-            <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+            <Text className="character-creator-description" size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
               {payload.summary}
             </Text>
           )}
           {payload.videoUrl && (
-            <Text size="xs" c="dimmed" mt={4}>
+            <Text className="character-creator-video-hint" size="xs" c="dimmed" mt={4}>
               将使用当前视频片段创建角色。
             </Text>
           )}
-          <Text size="xs" c="dimmed" mt={6}>
+          <Text className="character-creator-clip-hint" size="xs" c="dimmed" mt={6}>
             {payload.clipRange
               ? `默认截取 ${payload.clipRange.start.toFixed(2)}s - ${payload.clipRange.end.toFixed(2)}s，最长 ${CHARACTER_CLIP_MAX}s`
               : '请在下一步选择截取区间（建议 1.2-3 秒）'}
@@ -121,12 +122,13 @@ export function CharacterCreatorModal(): JSX.Element | null {
         {!allowTokenless && (
           <>
             {loading ? (
-              <Group gap="xs">
-                <Loader size="xs" />
-                <Text size="xs" c="dimmed">正在加载 Sora Token…</Text>
+              <Group className="character-creator-loading" gap="xs">
+                <Loader className="character-creator-loading-icon" size="xs" />
+                <Text className="character-creator-loading-text" size="xs" c="dimmed">正在加载 Sora Token…</Text>
               </Group>
             ) : tokens.length > 0 ? (
               <Select
+                className="character-creator-select"
                 label="Sora Token"
                 placeholder="请选择 Token"
                 data={tokens.map((t) => ({
@@ -139,33 +141,33 @@ export function CharacterCreatorModal(): JSX.Element | null {
                 size="xs"
               />
             ) : (
-              <Stack gap={4}>
-                <Text size="xs" c="red">
+              <Stack className="character-creator-empty" gap={4}>
+                <Text className="character-creator-empty-title" size="xs" c="red">
                   暂无可用的 Sora Token
                 </Text>
-                <Text size="xs" c="dimmed">
+                <Text className="character-creator-empty-desc" size="xs" c="dimmed">
                   请先前往资产面板绑定密钥，再尝试创建角色。
                 </Text>
               </Stack>
             )}
             {error && (
-              <Text size="xs" c="red">
+              <Text className="character-creator-error" size="xs" c="red">
                 {error}
               </Text>
             )}
           </>
         )}
         {allowTokenless && (
-          <Text size="xs" c="dimmed">
+          <Text className="character-creator-tokenless" size="xs" c="dimmed">
             当前使用 Sora2API，可不选 Token，直接提交。
           </Text>
         )}
 
-        <Group justify="flex-end" mt="xs">
-          <Button variant="default" onClick={close}>
+        <Group className="character-creator-actions" justify="flex-end" mt="xs">
+          <Button className="character-creator-cancel" variant="default" onClick={close}>
             取消
           </Button>
-          <Button onClick={handleConfirm} disabled={!allowTokenless && !selectedTokenId}>
+          <Button className="character-creator-confirm" onClick={handleConfirm} disabled={!allowTokenless && !selectedTokenId}>
             开始创建
           </Button>
         </Group>

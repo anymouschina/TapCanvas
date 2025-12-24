@@ -236,13 +236,14 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
   }
 
   const kindBadge = effectiveKind ? (
-    <Badge variant="light" color="blue" size="sm">
+    <Badge className="prompt-sample-drawer__kind-badge" variant="light" color="blue" size="sm">
       {nodeKindLabel[effectiveKind]}
     </Badge>
   ) : null
 
   return (
     <Drawer
+      className="prompt-sample-drawer"
       opened={opened}
       onClose={onClose}
       title="提示词支持共享配置"
@@ -251,10 +252,11 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
       overlayProps={{ opacity: 0.55, blur: 2 }}
       withinPortal
     >
-      <Stack gap="sm">
-        <form onSubmit={handleSubmit}>
-          <Group align="flex-end" gap="xs">
+      <Stack className="prompt-sample-drawer__stack" gap="sm">
+        <form className="prompt-sample-drawer__search-form" onSubmit={handleSubmit}>
+          <Group className="prompt-sample-drawer__search-group" align="flex-end" gap="xs">
             <TextInput
+              className="prompt-sample-drawer__search-input"
               label="搜索场景或关键字"
               placeholder="例如：水墨风、海报、文字修改"
               value={queryInput}
@@ -262,10 +264,11 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
               leftSection={<IconSearch size={14} />}
               style={{ flex: 1 }}
             />
-            <Button type="submit" variant="light">
+            <Button className="prompt-sample-drawer__search-submit" type="submit" variant="light">
               搜索
             </Button>
             <Button
+              className="prompt-sample-drawer__search-reset"
               type="button"
               variant="subtle"
               onClick={() => {
@@ -280,83 +283,108 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
 
         {kindBadge}
 
-        <Tabs value={activeTab} onChange={(value) => setActiveTab((value as 'official' | 'custom') || 'official')}>
-          <Tabs.List>
-            <Tabs.Tab value="official">公共案例</Tabs.Tab>
-            <Tabs.Tab value="custom">自定义案例</Tabs.Tab>
+        <Tabs
+          className="prompt-sample-drawer__tabs"
+          value={activeTab}
+          onChange={(value) => setActiveTab((value as 'official' | 'custom') || 'official')}
+        >
+          <Tabs.List className="prompt-sample-drawer__tabs-list">
+            <Tabs.Tab className="prompt-sample-drawer__tabs-tab" value="official">
+              公共案例
+            </Tabs.Tab>
+            <Tabs.Tab className="prompt-sample-drawer__tabs-tab" value="custom">
+              自定义案例
+            </Tabs.Tab>
           </Tabs.List>
 
-          <Tabs.Panel value="official" pt="sm">
+          <Tabs.Panel className="prompt-sample-drawer__tabs-panel" value="official" pt="sm">
             {officialLoading && (
-              <Group justify="center" py="md">
-                <Loader size="sm" />
-                <Text size="sm" c="dimmed">
+              <Group className="prompt-sample-drawer__loading" justify="center" py="md">
+                <Loader className="prompt-sample-drawer__loading-spinner" size="sm" />
+                <Text className="prompt-sample-drawer__loading-text" size="sm" c="dimmed">
                   正在加载案例...
                 </Text>
               </Group>
             )}
 
             {!officialLoading && officialError && (
-              <Paper withBorder p="md">
-                <Text size="sm" c="red.5">
+              <Paper className="prompt-sample-drawer__error" withBorder p="md">
+                <Text className="prompt-sample-drawer__error-text" size="sm" c="red.5">
                   {officialError}
                 </Text>
               </Paper>
             )}
 
             {!officialLoading && !officialError && (
-              <ScrollArea h="70vh" type="always">
-                <Stack gap="sm">
+              <ScrollArea className="prompt-sample-drawer__scroll" h="70vh" type="always">
+                <Stack className="prompt-sample-drawer__list" gap="sm">
                   {officialSamples.length === 0 && (
-                    <Paper withBorder p="md">
-                      <Text size="sm" c="dimmed">
+                    <Paper className="prompt-sample-drawer__empty" withBorder p="md">
+                      <Text className="prompt-sample-drawer__empty-text" size="sm" c="dimmed">
                         暂无匹配的案例，可以尝试其他关键字。
                       </Text>
                     </Paper>
                   )}
                   {officialSamples.map((sample) => (
-                    <Paper key={sample.id} withBorder radius="md" p="md" shadow="xs">
-                      <Stack gap={4}>
-                        <Group justify="space-between" align="flex-start">
-                          <div>
-                            <Text fw={600} size="sm">
+                    <Paper
+                      className="prompt-sample-drawer__sample-card"
+                      key={sample.id}
+                      withBorder
+                      radius="md"
+                      p="md"
+                      shadow="xs"
+                    >
+                      <Stack className="prompt-sample-drawer__sample-stack" gap={4}>
+                        <Group className="prompt-sample-drawer__sample-header" justify="space-between" align="flex-start">
+                          <div className="prompt-sample-drawer__sample-meta">
+                            <Text className="prompt-sample-drawer__sample-title" fw={600} size="sm">
                               {sample.title}
                             </Text>
-                            <Text size="xs" c="dimmed">
+                            <Text className="prompt-sample-drawer__sample-meta-text" size="xs" c="dimmed">
                               {sample.scene} ｜ {sample.commandType}
                             </Text>
                           </div>
-                          <Badge color="gray" variant="light">
+                          <Badge className="prompt-sample-drawer__sample-kind" color="gray" variant="light">
                             {nodeKindLabel[sample.nodeKind]}
                           </Badge>
                         </Group>
                         {sample.description && (
-                          <Text size="sm" c="dimmed">
+                          <Text className="prompt-sample-drawer__sample-description" size="sm" c="dimmed">
                             {sample.description}
                           </Text>
                         )}
-                        <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+                        <Text className="prompt-sample-drawer__sample-prompt" size="sm" style={{ whiteSpace: 'pre-line' }}>
                           {sample.prompt}
                         </Text>
                         {sample.outputNote && (
-                          <Text size="xs" c="dimmed">
+                          <Text className="prompt-sample-drawer__sample-output" size="xs" c="dimmed">
                             效果：{sample.outputNote}
                           </Text>
                         )}
                         {sample.inputHint && (
-                          <Text size="xs" c="dimmed">
+                          <Text className="prompt-sample-drawer__sample-input-hint" size="xs" c="dimmed">
                             输入建议：{sample.inputHint}
                           </Text>
                         )}
-                        <Group justify="space-between" mt="sm">
-                          <Group gap={4}>
+                        <Group className="prompt-sample-drawer__sample-actions" justify="space-between" mt="sm">
+                          <Group className="prompt-sample-drawer__sample-keywords" gap={4}>
                             {sample.keywords.slice(0, 3).map((keyword) => (
-                              <Badge key={keyword} size="xs" color="dark" variant="outline">
+                              <Badge
+                                className="prompt-sample-drawer__sample-keyword"
+                                key={keyword}
+                                size="xs"
+                                color="dark"
+                                variant="outline"
+                              >
                                 {keyword}
                               </Badge>
                             ))}
                           </Group>
-                          <Button size="xs" onClick={() => onApplySample(sample)}>
+                          <Button
+                            className="prompt-sample-drawer__sample-apply"
+                            size="xs"
+                            onClick={() => onApplySample(sample)}
+                          >
                             应用
                           </Button>
                         </Group>
@@ -368,26 +396,30 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
             )}
           </Tabs.Panel>
 
-          <Tabs.Panel value="custom" pt="sm">
-            <ScrollArea h="70vh" type="always">
-              <Stack gap="sm">
-                <Paper withBorder p="md" radius="md" shadow="xs">
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="center">
-                      <Text fw={600}>自定义案例</Text>
-                      <Text size="xs" c="dimmed">
+          <Tabs.Panel className="prompt-sample-drawer__tabs-panel" value="custom" pt="sm">
+            <ScrollArea className="prompt-sample-drawer__scroll" h="70vh" type="always">
+              <Stack className="prompt-sample-drawer__list" gap="sm">
+                <Paper className="prompt-sample-drawer__custom-form" withBorder p="md" radius="md" shadow="xs">
+                  <Stack className="prompt-sample-drawer__custom-form-stack" gap="xs">
+                    <Group className="prompt-sample-drawer__custom-form-header" justify="space-between" align="center">
+                      <Text className="prompt-sample-drawer__custom-form-title" fw={600}>
+                        自定义案例
+                      </Text>
+                      <Text className="prompt-sample-drawer__custom-form-desc" size="xs" c="dimmed">
                         存储在服务器，可跨设备复用
                       </Text>
                     </Group>
                     <Textarea
+                      className="prompt-sample-drawer__custom-raw"
                       label="原始提示词"
                       placeholder="粘贴长提示词，AI 将自动提取字段"
                       minRows={4}
                       value={rawPrompt}
                       onChange={(e) => setRawPrompt(e.currentTarget.value)}
                     />
-                    <Group justify="flex-end">
+                    <Group className="prompt-sample-drawer__custom-parse" justify="flex-end">
                       <Button
+                        className="prompt-sample-drawer__custom-parse-btn"
                         size="xs"
                         variant="light"
                         leftSection={<IconWand size={14} />}
@@ -398,20 +430,23 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                       </Button>
                     </Group>
                     <Select
+                      className="prompt-sample-drawer__custom-node-kind"
                       label="节点类型"
                       data={nodeKindOptions}
                       value={customForm.nodeKind}
                       onChange={(value) => handleCustomFieldChange('nodeKind', value || 'composeVideo')}
                       allowDeselect={false}
                     />
-                    <Group grow>
+                    <Group className="prompt-sample-drawer__custom-row" grow>
                       <TextInput
+                        className="prompt-sample-drawer__custom-title"
                         label="标题"
                         placeholder="例如：山雨破庙开场"
                         value={customForm.title}
                         onChange={(e) => handleCustomFieldChange('title', e.currentTarget.value)}
                       />
                       <TextInput
+                        className="prompt-sample-drawer__custom-scene"
                         label="场景"
                         placeholder="用于分类，如“视频真实感”"
                         value={customForm.scene}
@@ -419,12 +454,14 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                       />
                     </Group>
                     <TextInput
+                      className="prompt-sample-drawer__custom-command-type"
                       label="指令类型（可选）"
                       placeholder="例如：微剧情、风格改写"
                       value={customForm.commandType}
                       onChange={(e) => handleCustomFieldChange('commandType', e.currentTarget.value)}
                     />
                     <Textarea
+                      className="prompt-sample-drawer__custom-prompt"
                       label="提示词"
                       minRows={4}
                       placeholder="完整英文/中文提示词"
@@ -432,43 +469,47 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                       onChange={(e) => handleCustomFieldChange('prompt', e.currentTarget.value)}
                     />
                     <Textarea
+                      className="prompt-sample-drawer__custom-description"
                       label="描述（可选）"
                       minRows={2}
                       value={customForm.description}
                       onChange={(e) => handleCustomFieldChange('description', e.currentTarget.value)}
                     />
-                    <Group grow>
+                    <Group className="prompt-sample-drawer__custom-row" grow>
                       <TextInput
+                        className="prompt-sample-drawer__custom-input-hint"
                         label="输入建议（可选）"
                         value={customForm.inputHint}
                         onChange={(e) => handleCustomFieldChange('inputHint', e.currentTarget.value)}
                       />
                       <TextInput
+                        className="prompt-sample-drawer__custom-output-note"
                         label="预期效果（可选）"
                         value={customForm.outputNote}
                         onChange={(e) => handleCustomFieldChange('outputNote', e.currentTarget.value)}
                       />
                     </Group>
                     <TextInput
+                      className="prompt-sample-drawer__custom-keywords"
                       label="关键词（逗号分隔，可选）"
                       value={customForm.keywords}
                       onChange={(e) => handleCustomFieldChange('keywords', e.currentTarget.value)}
                     />
                     {formError && (
-                      <Text size="xs" c="red.6">
+                      <Text className="prompt-sample-drawer__custom-error" size="xs" c="red.6">
                         {formError}
                       </Text>
                     )}
                     {formSuccess && (
-                      <Text size="xs" c="teal.6">
+                      <Text className="prompt-sample-drawer__custom-success" size="xs" c="teal.6">
                         {formSuccess}
                       </Text>
                     )}
-                    <Group justify="flex-end">
-                      <Button size="xs" variant="subtle" onClick={resetForm}>
+                    <Group className="prompt-sample-drawer__custom-actions" justify="flex-end">
+                      <Button className="prompt-sample-drawer__custom-reset" size="xs" variant="subtle" onClick={resetForm}>
                         重置表单
                       </Button>
-                      <Button size="xs" onClick={handleSave} loading={saving}>
+                      <Button className="prompt-sample-drawer__custom-save" size="xs" onClick={handleSave} loading={saving}>
                         保存案例
                       </Button>
                     </Group>
@@ -476,89 +517,111 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                 </Paper>
 
                 {customLoading && (
-                  <Group justify="center" py="md">
-                    <Loader size="sm" />
-                    <Text size="sm" c="dimmed">
+                  <Group className="prompt-sample-drawer__custom-loading" justify="center" py="md">
+                    <Loader className="prompt-sample-drawer__custom-loading-spinner" size="sm" />
+                    <Text className="prompt-sample-drawer__custom-loading-text" size="sm" c="dimmed">
                       正在加载自定义案例...
                     </Text>
                   </Group>
                 )}
 
                 {!customLoading && customError && (
-                  <Paper withBorder p="md">
-                    <Text size="sm" c="red.5">
+                  <Paper className="prompt-sample-drawer__custom-error-card" withBorder p="md">
+                    <Text className="prompt-sample-drawer__custom-error-text" size="sm" c="red.5">
                       {customError}
                     </Text>
                   </Paper>
                 )}
 
                 {!customLoading && !customError && customSamples.length === 0 && (
-                  <Paper withBorder p="md" radius="md">
-                    <Text size="sm" c="dimmed">
+                  <Paper className="prompt-sample-drawer__custom-empty" withBorder p="md" radius="md">
+                    <Text className="prompt-sample-drawer__custom-empty-text" size="sm" c="dimmed">
                       暂无自定义案例，填写上方表单即可创建。
                     </Text>
                   </Paper>
                 )}
 
                 {!customLoading && !customError && customSamples.map((sample) => (
-                  <Paper key={sample.id} withBorder radius="md" p="md" shadow="xs">
-                    <Stack gap={4}>
-                      <Group justify="space-between" align="flex-start">
-                        <div>
-                          <Group gap={6}>
-                            <Text fw={600} size="sm">
+                  <Paper
+                    className="prompt-sample-drawer__custom-card"
+                    key={sample.id}
+                    withBorder
+                    radius="md"
+                    p="md"
+                    shadow="xs"
+                  >
+                    <Stack className="prompt-sample-drawer__custom-card-stack" gap={4}>
+                      <Group className="prompt-sample-drawer__custom-card-header" justify="space-between" align="flex-start">
+                        <div className="prompt-sample-drawer__custom-card-meta">
+                          <Group className="prompt-sample-drawer__custom-card-title-group" gap={6}>
+                            <Text className="prompt-sample-drawer__custom-card-title" fw={600} size="sm">
                               {sample.title}
                             </Text>
-                            <Badge color="orange" variant="light">
+                            <Badge className="prompt-sample-drawer__custom-card-tag" color="orange" variant="light">
                               自定义
                             </Badge>
                           </Group>
-                          <Text size="xs" c="dimmed">
+                          <Text className="prompt-sample-drawer__custom-card-meta-text" size="xs" c="dimmed">
                             {sample.scene} ｜ {sample.commandType}
                           </Text>
                         </div>
-                        <Group gap={6}>
-                          <Badge color="gray" variant="light">
+                        <Group className="prompt-sample-drawer__custom-card-actions" gap={6}>
+                          <Badge className="prompt-sample-drawer__custom-card-kind" color="gray" variant="light">
                             {nodeKindLabel[sample.nodeKind]}
                           </Badge>
                           <ActionIcon
+                            className="prompt-sample-drawer__custom-card-delete"
                             size="sm"
                             variant="subtle"
                             color="red"
                             onClick={() => handleDelete(sample.id)}
                             disabled={deletingId === sample.id}
                           >
-                            {deletingId === sample.id ? <Loader size="xs" color="red" /> : <IconTrash size={14} />}
+                            {deletingId === sample.id ? (
+                              <Loader className="prompt-sample-drawer__custom-card-delete-spinner" size="xs" color="red" />
+                            ) : (
+                              <IconTrash size={14} />
+                            )}
                           </ActionIcon>
                         </Group>
                       </Group>
                       {sample.description && (
-                        <Text size="sm" c="dimmed">
+                        <Text className="prompt-sample-drawer__custom-card-description" size="sm" c="dimmed">
                           {sample.description}
                         </Text>
                       )}
-                      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+                      <Text className="prompt-sample-drawer__custom-card-prompt" size="sm" style={{ whiteSpace: 'pre-line' }}>
                         {sample.prompt}
                       </Text>
                       {sample.outputNote && (
-                        <Text size="xs" c="dimmed">
+                        <Text className="prompt-sample-drawer__custom-card-output" size="xs" c="dimmed">
                           效果：{sample.outputNote}
                         </Text>
                       )}
                       {sample.inputHint && (
-                        <Text size="xs" c="dimmed">
+                        <Text className="prompt-sample-drawer__custom-card-input-hint" size="xs" c="dimmed">
                           输入建议：{sample.inputHint}
                         </Text>
                       )}
-                      <Group justify="space-between" mt="sm">
-                        <Group gap={4}>
+                      <Group className="prompt-sample-drawer__custom-card-footer" justify="space-between" mt="sm">
+                        <Group className="prompt-sample-drawer__custom-card-keywords" gap={4}>
                           {sample.keywords.slice(0, 3).map((keyword) => (
-                            <Badge key={keyword} size="xs" color="dark" variant="outline">
+                            <Badge
+                              className="prompt-sample-drawer__custom-card-keyword"
+                              key={keyword}
+                              size="xs"
+                              color="dark"
+                              variant="outline"
+                            >
                               {keyword}
                             </Badge>
                           ))}
                         </Group>
-                        <Button size="xs" onClick={() => onApplySample(sample)}>
+                        <Button
+                          className="prompt-sample-drawer__custom-card-apply"
+                          size="xs"
+                          onClick={() => onApplySample(sample)}
+                        >
                           应用
                         </Button>
                       </Group>

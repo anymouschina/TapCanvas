@@ -2255,6 +2255,7 @@ const handleCloseProxyModal = () => {
               </div>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={veoModalOpen}
               onClose={() => setVeoModalOpen(false)}
               fullScreen
@@ -2379,6 +2380,7 @@ const handleCloseProxyModal = () => {
               </div>
             </Modal>
             <Modal
+              className="tc-model-panel__modal"
               opened={sora2apiModalOpen}
               onClose={() => setSora2apiModalOpen(false)}
               fullScreen

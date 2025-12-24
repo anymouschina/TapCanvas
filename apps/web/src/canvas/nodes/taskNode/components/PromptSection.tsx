@@ -67,8 +67,9 @@ export function PromptSection({
   onOpenPromptSamples,
 }: PromptSectionProps) {
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="task-node-prompt__root" style={{ position: 'relative' }}>
       <div
+        className="task-node-prompt__toolbar"
         style={{
           position: 'absolute',
           top: 8,
@@ -80,6 +81,7 @@ export function PromptSection({
       >
         {onOpenPromptSamples && (
           <ActionIcon
+            className="task-node-prompt__toolbar-button"
             variant="subtle"
             size="xs"
             onClick={onOpenPromptSamples}
@@ -89,10 +91,11 @@ export function PromptSection({
               background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
             }}
           >
-            <IconBulb size={12} style={{ color: nodeShellText }} />
+            <IconBulb className="task-node-prompt__toolbar-icon" size={12} style={{ color: nodeShellText }} />
           </ActionIcon>
         )}
         <ActionIcon
+          className="task-node-prompt__toolbar-button"
           variant="subtle"
           size="xs"
           onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
@@ -102,20 +105,25 @@ export function PromptSection({
             border: 'none',
           }}
         >
-          <IconBrain size={12} style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }} />
+          <IconBrain
+            className="task-node-prompt__toolbar-icon"
+            size={12}
+            style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }}
+          />
         </ActionIcon>
       </div>
       <Textarea
+        className="task-node-prompt__textarea"
         autosize
         minRows={2}
         maxRows={6}
         placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
         value={prompt}
         onChange={(e) => {
-        const el = e.currentTarget
-        const v = el.value
-        setPrompt(v)
-        onUpdateNodeData({ prompt: v })
+          const el = e.currentTarget
+          const v = el.value
+          setPrompt(v)
+          onUpdateNodeData({ prompt: v })
 
           const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
           const before = v.slice(0, caret)
@@ -191,6 +199,7 @@ export function PromptSection({
       />
       {promptSuggestions.length > 0 && (
         <div
+          className="task-node-prompt__suggestions"
           style={{
             position: 'absolute',
             right: 10,
@@ -210,6 +219,7 @@ export function PromptSection({
         >
           {promptSuggestions.map((s, idx) => (
             <div
+              className="task-node-prompt__suggestion"
               key={`${idx}-${s.slice(0, 16)}`}
               onMouseDown={(e) => {
                 e.preventDefault()
@@ -233,6 +243,7 @@ export function PromptSection({
       )}
       {mentionOpen && mentionItems.length > 0 && (
         <div
+          className="task-node-prompt__mentions"
           style={{
             position: 'absolute',
             left: 0,
@@ -246,11 +257,12 @@ export function PromptSection({
             zIndex: 32,
           }}
         >
-          <Text size="xs" c="dimmed" mb={4}>
+          <Text className="task-node-prompt__mentions-title" size="xs" c="dimmed" mb={4}>
             选择角色引用
           </Text>
           {mentionItems.map((item: any) => (
             <div
+              className="task-node-prompt__mention"
               key={item?.username || item?.id || item?.name}
               style={{ padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}
               onMouseDown={(e) => {
@@ -268,32 +280,35 @@ export function PromptSection({
                 mentionMetaRef.current = null
               }}
             >
-              <Text size="sm">{item?.display_name || item?.username || '角色'}</Text>
+              <Text className="task-node-prompt__mention-name" size="sm">
+                {item?.display_name || item?.username || '角色'}
+              </Text>
             </div>
           ))}
           {mentionLoading && (
-            <Text size="xs" c="dimmed">
+            <Text className="task-node-prompt__mention-loading" size="xs" c="dimmed">
               加载中...
             </Text>
           )}
           {!mentionLoading && mentionItems.length === 0 && (
-            <Text size="xs" c="dimmed">
+            <Text className="task-node-prompt__mention-empty" size="xs" c="dimmed">
               无匹配角色
             </Text>
           )}
         </div>
       )}
       {isCharacterNode ? (
-        <Text size="xs" c="dimmed" mb={6}>
+        <Text className="task-node-prompt__hint" size="xs" c="dimmed" mb={6}>
           挑选或创建角色，供后续节点通过 @角色名 自动引用。
         </Text>
       ) : (
-        <Text size="xs" c="dimmed" mb={6}>
+        <Text className="task-node-prompt__hint" size="xs" c="dimmed" mb={6}>
           {isComposerNode ? '分镜/脚本（支持多镜头，当前为实验功能）' : ''}
         </Text>
       )}
       {hasSystemPrompt && (
         <SystemPromptPanel
+          className="task-node-prompt__system-panel"
           target={isComposerNode || isStoryboardNode ? 'video' : 'image'}
           enabled={showSystemPrompt}
           value={systemPrompt}

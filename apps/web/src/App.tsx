@@ -772,15 +772,16 @@ function CanvasApp(): JSX.Element {
       }}
     >
       {!langGraphChatOpen && (
-      <AppShell.Header>
-        <Group justify="space-between" p="sm">
-          <Group>
-            <Image src="/weblogo.png" alt="TapCanvas logo" h={28} fit="contain" />
-            <Title order={4}>TapCanvas</Title>
-            {isDirty && (<Badge color="red" variant="light">{$('未保存')}</Badge>)}
+      <AppShell.Header className="app-shell-header">
+        <Group className="app-header" justify="space-between" p="sm">
+          <Group className="app-header-left">
+            <Image className="app-logo" src="/weblogo.png" alt="TapCanvas logo" h={28} fit="contain" />
+            <Title className="app-title" order={4}>TapCanvas</Title>
+            {isDirty && (<Badge className="app-dirty-badge" color="red" variant="light">{$('未保存')}</Badge>)}
           </Group>
-          <Group gap="xs">
+          <Group className="app-header-actions" gap="xs">
             <TextInput
+              className="app-project-input"
               size="xs"
               placeholder={$('项目名')}
               value={currentProject?.name || ''}
@@ -789,30 +790,32 @@ function CanvasApp(): JSX.Element {
               onBlur={async ()=>{ if (currentProject?.id && currentProject.name) await upsertProject({ id: currentProject.id, name: currentProject.name }) }}
               data-tour="project-name"
             />
-            <Button size="xs" onClick={doSave} disabled={!isDirty} loading={saving} data-tour="save-button">{$('保存')}</Button>
-            <Tooltip label="运行工作流">
+            <Button className="app-save-button" size="xs" onClick={doSave} disabled={!isDirty} loading={saving} data-tour="save-button">{$('保存')}</Button>
+            <Tooltip className="app-run-tooltip" label="运行工作流">
               <ActionIcon
+                className="app-run-action"
                 size="lg"
                 variant="subtle"
                 aria-label="运行工作流"
                 onClick={handleRunWorkflow}
                 disabled={execStarting || saving}
               >
-                {execStarting ? <Loader size="sm" /> : <IconPlayerPlay size={18} />}
+                {execStarting ? <Loader className="app-run-loader" size="sm" /> : <IconPlayerPlay className="app-run-icon" size={18} />}
               </ActionIcon>
             </Tooltip>
             {isGrsaiProxyActive && (
-              <Group gap={4} align="center">
-                <Badge color="grape" variant="light" size="sm">
+              <Group className="app-grsai-credits" gap={4} align="center">
+                <Badge className="app-grsai-credits-badge" color="grape" variant="light" size="sm">
                   grsai 积分
                 </Badge>
-                <Tooltip label={grsaiCreditsDisplay.full} disabled={grsaiCreditsDisplay.text === grsaiCreditsDisplay.full || !grsaiCreditsDisplay.full}>
-                  <Text size="sm" fw={600} style={{ maxWidth: 80 }}>
+                <Tooltip className="app-grsai-credits-tooltip" label={grsaiCreditsDisplay.full} disabled={grsaiCreditsDisplay.text === grsaiCreditsDisplay.full || !grsaiCreditsDisplay.full}>
+                  <Text className="app-grsai-credits-text" size="sm" fw={600} style={{ maxWidth: 80 }}>
                     {grsaiCreditsDisplay.text}
                   </Text>
                 </Tooltip>
-                <Tooltip label="刷新积分">
+                <Tooltip className="app-grsai-refresh-tooltip" label="刷新积分">
                   <ActionIcon
+                    className="app-grsai-refresh-action"
                     size="sm"
                     variant="subtle"
                     aria-label="刷新 grsai 积分"
@@ -820,15 +823,16 @@ function CanvasApp(): JSX.Element {
                       if (!grsaiCreditsLoading) fetchGrsaiCredits()
                     }}
                   >
-                    {grsaiCreditsLoading ? <Loader size="xs" /> : <IconRefresh size={16} />}
+                    {grsaiCreditsLoading ? <Loader className="app-grsai-refresh-loader" size="xs" /> : <IconRefresh className="app-grsai-refresh-icon" size={16} />}
                   </ActionIcon>
                 </Tooltip>
                 {grsaiCreditsError && (
-                  <Tooltip label={grsaiCreditsError}>
-                    <IconAlertCircle size={16} color="var(--mantine-color-red-5)" />
+                  <Tooltip className="app-grsai-error-tooltip" label={grsaiCreditsError}>
+                    <IconAlertCircle className="app-grsai-error-icon" size={16} color="var(--mantine-color-red-5)" />
                   </Tooltip>
                 )}
                 <Popover
+                  className="app-grsai-status-popover"
                   width={260}
                   position="bottom-end"
                   withArrow
@@ -836,26 +840,28 @@ function CanvasApp(): JSX.Element {
                   opened={statusPopoverOpened}
                   onChange={setStatusPopoverOpened}
                 >
-                  <Popover.Target>
-                    <Tooltip label="查看模型状态">
+                  <Popover.Target className="app-grsai-status-target">
+                    <Tooltip className="app-grsai-status-tooltip" label="查看模型状态">
                       <ActionIcon
+                        className="app-grsai-status-action"
                         size="sm"
                         variant="subtle"
                         aria-label="查看 grsai 模型状态"
                         onClick={() => setStatusPopoverOpened((v) => !v)}
                       >
-                        {grsaiStatusLoading ? <Loader size="xs" /> : <IconHeartbeat size={16} />}
+                        {grsaiStatusLoading ? <Loader className="app-grsai-status-loader" size="xs" /> : <IconHeartbeat className="app-grsai-status-icon" size={16} />}
                       </ActionIcon>
                     </Tooltip>
                   </Popover.Target>
-                  <Popover.Dropdown>
-                    <Stack gap={6} style={{ minWidth: 220 }}>
-                      <Group justify="space-between" align="center">
-                        <Text size="sm" fw={600}>
+                  <Popover.Dropdown className="app-grsai-status-dropdown">
+                    <Stack className="app-grsai-status-stack" gap={6} style={{ minWidth: 220 }}>
+                      <Group className="app-grsai-status-header" justify="space-between" align="center">
+                        <Text className="app-grsai-status-title" size="sm" fw={600}>
                           Veo3 状态
                         </Text>
-                        <Tooltip label="刷新模型状态">
+                        <Tooltip className="app-grsai-status-refresh-tooltip" label="刷新模型状态">
                           <ActionIcon
+                            className="app-grsai-status-refresh-action"
                             size="sm"
                             variant="subtle"
                             aria-label="刷新 grsai 模型状态"
@@ -863,18 +869,18 @@ function CanvasApp(): JSX.Element {
                               if (!grsaiStatusLoading) fetchGrsaiStatuses()
                             }}
                           >
-                            {grsaiStatusLoading ? <Loader size="xs" /> : <IconRefresh size={14} />}
+                            {grsaiStatusLoading ? <Loader className="app-grsai-status-refresh-loader" size="xs" /> : <IconRefresh className="app-grsai-status-refresh-icon" size={14} />}
                           </ActionIcon>
                         </Tooltip>
                       </Group>
                       {grsaiStatusError && (
-                        <Text size="xs" c="red">
+                        <Text className="app-grsai-status-error" size="xs" c="red">
                           {grsaiStatusError}
                         </Text>
                       )}
                       {grsaiStatusGroups.map(({ group, models }) => (
-                        <Stack key={group} gap={4}>
-                          <Text size="xs" c="dimmed" fw={600}>
+                        <Stack className="app-grsai-status-group" key={group} gap={4}>
+                          <Text className="app-grsai-status-group-title" size="xs" c="dimmed" fw={600}>
                             {group}
                           </Text>
                           {models.map((model) => {
@@ -882,15 +888,15 @@ function CanvasApp(): JSX.Element {
                             const color = !info ? 'gray' : info.status ? 'teal' : 'red'
                             const label = !info ? '待查询' : info.status ? '正常' : '异常'
                             return (
-                              <div key={model.value}>
-                                <Group justify="space-between" align="center">
-                                  <Text size="xs">{model.label}</Text>
-                                  <Badge size="xs" color={color} variant="light">
+                              <div className="app-grsai-status-row" key={model.value}>
+                                <Group className="app-grsai-status-row-main" justify="space-between" align="center">
+                                  <Text className="app-grsai-status-model-name" size="xs">{model.label}</Text>
+                                  <Badge className="app-grsai-status-model-badge" size="xs" color={color} variant="light">
                                     {label}
                                   </Badge>
                                 </Group>
                                 {!info?.status && info?.error && (
-                                  <Text size="xs" c="dimmed">
+                                  <Text className="app-grsai-status-model-error" size="xs" c="dimmed">
                                     {info.error}
                                   </Text>
                                 )}
@@ -905,6 +911,7 @@ function CanvasApp(): JSX.Element {
               </Group>
             )}
             <Button
+              className="app-unwatermark-button"
               size="xs"
               variant="subtle"
               onClick={handleOpenUnwatermark}
@@ -912,6 +919,7 @@ function CanvasApp(): JSX.Element {
               Sora 视频去水印
             </Button>
             <Button
+              className="app-tapshow-link"
               size="xs"
               variant="subtle"
               component="a"
@@ -922,6 +930,7 @@ function CanvasApp(): JSX.Element {
               TapShow
             </Button>
             <Button
+              className="app-webcut-link"
               size="xs"
               variant="subtle"
               component="a"
@@ -932,14 +941,16 @@ function CanvasApp(): JSX.Element {
               在线剪辑
             </Button>
             <ActionIcon
+              className="app-theme-toggle"
               variant="subtle"
               aria-label={colorScheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
               onClick={() => toggleColorScheme()}
             >
-              {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+              {colorScheme === 'dark' ? <IconSun className="app-theme-toggle-icon" size={18} /> : <IconMoonStars className="app-theme-toggle-icon" size={18} />}
             </ActionIcon>
             {/* 历史入口迁移到左侧浮动菜单 */}
             <ActionIcon
+              className="app-language-toggle"
               variant="subtle"
               aria-label="Language / 语言"
               onClick={() => {
@@ -948,18 +959,19 @@ function CanvasApp(): JSX.Element {
                 setCurrentLang(newLang)
               }}
             >
-              <IconLanguage size={18} />
+              <IconLanguage className="app-language-toggle-icon" size={18} />
             </ActionIcon>
             <ActionIcon
+              className="app-help-toggle"
               variant="subtle"
               aria-label={$('帮助')}
               onClick={() => setFeatureTourOpen(true)}
               data-tour="help-tour"
             >
-              <IconHelpCircle size={18} />
+              <IconHelpCircle className="app-help-toggle-icon" size={18} />
             </ActionIcon>
-            <ActionIcon component="a" href="https://github.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer" variant="subtle" aria-label="GitHub">
-              <IconBrandGithub size={18} />
+            <ActionIcon className="app-github-link" component="a" href="https://github.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer" variant="subtle" aria-label="GitHub">
+              <IconBrandGithub className="app-github-icon" size={18} />
             </ActionIcon>
           </Group>
         </Group>
@@ -968,23 +980,24 @@ function CanvasApp(): JSX.Element {
 
       {/* 移除左侧固定栏，改为悬浮灵动岛样式 */}
 
-      <AppShell.Main>
-        <Box style={{ height: `calc(100vh - ${headerHeight}px)`, width: '100vw' }} onClick={(e)=>{
+      <AppShell.Main className="app-shell-main">
+        <Box className="app-shell-main-box" style={{ height: `calc(100vh - ${headerHeight}px)`, width: '100vw' }} onClick={(e)=>{
           const el = e.target as HTMLElement
           if (!el.closest('[data-ux-floating]') && !el.closest('[data-ux-panel]')) {
             setActivePanel(null)
           }
         }}>
-          <GithubGate>
-            <Canvas />
+          <GithubGate className="app-github-gate">
+            <Canvas className="app-canvas" />
           </GithubGate>
         </Box>
       </AppShell.Main>
 
       {/* 右侧属性栏已移除：节点采取顶部操作条 + 参数弹窗 */}
 
-      <KeyboardShortcuts />
+      <KeyboardShortcuts className="app-keyboard-shortcuts" />
       <Modal
+        className="app-unwatermark-modal"
         opened={unwatermarkOpen}
         onClose={() => {
           setUnwatermarkOpen(false)
@@ -995,22 +1008,24 @@ function CanvasApp(): JSX.Element {
         centered
         size="lg"
       >
-        <Stack gap="sm">
-          <Text size="sm" c="dimmed">
+        <Stack className="app-unwatermark-body" gap="sm">
+          <Text className="app-unwatermark-desc" size="sm" c="dimmed">
             输入 Sora 分享链接（例如：https://sora.chatgpt.com/p/s_xxxxx），解析出无水印的视频地址并预览/下载。
           </Text>
           <TextInput
+            className="app-unwatermark-input"
             placeholder="粘贴 Sora 分享链接"
             value={unwatermarkUrl}
             onChange={(e) => setUnwatermarkUrl(e.currentTarget.value)}
           />
           {unwatermarkError && (
-            <Text size="xs" c="red">
+            <Text className="app-unwatermark-error" size="xs" c="red">
               {unwatermarkError}
             </Text>
           )}
-          <Group justify="flex-end">
+          <Group className="app-unwatermark-actions" justify="flex-end">
             <Button
+              className="app-unwatermark-run"
               size="xs"
               variant="default"
               loading={unwatermarkLoading}
@@ -1020,14 +1035,15 @@ function CanvasApp(): JSX.Element {
             </Button>
           </Group>
           {unwatermarkResult && (
-            <Stack gap="xs">
-              <Text size="xs" c="dimmed">
+            <Stack className="app-unwatermark-result" gap="xs">
+              <Text className="app-unwatermark-result-label" size="xs" c="dimmed">
                 已解析的无水印播放地址：
               </Text>
-              <Text size="xs" style={{ wordBreak: 'break-all' }}>
+              <Text className="app-unwatermark-result-url" size="xs" style={{ wordBreak: 'break-all' }}>
                 {unwatermarkResult}
               </Text>
               <video
+                className="app-unwatermark-video"
                 src={unwatermarkResult}
                 controls
                 style={{
@@ -1037,8 +1053,9 @@ function CanvasApp(): JSX.Element {
                   background: '#000',
                 }}
               />
-              <Group justify="flex-end" gap="xs">
+              <Group className="app-unwatermark-result-actions" justify="flex-end" gap="xs">
                 <Button
+                  className="app-unwatermark-preview"
                   size="xs"
                   variant="subtle"
                   onClick={() => {
@@ -1053,6 +1070,7 @@ function CanvasApp(): JSX.Element {
                   全屏预览
                 </Button>
                 <Button
+                  className="app-unwatermark-download"
                   size="xs"
                   variant="light"
                   onClick={() => {
@@ -1072,12 +1090,12 @@ function CanvasApp(): JSX.Element {
           )}
         </Stack>
       </Modal>
-      <ToastHost />
-      <ExecutionLogModal opened={execLogOpen} executionId={execId} nodeLabelById={nodeLabelById} onClose={() => setExecLogOpen(false)} />
-      <FeatureTour opened={featureTourOpen && !langGraphChatOpen} steps={featureTourSteps} onClose={closeFeatureTour} />
-      <FloatingNav />
-      <AddNodePanel />
-      <TemplatePanel />
+      <ToastHost className="app-toast-host" />
+      <ExecutionLogModal className="app-exec-log-modal" opened={execLogOpen} executionId={execId} nodeLabelById={nodeLabelById} onClose={() => setExecLogOpen(false)} />
+      <FeatureTour className="app-feature-tour" opened={featureTourOpen && !langGraphChatOpen} steps={featureTourSteps} onClose={closeFeatureTour} />
+      <FloatingNav className="app-floating-nav" />
+      <AddNodePanel className="app-add-node-panel" />
+      <TemplatePanel className="app-template-panel" />
       <ProjectPanel />
       <AccountPanel />
       <AssetPanel />

@@ -97,9 +97,10 @@ function formatDuration(seconds?: number | null): string | null {
 type TapshowCardProps = {
   asset: PublicAssetDto
   onPreview: (asset: PublicAssetDto) => void
+  className?: string
 }
 
-function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
+function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Element {
   const isVideo = asset.type === 'video'
   const cover = asset.thumbnailUrl || asset.url
   const label = asset.name || (isVideo ? '视频作品' : '图片作品')
@@ -108,10 +109,11 @@ function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
       ? asset.prompt.trim()
       : asset.projectName || asset.ownerName || asset.ownerLogin || ''
   const durationText = formatDuration(asset.duration)
+  const cardClassName = ['tapshow-card', className].filter(Boolean).join(' ')
 
   return (
     <Box
-      className="tapshow-card"
+      className={cardClassName}
       onClick={() => {
         onPreview(asset)
       }}
@@ -149,28 +151,30 @@ function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
         )}
 
         <div className="tapshow-card-overlay">
-          <Group gap={8}>
+          <Group className="tapshow-card-badges" gap={8}>
             <Badge
+              className="tapshow-card-badge"
               size="xs"
               radius="xl"
               variant="light"
               color={isVideo ? 'violet' : 'teal'}
-              leftSection={isVideo ? <IconPlayerPlay size={12} /> : <IconPhoto size={12} />}
+              leftSection={isVideo ? <IconPlayerPlay className="tapshow-card-badge-icon" size={12} /> : <IconPhoto className="tapshow-card-badge-icon" size={12} />}
             >
               {isVideo ? '视频' : '图片'}
             </Badge>
             {asset.modelKey && (
-              <Badge size="xs" radius="xl" variant="outline" color="gray">
+              <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="outline" color="gray">
                 {asset.modelKey}
               </Badge>
             )}
             {durationText && (
-              <Badge size="xs" radius="xl" variant="filled" color="dark">
+              <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="filled" color="dark">
                 {durationText}
               </Badge>
             )}
           </Group>
           <ActionIcon
+            className="tapshow-card-open"
             size="sm"
             radius="xl"
             variant="subtle"
@@ -185,34 +189,34 @@ function TapshowCard({ asset, onPreview }: TapshowCardProps): JSX.Element {
               }
             }}
           >
-            <IconExternalLink size={14} />
+            <IconExternalLink className="tapshow-card-open-icon" size={14} />
           </ActionIcon>
         </div>
       </div>
 
-      <Stack gap={6} mt={10}>
+      <Stack className="tapshow-card-meta" gap={6} mt={10}>
         <Text size="sm" fw={600} className="tapshow-card-title" lineClamp={1}>
           {label}
         </Text>
         {subtitle && (
-          <Text size="xs" c="dimmed" lineClamp={2}>
+          <Text className="tapshow-card-subtitle" size="xs" c="dimmed" lineClamp={2}>
             {subtitle}
           </Text>
         )}
-        <Group justify="space-between" align="center" gap={6} mt={4}>
-          <Group gap={6}>
+        <Group className="tapshow-card-meta-row" justify="space-between" align="center" gap={6} mt={4}>
+          <Group className="tapshow-card-owner" gap={6}>
             {(asset.ownerLogin || asset.ownerName) && (
-              <Group gap={4}>
-                <IconUser size={12} />
-                <Text size="xs" c="dimmed">
+              <Group className="tapshow-card-owner-info" gap={4}>
+                <IconUser className="tapshow-card-owner-icon" size={12} />
+                <Text className="tapshow-card-owner-text" size="xs" c="dimmed">
                   {asset.ownerName || asset.ownerLogin}
                 </Text>
               </Group>
             )}
           </Group>
-          <Group gap={4}>
-            <IconClock size={12} />
-            <Text size="xs" c="dimmed">
+          <Group className="tapshow-card-date" gap={4}>
+            <IconClock className="tapshow-card-date-icon" size={12} />
+            <Text className="tapshow-card-date-text" size="xs" c="dimmed">
               {formatDate(asset.createdAt)}
             </Text>
           </Group>
@@ -272,16 +276,18 @@ function pickCoverFromFlows(flows: FlowDto[]): ProjectCover | null {
 type PublicProjectCardProps = {
   item: PublicProjectShowcase
   onOpen: (item: PublicProjectShowcase) => void
+  className?: string
 }
 
-function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Element {
+function PublicProjectCard({ item, onOpen, className }: PublicProjectCardProps): JSX.Element {
   const cover = item.cover
   const isVideo = cover.type === 'video'
   const label = item.project.name || '公开项目'
   const subtitle = item.project.ownerName || item.project.owner || ''
+  const cardClassName = ['tapshow-card', className].filter(Boolean).join(' ')
 
   return (
-    <Box className="tapshow-card" onClick={() => onOpen(item)}>
+    <Box className={cardClassName} onClick={() => onOpen(item)}>
       <div className="tapshow-card-media">
         {isVideo ? (
           <video
@@ -313,21 +319,23 @@ function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Elemen
         )}
 
         <div className="tapshow-card-overlay">
-          <Group gap={8}>
+          <Group className="tapshow-card-badges" gap={8}>
             <Badge
+              className="tapshow-card-badge"
               size="xs"
               radius="xl"
               variant="light"
               color={isVideo ? 'violet' : 'teal'}
-              leftSection={isVideo ? <IconPlayerPlay size={12} /> : <IconPhoto size={12} />}
+              leftSection={isVideo ? <IconPlayerPlay className="tapshow-card-badge-icon" size={12} /> : <IconPhoto className="tapshow-card-badge-icon" size={12} />}
             >
               {isVideo ? '项目视频' : '项目图片'}
             </Badge>
-            <Badge size="xs" radius="xl" variant="outline" color="gray">
+            <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="outline" color="gray">
               公开项目
             </Badge>
           </Group>
           <ActionIcon
+            className="tapshow-card-open"
             size="sm"
             radius="xl"
             variant="subtle"
@@ -337,34 +345,34 @@ function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Elemen
               onOpen(item)
             }}
           >
-            <IconExternalLink size={14} />
+            <IconExternalLink className="tapshow-card-open-icon" size={14} />
           </ActionIcon>
         </div>
       </div>
 
-      <Stack gap={6} mt={10}>
+      <Stack className="tapshow-card-meta" gap={6} mt={10}>
         <Text size="sm" fw={600} className="tapshow-card-title" lineClamp={1}>
           {label}
         </Text>
         {subtitle && (
-          <Text size="xs" c="dimmed" lineClamp={1}>
+          <Text className="tapshow-card-subtitle" size="xs" c="dimmed" lineClamp={1}>
             {subtitle}
           </Text>
         )}
-        <Group justify="space-between" align="center" gap={6} mt={4}>
-          <Group gap={6}>
+        <Group className="tapshow-card-meta-row" justify="space-between" align="center" gap={6} mt={4}>
+          <Group className="tapshow-card-owner" gap={6}>
             {(item.project.owner || item.project.ownerName) && (
-              <Group gap={4}>
-                <IconUser size={12} />
-                <Text size="xs" c="dimmed">
+              <Group className="tapshow-card-owner-info" gap={4}>
+                <IconUser className="tapshow-card-owner-icon" size={12} />
+                <Text className="tapshow-card-owner-text" size="xs" c="dimmed">
                   {item.project.ownerName || item.project.owner}
                 </Text>
               </Group>
             )}
           </Group>
-          <Group gap={4}>
-            <IconClock size={12} />
-            <Text size="xs" c="dimmed">
+          <Group className="tapshow-card-date" gap={4}>
+            <IconClock className="tapshow-card-date-icon" size={12} />
+            <Text className="tapshow-card-date-text" size="xs" c="dimmed">
               {formatDate(item.project.updatedAt)}
             </Text>
           </Group>
@@ -374,7 +382,7 @@ function PublicProjectCard({ item, onOpen }: PublicProjectCardProps): JSX.Elemen
   )
 }
 
-function TapshowFullPageInner(): JSX.Element {
+function TapshowFullPageInner({ className }: { className?: string }): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
   const isAdmin = useAuth((s) => s.user?.role === 'admin')
   const { colorScheme } = useMantineColorScheme()
@@ -551,18 +559,21 @@ function TapshowFullPageInner(): JSX.Element {
     ? 'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.14), transparent 60%), radial-gradient(circle at 100% 0%, rgba(37,99,235,0.18), transparent 60%), radial-gradient(circle at 0% 100%, rgba(168,85,247,0.12), transparent 55%), linear-gradient(180deg, #020617 0%, #020617 100%)'
     : 'radial-gradient(circle at 0% 0%, rgba(59,130,246,0.12), transparent 60%), radial-gradient(circle at 100% 0%, rgba(59,130,246,0.08), transparent 60%), radial-gradient(circle at 0% 100%, rgba(56,189,248,0.08), transparent 55%), linear-gradient(180deg, #eef2ff 0%, #e9efff 100%)'
 
+  const rootClassName = ['tapshow-fullpage-root', className].filter(Boolean).join(' ')
+
   return (
-    <div className="tapshow-fullpage-root" style={{ background }}>
-      <ToastHost />
-      <PreviewModal />
-      <Container size="xl" px="md">
-        <Box pt="md" pb="sm">
-          <Group justify="space-between" align="center" mb="md">
-            <Group gap={10} align="center">
+    <div className={rootClassName} style={{ background }}>
+      <ToastHost className="tapshow-fullpage-toast" />
+      <PreviewModal className="tapshow-fullpage-preview" />
+      <Container className="tapshow-fullpage-container" size="xl" px="md">
+        <Box className="tapshow-fullpage-header" pt="md" pb="sm">
+          <Group className="tapshow-fullpage-header-row" justify="space-between" align="center" mb="md">
+            <Group className="tapshow-fullpage-header-left" gap={10} align="center">
               <Button
+                className="tapshow-fullpage-back"
                 size="xs"
                 variant="subtle"
-                leftSection={<IconArrowLeft size={14} />}
+                leftSection={<IconArrowLeft className="tapshow-fullpage-back-icon" size={14} />}
                 onClick={() => {
                   if (typeof window !== 'undefined') {
                     window.location.href = '/'
@@ -572,10 +583,11 @@ function TapshowFullPageInner(): JSX.Element {
                 返回 TapCanvas
               </Button>
             </Group>
-            <Group gap={6}>
+            <Group className="tapshow-fullpage-header-right" gap={6}>
               {isAdmin && (
-                <Tooltip label="看板（仅管理员）" withArrow>
+                <Tooltip className="tapshow-fullpage-admin-tooltip" label="看板（仅管理员）" withArrow>
                   <ActionIcon
+                    className="tapshow-fullpage-admin-action"
                     size="sm"
                     variant="subtle"
                     aria-label="看板"
@@ -591,12 +603,13 @@ function TapshowFullPageInner(): JSX.Element {
                       }
                     }}
                   >
-                    <IconChartBar size={14} />
+                    <IconChartBar className="tapshow-fullpage-admin-icon" size={14} />
                   </ActionIcon>
                 </Tooltip>
               )}
-              <Tooltip label="刷新" withArrow>
+              <Tooltip className="tapshow-fullpage-refresh-tooltip" label="刷新" withArrow>
                 <ActionIcon
+                  className="tapshow-fullpage-refresh-action"
                   size="sm"
                   variant="subtle"
                   aria-label="刷新 TapShow 作品"
@@ -607,31 +620,32 @@ function TapshowFullPageInner(): JSX.Element {
                   }}
                   loading={refreshing || loading || projectsLoading}
                 >
-                  <IconRefresh size={14} />
+                  <IconRefresh className="tapshow-fullpage-refresh-icon" size={14} />
                 </ActionIcon>
               </Tooltip>
             </Group>
           </Group>
 
-          <Stack gap={6} mb="lg">
+          <Stack className="tapshow-fullpage-hero" gap={6} mb="lg">
             <Title order={2} className="tapshow-fullpage-title">
               TapShow 作品展
             </Title>
-            <Text size="sm" c="dimmed" maw={620}>
+            <Text className="tapshow-fullpage-subtitle" size="sm" c="dimmed" maw={620}>
               展示社区里用户公开的图片与视频作品。后续会支持按时长、热度等条件筛选排序。
             </Text>
           </Stack>
 
-          <Stack gap={8} mb="lg">
-            <Group justify="space-between" align="center" wrap="wrap" gap={8}>
-              <Group gap={8} align="center">
-                <Title order={4}>公开项目</Title>
-                <Badge variant="light" color="gray">
+          <Stack className="tapshow-fullpage-projects" gap={8} mb="lg">
+            <Group className="tapshow-fullpage-projects-header" justify="space-between" align="center" wrap="wrap" gap={8}>
+              <Group className="tapshow-fullpage-projects-title" gap={8} align="center">
+                <Title className="tapshow-fullpage-projects-heading" order={4}>公开项目</Title>
+                <Badge className="tapshow-fullpage-projects-count" variant="light" color="gray">
                   {publicProjects.length}
                 </Badge>
               </Group>
-              <Group gap={6}>
+              <Group className="tapshow-fullpage-projects-actions" gap={6}>
                 <Button
+                  className="tapshow-fullpage-projects-viewall"
                   size="xs"
                   variant="subtle"
                   onClick={() => {
@@ -641,8 +655,9 @@ function TapshowFullPageInner(): JSX.Element {
                 >
                   查看全部
                 </Button>
-                <Tooltip label="刷新公开项目" withArrow>
+                <Tooltip className="tapshow-fullpage-projects-refresh-tooltip" label="刷新公开项目" withArrow>
                   <ActionIcon
+                    className="tapshow-fullpage-projects-refresh-action"
                     size="sm"
                     variant="light"
                     aria-label="刷新公开项目"
@@ -651,33 +666,34 @@ function TapshowFullPageInner(): JSX.Element {
                     }}
                     loading={projectsLoading}
                   >
-                    <IconRefresh size={14} />
+                    <IconRefresh className="tapshow-fullpage-projects-refresh-icon" size={14} />
                   </ActionIcon>
                 </Tooltip>
               </Group>
             </Group>
-            <Text size="xs" c="dimmed">
+            <Text className="tapshow-fullpage-projects-desc" size="xs" c="dimmed">
               默认使用项目内的视频作为封面，其次图片；点击进入分享页，可查看画布与创作过程（只读）。
             </Text>
 
             {projectsLoading && publicProjects.length === 0 ? (
-              <Center mih={140}>
-                <Stack gap={8} align="center">
-                  <Loader size="sm" />
-                  <Text size="sm" c="dimmed">
+              <Center className="tapshow-fullpage-projects-loading" mih={140}>
+                <Stack className="tapshow-fullpage-projects-loading-stack" gap={8} align="center">
+                  <Loader className="tapshow-fullpage-projects-loading-icon" size="sm" />
+                  <Text className="tapshow-fullpage-projects-loading-text" size="sm" c="dimmed">
                     正在加载公开项目…
                   </Text>
                 </Stack>
               </Center>
             ) : publicProjects.length === 0 ? (
-              <Text size="sm" c="dimmed">
+              <Text className="tapshow-fullpage-projects-empty" size="sm" c="dimmed">
                 暂无可展示的公开项目（需要项目内至少有一个视频/图片结果作为封面）。
               </Text>
             ) : (
-              <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }} spacing={{ base: 'md', md: 'lg' }} className="tapshow-grid">
+              <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }} spacing={{ base: 'md', md: 'lg' }} className="tapshow-grid tapshow-fullpage-projects-grid">
                 {publicProjects.map((item) => (
                   <PublicProjectCard
                     key={item.project.id}
+                    className="tapshow-card--project"
                     item={item}
                     onOpen={(it) => {
                       const url = `/share/${encodeURIComponent(it.project.id)}/${encodeURIComponent(it.cover.flowId)}`
@@ -689,9 +705,10 @@ function TapshowFullPageInner(): JSX.Element {
             )}
           </Stack>
 
-          <Group justify="space-between" align="center" mb="md" wrap="wrap" gap={8}>
-            <Group gap={8} wrap="wrap">
+          <Group className="tapshow-fullpage-filters" justify="space-between" align="center" mb="md" wrap="wrap" gap={8}>
+            <Group className="tapshow-fullpage-filters-left" gap={8} wrap="wrap">
               <SegmentedControl
+                className="tapshow-fullpage-filter-media"
                 size="xs"
                 radius="xl"
                 value={mediaFilter}
@@ -704,6 +721,7 @@ function TapshowFullPageInner(): JSX.Element {
               />
 
               <SegmentedControl
+                className="tapshow-fullpage-filter-sort"
                 size="xs"
                 radius="xl"
                 value={sortKey}
@@ -715,39 +733,40 @@ function TapshowFullPageInner(): JSX.Element {
               />
 
               <ActionIcon
+                className="tapshow-fullpage-filter-order"
                 size="sm"
                 radius="xl"
                 variant="light"
                 aria-label="切换排序方向"
                 onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
               >
-                {sortOrder === 'desc' ? <IconSortDescending size={14} /> : <IconFilter size={14} />}
+                {sortOrder === 'desc' ? <IconSortDescending className="tapshow-fullpage-filter-order-icon" size={14} /> : <IconFilter className="tapshow-fullpage-filter-order-icon" size={14} />}
               </ActionIcon>
             </Group>
 
-            <Text size="xs" c="dimmed">
+            <Text className="tapshow-fullpage-count" size="xs" c="dimmed">
               共 {filteredAssets.length} 个公开作品
             </Text>
           </Group>
         </Box>
 
-        <Box pb="xl">
+        <Box className="tapshow-fullpage-list" pb="xl">
           {loading && !hasLoadedOnce ? (
-            <Center mih={260}>
-              <Stack gap={8} align="center">
-                <Loader size="sm" />
-                <Text size="sm" c="dimmed">
+            <Center className="tapshow-fullpage-loading" mih={260}>
+              <Stack className="tapshow-fullpage-loading-stack" gap={8} align="center">
+                <Loader className="tapshow-fullpage-loading-icon" size="sm" />
+                <Text className="tapshow-fullpage-loading-text" size="sm" c="dimmed">
                   正在加载作品…
                 </Text>
               </Stack>
             </Center>
           ) : !filteredAssets.length ? (
-            <Center mih={260}>
-              <Stack gap={6} align="center">
-                <Text size="sm" fw={500}>
+            <Center className="tapshow-fullpage-empty" mih={260}>
+              <Stack className="tapshow-fullpage-empty-stack" gap={6} align="center">
+                <Text className="tapshow-fullpage-empty-title" size="sm" fw={500}>
                   暂无公开作品
                 </Text>
-                <Text size="xs" c="dimmed" ta="center" maw={420}>
+                <Text className="tapshow-fullpage-empty-desc" size="xs" c="dimmed" ta="center" maw={420}>
                   公开上传到 OSS 的图片 / 视频会自动出现在这里。
                 </Text>
               </Stack>
@@ -756,17 +775,18 @@ function TapshowFullPageInner(): JSX.Element {
             <SimpleGrid
               cols={{ base: 1, sm: 2, md: 3, lg: 4 }}
               spacing={{ base: 'md', md: 'lg' }}
-              className="tapshow-grid"
+              className="tapshow-grid tapshow-fullpage-grid"
             >
               {visibleAssets.map((asset) => (
-                <TapshowCard key={asset.id} asset={asset} onPreview={handlePreview} />
+                <TapshowCard key={asset.id} className="tapshow-card--asset" asset={asset} onPreview={handlePreview} />
               ))}
             </SimpleGrid>
           )}
 
           {hasMore && (
-            <Center mt="lg" ref={loadMoreRef}>
+            <Center className="tapshow-fullpage-load-more" mt="lg" ref={loadMoreRef}>
               <Button
+                className="tapshow-fullpage-load-more-button"
                 size="xs"
                 variant="light"
                 onClick={() => {
@@ -784,5 +804,5 @@ function TapshowFullPageInner(): JSX.Element {
 }
 
 export default function TapshowFullPage(): JSX.Element {
-  return <TapshowFullPageInner />
+  return <TapshowFullPageInner className="tapshow-fullpage" />
 }

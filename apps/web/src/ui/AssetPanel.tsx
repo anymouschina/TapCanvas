@@ -57,7 +57,7 @@ function PlaceholderImage({ label }: { label: string }) {
   const svg = encodeURIComponent(
     `<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='${start}'/><stop offset='100%' stop-color='${end}'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='${textColor}' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`,
   )
-  return <Image src={`data:image/svg+xml;charset=UTF-8,${svg}`} alt={label} radius="sm" />
+  return <Image className="asset-panel-placeholder" src={`data:image/svg+xml;charset=UTF-8,${svg}`} alt={label} radius="sm" />
 }
 
 function getGenerationData(asset: ServerAssetDto): GenerationAssetData {
@@ -446,10 +446,11 @@ export default function AssetPanel(): JSX.Element | null {
     const cover = isVideo ? generated || data.thumbnailUrl || null : data.thumbnailUrl || data.url
     const label = asset.name || (isVideo ? '视频' : '图片')
     return (
-      <Card key={asset.id} withBorder radius="md" shadow="sm">
+      <Card className="asset-panel-card" key={asset.id} withBorder radius="md" shadow="sm">
         {isVideo ? (
           data.url ? (
             <div
+              className="asset-panel-card-media"
               style={{
                 borderRadius: 8,
                 overflow: 'hidden',
@@ -457,6 +458,7 @@ export default function AssetPanel(): JSX.Element | null {
               }}
             >
               <video
+                className="asset-panel-card-video"
                 src={data.url}
                 poster={cover || undefined}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
@@ -469,6 +471,7 @@ export default function AssetPanel(): JSX.Element | null {
           )
         ) : cover ? (
           <Image
+            className="asset-panel-card-image"
             src={cover}
             alt={label}
             radius="sm"
@@ -478,36 +481,37 @@ export default function AssetPanel(): JSX.Element | null {
         ) : (
           <PlaceholderImage label={label} />
         )}
-        <Stack gap={6} mt="sm">
-          <Group gap="xs">
-            <Badge size="xs" color={isVideo ? 'violet' : 'teal'} leftSection={isVideo ? <IconVideo size={12} /> : <IconPhoto size={12} />}>
+        <Stack className="asset-panel-card-body" gap={6} mt="sm">
+          <Group className="asset-panel-card-badges" gap="xs">
+            <Badge className="asset-panel-card-type" size="xs" color={isVideo ? 'violet' : 'teal'} leftSection={isVideo ? <IconVideo className="asset-panel-card-type-icon" size={12} /> : <IconPhoto className="asset-panel-card-type-icon" size={12} />}>
               {isVideo ? '视频' : '图片'}
             </Badge>
             {data.vendor && (
-              <Badge size="xs" variant="light">
+              <Badge className="asset-panel-card-vendor" size="xs" variant="light">
                 {data.vendor}
               </Badge>
             )}
             {data.modelKey && (
-              <Badge size="xs" variant="outline">
+              <Badge className="asset-panel-card-model" size="xs" variant="outline">
                 {data.modelKey}
               </Badge>
             )}
           </Group>
-          <Text size="sm" fw={600} lineClamp={1}>
+          <Text className="asset-panel-card-title" size="sm" fw={600} lineClamp={1}>
             {label}
           </Text>
           {data.prompt && (
-            <Text size="xs" c="dimmed" lineClamp={2}>
+            <Text className="asset-panel-card-prompt" size="xs" c="dimmed" lineClamp={2}>
               {data.prompt}
             </Text>
           )}
-          <Text size="xs" c="dimmed">
+          <Text className="asset-panel-card-date" size="xs" c="dimmed">
             {formatDate(asset.createdAt)}
           </Text>
-          <Group justify="flex-end" gap={4}>
-            <Tooltip label="预览" withArrow>
+          <Group className="asset-panel-card-actions" justify="flex-end" gap={4}>
+            <Tooltip className="asset-panel-card-preview-tooltip" label="预览" withArrow>
               <ActionIcon
+                className="asset-panel-card-preview-action"
                 size="sm"
                 variant="subtle"
                 onClick={() => {
@@ -515,12 +519,13 @@ export default function AssetPanel(): JSX.Element | null {
                   openPreview({ url: data.url, kind: isVideo ? 'video' : 'image', name: asset.name })
                 }}
               >
-                {isVideo ? <IconPlayerPlay size={16} /> : <IconPhoto size={16} />}
+                {isVideo ? <IconPlayerPlay className="asset-panel-card-preview-icon" size={16} /> : <IconPhoto className="asset-panel-card-preview-icon" size={16} />}
               </ActionIcon>
             </Tooltip>
             {data.url && (
-              <Tooltip label="加入画布" withArrow>
+              <Tooltip className="asset-panel-card-add-tooltip" label="加入画布" withArrow>
                 <ActionIcon
+                  className="asset-panel-card-add-action"
                   size="sm"
                   variant="light"
                   onClick={() => {
@@ -540,25 +545,25 @@ export default function AssetPanel(): JSX.Element | null {
                     setActivePanel(null)
                   }}
                 >
-                  <IconPlus size={16} />
+                  <IconPlus className="asset-panel-card-add-icon" size={16} />
                 </ActionIcon>
               </Tooltip>
             )}
             {data.url && (
-              <Tooltip label="复制链接" withArrow>
-                <ActionIcon size="sm" variant="subtle" onClick={() => handleCopy(data.url || '')}>
-                  <IconCopy size={16} />
+              <Tooltip className="asset-panel-card-copy-tooltip" label="复制链接" withArrow>
+                <ActionIcon className="asset-panel-card-copy-action" size="sm" variant="subtle" onClick={() => handleCopy(data.url || '')}>
+                  <IconCopy className="asset-panel-card-copy-icon" size={16} />
                 </ActionIcon>
               </Tooltip>
             )}
-            <Tooltip label="重命名" withArrow>
-              <ActionIcon size="sm" variant="subtle" onClick={() => handleRename(asset)}>
-                <IconPencil size={16} />
+            <Tooltip className="asset-panel-card-rename-tooltip" label="重命名" withArrow>
+              <ActionIcon className="asset-panel-card-rename-action" size="sm" variant="subtle" onClick={() => handleRename(asset)}>
+                <IconPencil className="asset-panel-card-rename-icon" size={16} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="删除" withArrow>
-              <ActionIcon size="sm" variant="subtle" color="red" onClick={() => handleDelete(asset)}>
-                <IconTrash size={16} />
+            <Tooltip className="asset-panel-card-delete-tooltip" label="删除" withArrow>
+              <ActionIcon className="asset-panel-card-delete-action" size="sm" variant="subtle" color="red" onClick={() => handleDelete(asset)}>
+                <IconTrash className="asset-panel-card-delete-icon" size={16} />
               </ActionIcon>
             </Tooltip>
           </Group>
@@ -568,18 +573,19 @@ export default function AssetPanel(): JSX.Element | null {
   }
 
   const renderWorkflowCard = (asset: ServerAssetDto) => (
-    <Card key={asset.id} withBorder radius="md" shadow="sm">
+    <Card className="asset-panel-card" key={asset.id} withBorder radius="md" shadow="sm">
       <PlaceholderImage label={asset.name} />
-      <Stack gap={6} mt="sm">
-        <Text size="sm" fw={600} lineClamp={1}>
+      <Stack className="asset-panel-card-body" gap={6} mt="sm">
+        <Text className="asset-panel-card-title" size="sm" fw={600} lineClamp={1}>
           {asset.name}
         </Text>
-        <Text size="xs" c="dimmed">
+        <Text className="asset-panel-card-date" size="xs" c="dimmed">
           {formatDate(asset.updatedAt)}
         </Text>
-        <Group justify="flex-end" gap={4}>
-          <Tooltip label="添加到画布" withArrow>
+        <Group className="asset-panel-card-actions" justify="flex-end" gap={4}>
+          <Tooltip className="asset-panel-card-add-tooltip" label="添加到画布" withArrow>
             <ActionIcon
+              className="asset-panel-card-add-action"
               size="sm"
               variant="light"
               onClick={() => {
@@ -588,17 +594,17 @@ export default function AssetPanel(): JSX.Element | null {
                 setActivePanel(null)
               }}
             >
-              <IconPlus size={16} />
+              <IconPlus className="asset-panel-card-add-icon" size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="重命名" withArrow>
-            <ActionIcon size="sm" variant="subtle" onClick={() => handleRename(asset)}>
-              <IconPencil size={16} />
+          <Tooltip className="asset-panel-card-rename-tooltip" label="重命名" withArrow>
+            <ActionIcon className="asset-panel-card-rename-action" size="sm" variant="subtle" onClick={() => handleRename(asset)}>
+              <IconPencil className="asset-panel-card-rename-icon" size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="删除" withArrow>
-            <ActionIcon size="sm" variant="subtle" color="red" onClick={() => handleDelete(asset)}>
-              <IconTrash size={16} />
+          <Tooltip className="asset-panel-card-delete-tooltip" label="删除" withArrow>
+            <ActionIcon className="asset-panel-card-delete-action" size="sm" variant="subtle" color="red" onClick={() => handleDelete(asset)}>
+              <IconTrash className="asset-panel-card-delete-icon" size={16} />
             </ActionIcon>
           </Tooltip>
         </Group>
@@ -616,10 +622,10 @@ export default function AssetPanel(): JSX.Element | null {
   }
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="asset-panel-anchor" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
+      <Transition className="asset-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="asset-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -637,33 +643,34 @@ export default function AssetPanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
-                <Title order={6}>我的资产</Title>
-                <Group gap="xs">
-                  <Tooltip label="刷新" withArrow>
-                    <ActionIcon size="sm" variant="light" onClick={handleRefresh} loading={refreshing || loading}>
-                      <IconRefresh size={16} />
+              <div className="asset-panel-arrow panel-arrow" />
+              <Group className="asset-panel-header" justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
+                <Title className="asset-panel-title" order={6}>我的资产</Title>
+                <Group className="asset-panel-header-actions" gap="xs">
+                  <Tooltip className="asset-panel-refresh-tooltip" label="刷新" withArrow>
+                    <ActionIcon className="asset-panel-refresh-action" size="sm" variant="light" onClick={handleRefresh} loading={refreshing || loading}>
+                      <IconRefresh className="asset-panel-refresh-icon" size={16} />
                     </ActionIcon>
                   </Tooltip>
-                  <Button size="xs" variant="subtle" onClick={() => setActivePanel(null)}>
+                  <Button className="asset-panel-close" size="xs" variant="subtle" onClick={() => setActivePanel(null)}>
                     关闭
                   </Button>
                 </Group>
               </Group>
-              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
-                <Tabs value={tab} onChange={(v) => setTab((v as any) || 'generated')}>
-                  <Tabs.List>
-                    <Tabs.Tab value="generated">生成内容</Tabs.Tab>
-                    <Tabs.Tab value="workflow">工作流片段</Tabs.Tab>
+              <div className="asset-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
+                <Tabs className="asset-panel-tabs" value={tab} onChange={(v) => setTab((v as any) || 'generated')}>
+                  <Tabs.List className="asset-panel-tab-list">
+                    <Tabs.Tab className="asset-panel-tab" value="generated">生成内容</Tabs.Tab>
+                    <Tabs.Tab className="asset-panel-tab" value="workflow">工作流片段</Tabs.Tab>
                   </Tabs.List>
-                  <Tabs.Panel value="generated" pt="xs">
-                    <Stack gap="sm">
-                      <Group justify="space-between" align="center">
-                        <Text size="sm" c="dimmed">
+                  <Tabs.Panel className="asset-panel-tab-panel" value="generated" pt="xs">
+                    <Stack className="asset-panel-section" gap="sm">
+                      <Group className="asset-panel-section-header" justify="space-between" align="center">
+                        <Text className="asset-panel-section-desc" size="sm" c="dimmed">
                           已自动保存的生成结果（默认显示视频，可切换图片）
                         </Text>
                         <SegmentedControl
+                          className="asset-panel-filter"
                           size="sm"
                           radius="xl"
                           variant="filled"
@@ -678,45 +685,45 @@ export default function AssetPanel(): JSX.Element | null {
                         />
                       </Group>
                       {loading ? (
-                        <Center py="md">
-                          <Group gap="xs">
-                            <Loader size="sm" />
-                            <Text size="xs" c="dimmed">
+                        <Center className="asset-panel-loading" py="md">
+                          <Group className="asset-panel-loading-group" gap="xs">
+                            <Loader className="asset-panel-loading-icon" size="sm" />
+                            <Text className="asset-panel-loading-text" size="xs" c="dimmed">
                               加载中…
                             </Text>
                           </Group>
                         </Center>
                       ) : filteredGenerationAssets.length === 0 ? (
-                        <Text size="xs" c="dimmed">
+                        <Text className="asset-panel-empty" size="xs" c="dimmed">
                           暂无生成内容
                         </Text>
                       ) : (
-                        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                        <SimpleGrid className="asset-panel-grid" cols={{ base: 1, sm: 2 }} spacing="sm">
                           {visibleGenerationAssets.map((asset) => renderGenerationCard(asset))}
                         </SimpleGrid>
                       )}
                     </Stack>
                   </Tabs.Panel>
-                  <Tabs.Panel value="workflow" pt="xs">
-                    <Stack gap="sm">
-                      <Text size="sm" c="dimmed">
+                  <Tabs.Panel className="asset-panel-tab-panel" value="workflow" pt="xs">
+                    <Stack className="asset-panel-section" gap="sm">
+                      <Text className="asset-panel-section-desc" size="sm" c="dimmed">
                         保存的工作流片段（节点组合）
                       </Text>
                       {loading ? (
-                        <Center py="md">
-                          <Group gap="xs">
-                            <Loader size="sm" />
-                            <Text size="xs" c="dimmed">
+                        <Center className="asset-panel-loading" py="md">
+                          <Group className="asset-panel-loading-group" gap="xs">
+                            <Loader className="asset-panel-loading-icon" size="sm" />
+                            <Text className="asset-panel-loading-text" size="xs" c="dimmed">
                               加载中…
                             </Text>
                           </Group>
                         </Center>
                       ) : workflowAssets.length === 0 ? (
-                        <Text size="xs" c="dimmed">
+                        <Text className="asset-panel-empty" size="xs" c="dimmed">
                           暂无工作流片段
                         </Text>
                       ) : (
-                        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                        <SimpleGrid className="asset-panel-grid" cols={{ base: 1, sm: 2 }} spacing="sm">
                           {workflowAssets.map((asset) => renderWorkflowCard(asset))}
                         </SimpleGrid>
                       )}

@@ -12,7 +12,8 @@ function isTextInputElement(target: EventTarget | null) {
   return false
 }
 
-export default function KeyboardShortcuts() {
+export default function KeyboardShortcuts({ className }: { className?: string }) {
+  void className
   const removeSelected = useRFStore((s) => s.removeSelected)
   const copySelected = useRFStore((s) => s.copySelected)
   const pasteFromClipboard = useRFStore((s) => s.pasteFromClipboard)

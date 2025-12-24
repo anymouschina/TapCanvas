@@ -442,12 +442,16 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
 
   const modal = open ? (
     <Modal
+      className="pose-editor__modal"
       opened={open}
       onClose={() => setOpen(false)}
       title={(
-        <Group gap={10} align="center" justify="space-between" wrap="nowrap">
-          <Text size="md" fw={700}>编辑模式</Text>
+        <Group className="pose-editor__header" gap={10} align="center" justify="space-between" wrap="nowrap">
+          <Text className="pose-editor__title" size="md" fw={700}>
+            编辑模式
+          </Text>
           <SegmentedControl
+            className="pose-editor__mode"
             size="sm"
             value={editMode}
             onChange={(value) => setEditMode(value as 'pose' | 'depth')}
@@ -466,19 +470,22 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
       withinPortal
       zIndex={320}
     >
-      <Stack gap="sm">
-        <Text size="xs" c="dimmed">
+      <Stack className="pose-editor__content" gap="sm">
+        <Text className="pose-editor__intro" size="xs" c="dimmed">
           使用方法：可拖动火柴人调整姿势，或只用圈选 + 提示词编辑局部。保存后会生成图片编辑参考，影响后续的出图效果。
         </Text>
-        <Group align="flex-start" gap="md" grow>
-          <Stack gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
-            <Group gap={8} align="center">
-              <Text size="sm" fw={600}>原图圈选（可选）</Text>
-              <Badge size="xs" variant="outline" color="orange">
+        <Group className="pose-editor__panels" align="flex-start" gap="md" grow>
+          <Stack className="pose-editor__panel" gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
+            <Group className="pose-editor__panel-header" gap={8} align="center">
+              <Text className="pose-editor__panel-title" size="sm" fw={600}>
+                原图圈选（可选）
+              </Text>
+              <Badge className="pose-editor__panel-badge" size="xs" variant="outline" color="orange">
                 画笔圈中需要调整的主体
               </Badge>
             </Group>
             <div
+              className="pose-editor__mask-canvas"
               style={{
                 position: 'relative',
                 width: POSE_CANVAS_SIZE.width,
@@ -491,6 +498,7 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
             >
               {poseReady ? (
                 <img
+                  className="pose-editor__base-image"
                   src={options.baseImageUrl}
                   alt="base"
                   style={{
@@ -503,11 +511,12 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                   }}
                 />
               ) : (
-                <Text size="xs" c="dimmed" style={{ padding: 12 }}>
+                <Text className="pose-editor__base-empty" size="xs" c="dimmed" style={{ padding: 12 }}>
                   未找到在线主图，请先上传到可访问的地址
                 </Text>
               )}
               <canvas
+                className="pose-editor__mask-layer"
                 ref={maskCanvasRef}
                 width={POSE_CANVAS_SIZE.width}
                 height={POSE_CANVAS_SIZE.height}
@@ -524,21 +533,26 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                 onMouseLeave={(e) => handleMaskPointer(e, 'up')}
               />
             </div>
-            <Group gap={6}>
-              <Button variant="subtle" size="xs" onClick={clearMask} disabled={!maskDirty}>
+            <Group className="pose-editor__panel-actions" gap={6}>
+              <Button className="pose-editor__clear-mask" variant="subtle" size="xs" onClick={clearMask} disabled={!maskDirty}>
                 清除圈选
               </Button>
             </Group>
           </Stack>
-          <Stack gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
+          <Stack className="pose-editor__panel" gap={8} style={{ height: EDIT_PANEL_HEIGHT }}>
               {editMode === 'pose' ? (
                 <>
-                  <Stack gap={8}>
-                    <Group gap={8} align="center">
-                      <Text size="sm" fw={600}>火柴人参考（必选）</Text>
-                      <Badge size="xs" variant="light">必选</Badge>
+                  <Stack className="pose-editor__panel-stack" gap={8}>
+                    <Group className="pose-editor__panel-header" gap={8} align="center">
+                      <Text className="pose-editor__panel-title" size="sm" fw={600}>
+                        火柴人参考（必选）
+                      </Text>
+                      <Badge className="pose-editor__panel-badge" size="xs" variant="light">
+                        必选
+                      </Badge>
                     </Group>
                     <canvas
+                      className="pose-editor__pose-canvas"
                       ref={canvasRef}
                       width={POSE_CANVAS_SIZE.width}
                       height={POSE_CANVAS_SIZE.height}
@@ -556,6 +570,7 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                       onMouseLeave={(e) => handlePointer(e, 'up')}
                     />
                     <Textarea
+                      className="pose-editor__pose-prompt"
                       label="补充提示词"
                       placeholder="示例：保持原衣着，只调整手部动作；光影延续原图"
                       autosize
@@ -565,17 +580,19 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                       onChange={(e) => setPromptInput(e.currentTarget.value)}
                     />
                   </Stack>
-                  <div style={{ flex: 1 }} />
-                  <Group gap={6}>
+                  <div className="pose-editor__spacer" style={{ flex: 1 }} />
+                  <Group className="pose-editor__panel-actions" gap={6}>
                     <Button
+                      className="pose-editor__reset-pose"
                       variant="subtle"
                       size="xs"
                       onClick={() => setPoints(createDefaultPosePoints())}
                     >
                       重置火柴人
                     </Button>
-                    <Tooltip label="保存参考图、圈选和提示词，并创建引用节点">
+                    <Tooltip className="pose-editor__save-tooltip" label="保存参考图、圈选和提示词，并创建引用节点">
                       <Button
+                        className="pose-editor__save"
                         size="xs"
                         leftSection={<IconAdjustments size={14} />}
                         onClick={handleApply}
@@ -588,17 +605,21 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                 </>
               ) : (
                 <>
-                  <Stack gap={8}>
-                    <Text size="sm" fw={600}>深度描述（JSON，可编辑）</Text>
+                  <Stack className="pose-editor__panel-stack" gap={8}>
+                    <Text className="pose-editor__panel-title" size="sm" fw={600}>
+                      深度描述（JSON，可编辑）
+                    </Text>
                     <Text
+                      className="pose-editor__depth-hint"
                       size="xs"
                       c="dimmed"
                       style={{ color: options.isDarkUi ? 'rgba(226,232,240,0.7)' : '#475569' }}
                     >
                       先生成 JSON，再按需要修改内容；保存后会作为 prompt 使用。
                     </Text>
-                    <Group gap={6}>
+                    <Group className="pose-editor__panel-actions" gap={6}>
                       <Button
+                        className="pose-editor__generate-depth"
                         size="xs"
                         variant="light"
                         loading={depthLoading}
@@ -606,9 +627,14 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                       >
                         生成深度描述
                       </Button>
-                      {depthError && <Text size="xs" c="red">{depthError}</Text>}
+                      {depthError && (
+                        <Text className="pose-editor__depth-error" size="xs" c="red">
+                          {depthError}
+                        </Text>
+                      )}
                     </Group>
                     <Textarea
+                      className="pose-editor__depth-textarea"
                       label="JSON 内容"
                       placeholder="点击“生成深度描述”后在此编辑"
                       autosize
@@ -618,10 +644,11 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
                       onChange={(e) => setDepthPrompt(e.currentTarget.value)}
                     />
                   </Stack>
-                  <div style={{ flex: 1 }} />
-                  <Group gap={6}>
-                    <Tooltip label="保存参考图、圈选和深度描述，并创建引用节点">
+                  <div className="pose-editor__spacer" style={{ flex: 1 }} />
+                  <Group className="pose-editor__panel-actions" gap={6}>
+                    <Tooltip className="pose-editor__save-tooltip" label="保存参考图、圈选和深度描述，并创建引用节点">
                       <Button
+                        className="pose-editor__save"
                         size="xs"
                         leftSection={<IconAdjustments size={14} />}
                         onClick={handleApply}
@@ -635,7 +662,7 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
               )}
             </Stack>
         </Group>
-        <Text size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
+        <Text className="pose-editor__note" size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
           效果：参考区域与提示词会被模型优先遵循，未圈选区域尽量保持原样。
         </Text>
       </Stack>
