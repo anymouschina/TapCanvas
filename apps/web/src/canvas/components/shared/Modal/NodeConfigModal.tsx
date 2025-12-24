@@ -331,14 +331,15 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
     };
 
     return (
-      <div key={field.key} style={fieldStyle}>
-        <label style={labelStyle}>
+      <div className="node-config-modal__field" key={field.key} style={fieldStyle}>
+        <label className="node-config-modal__label" style={labelStyle}>
           {field.label}
-          {field.required && <span style={{ color: '#ef4444' }}> *</span>}
+          {field.required && <span className="node-config-modal__label-required" style={{ color: '#ef4444' }}> *</span>}
         </label>
 
         {field.type === 'text' && (
           <input
+            className="node-config-modal__input"
             type="text"
             value={value}
             onChange={(e) => handleConfigChange(field.key, e.target.value)}
@@ -349,6 +350,7 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
 
         {field.type === 'number' && (
           <input
+            className="node-config-modal__input"
             type="number"
             value={value}
             onChange={(e) => handleConfigChange(field.key, Number(e.target.value))}
@@ -361,13 +363,16 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
 
         {field.type === 'select' && field.options && (
           <select
+            className="node-config-modal__select"
             value={value}
             onChange={(e) => handleConfigChange(field.key, e.target.value)}
             style={inputStyle}
           >
-            <option value="">Select an option</option>
+            <option className="node-config-modal__option" value="">
+              Select an option
+            </option>
             {field.options.map(option => (
-              <option key={option} value={option}>
+              <option className="node-config-modal__option" key={option} value={option}>
                 {option}
               </option>
             ))}
@@ -376,6 +381,7 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
 
         {field.type === 'textarea' && (
           <textarea
+            className="node-config-modal__textarea"
             value={value}
             onChange={(e) => handleConfigChange(field.key, e.target.value)}
             placeholder={field.placeholder}
@@ -389,8 +395,9 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
         )}
 
         {field.type === 'checkbox' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label className="node-config-modal__checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
+              className="node-config-modal__checkbox-input"
               type="checkbox"
               checked={Boolean(value)}
               onChange={(e) => handleConfigChange(field.key, e.target.checked)}
@@ -401,13 +408,13 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
         )}
 
         {field.description && (
-          <div style={descriptionStyle}>
+          <div className="node-config-modal__description" style={descriptionStyle}>
             {field.description}
           </div>
         )}
 
         {error && (
-          <div style={errorStyle}>
+          <div className="node-config-modal__error" style={errorStyle}>
             {error}
           </div>
         )}
@@ -425,10 +432,12 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
       cancelText="Cancel"
       className={className}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="node-config-modal__content" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* 基本信息 */}
-        <div>
-          <div style={{
+        <div className="node-config-modal__section">
+          <div
+            className="node-config-modal__section-title"
+            style={{
             fontSize: '12px',
             fontWeight: '600',
             color: '#6b7280',
@@ -438,14 +447,16 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
             Basic Information
           </div>
 
-          <div>
-            <div style={{
+          <div className="node-config-modal__section-body">
+            <div
+              className="node-config-modal__section-meta"
+              style={{
               fontSize: '12px',
               color: '#9ca3af',
               marginBottom: '16px',
             }}>
-              Node Type: <strong>{nodeData.kind}</strong> |
-              ID: <code style={{ backgroundColor: '#f3f4f6', padding: '2px 4px', borderRadius: '2px' }}>
+              Node Type: <strong className="node-config-modal__section-strong">{nodeData.kind}</strong> |
+              ID: <code className="node-config-modal__section-code" style={{ backgroundColor: '#f3f4f6', padding: '2px 4px', borderRadius: '2px' }}>
                 {nodeData.id}
               </code>
             </div>
@@ -455,8 +466,10 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
         </div>
 
         {/* 配置选项 */}
-        <div>
-          <div style={{
+        <div className="node-config-modal__section">
+          <div
+            className="node-config-modal__section-title"
+            style={{
             fontSize: '12px',
             fontWeight: '600',
             color: '#6b7280',
@@ -466,15 +479,16 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
             Configuration
           </div>
 
-          <div>
+          <div className="node-config-modal__section-body">
             {getConfigFields().slice(2).map(renderField)}
           </div>
         </div>
 
         {/* 高级选项切换 */}
         {!showAdvanced && (
-          <div style={{ textAlign: 'center', paddingTop: '8px' }}>
+          <div className="node-config-modal__advanced-toggle" style={{ textAlign: 'center', paddingTop: '8px' }}>
             <button
+              className="node-config-modal__advanced-toggle-button"
               type="button"
               onClick={() => setShowAdvancedOptions(true)}
               style={{
@@ -493,8 +507,10 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
 
         {/* 高级选项 */}
         {showAdvancedOptions && (
-          <div>
-            <div style={{
+          <div className="node-config-modal__advanced">
+            <div
+              className="node-config-modal__advanced-title"
+              style={{
               fontSize: '12px',
               fontWeight: '600',
               color: '#6b7280',
@@ -506,6 +522,7 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
             }}>
               Advanced Options
               <button
+                className="node-config-modal__advanced-hide"
                 type="button"
                 onClick={() => setShowAdvancedOptions(false)}
                 style={{
@@ -520,7 +537,7 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({
               </button>
             </div>
 
-            <div>
+            <div className="node-config-modal__advanced-body">
               {getConfigFields().slice(-2).map(renderField)}
             </div>
           </div>

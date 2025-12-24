@@ -140,10 +140,10 @@ export default function ExecutionPanel(props: {
   const maxHeight = calculateSafeMaxHeight(anchorY, 190)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 190 : 140, zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="execution-panel-anchor" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 190 : 140, zIndex: 200 }} data-ux-panel>
+      <Transition className="execution-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="execution-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -161,92 +161,93 @@ export default function ExecutionPanel(props: {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <Group justify="space-between" mb={8}>
-                <Group gap="xs">
-                  <Title order={6}>运行记录</Title>
-                  <Tooltip label="刷新">
-                    <ActionIcon size="sm" variant="subtle" aria-label="刷新运行记录" onClick={() => void load()} disabled={loading}>
-                      <IconRefresh size={14} />
+              <div className="execution-panel-arrow panel-arrow" />
+              <Group className="execution-panel-header" justify="space-between" mb={8}>
+                <Group className="execution-panel-title-group" gap="xs">
+                  <Title className="execution-panel-title" order={6}>运行记录</Title>
+                  <Tooltip className="execution-panel-refresh-tooltip" label="刷新">
+                    <ActionIcon className="execution-panel-refresh-action" size="sm" variant="subtle" aria-label="刷新运行记录" onClick={() => void load()} disabled={loading}>
+                      <IconRefresh className="execution-panel-refresh-icon" size={14} />
                     </ActionIcon>
                   </Tooltip>
-                  <Tooltip label="运行">
+                  <Tooltip className="execution-panel-run-tooltip" label="运行">
                     <ActionIcon
+                      className="execution-panel-run-action"
                       size="sm"
                       variant="subtle"
                       aria-label="运行工作流"
                       onClick={() => void handleRun()}
                       disabled={!currentFlowId || runStarting}
                     >
-                      {runStarting ? <Loader size="xs" /> : <IconPlayerPlay size={14} />}
+                      {runStarting ? <Loader className="execution-panel-run-loader" size="xs" /> : <IconPlayerPlay className="execution-panel-run-icon" size={14} />}
                     </ActionIcon>
                   </Tooltip>
                 </Group>
-                <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
+                <Button className="execution-panel-close" size="xs" variant="light" onClick={() => setActivePanel(null)}>
                   关闭
                 </Button>
               </Group>
 
               {!currentFlowId && (
-                <Text size="sm" c="dimmed">
+                <Text className="execution-panel-empty-hint" size="sm" c="dimmed">
                   还没有保存过这个项目：先点顶部“保存”，再运行一次就会出现在这里。
                 </Text>
               )}
 
               {!!error && (
-                <Text size="sm" c="red">
+                <Text className="execution-panel-error" size="sm" c="red">
                   {error}
                 </Text>
               )}
 
-              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
-                <Stack gap="xs">
+              <div className="execution-panel-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+                <Stack className="execution-panel-body-stack" gap="xs">
                   {currentFlowId && !items.length && !loading && (
-                    <Text size="sm" c="dimmed">
+                    <Text className="execution-panel-no-items" size="sm" c="dimmed">
                       暂无运行记录
                     </Text>
                   )}
 
                   {!!items.length && (
-                    <Table striped highlightOnHover stickyHeader verticalSpacing="xs">
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th style={{ width: 170 }}>时间</Table.Th>
-                          <Table.Th style={{ width: 100 }}>状态</Table.Th>
-                          <Table.Th style={{ width: 110 }}>进度</Table.Th>
-                          <Table.Th style={{ width: 170 }}>失败节点</Table.Th>
-                          <Table.Th>信息</Table.Th>
-                          <Table.Th style={{ width: 150 }} />
+                    <Table className="execution-panel-table" striped highlightOnHover stickyHeader verticalSpacing="xs">
+                      <Table.Thead className="execution-panel-table-head">
+                        <Table.Tr className="execution-panel-table-head-row">
+                          <Table.Th className="execution-panel-table-head-cell" style={{ width: 170 }}>时间</Table.Th>
+                          <Table.Th className="execution-panel-table-head-cell" style={{ width: 100 }}>状态</Table.Th>
+                          <Table.Th className="execution-panel-table-head-cell" style={{ width: 110 }}>进度</Table.Th>
+                          <Table.Th className="execution-panel-table-head-cell" style={{ width: 170 }}>失败节点</Table.Th>
+                          <Table.Th className="execution-panel-table-head-cell">信息</Table.Th>
+                          <Table.Th className="execution-panel-table-head-cell" style={{ width: 150 }} />
                         </Table.Tr>
                       </Table.Thead>
-                      <Table.Tbody>
+                      <Table.Tbody className="execution-panel-table-body">
                         {items.map((it) => (
-                          <Table.Tr key={it.id}>
-                            <Table.Td>
-                              <Text size="xs" c="dimmed">
+                          <Table.Tr className="execution-panel-table-row" key={it.id}>
+                            <Table.Td className="execution-panel-table-cell">
+                              <Text className="execution-panel-created-at" size="xs" c="dimmed">
                                 {new Date(it.createdAt).toLocaleString()}
                               </Text>
                             </Table.Td>
-                            <Table.Td>
-                              <Badge size="xs" variant="light" color={statusColor(it.status) as any}>
+                            <Table.Td className="execution-panel-table-cell">
+                              <Badge className="execution-panel-status-badge" size="xs" variant="light" color={statusColor(it.status) as any}>
                                 {it.status}
                               </Badge>
                             </Table.Td>
-                            <Table.Td>
+                            <Table.Td className="execution-panel-table-cell">
                               {(() => {
                                 const stats = runStatsByExecId[it.id]
-                                if (!stats || !stats.total) return <Text size="xs" c="dimmed">—</Text>
+                                if (!stats || !stats.total) return <Text className="execution-panel-progress-empty" size="xs" c="dimmed">—</Text>
                                 const label = `${stats.done}/${stats.total}${stats.failed ? ` · 失败${stats.failed}` : ''}`
                                 return (
-                                  <Text size="xs" c={stats.failed ? 'red' : 'dimmed'}>
+                                  <Text className="execution-panel-progress" size="xs" c={stats.failed ? 'red' : 'dimmed'}>
                                     {label}
                                   </Text>
                                 )
                               })()}
                             </Table.Td>
-                            <Table.Td>
+                            <Table.Td className="execution-panel-table-cell">
                               {it.status === 'failed' ? (
-                                <Text size="xs" title={failedNodeByExecId[it.id]?.nodeId} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>
+                                <Text className="execution-panel-failed-node" size="xs" title={failedNodeByExecId[it.id]?.nodeId} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>
                                   {(() => {
                                     const nodeId = failedNodeByExecId[it.id]?.nodeId
                                     if (!nodeId) return '（加载中…）'
@@ -254,32 +255,34 @@ export default function ExecutionPanel(props: {
                                   })()}
                                 </Text>
                               ) : (
-                                <Text size="xs" c="dimmed">—</Text>
+                                <Text className="execution-panel-failed-node-empty" size="xs" c="dimmed">—</Text>
                               )}
                             </Table.Td>
-                            <Table.Td>
-                              <Text size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
+                            <Table.Td className="execution-panel-table-cell">
+                              <Text className="execution-panel-message" size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
                                 {it.errorMessage || (it.trigger ? `触发：${it.trigger}` : '') || '—'}
                               </Text>
                             </Table.Td>
-                            <Table.Td>
-                              <Group gap={6} justify="flex-end" wrap="nowrap">
+                            <Table.Td className="execution-panel-table-cell">
+                              <Group className="execution-panel-actions" gap={6} justify="flex-end" wrap="nowrap">
                                 {(it.status === 'failed' || it.status === 'success') && (
-                                  <Tooltip label="重跑">
+                                  <Tooltip className="execution-panel-rerun-tooltip" label="重跑">
                                     <ActionIcon
+                                      className="execution-panel-rerun-action"
                                       size="sm"
                                       variant="light"
                                       aria-label="重跑"
                                       onClick={() => void handleRerun()}
                                       disabled={runStarting}
                                     >
-                                      <IconPlayerPlay size={14} />
+                                      <IconPlayerPlay className="execution-panel-rerun-icon" size={14} />
                                     </ActionIcon>
                                   </Tooltip>
                                 )}
                                 {it.status === 'failed' && (
-                                  <Tooltip label="定位失败节点">
+                                  <Tooltip className="execution-panel-focus-tooltip" label="定位失败节点">
                                     <ActionIcon
+                                      className="execution-panel-focus-action"
                                       size="sm"
                                       variant="light"
                                       aria-label="定位失败节点"
@@ -289,13 +292,13 @@ export default function ExecutionPanel(props: {
                                         onFocusNode?.(payload.nodeId)
                                       }}
                                     >
-                                      <IconTarget size={14} />
+                                      <IconTarget className="execution-panel-focus-icon" size={14} />
                                     </ActionIcon>
                                   </Tooltip>
                                 )}
-                                <Tooltip label="打开日志">
-                                  <ActionIcon size="sm" variant="light" aria-label="打开日志" onClick={() => props.onOpenLog(it.id)}>
-                                    <IconFileText size={14} />
+                                <Tooltip className="execution-panel-log-tooltip" label="打开日志">
+                                  <ActionIcon className="execution-panel-log-action" size="sm" variant="light" aria-label="打开日志" onClick={() => props.onOpenLog(it.id)}>
+                                    <IconFileText className="execution-panel-log-icon" size={14} />
                                   </ActionIcon>
                                 </Tooltip>
                               </Group>

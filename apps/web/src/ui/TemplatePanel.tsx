@@ -15,10 +15,10 @@ const publicTemplates:[] = [
 
 function PlaceholderImage({ label }: { label: string }) {
   const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='#1f2937'/><stop offset='100%' stop-color='#111827'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='#e5e7eb' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`) 
-  return <Image src={`data:image/svg+xml;charset=UTF-8,${svg}`} alt={label} radius="sm" />
+  return <Image className="template-panel-placeholder" src={`data:image/svg+xml;charset=UTF-8,${svg}`} alt={label} radius="sm" />
 }
 
-export default function TemplatePanel(): JSX.Element | null {
+export default function TemplatePanel({ className }: { className?: string }): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
@@ -39,11 +39,13 @@ export default function TemplatePanel(): JSX.Element | null {
   // 计算安全的最大高度
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
+  const panelClassName = ['template-panel', className].filter(Boolean).join(' ')
+
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className={panelClassName} style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 200 }} data-ux-panel>
+      <Transition className="template-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="template-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -61,45 +63,45 @@ export default function TemplatePanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-        <Group justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
-          <Title order={6}>{$t('工作流（项目：{{project}}）', { project: currentProject?.name || '全部' })}</Title>
-          <Group>
-            <Badge color="gray" variant="light">{$('推荐')}</Badge>
-            <Badge color="gray" variant="light">{$('浏览全部')}</Badge>
-            <Badge color="gray" variant="light">{$('创建')}</Badge>
+              <div className="template-panel-arrow panel-arrow" />
+        <Group className="template-panel-header" justify="space-between" mb={8} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}>
+          <Title className="template-panel-title" order={6}>{$t('工作流（项目：{{project}}）', { project: currentProject?.name || '全部' })}</Title>
+          <Group className="template-panel-header-badges">
+            <Badge className="template-panel-header-badge" color="gray" variant="light">{$('推荐')}</Badge>
+            <Badge className="template-panel-header-badge" color="gray" variant="light">{$('浏览全部')}</Badge>
+            <Badge className="template-panel-header-badge" color="gray" variant="light">{$('创建')}</Badge>
           </Group>
         </Group>
-        <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
-        <Tabs defaultValue="public">
-          <Tabs.List>
-            <Tabs.Tab value="public">{$('公共工作流')}</Tabs.Tab>
-            <Tabs.Tab value="server">{$('我的工作流(服务端)')}</Tabs.Tab>
+        <div className="template-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+        <Tabs className="template-panel-tabs" defaultValue="public">
+          <Tabs.List className="template-panel-tab-list">
+            <Tabs.Tab className="template-panel-tab" value="public">{$('公共工作流')}</Tabs.Tab>
+            <Tabs.Tab className="template-panel-tab" value="server">{$('我的工作流(服务端)')}</Tabs.Tab>
           </Tabs.List>
-          <Tabs.Panel value="public" pt="xs">
-            <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
+          <Tabs.Panel className="template-panel-tab-panel" value="public" pt="xs">
+            <SimpleGrid className="template-panel-grid" cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
               {publicTemplates.map((t) => (
-                <Card key={t.title} withBorder radius="md" shadow="sm">
+                <Card className="template-panel-card" key={t.title} withBorder radius="md" shadow="sm">
                   <PlaceholderImage label={t.title} />
-                  <Group justify="space-between" mt="sm">
-                    <Text size="sm">{t.title}</Text>
-                    <Button size="xs" variant="light" onClick={() => { addNode('taskNode', t.title, { kind: 'subflow', autoLabel: false }); setActivePanel(null) }}>使用</Button>
+                  <Group className="template-panel-card-actions" justify="space-between" mt="sm">
+                    <Text className="template-panel-card-title" size="sm">{t.title}</Text>
+                    <Button className="template-panel-card-button" size="xs" variant="light" onClick={() => { addNode('taskNode', t.title, { kind: 'subflow', autoLabel: false }); setActivePanel(null) }}>使用</Button>
                   </Group>
                 </Card>
               ))}
             </SimpleGrid>
           </Tabs.Panel>
-          <Tabs.Panel value="server" pt="xs">
-            {serverFlows === null && (<Text size="xs" c="dimmed">载入中...</Text>)}
-            {serverFlows && serverFlows.length === 0 && (<Text size="xs" c="dimmed">服务端暂无工作流</Text>)}
+          <Tabs.Panel className="template-panel-tab-panel" value="server" pt="xs">
+            {serverFlows === null && (<Text className="template-panel-empty" size="xs" c="dimmed">载入中...</Text>)}
+            {serverFlows && serverFlows.length === 0 && (<Text className="template-panel-empty" size="xs" c="dimmed">服务端暂无工作流</Text>)}
             {serverFlows && (
-              <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
+              <SimpleGrid className="template-panel-grid" cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
                 {serverFlows.map((f) => (
-                  <Card key={f.id} withBorder radius="md" shadow="sm">
+                  <Card className="template-panel-card" key={f.id} withBorder radius="md" shadow="sm">
                     <PlaceholderImage label={f.name} />
-                    <Group justify="space-between" mt="sm">
-                      <Text size="sm">{f.name}</Text>
-                      <Button size="xs" variant="light" onClick={() => { addNode('taskNode', f.name, { kind: 'subflow', subflowRef: f.id, autoLabel: false }); setActivePanel(null) }}>引用</Button>
+                    <Group className="template-panel-card-actions" justify="space-between" mt="sm">
+                      <Text className="template-panel-card-title" size="sm">{f.name}</Text>
+                      <Button className="template-panel-card-button" size="xs" variant="light" onClick={() => { addNode('taskNode', f.name, { kind: 'subflow', subflowRef: f.id, autoLabel: false }); setActivePanel(null) }}>引用</Button>
                     </Group>
                   </Card>
                 ))}

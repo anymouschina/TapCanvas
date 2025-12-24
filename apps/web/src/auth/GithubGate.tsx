@@ -99,7 +99,7 @@ function buildGuideUrl(){
    return `https://ai.feishu.cn/wiki/YZWhw4w2FiO02LkqYosc4NY5nSh`
 }
 
-export default function GithubGate({ children }: { children: React.ReactNode }) {
+export default function GithubGate({ children, className }: { children: React.ReactNode; className?: string }) {
   const token = useAuth(s => s.token)
   const user = useAuth(s => s.user)
   const setAuth = useAuth(s => s.setAuth)
@@ -194,22 +194,24 @@ export default function GithubGate({ children }: { children: React.ReactNode }) 
     window.location.href = buildAuthUrl(state)
   }, [setHasRedirect, githubEnabled])
 
-  if (token) return <>{children}</>
+  const gateClassName = ['github-gate', className].filter(Boolean).join(' ')
+
+  if (token) return <div className={gateClassName}>{children}</div>
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Paper withBorder shadow="md" p="lg" radius="md" style={{ width: 420, textAlign: 'center' }}>
-        <Title order={4} mb="sm">登录 TapCanvas</Title>
-        <Text c="dimmed" size="sm" mb="md">使用 GitHub 账号登录后方可使用</Text>
-        <Stack gap="sm">
-          <Group justify="center" gap="sm">
-            <Button onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
-            <Tooltip label={githubEnabled ? '' : '未配置 VITE_GITHUB_CLIENT_ID，已禁用 GitHub 登录'} disabled={githubEnabled}>
-              <Button onClick={handleGithubLogin} disabled={!githubEnabled}>使用 GitHub 登录</Button>
+    <div className={gateClassName} style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Paper className="github-gate-card" withBorder shadow="md" p="lg" radius="md" style={{ width: 420, textAlign: 'center' }}>
+        <Title className="github-gate-title" order={4} mb="sm">登录 TapCanvas</Title>
+        <Text className="github-gate-subtitle" c="dimmed" size="sm" mb="md">使用 GitHub 账号登录后方可使用</Text>
+        <Stack className="github-gate-actions" gap="sm">
+          <Group className="github-gate-actions-row" justify="center" gap="sm">
+            <Button className="github-gate-guide" onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
+            <Tooltip className="github-gate-github-tooltip" label={githubEnabled ? '' : '未配置 VITE_GITHUB_CLIENT_ID，已禁用 GitHub 登录'} disabled={githubEnabled}>
+              <Button className="github-gate-github" onClick={handleGithubLogin} disabled={!githubEnabled}>使用 GitHub 登录</Button>
             </Tooltip>
           </Group>
-          <Button variant="default" loading={guestLoading} onClick={handleGuestLogin}>游客模式体验</Button>
-          <Text size="xs" c="dimmed">无需 GitHub，系统会自动创建临时账号，数据仅保存在当前浏览器。</Text>
+          <Button className="github-gate-guest" variant="default" loading={guestLoading} onClick={handleGuestLogin}>游客模式体验</Button>
+          <Text className="github-gate-hint" size="xs" c="dimmed">无需 GitHub，系统会自动创建临时账号，数据仅保存在当前浏览器。</Text>
         </Stack>
       </Paper>
     </div>

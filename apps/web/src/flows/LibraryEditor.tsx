@@ -97,23 +97,24 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
   const removePort = (dir: 'inputs'|'outputs', id: string) => setIo((prev)=>({ ...prev, [dir]: prev[dir].filter(p=>p.id !== id) }))
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: '92%', height: '92%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', display: 'grid', gridTemplateColumns: '1fr 320px', border: '1px solid rgba(127,127,127,.25)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Title order={5}>工作流编辑</Title>
-            <Group gap="xs">
-              <Select size="xs" placeholder="选择服务端工作流" data={serverList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById(v)} searchable clearable style={{ width: 260 }} />
-              <Button size="xs" onClick={saveAll}>保存</Button>
-              <Button size="xs" variant="light" onClick={saveAs}>另存为</Button>
-              <Button size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentId)) } catch { setVersions([]) } }}>历史</Button>
-              <Button size="xs" variant="light" color="red" onClick={removeCurrent}>删除</Button>
-              <Button size="xs" variant="light" onClick={()=>{ if (dirty && !confirm('有未保存更改，确定关闭？')) return; onClose() }}>关闭</Button>
+    <div className="tc-library-editor" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="tc-library-editor__panel" style={{ width: '92%', height: '92%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', display: 'grid', gridTemplateColumns: '1fr 320px', border: '1px solid rgba(127,127,127,.25)' }}>
+        <div className="tc-library-editor__main" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="tc-library-editor__header" style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Title className="tc-library-editor__title" order={5}>工作流编辑</Title>
+            <Group className="tc-library-editor__actions" gap="xs">
+              <Select className="tc-library-editor__select" size="xs" placeholder="选择服务端工作流" data={serverList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById(v)} searchable clearable style={{ width: 260 }} />
+              <Button className="tc-library-editor__action" size="xs" onClick={saveAll}>保存</Button>
+              <Button className="tc-library-editor__action" size="xs" variant="light" onClick={saveAs}>另存为</Button>
+              <Button className="tc-library-editor__action" size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentId)) } catch { setVersions([]) } }}>历史</Button>
+              <Button className="tc-library-editor__action" size="xs" variant="light" color="red" onClick={removeCurrent}>删除</Button>
+              <Button className="tc-library-editor__action" size="xs" variant="light" onClick={()=>{ if (dirty && !confirm('有未保存更改，确定关闭？')) return; onClose() }}>关闭</Button>
             </Group>
           </div>
-          <div style={{ height: '100%' }}>
+          <div className="tc-library-editor__canvas" style={{ height: '100%' }}>
             <ReactFlowProvider>
               <ReactFlow
+                className="tc-library-editor__flow"
                 nodes={nodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
@@ -123,51 +124,51 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
                 fitView
                 connectionLineType={ConnectionLineType.SmoothStep}
               >
-                <MiniMap />
-                <Controls position="bottom-left" />
-                <Background gap={16} size={1} color="#2a2f3a" variant="dots" />
+                <MiniMap className="tc-library-editor__minimap" />
+                <Controls className="tc-library-editor__controls" position="bottom-left" />
+                <Background className="tc-library-editor__background" gap={16} size={1} color="#2a2f3a" variant="dots" />
               </ReactFlow>
             </ReactFlowProvider>
           </div>
         </div>
-        <div style={{ borderLeft: '1px solid rgba(127,127,127,.2)', padding: 12, overflow: 'auto' }}>
-          <Title order={6}>配置</Title>
-          <TextInput label="名称" value={name} onChange={(e)=>setName(e.currentTarget.value)} />
-          <Divider my={10} />
-          <Title order={6}>IO 端口</Title>
-          <Text size="xs" c="dimmed">Inputs</Text>
-          {io.inputs.length === 0 && <Text size="xs" c="dimmed">无</Text>}
-          <Stack gap={6}>
+        <div className="tc-library-editor__side" style={{ borderLeft: '1px solid rgba(127,127,127,.2)', padding: 12, overflow: 'auto' }}>
+          <Title className="tc-library-editor__section-title" order={6}>配置</Title>
+          <TextInput className="tc-library-editor__input" label="名称" value={name} onChange={(e)=>setName(e.currentTarget.value)} />
+          <Divider className="tc-library-editor__divider" my={10} />
+          <Title className="tc-library-editor__section-title" order={6}>IO 端口</Title>
+          <Text className="tc-library-editor__section-label" size="xs" c="dimmed">Inputs</Text>
+          {io.inputs.length === 0 && <Text className="tc-library-editor__empty" size="xs" c="dimmed">无</Text>}
+          <Stack className="tc-library-editor__list" gap={6}>
             {io.inputs.map(p => (
-              <Group key={p.id} justify="space-between">
-                <Text size="sm">{p.label} <Text span c="dimmed">({p.type})</Text></Text>
-                <Button size="xs" color="red" variant="subtle" onClick={()=>removePort('inputs', p.id)}>删除</Button>
+              <Group className="tc-library-editor__row" key={p.id} justify="space-between">
+                <Text className="tc-library-editor__row-text" size="sm">{p.label} <Text className="tc-library-editor__row-meta" span c="dimmed">({p.type})</Text></Text>
+                <Button className="tc-library-editor__row-action" size="xs" color="red" variant="subtle" onClick={()=>removePort('inputs', p.id)}>删除</Button>
               </Group>
             ))}
           </Stack>
-          <Button mt={6} variant="subtle" onClick={()=>addPort('inputs')}>+ 添加输入</Button>
+          <Button className="tc-library-editor__add" mt={6} variant="subtle" onClick={()=>addPort('inputs')}>+ 添加输入</Button>
 
-          <Divider my={10} />
-          <Text size="xs" c="dimmed">Outputs</Text>
-          {io.outputs.length === 0 && <Text size="xs" c="dimmed">无</Text>}
-          <Stack gap={6}>
+          <Divider className="tc-library-editor__divider" my={10} />
+          <Text className="tc-library-editor__section-label" size="xs" c="dimmed">Outputs</Text>
+          {io.outputs.length === 0 && <Text className="tc-library-editor__empty" size="xs" c="dimmed">无</Text>}
+          <Stack className="tc-library-editor__list" gap={6}>
             {io.outputs.map(p => (
-              <Group key={p.id} justify="space-between">
-                <Text size="sm">{p.label} <Text span c="dimmed">({p.type})</Text></Text>
-                <Button size="xs" color="red" variant="subtle" onClick={()=>removePort('outputs', p.id)}>删除</Button>
+              <Group className="tc-library-editor__row" key={p.id} justify="space-between">
+                <Text className="tc-library-editor__row-text" size="sm">{p.label} <Text className="tc-library-editor__row-meta" span c="dimmed">({p.type})</Text></Text>
+                <Button className="tc-library-editor__row-action" size="xs" color="red" variant="subtle" onClick={()=>removePort('outputs', p.id)}>删除</Button>
               </Group>
             ))}
           </Stack>
-          <Button mt={6} variant="subtle" onClick={()=>addPort('outputs')}>+ 添加输出</Button>
+          <Button className="tc-library-editor__add" mt={6} variant="subtle" onClick={()=>addPort('outputs')}>+ 添加输出</Button>
         </div>
       </div>
-      <Modal opened={showHistory} onClose={()=>setShowHistory(false)} title="保存历史" size="lg" centered>
-        <Stack>
-          {versions.length === 0 && <Text size="sm" c="dimmed">暂无历史</Text>}
+      <Modal className="tc-library-editor__modal" opened={showHistory} onClose={()=>setShowHistory(false)} title="保存历史" size="lg" centered>
+        <Stack className="tc-library-editor__modal-stack">
+          {versions.length === 0 && <Text className="tc-library-editor__empty" size="sm" c="dimmed">暂无历史</Text>}
           {versions.map(v => (
-            <Group key={v.id} justify="space-between">
-              <Text size="sm">{new Date(v.createdAt).toLocaleString()} - {v.name}</Text>
-              <Button size="xs" variant="light" onClick={async ()=>{
+            <Group className="tc-library-editor__row" key={v.id} justify="space-between">
+              <Text className="tc-library-editor__row-text" size="sm">{new Date(v.createdAt).toLocaleString()} - {v.name}</Text>
+              <Button className="tc-library-editor__row-action" size="xs" variant="light" onClick={async ()=>{
                 if (!confirm('回滚到该版本？当前更改将丢失')) return
                 await rollbackFlow(currentId, v.id)
                 const r = await getServerFlow(currentId)

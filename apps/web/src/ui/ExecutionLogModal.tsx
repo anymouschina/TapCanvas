@@ -28,8 +28,9 @@ export function ExecutionLogModal(props: {
   executionId: string | null
   onClose: () => void
   nodeLabelById?: Record<string, string>
+  className?: string
 }) {
-  const { opened, executionId, onClose, nodeLabelById } = props
+  const { opened, executionId, onClose, nodeLabelById, className } = props
   const [events, setEvents] = React.useState<WorkflowExecutionEventDto[]>([])
   const [nodeRuns, setNodeRuns] = React.useState<WorkflowNodeRunDto[]>([])
   const [statusLine, setStatusLine] = React.useState<string>('connecting')
@@ -198,19 +199,22 @@ export function ExecutionLogModal(props: {
     })
   }, [events, onlyIssues, filterNodeId])
 
+  const modalClassName = ['execution-log-modal', className].filter(Boolean).join(' ')
+
   return (
-    <Modal opened={opened} onClose={onClose} title="运行日志" centered size="lg">
-      <Stack gap="sm">
-        <Group justify="space-between">
-          <Group gap="xs">
-            <Text size="xs" c="dimmed">
+    <Modal className={modalClassName} opened={opened} onClose={onClose} title="运行日志" centered size="lg">
+      <Stack className="execution-log-body" gap="sm">
+        <Group className="execution-log-header" justify="space-between">
+          <Group className="execution-log-meta" gap="xs">
+            <Text className="execution-log-meta-label" size="xs" c="dimmed">
               execution
             </Text>
-            <Text size="xs" fw={600} style={{ wordBreak: 'break-all' }}>
+            <Text className="execution-log-meta-id" size="xs" fw={600} style={{ wordBreak: 'break-all' }}>
               {executionId || '--'}
             </Text>
             {execution?.status && (
               <Badge
+                className="execution-log-status"
                 size="xs"
                 variant="light"
                 color={execution.status === 'failed' ? 'red' : execution.status === 'success' ? 'teal' : execution.status === 'running' ? 'blue' : 'gray'}
@@ -219,44 +223,47 @@ export function ExecutionLogModal(props: {
               </Badge>
             )}
           </Group>
-          <Group gap="xs" wrap="nowrap">
-            <Tooltip label={onlyIssues ? '只看告警/错误（已开启）' : '只看告警/错误'}>
+          <Group className="execution-log-controls" gap="xs" wrap="nowrap">
+            <Tooltip className="execution-log-filter-tooltip" label={onlyIssues ? '只看告警/错误（已开启）' : '只看告警/错误'}>
               <ActionIcon
+                className="execution-log-filter-action"
                 size="sm"
                 variant={onlyIssues ? 'light' : 'subtle'}
                 aria-label="只看告警/错误"
                 onClick={() => setOnlyIssues((v) => !v)}
               >
-                <IconFilter size={14} />
+                <IconFilter className="execution-log-filter-icon" size={14} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label={filterNodeId ? '清除节点筛选' : '未筛选节点'}>
+            <Tooltip className="execution-log-node-filter-tooltip" label={filterNodeId ? '清除节点筛选' : '未筛选节点'}>
               <ActionIcon
+                className="execution-log-node-filter-action"
                 size="sm"
                 variant={filterNodeId ? 'light' : 'subtle'}
                 aria-label="清除节点筛选"
                 disabled={!filterNodeId}
                 onClick={() => setFilterNodeId(null)}
               >
-                <IconX size={14} />
+                <IconX className="execution-log-node-filter-icon" size={14} />
               </ActionIcon>
             </Tooltip>
-            <Badge variant="light">{statusLine}</Badge>
+            <Badge className="execution-log-status-line" variant="light">{statusLine}</Badge>
           </Group>
         </Group>
 
         {!!nodeRuns.length && (
           <>
-            <Group justify="space-between">
-              <Group gap="xs">
-                <Text size="xs" c="dimmed">
+            <Group className="execution-log-summary" justify="space-between">
+              <Group className="execution-log-summary-left" gap="xs">
+                <Text className="execution-log-summary-label" size="xs" c="dimmed">
                   节点执行
                 </Text>
-                <Badge size="xs" variant="light">
+                <Badge className="execution-log-summary-total" size="xs" variant="light">
                   {runsSummary.total}
                 </Badge>
                 {Object.entries(runsSummary.by).map(([k, v]) => (
                   <Badge
+                    className="execution-log-summary-badge"
                     key={k}
                     size="xs"
                     variant="light"
@@ -267,6 +274,7 @@ export function ExecutionLogModal(props: {
                 ))}
               </Group>
               <Button
+                className="execution-log-summary-focus"
                 size="xs"
                 variant="subtle"
                 onClick={() => {
@@ -279,22 +287,23 @@ export function ExecutionLogModal(props: {
               </Button>
             </Group>
 
-            <ScrollArea h={180} offsetScrollbars>
-              <Table striped highlightOnHover stickyHeader verticalSpacing="xs">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th style={{ width: 180 }}>节点</Table.Th>
-                    <Table.Th style={{ width: 110 }}>状态</Table.Th>
-                    <Table.Th>信息</Table.Th>
+            <ScrollArea className="execution-log-runs-scroll" h={180} offsetScrollbars>
+              <Table className="execution-log-runs-table" striped highlightOnHover stickyHeader verticalSpacing="xs">
+                <Table.Thead className="execution-log-runs-head">
+                  <Table.Tr className="execution-log-runs-head-row">
+                    <Table.Th className="execution-log-runs-head-cell" style={{ width: 180 }}>节点</Table.Th>
+                    <Table.Th className="execution-log-runs-head-cell" style={{ width: 110 }}>状态</Table.Th>
+                    <Table.Th className="execution-log-runs-head-cell">信息</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
-                <Table.Tbody>
+                <Table.Tbody className="execution-log-runs-body">
                   {nodeRuns.map((r) => {
                     const label = nodeLabelById?.[r.nodeId]
                     const nodeDisplay = label || `${r.nodeId.slice(0, 8)}…`
                     const color = r.status === 'failed' ? 'red' : r.status === 'success' ? 'teal' : r.status === 'running' ? 'blue' : 'gray'
                     return (
                       <Table.Tr
+                        className="execution-log-runs-row"
                         key={r.id}
                         style={{ cursor: 'pointer' }}
                         onClick={() => {
@@ -302,18 +311,18 @@ export function ExecutionLogModal(props: {
                           focusNode(r.nodeId)
                         }}
                       >
-                        <Table.Td>
-                          <Text size="xs" fw={label ? 600 : 400} title={r.nodeId} style={{ maxWidth: 180 }}>
+                        <Table.Td className="execution-log-runs-cell">
+                          <Text className="execution-log-runs-node" size="xs" fw={label ? 600 : 400} title={r.nodeId} style={{ maxWidth: 180 }}>
                             {nodeDisplay}
                           </Text>
                         </Table.Td>
-                        <Table.Td>
-                          <Badge size="xs" variant="light" color={color as any}>
+                        <Table.Td className="execution-log-runs-cell">
+                          <Badge className="execution-log-runs-status" size="xs" variant="light" color={color as any}>
                             {r.status}
                           </Badge>
                         </Table.Td>
-                        <Table.Td>
-                          <Text size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300 }}>
+                        <Table.Td className="execution-log-runs-cell">
+                          <Text className="execution-log-runs-message" size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300 }}>
                             {r.errorMessage || '—'}
                           </Text>
                         </Table.Td>
@@ -323,24 +332,24 @@ export function ExecutionLogModal(props: {
                 </Table.Tbody>
               </Table>
             </ScrollArea>
-            <Divider />
+            <Divider className="execution-log-divider" />
           </>
         )}
 
-        <ScrollArea h={360} offsetScrollbars>
-          <Table striped highlightOnHover withColumnBorders={false} horizontalSpacing="sm" verticalSpacing="xs" stickyHeader>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th style={{ width: 54 }}>#</Table.Th>
-                <Table.Th style={{ width: 90 }}>时间</Table.Th>
-                <Table.Th style={{ width: 70 }}>级别</Table.Th>
-                <Table.Th style={{ width: 160 }}>节点</Table.Th>
-                <Table.Th style={{ width: 120 }}>事件</Table.Th>
-                <Table.Th>信息</Table.Th>
-                <Table.Th style={{ width: 44 }} />
+        <ScrollArea className="execution-log-events-scroll" h={360} offsetScrollbars>
+          <Table className="execution-log-events-table" striped highlightOnHover withColumnBorders={false} horizontalSpacing="sm" verticalSpacing="xs" stickyHeader>
+            <Table.Thead className="execution-log-events-head">
+              <Table.Tr className="execution-log-events-head-row">
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 54 }}>#</Table.Th>
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 90 }}>时间</Table.Th>
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 70 }}>级别</Table.Th>
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 160 }}>节点</Table.Th>
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 120 }}>事件</Table.Th>
+                <Table.Th className="execution-log-events-head-cell">信息</Table.Th>
+                <Table.Th className="execution-log-events-head-cell" style={{ width: 44 }} />
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody className="execution-log-events-body">
               {visibleEvents.map((e) => {
                 const nodeLabel = e.nodeId ? nodeLabelById?.[e.nodeId] : null
                 const nodeDisplay = nodeLabel || (e.nodeId ? `${e.nodeId.slice(0, 8)}…` : '--')
@@ -356,6 +365,7 @@ export function ExecutionLogModal(props: {
                   .join(' · ')
                 return (
                   <Table.Tr
+                    className="execution-log-events-row"
                     key={`${e.seq}-${e.id}`}
                     style={{ cursor: e.nodeId ? 'pointer' : undefined }}
                     onClick={() => {
@@ -364,37 +374,38 @@ export function ExecutionLogModal(props: {
                       focusNode(e.nodeId)
                     }}
                   >
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
+                    <Table.Td className="execution-log-events-cell">
+                      <Text className="execution-log-events-seq" size="xs" c="dimmed">
                         {e.seq}
                       </Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
+                    <Table.Td className="execution-log-events-cell">
+                      <Text className="execution-log-events-time" size="xs" c="dimmed">
                         {formatTime(e.createdAt)}
                       </Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Badge size="xs" variant="light" color={levelColor}>
+                    <Table.Td className="execution-log-events-cell">
+                      <Badge className="execution-log-events-level" size="xs" variant="light" color={levelColor}>
                         {e.level}
                       </Badge>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" fw={nodeLabel ? 600 : 400} title={e.nodeId || undefined} style={{ maxWidth: 160 }}>
+                    <Table.Td className="execution-log-events-cell">
+                      <Text className="execution-log-events-node" size="xs" fw={nodeLabel ? 600 : 400} title={e.nodeId || undefined} style={{ maxWidth: 160 }}>
                         {nodeDisplay}
                       </Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="xs">{e.eventType}</Text>
+                    <Table.Td className="execution-log-events-cell">
+                      <Text className="execution-log-events-type" size="xs">{e.eventType}</Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                    <Table.Td className="execution-log-events-cell">
+                      <Text className="execution-log-events-message" size="xs" style={{ whiteSpace: 'pre-wrap' }}>
                         {e.message || ''}
                       </Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Tooltip label="复制">
+                    <Table.Td className="execution-log-events-cell">
+                      <Tooltip className="execution-log-events-copy-tooltip" label="复制">
                         <ActionIcon
+                          className="execution-log-events-copy-action"
                           size="sm"
                           variant="subtle"
                           aria-label="复制日志"
@@ -403,7 +414,7 @@ export function ExecutionLogModal(props: {
                             void writeClipboard(clip)
                           }}
                         >
-                          <IconCopy size={14} />
+                          <IconCopy className="execution-log-events-copy-icon" size={14} />
                         </ActionIcon>
                       </Tooltip>
                     </Table.Td>
@@ -411,9 +422,9 @@ export function ExecutionLogModal(props: {
                 )
               })}
               {!visibleEvents.length && (
-                <Table.Tr>
-                  <Table.Td colSpan={7}>
-                    <Text size="xs" c="dimmed" p="xs">
+                <Table.Tr className="execution-log-events-empty-row">
+                  <Table.Td className="execution-log-events-empty-cell" colSpan={7}>
+                    <Text className="execution-log-events-empty-text" size="xs" c="dimmed" p="xs">
                       暂无事件
                     </Text>
                   </Table.Td>
@@ -423,8 +434,8 @@ export function ExecutionLogModal(props: {
           </Table>
         </ScrollArea>
 
-        <Group justify="flex-end">
-          <Button variant="subtle" onClick={onClose}>
+        <Group className="execution-log-footer" justify="flex-end">
+          <Button className="execution-log-close" variant="subtle" onClick={onClose}>
             关闭
           </Button>
         </Group>

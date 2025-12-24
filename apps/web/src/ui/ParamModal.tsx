@@ -36,22 +36,23 @@ export default function ParamModal(): JSX.Element {
   }
 
   return (
-    <Modal opened={!!nodeId} onClose={close} title="参数" centered>
-      {!n && <div>节点不存在</div>}
+    <Modal className="param-modal" opened={!!nodeId} onClose={close} title="参数" centered>
+      {!n && <div className="param-modal-empty">节点不存在</div>}
       {n && (
-        <div>
-                                                                    {(kind === 'composeVideo' || kind === 'storyboard') && (
+        <div className="param-modal-body">
+          {(kind === 'composeVideo' || kind === 'storyboard') && (
             <>
-              <Textarea label="分镜/脚本" autosize minRows={4} value={form.storyboard||''} onChange={(e)=>setField('storyboard', e.currentTarget.value)} />
-              <Group grow mt={8}>
-                <NumberInput label="Duration(s)" min={1} max={600} value={form.duration||30} onChange={(v)=>setField('duration', Number(v)||30)} />
-                <NumberInput label="FPS" min={1} max={60} value={form.fps||24} onChange={(v)=>setField('fps', Number(v)||24)} />
+              <Textarea className="param-modal-field" label="分镜/脚本" autosize minRows={4} value={form.storyboard||''} onChange={(e)=>setField('storyboard', e.currentTarget.value)} />
+              <Group className="param-modal-row" grow mt={8}>
+                <NumberInput className="param-modal-field" label="Duration(s)" min={1} max={600} value={form.duration||30} onChange={(v)=>setField('duration', Number(v)||30)} />
+                <NumberInput className="param-modal-field" label="FPS" min={1} max={60} value={form.fps||24} onChange={(v)=>setField('fps', Number(v)||24)} />
               </Group>
             </>
           )}
           {(kind === 'composeVideo' || kind === 'storyboard' || kind === 'image' || kind === 'textToImage') && (
             <>
               <Textarea
+                className="param-modal-field"
                 label="Prompt"
                 autosize
                 minRows={4}
@@ -63,21 +64,21 @@ export default function ParamModal(): JSX.Element {
           )}
           {kind === 'subtitleAlign' && (
             <>
-              <TextInput label="音频 URL" value={form.audioUrl||''} onChange={(e)=>setField('audioUrl', e.currentTarget.value)} />
-              <Textarea mt={8} label="字幕文本" autosize minRows={4} value={form.transcript||''} onChange={(e)=>setField('transcript', e.currentTarget.value)} />
+              <TextInput className="param-modal-field" label="音频 URL" value={form.audioUrl||''} onChange={(e)=>setField('audioUrl', e.currentTarget.value)} />
+              <Textarea className="param-modal-field" mt={8} label="字幕文本" autosize minRows={4} value={form.transcript||''} onChange={(e)=>setField('transcript', e.currentTarget.value)} />
             </>
           )}
-          <Group justify="space-between" mt={12}>
-            <Group gap="xs">
-              <Tooltip label="发给小T" withArrow>
-                <ActionIcon variant="light" disabled={viewOnly} aria-label="发给小T" onClick={() => sendToLittleT()}>
-                  <IconSparkles size={18} />
+          <Group className="param-modal-footer" justify="space-between" mt={12}>
+            <Group className="param-modal-footer-left" gap="xs">
+              <Tooltip className="param-modal-sparkle-tooltip" label="发给小T" withArrow>
+                <ActionIcon className="param-modal-sparkle" variant="light" disabled={viewOnly} aria-label="发给小T" onClick={() => sendToLittleT()}>
+                  <IconSparkles className="param-modal-sparkle-icon" size={18} />
                 </ActionIcon>
               </Tooltip>
             </Group>
-            <Group gap="xs">
-              <Button variant="subtle" onClick={close}>取消</Button>
-              <Button onClick={saveRun}>保存并执行</Button>
+            <Group className="param-modal-footer-actions" gap="xs">
+              <Button className="param-modal-cancel" variant="subtle" onClick={close}>取消</Button>
+              <Button className="param-modal-save" onClick={saveRun}>保存并执行</Button>
             </Group>
           </Group>
         </div>

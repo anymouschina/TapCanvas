@@ -17,6 +17,7 @@ export function VideoRealismTips({ onInsertSnippet }: VideoRealismTipsProps) {
 
   return (
     <Paper
+      className="video-realism-tips"
       shadow="sm"
       radius="md"
       withBorder
@@ -26,26 +27,31 @@ export function VideoRealismTips({ onInsertSnippet }: VideoRealismTipsProps) {
         borderColor: isDark ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.4)',
       }}
     >
-      <Group justify="space-between" mb="xs" align="center">
-        <div>
-          <Text fw={600} size="sm">
+      <Group className="video-realism-tips__header" justify="space-between" mb="xs" align="center">
+        <div className="video-realism-tips__title">
+          <Text className="video-realism-tips__title-text" fw={600} size="sm">
             AI 视频真实感九大法则
           </Text>
-          <Text size="xs" c="dimmed">
+          <Text className="video-realism-tips__subtitle" size="xs" c="dimmed">
             直接应用到 composeVideo / Storyboard 提示词中，维持统一的光影与镜头语言。
           </Text>
         </div>
-        <Group gap={6}>
-          <Button size="xs" variant="light" onClick={handleInsert}>
+        <Group className="video-realism-tips__actions" gap={6}>
+          <Button className="video-realism-tips__insert" size="xs" variant="light" onClick={handleInsert}>
             注入模板
           </Button>
-          <CopyButton value={VIDEO_REALISM_PROMPT_SNIPPET} timeout={1800}>
+          <CopyButton className="video-realism-tips__copy" value={VIDEO_REALISM_PROMPT_SNIPPET} timeout={1800}>
             {({ copied, copy }) => (
-              <Tooltip label={copied ? '已复制' : '复制英文模板'} withArrow>
+              <Tooltip className="video-realism-tips__tooltip" label={copied ? '已复制' : '复制英文模板'} withArrow>
                 <Button
+                  className="video-realism-tips__copy-button"
                   size="xs"
                   variant="subtle"
-                  leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                  leftSection={
+                    copied
+                      ? <IconCheck className="video-realism-tips__copy-icon" size={14} />
+                      : <IconCopy className="video-realism-tips__copy-icon" size={14} />
+                  }
                   onClick={copy}
                 >
                   {copied ? '已复制' : '复制'}
@@ -55,13 +61,13 @@ export function VideoRealismTips({ onInsertSnippet }: VideoRealismTipsProps) {
           </CopyButton>
         </Group>
       </Group>
-      <Stack gap={6}>
+      <Stack className="video-realism-tips__list" gap={6}>
         {VIDEO_REALISM_RULES.map(rule => (
-          <Group key={rule.id} align="flex-start" gap={8}>
-            <Badge radius="sm" variant="light" color="blue" size="xs" style={{ flexShrink: 0 }}>
+          <Group className="video-realism-tips__item" key={rule.id} align="flex-start" gap={8}>
+            <Badge className="video-realism-tips__badge" radius="sm" variant="light" color="blue" size="xs" style={{ flexShrink: 0 }}>
               {rule.title}
             </Badge>
-            <Text size="xs" c="dimmed" style={{ lineHeight: 1.4 }}>
+            <Text className="video-realism-tips__summary" size="xs" c="dimmed" style={{ lineHeight: 1.4 }}>
               {rule.summary}
             </Text>
           </Group>

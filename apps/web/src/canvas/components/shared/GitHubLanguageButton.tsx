@@ -53,6 +53,7 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
     <div className={`github-language-button ${className}`} style={{ position: 'relative', display: 'inline-block' }}>
       {/* 主按钮 */}
       <button
+        className="github-language-button__trigger"
         style={{
           ...buttonStyle,
           ...(isHovered ? hoverStyle : {}),
@@ -61,9 +62,10 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <span style={{ fontSize: '14px' }}>🌐</span>
-        <span>{isZh ? '中文' : 'EN'}</span>
+        <span className="github-language-button__icon" style={{ fontSize: '14px' }}>🌐</span>
+        <span className="github-language-button__label">{isZh ? '中文' : 'EN'}</span>
         <svg
+          className="github-language-button__caret"
           width="12"
           height="12"
           viewBox="0 0 12 12"
@@ -73,7 +75,7 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
             transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
           }}
         >
-          <path d="M6 9L2 5l4-4 4 4-4 4z" />
+          <path className="github-language-button__caret-path" d="M6 9L2 5l4-4 4 4-4 4z" />
         </svg>
       </button>
 
@@ -82,6 +84,7 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
         <>
           {/* 遮罩层 */}
           <div
+            className="github-language-button__overlay"
             style={{
               position: 'fixed',
               top: 0,
@@ -95,6 +98,7 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
 
           {/* 菜单内容 */}
           <div
+            className="github-language-button__menu"
             style={{
               position: 'absolute',
               top: '100%',
@@ -110,6 +114,7 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
             }}
           >
             <button
+              className="github-language-button__menu-item"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -126,24 +131,26 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
               }}
               onClick={() => handleLanguageChange('zh')}
             >
-              <span>🇨🇳</span>
-              <span>简体中文</span>
+              <span className="github-language-button__menu-flag">🇨🇳</span>
+              <span className="github-language-button__menu-label">简体中文</span>
               {isZh && (
                 <svg
+                  className="github-language-button__menu-check"
                   width="12"
                   height="12"
                   viewBox="0 0 12 12"
                   fill="currentColor"
                   style={{ marginLeft: 'auto' }}
                 >
-                  <path d="M9.5 3L4.5 8L2.5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  <path className="github-language-button__menu-check-path" d="M9.5 3L4.5 8L2.5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
                 </svg>
               )}
             </button>
 
-            <div style={{ height: '1px', backgroundColor: '#d0d7de' }} />
+            <div className="github-language-button__menu-divider" style={{ height: '1px', backgroundColor: '#d0d7de' }} />
 
             <button
+              className="github-language-button__menu-item"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -160,24 +167,25 @@ export const GitHubLanguageButton: React.FC<GitHubLanguageButtonProps> = ({
               }}
               onClick={() => handleLanguageChange('en')}
             >
-              <span>🇺🇸</span>
-              <span>English</span>
+              <span className="github-language-button__menu-flag">🇺🇸</span>
+              <span className="github-language-button__menu-label">English</span>
               {isEn && (
                 <svg
+                  className="github-language-button__menu-check"
                   width="12"
                   height="12"
                   viewBox="0 0 12 12"
                   fill="currentColor"
                   style={{ marginLeft: 'auto' }}
                 >
-                  <path d="M9.5 3L4.5 8L2.5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  <path className="github-language-button__menu-check-path" d="M9.5 3L4.5 8L2.5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
                 </svg>
               )}
             </button>
 
-            <div style={{ height: '1px', backgroundColor: '#d0d7de' }} />
+            <div className="github-language-button__menu-divider" style={{ height: '1px', backgroundColor: '#d0d7de' }} />
 
-            <div style={{
+            <div className="github-language-button__menu-footer" style={{
               padding: '8px 12px',
               fontSize: '11px',
               color: '#656d76',
@@ -228,13 +236,14 @@ export const SimpleGitHubLanguageButton: React.FC<
 
   return (
     <button
+      className="github-language-button__simple"
       style={buttonStyle}
       onClick={toggleLanguage}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <span style={{ fontSize: '13px' }}>🌐</span>
-      <span>{currentLanguage === 'zh' ? '中文' : 'EN'}</span>
+      <span className="github-language-button__simple-icon" style={{ fontSize: '13px' }}>🌐</span>
+      <span className="github-language-button__simple-label">{currentLanguage === 'zh' ? '中文' : 'EN'}</span>
     </button>
   );
 };
@@ -269,11 +278,12 @@ export const CompactGitHubLanguageButton: React.FC<{
 
   return (
     <button
+      className="github-language-button__compact"
       style={buttonStyle}
       onClick={toggleLanguage}
       title={currentLanguage === 'zh' ? '切换到英文' : 'Switch to Chinese'}
     >
-      <span>{currentLanguage === 'zh' ? '中文' : 'EN'}</span>
+      <span className="github-language-button__compact-label">{currentLanguage === 'zh' ? '中文' : 'EN'}</span>
     </button>
   );
 };
@@ -282,6 +292,7 @@ export const CompactGitHubLanguageButton: React.FC<{
 export const FixedGitHubLanguageButton: React.FC = () => {
   return (
     <div
+      className="github-language-button__fixed"
       style={{
         position: 'fixed',
         top: '16px',

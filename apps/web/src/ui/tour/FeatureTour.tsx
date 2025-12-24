@@ -80,8 +80,9 @@ export function FeatureTour(props: {
   opened: boolean
   steps: FeatureTourStep[]
   onClose: () => void
+  className?: string
 }) {
-  const { opened, steps, onClose } = props
+  const { opened, steps, onClose, className } = props
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [highlight, setHighlight] = React.useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const tooltipRef = React.useRef<HTMLDivElement | null>(null)
@@ -170,11 +171,14 @@ export function FeatureTour(props: {
   const isFirst = activeIndex === 0
   const isLast = activeIndex === steps.length - 1
 
+  const tourClassName = ['feature-tour', className].filter(Boolean).join(' ')
+
   return (
-    <Portal>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 5000 }}>
+    <Portal className="feature-tour-portal">
+      <div className={tourClassName} style={{ position: 'fixed', inset: 0, zIndex: 5000 }}>
         {/* Block interactions */}
         <div
+          className="feature-tour-backdrop"
           style={{ position: 'absolute', inset: 0, background: highlight ? 'transparent' : 'rgba(0,0,0,0.55)' }}
           onClick={onClose}
         />
@@ -182,6 +186,7 @@ export function FeatureTour(props: {
         {/* Highlight with "hole" via huge shadow */}
         {highlight && (
           <div
+            className="feature-tour-highlight"
             style={{
               position: 'absolute',
               left: highlight.left,
@@ -198,6 +203,7 @@ export function FeatureTour(props: {
         )}
 
         <div
+          className="feature-tour-tooltip-wrap"
           ref={tooltipRef}
           style={{
             position: 'absolute',
@@ -207,30 +213,31 @@ export function FeatureTour(props: {
             width: 360,
           }}
         >
-          <Paper withBorder shadow="xl" radius="lg" p="md" className="glass" style={{ pointerEvents: 'auto' }}>
-            <Group justify="space-between" align="flex-start" gap="sm" mb={6}>
-              <div style={{ minWidth: 0 }}>
-                <Title order={6} style={{ lineHeight: 1.2 }}>
+          <Paper className="feature-tour-card glass" withBorder shadow="xl" radius="lg" p="md" style={{ pointerEvents: 'auto' }}>
+            <Group className="feature-tour-card-header" justify="space-between" align="flex-start" gap="sm" mb={6}>
+              <div className="feature-tour-card-title" style={{ minWidth: 0 }}>
+                <Title className="feature-tour-title" order={6} style={{ lineHeight: 1.2 }}>
                   {step.title}
                 </Title>
-                <Text size="xs" c="dimmed">
+                <Text className="feature-tour-step" size="xs" c="dimmed">
                   {activeIndex + 1} / {steps.length}
                 </Text>
               </div>
-              <Button size="xs" variant="subtle" onClick={onClose}>
+              <Button className="feature-tour-skip" size="xs" variant="subtle" onClick={onClose}>
                 {$('跳过')}
               </Button>
             </Group>
 
-            <Text size="sm" style={{ lineHeight: 1.55 }}>
+            <Text className="feature-tour-description" size="sm" style={{ lineHeight: 1.55 }}>
               {step.description}
             </Text>
 
-            <Group justify="space-between" mt="md">
-              <Button size="xs" variant="default" disabled={isFirst} onClick={() => setActiveIndex((i) => Math.max(0, i - 1))}>
+            <Group className="feature-tour-footer" justify="space-between" mt="md">
+              <Button className="feature-tour-prev" size="xs" variant="default" disabled={isFirst} onClick={() => setActiveIndex((i) => Math.max(0, i - 1))}>
                 {$('上一个')}
               </Button>
               <Button
+                className="feature-tour-next"
                 size="xs"
                 onClick={() => {
                   if (isLast) onClose()
@@ -246,4 +253,3 @@ export function FeatureTour(props: {
     </Portal>
   )
 }
-

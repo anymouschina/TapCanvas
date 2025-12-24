@@ -49,6 +49,7 @@ export function VeoImageModal({
 }: VeoImageModalProps) {
   return (
     <Modal
+      className="veo-image-modal"
       opened={opened}
       onClose={onClose}
       title={
@@ -63,16 +64,17 @@ export function VeoImageModal({
       withinPortal
       zIndex={8200}
     >
-      <Stack gap="sm">
+      <Stack className="veo-image-modal-body" gap="sm">
         {mode === 'reference' && (
           <>
             {firstFrameLocked && (
-              <Text size="xs" c="red">
+              <Text className="veo-image-modal-warning" size="xs" c="red">
                 已设置首帧时无法添加或选择参考图。请先清空首帧 URL。
               </Text>
             )}
-            <Group gap="xs" align="flex-end">
+            <Group className="veo-image-modal-input-row" gap="xs" align="flex-end">
               <TextInput
+                className="veo-image-modal-input"
                 label="添加参考图"
                 placeholder="https://example.com/ref.png"
                 value={veoCustomImageInput}
@@ -81,6 +83,7 @@ export function VeoImageModal({
                 disabled={firstFrameLocked}
               />
               <Button
+                className="veo-image-modal-add"
                 size="xs"
                 onClick={onAddCustomReferenceImage}
                 disabled={firstFrameLocked || !veoCustomImageInput.trim() || veoReferenceLimitReached}
@@ -89,14 +92,15 @@ export function VeoImageModal({
               </Button>
             </Group>
             {veoReferenceImages.length === 0 ? (
-              <Text size="xs" c="dimmed">
+              <Text className="veo-image-modal-empty" size="xs" c="dimmed">
                 未选择参考图。
               </Text>
             ) : (
-              <Group gap={6} wrap="wrap">
+              <Group className="veo-image-modal-reference-list" gap={6} wrap="wrap">
                 {veoReferenceImages.map((url) => (
-                  <Paper key={url} radius="md" p="xs" withBorder style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Paper className="veo-image-modal-reference-card" key={url} radius="md" p="xs" withBorder style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div
+                      className="veo-image-modal-reference-thumb"
                       style={{
                         width: 48,
                         height: 48,
@@ -106,10 +110,10 @@ export function VeoImageModal({
                         background: mediaFallbackSurface,
                       }}
                     >
-                      <img src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img className="veo-image-modal-reference-img" src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    <ActionIcon size="xs" variant="subtle" onClick={() => onRemoveReferenceImage(url)}>
-                      <IconTrash size={12} />
+                    <ActionIcon className="veo-image-modal-reference-remove" size="xs" variant="subtle" onClick={() => onRemoveReferenceImage(url)}>
+                      <IconTrash className="veo-image-modal-reference-remove-icon" size={12} />
                     </ActionIcon>
                   </Paper>
                 ))}
@@ -118,11 +122,12 @@ export function VeoImageModal({
           </>
         )}
         {veoCandidateImages.length === 0 ? (
-          <Text size="sm" c="dimmed">
+          <Text className="veo-image-modal-candidate-empty" size="sm" c="dimmed">
             暂无可用图片，试着连接图像节点。
           </Text>
         ) : (
           <div
+            className="veo-image-modal-candidate-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
@@ -136,8 +141,9 @@ export function VeoImageModal({
               const isImageSource = candidate.sourceType === 'image'
               const borderColor = isFirstFrame || isLastFrame || isSelected ? statusColor : inlineDividerColor
               return (
-                <Paper key={`${candidate.url}-${candidate.label}`} radius="md" p="xs" withBorder style={{ borderColor }}>
+                <Paper className="veo-image-modal-candidate-card" key={`${candidate.url}-${candidate.label}`} radius="md" p="xs" withBorder style={{ borderColor }}>
                   <div
+                    className="veo-image-modal-candidate-thumb"
                     style={{
                       borderRadius: 6,
                       overflow: 'hidden',
@@ -146,14 +152,15 @@ export function VeoImageModal({
                       background: mediaFallbackSurface,
                     }}
                   >
-                    <img src={candidate.url} alt={candidate.label} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
+                    <img className="veo-image-modal-candidate-img" src={candidate.url} alt={candidate.label} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
                   </div>
-                  <Text size="xs" c="dimmed" lineClamp={1}>
+                  <Text className="veo-image-modal-candidate-label" size="xs" c="dimmed" lineClamp={1}>
                     {candidate.label}
                   </Text>
-                  <Group gap={4} mt={6} wrap="wrap">
+                  <Group className="veo-image-modal-candidate-actions" gap={4} mt={6} wrap="wrap">
                     {mode === 'first' && (
                       <Button
+                        className="veo-image-modal-candidate-action"
                         size="compact-xs"
                         variant="subtle"
                         disabled={!isImageSource}
@@ -167,6 +174,7 @@ export function VeoImageModal({
                     )}
                     {mode === 'last' && (
                       <Button
+                        className="veo-image-modal-candidate-action"
                         size="compact-xs"
                         variant="subtle"
                         disabled={!firstFrameLocked || !isImageSource}
@@ -180,6 +188,7 @@ export function VeoImageModal({
                     )}
                     {mode === 'reference' && (
                       <Button
+                        className="veo-image-modal-candidate-action"
                         size="compact-xs"
                         variant={isSelected ? 'filled' : 'subtle'}
                         disabled={firstFrameLocked || (!isSelected && veoReferenceLimitReached)}
@@ -195,12 +204,12 @@ export function VeoImageModal({
           </div>
         )}
         {mode === 'first' && trimmedFirstFrameUrl && (
-          <Button variant="subtle" size="xs" onClick={() => onSetFirstFrameUrl('')}>
+          <Button className="veo-image-modal-clear" variant="subtle" size="xs" onClick={() => onSetFirstFrameUrl('')}>
             清除首帧
           </Button>
         )}
         {mode === 'last' && trimmedLastFrameUrl && (
-          <Button variant="subtle" size="xs" onClick={() => onSetLastFrameUrl('')} disabled={!firstFrameLocked}>
+          <Button className="veo-image-modal-clear" variant="subtle" size="xs" onClick={() => onSetLastFrameUrl('')} disabled={!firstFrameLocked}>
             清除尾帧
           </Button>
         )}

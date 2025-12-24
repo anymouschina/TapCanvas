@@ -38,6 +38,7 @@ export function VideoResultModal({
 }: VideoResultModalProps) {
   return (
     <Modal
+      className="video-result-modal"
       opened={opened}
       onClose={onClose}
       title={videos.length > 0 ? title : '视频历史记录'}
@@ -46,23 +47,24 @@ export function VideoResultModal({
       withinPortal
       zIndex={300}
     >
-      <Stack gap="sm">
+      <Stack className="video-result-modal-body" gap="sm">
         {videos.length === 0 ? (
           (() => {
             const VideoHistoryIcon = isStoryboardNode ? IconMovie : IconVideo
             return (
               <div
+                className="video-result-modal-empty"
                 style={{
                   padding: '40px 20px',
                   textAlign: 'center',
                   color: mediaFallbackText,
                 }}
               >
-                <VideoHistoryIcon size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                <Text size="sm" c="dimmed">
+                <VideoHistoryIcon className="video-result-modal-empty-icon" size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
+                <Text className="video-result-modal-empty-title" size="sm" c="dimmed">
                   暂无视频生成历史
                 </Text>
-                <Text size="xs" c="dimmed" mt={4}>
+                <Text className="video-result-modal-empty-desc" size="xs" c="dimmed" mt={4}>
                   生成视频后，这里将显示所有历史记录，你可以选择效果最好的作为主视频
                 </Text>
               </div>
@@ -70,16 +72,18 @@ export function VideoResultModal({
           })()
         ) : (
           <>
-            <Text size="xs" c="dimmed">
+            <Text className="video-result-modal-hint" size="xs" c="dimmed">
               当前共有 {videos.length} 个视频。点击「设为主视频」可更新本节点主视频，点击「全屏预览」可放大查看。
             </Text>
             <div
+              className="video-result-modal-scroll"
               style={{
                 maxHeight: '60vh',
                 overflowY: 'auto',
               }}
             >
               <div
+                className="video-result-modal-grid"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
@@ -90,6 +94,7 @@ export function VideoResultModal({
                   const isPrimary = idx === primaryIndex
                   return (
                     <Paper
+                      className="video-result-modal-card"
                       key={`${idx}-${video.url}`}
                       radius="md"
                       p="xs"
@@ -98,6 +103,7 @@ export function VideoResultModal({
                       }}
                     >
                       <div
+                        className="video-result-modal-thumb"
                         style={{
                           borderRadius: 8,
                           overflow: 'hidden',
@@ -108,6 +114,7 @@ export function VideoResultModal({
                         }}
                       >
                         <video
+                          className="video-result-modal-video"
                           src={video.url}
                           poster={video.thumbnailUrl || undefined}
                           muted
@@ -129,6 +136,7 @@ export function VideoResultModal({
                         />
                         {video.duration && (
                           <div
+                            className="video-result-modal-duration"
                             style={{
                               position: 'absolute',
                               bottom: 4,
@@ -144,12 +152,13 @@ export function VideoResultModal({
                           </div>
                         )}
                       </div>
-                      <Group justify="space-between">
-                        <Text size="xs" c="dimmed">
+                      <Group className="video-result-modal-actions" justify="space-between">
+                        <Text className="video-result-modal-label" size="xs" c="dimmed">
                           {isPrimary ? `主视频 · 第 ${idx + 1} 个` : `第 ${idx + 1} 个`}
                         </Text>
-                        <Group gap={4}>
+                        <Group className="video-result-modal-buttons" gap={4}>
                           <Button
+                            className="video-result-modal-preview"
                             size="xs"
                             variant="subtle"
                             onClick={() => onPreview(video)}
@@ -158,6 +167,7 @@ export function VideoResultModal({
                           </Button>
                           {!isPrimary && (
                             <Button
+                              className="video-result-modal-set-primary"
                               size="xs"
                               variant="subtle"
                               onClick={() => {

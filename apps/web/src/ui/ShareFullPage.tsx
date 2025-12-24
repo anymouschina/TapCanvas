@@ -184,44 +184,45 @@ export default function ShareFullPage(): JSX.Element {
 
   if (!projectId) {
     return (
-      <Container size="md" py={40}>
-        <Stack gap="md">
-          <Group justify="space-between">
-            <Title order={3}>TapCanvas 分享</Title>
-            <Button variant="subtle" component="a" href="/">
+      <Container className="tc-share" size="md" py={40}>
+        <Stack className="tc-share__stack" gap="md">
+          <Group className="tc-share__header" justify="space-between">
+            <Title className="tc-share__title" order={3}>TapCanvas 分享</Title>
+            <Button className="tc-share__action" variant="subtle" component="a" href="/">
               返回
             </Button>
           </Group>
-          <Text size="sm" c="dimmed">
+          <Text className="tc-share__desc" size="sm" c="dimmed">
             这是只读分享页：只能观看创作过程，不能编辑画布，也不能发送消息。
           </Text>
-          <Group justify="space-between" align="center">
-            <Title order={5}>公开项目</Title>
-            <ActionIcon variant="light" onClick={() => reload()} loading={refreshing || loading} aria-label="刷新">
-              <IconRefresh size={16} />
+          <Group className="tc-share__section-header" justify="space-between" align="center">
+            <Title className="tc-share__section-title" order={5}>公开项目</Title>
+            <ActionIcon className="tc-share__icon-button" variant="light" onClick={() => reload()} loading={refreshing || loading} aria-label="刷新">
+              <IconRefresh className="tc-share__icon" size={16} />
             </ActionIcon>
           </Group>
           {loading ? (
-            <Center py="lg">
-              <Group gap="xs">
-                <Loader size="sm" />
-                <Text size="sm" c="dimmed">加载中…</Text>
+            <Center className="tc-share__center" py="lg">
+              <Group className="tc-share__loading" gap="xs">
+                <Loader className="tc-share__loader" size="sm" />
+                <Text className="tc-share__loading-text" size="sm" c="dimmed">加载中…</Text>
               </Group>
             </Center>
           ) : publicProjects.length === 0 ? (
-            <Text size="sm" c="dimmed">暂无公开项目</Text>
+            <Text className="tc-share__empty" size="sm" c="dimmed">暂无公开项目</Text>
           ) : (
-            <Stack gap={8}>
+            <Stack className="tc-share__list" gap={8}>
               {publicProjects.map((p) => (
                 <Button
+                  className="tc-share__list-item"
                   key={p.id}
                   variant="light"
                   component="a"
                   href={buildShareUrl(p.id, null)}
                   styles={{ inner: { justifyContent: 'space-between' } }}
                 >
-                  <span>{p.name}</span>
-                  <Badge variant="outline" color="green">公开</Badge>
+                  <span className="tc-share__list-name">{p.name}</span>
+                  <Badge className="tc-share__list-badge" variant="outline" color="green">公开</Badge>
                 </Button>
               ))}
             </Stack>
@@ -257,8 +258,9 @@ export default function ShareFullPage(): JSX.Element {
   }, [selectedFlow])
 
   return (
-    <Box className="tapcanvas-viewonly" style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}>
+    <Box className="tapcanvas-viewonly tc-share" style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}>
       <Box
+        className="tc-share__topbar"
         style={{
           flex: '0 0 auto',
           padding: 12,
@@ -267,29 +269,30 @@ export default function ShareFullPage(): JSX.Element {
           backdropFilter: 'blur(8px)',
         }}
       >
-        <Group justify="space-between" align="center" gap="sm">
-          <Group gap="sm" align="center">
-            <Tooltip label="返回主页" withArrow>
-              <ActionIcon variant="subtle" component="a" href="/" aria-label="返回">
-                <IconArrowLeft size={18} />
+        <Group className="tc-share__topbar-row" justify="space-between" align="center" gap="sm">
+          <Group className="tc-share__topbar-left" gap="sm" align="center">
+            <Tooltip className="tc-share__tooltip" label="返回主页" withArrow>
+              <ActionIcon className="tc-share__icon-button" variant="subtle" component="a" href="/" aria-label="返回">
+                <IconArrowLeft className="tc-share__icon" size={18} />
               </ActionIcon>
             </Tooltip>
-            <Stack gap={0}>
-              <Group gap={8} align="center">
-                <Title order={5}>TapCanvas 分享</Title>
-                <Badge variant="light" color="gray">只读</Badge>
+            <Stack className="tc-share__topbar-title" gap={0}>
+              <Group className="tc-share__topbar-title-row" gap={8} align="center">
+                <Title className="tc-share__title" order={5}>TapCanvas 分享</Title>
+                <Badge className="tc-share__badge" variant="light" color="gray">只读</Badge>
                 {project?.ownerName && (
-                  <Badge variant="outline" color="blue">{project.ownerName}</Badge>
+                  <Badge className="tc-share__badge" variant="outline" color="blue">{project.ownerName}</Badge>
                 )}
               </Group>
-              <Text size="xs" c="dimmed">
+              <Text className="tc-share__desc" size="xs" c="dimmed">
                 只能观看创作过程，不能编辑画布，也不能发送消息。
               </Text>
             </Stack>
           </Group>
 
-          <Group gap="xs" align="center">
+          <Group className="tc-share__topbar-actions" gap="xs" align="center">
             <Select
+              className="tc-share__select"
               size="xs"
               value={selectedFlowId}
               onChange={(v) => setSelectedFlowId(v)}
@@ -298,8 +301,9 @@ export default function ShareFullPage(): JSX.Element {
               w={220}
               disabled={loading || !flowOptions.length}
             />
-            <Tooltip label="复制到我的项目" withArrow>
+            <Tooltip className="tc-share__tooltip" label="复制到我的项目" withArrow>
               <Button
+                className="tc-share__action"
                 size="xs"
                 variant="light"
                 leftSection={<IconCopyPlus size={14} />}
@@ -310,76 +314,78 @@ export default function ShareFullPage(): JSX.Element {
                 复制项目
               </Button>
             </Tooltip>
-            <Tooltip label="查看提示词" withArrow>
+            <Tooltip className="tc-share__tooltip" label="查看提示词" withArrow>
               <ActionIcon
+                className="tc-share__icon-button"
                 variant="light"
                 onClick={() => setPromptModalOpen(true)}
                 aria-label="查看提示词"
                 disabled={!selectedFlow}
               >
-                <IconFileText size={16} />
+                <IconFileText className="tc-share__icon" size={16} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="打开创作过程（只读）" withArrow>
-              <ActionIcon variant="light" onClick={() => openLangGraphChat()} aria-label="打开创作过程">
-                <IconMessageCircle size={16} />
+            <Tooltip className="tc-share__tooltip" label="打开创作过程（只读）" withArrow>
+              <ActionIcon className="tc-share__icon-button" variant="light" onClick={() => openLangGraphChat()} aria-label="打开创作过程">
+                <IconMessageCircle className="tc-share__icon" size={16} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="复制分享链接" withArrow>
-              <ActionIcon variant="light" onClick={handleCopyLink} aria-label="复制链接">
-                <IconCopy size={16} />
+            <Tooltip className="tc-share__tooltip" label="复制分享链接" withArrow>
+              <ActionIcon className="tc-share__icon-button" variant="light" onClick={handleCopyLink} aria-label="复制链接">
+                <IconCopy className="tc-share__icon" size={16} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="刷新" withArrow>
-              <ActionIcon variant="light" onClick={() => reload({ silent: true })} loading={refreshing} aria-label="刷新">
-                <IconRefresh size={16} />
+            <Tooltip className="tc-share__tooltip" label="刷新" withArrow>
+              <ActionIcon className="tc-share__icon-button" variant="light" onClick={() => reload({ silent: true })} loading={refreshing} aria-label="刷新">
+                <IconRefresh className="tc-share__icon" size={16} />
               </ActionIcon>
             </Tooltip>
           </Group>
         </Group>
       </Box>
 
-      <Box style={{ flex: 1, minHeight: 0 }}>
+      <Box className="tc-share__content" style={{ flex: 1, minHeight: 0 }}>
         {loading && !selectedFlow ? (
-          <Center style={{ height: '100%' }}>
-            <Group gap="xs">
-              <Loader size="sm" />
-              <Text size="sm" c="dimmed">加载中…</Text>
+          <Center className="tc-share__center" style={{ height: '100%' }}>
+            <Group className="tc-share__loading" gap="xs">
+              <Loader className="tc-share__loader" size="sm" />
+              <Text className="tc-share__loading-text" size="sm" c="dimmed">加载中…</Text>
             </Group>
           </Center>
         ) : flows.length === 0 ? (
-          <Center style={{ height: '100%' }}>
-            <Text size="sm" c="dimmed">该项目暂无公开工作流</Text>
+          <Center className="tc-share__center" style={{ height: '100%' }}>
+            <Text className="tc-share__empty" size="sm" c="dimmed">该项目暂无公开工作流</Text>
           </Center>
         ) : (
           <Canvas />
         )}
       </Box>
       <Modal
+        className="tc-share__modal"
         opened={promptModalOpen}
         onClose={() => setPromptModalOpen(false)}
         title="提示词"
         size="lg"
         centered
       >
-        <ScrollArea h={480} type="auto">
-          <Stack gap="md">
+        <ScrollArea className="tc-share__scroll" h={480} type="auto">
+          <Stack className="tc-share__modal-stack" gap="md">
             {promptEntries.length === 0 ? (
-              <Text size="sm" c="dimmed">当前工作流暂无可展示的提示词。</Text>
+              <Text className="tc-share__empty" size="sm" c="dimmed">当前工作流暂无可展示的提示词。</Text>
             ) : (
               promptEntries.map((entry) => (
-                <Paper key={entry.id} withBorder radius="md" p="md">
-                  <Group justify="space-between" mb="xs" gap="xs">
-                    <Text size="sm" fw={600}>{entry.label}</Text>
-                    <Badge size="xs" variant="light" color="gray">
+                <Paper className="tc-share__prompt-card" key={entry.id} withBorder radius="md" p="md">
+                  <Group className="tc-share__prompt-header" justify="space-between" mb="xs" gap="xs">
+                    <Text className="tc-share__prompt-title" size="sm" fw={600}>{entry.label}</Text>
+                    <Badge className="tc-share__badge" size="xs" variant="light" color="gray">
                       {entry.items.length} 条
                     </Badge>
                   </Group>
-                  <Stack gap="xs">
+                  <Stack className="tc-share__prompt-list" gap="xs">
                     {entry.items.map((item) => (
-                      <div key={`${entry.id}-${item.label}`}>
-                        <Text size="xs" c="dimmed">{item.label}</Text>
-                        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{item.value}</Text>
+                      <div className="tc-share__prompt-item" key={`${entry.id}-${item.label}`}>
+                        <Text className="tc-share__prompt-label" size="xs" c="dimmed">{item.label}</Text>
+                        <Text className="tc-share__prompt-value" size="sm" style={{ whiteSpace: 'pre-wrap' }}>{item.value}</Text>
                       </div>
                     ))}
                   </Stack>

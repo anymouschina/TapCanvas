@@ -19,10 +19,10 @@ export default function AccountPanel(): JSX.Element | null {
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="account-panel-anchor" style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 100 : 140), zIndex: 200 }} data-ux-panel>
+      <Transition className="account-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="account-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -40,33 +40,34 @@ export default function AccountPanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
-                <Group>
-                  <Avatar src={user?.avatarUrl} alt={user?.login} radius={999} />
-                  <div>
-                    <Title order={6}>{user?.login || '未登录'}</Title>
-                    {user?.email && <Text size="xs" c="dimmed">{user.email}</Text>}
-                    {isGuest && <Text size="xs" c="dimmed">游客模式（仅保存在当前浏览器）</Text>}
+              <div className="account-panel-arrow panel-arrow" />
+              <div className="account-panel-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+                <Group className="account-panel-header">
+                  <Avatar className="account-panel-avatar" src={user?.avatarUrl} alt={user?.login} radius={999} />
+                  <div className="account-panel-user">
+                    <Title className="account-panel-user-name" order={6}>{user?.login || '未登录'}</Title>
+                    {user?.email && <Text className="account-panel-user-email" size="xs" c="dimmed">{user.email}</Text>}
+                    {isGuest && <Text className="account-panel-user-guest" size="xs" c="dimmed">游客模式（仅保存在当前浏览器）</Text>}
                   </div>
                 </Group>
-                <Divider my={10} />
-                <Stack gap={6}>
+                <Divider className="account-panel-divider" my={10} />
+                <Stack className="account-panel-actions" gap={6}>
                   {user?.login && !isGuest && (
-                    <Button size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
+                    <Button className="account-panel-github" size="xs" variant="light" component="a" href={`https://github.com/${user.login}`} target="_blank">查看 GitHub</Button>
                   )}
-                  <Button size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
-                  <Divider label="提示词自动补全" labelPosition="left" my={8} />
-                  <Stack gap={4}>
-                    <Text size="xs" c={colorScheme === 'dark' ? '#cbd5f5' : '#1f2937'}>补全模式</Text>
+                  <Button className="account-panel-logout" size="xs" color="red" variant="light" onClick={()=>{ clear(); setActivePanel(null) }}>退出登录</Button>
+                  <Divider className="account-panel-divider" label="提示词自动补全" labelPosition="left" my={8} />
+                  <Stack className="account-panel-autocomplete" gap={4}>
+                    <Text className="account-panel-autocomplete-label" size="xs" c={colorScheme === 'dark' ? '#cbd5f5' : '#1f2937'}>补全模式</Text>
                     <SegmentedControl
+                      className="account-panel-autocomplete-control"
                       size="xs"
                       value={promptSuggestMode}
                       onChange={(v) => setPromptSuggestMode(v as 'off' | 'history' | 'semantic')}
                       data={[
-                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>关闭</span>, value: 'off' },
-                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>历史匹配</span>, value: 'history' },
-                        { label: <span style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>语义匹配</span>, value: 'semantic' },
+                        { label: <span className="account-panel-autocomplete-option" style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>关闭</span>, value: 'off' },
+                        { label: <span className="account-panel-autocomplete-option" style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>历史匹配</span>, value: 'history' },
+                        { label: <span className="account-panel-autocomplete-option" style={{ color: colorScheme === 'dark' ? '#f8fafc' : '#0f172a' }}>语义匹配</span>, value: 'semantic' },
                       ]}
                     />
                   </Stack>

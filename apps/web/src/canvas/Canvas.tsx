@@ -1747,10 +1747,11 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 const ReactFlowProviderWithClass =
   ReactFlowProvider as unknown as React.FC<React.PropsWithChildren<{ className?: string }>>
 
-export default function Canvas(): JSX.Element {
+export default function Canvas({ className }: { className?: string }): JSX.Element {
+  const innerClassName = ['tc-canvas-inner', className].filter(Boolean).join(' ')
   return (
     <ReactFlowProviderWithClass className="tc-canvas-provider">
-      <CanvasInner className="tc-canvas-inner" />
+      <CanvasInner className={innerClassName} />
     </ReactFlowProviderWithClass>
   )
 }

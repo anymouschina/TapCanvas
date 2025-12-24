@@ -145,7 +145,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
   // 创建模态框内容
   const modalContent = (
     <div
-      className={`modal-overlay ${overlayClassName}`}
+      className={`modal-overlay base-modal__overlay ${overlayClassName}`}
       style={{
         position: 'fixed',
         top: 0,
@@ -167,7 +167,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
     >
       <div
         ref={modalRef}
-        className={`modal-content ${className}`}
+        className={`modal-content base-modal__content ${className}`}
         style={{
           backgroundColor: '#ffffff',
           borderRadius: '8px',
@@ -185,6 +185,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
         {/* 头部 */}
         {(title || showCancel) && (
           <div
+            className="base-modal__header"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -196,6 +197,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
           >
             {title && (
               <h2
+                className="base-modal__title"
                 id="modal-title"
                 style={{
                   margin: 0,
@@ -210,6 +212,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
 
             {showCancel && (
               <button
+                className="base-modal__header-close"
                 type="button"
                 onClick={handleCancel}
                 disabled={loading}
@@ -239,6 +242,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
         {/* 内容区域 */}
         <div
           id="modal-content"
+          className="base-modal__body"
           style={{
             flex: 1,
             padding: '20px',
@@ -252,6 +256,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
         {/* 底部操作按钮 */}
         {(showConfirm || showCancel) && (
           <div
+            className="base-modal__footer"
             style={{
               display: 'flex',
               justifyContent: 'flex-end',
@@ -263,6 +268,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
           >
             {showCancel && (
               <button
+                className="base-modal__footer-cancel"
                 type="button"
                 onClick={handleCancel}
                 disabled={loading}
@@ -285,6 +291,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
             {showConfirm && (
               <button
                 ref={confirmButtonRef}
+                className="base-modal__footer-confirm"
                 type="button"
                 onClick={handleConfirm}
                 disabled={loading || confirmDisabled}
@@ -307,6 +314,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
               >
                 {loading && (
                   <div
+                    className="base-modal__footer-spinner"
                     style={{
                       width: '12px',
                       height: '12px',
@@ -324,7 +332,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
         )}
 
         {/* 加载动画样式 */}
-        <style jsx>{`
+        <style className="base-modal__style" jsx>{`
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }

@@ -31,9 +31,10 @@ export function TopToolbar({
   onDownload,
 }: TopToolbarProps) {
   return (
-    <NodeToolbar isVisible={isVisible && selectedCount === 1 && hasContent} position={Position.Top} align="center">
-      <div style={{ position: 'relative', display: 'inline-block' }}>
+    <NodeToolbar className="top-toolbar" isVisible={isVisible && selectedCount === 1 && hasContent} position={Position.Top} align="center">
+      <div className="top-toolbar-anchor" style={{ position: 'relative', display: 'inline-block' }}>
         <div
+          className="top-toolbar-content"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -48,8 +49,9 @@ export function TopToolbar({
             maxWidth: 'min(92vw, 980px)',
           }}
         >
-          <Tooltip label="放大预览" position="bottom" withArrow>
+          <Tooltip className="top-toolbar-tooltip" label="放大预览" position="bottom" withArrow>
             <ActionIcon
+              className="top-toolbar-action"
               variant="transparent"
               radius={0}
               size="sm"
@@ -57,11 +59,12 @@ export function TopToolbar({
               styles={toolbarActionIconStyles}
               onClick={onPreview}
             >
-              <IconMaximize size={16} />
+              <IconMaximize className="top-toolbar-action-icon" size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="下载" position="bottom" withArrow>
+          <Tooltip className="top-toolbar-tooltip" label="下载" position="bottom" withArrow>
             <ActionIcon
+              className="top-toolbar-action"
               variant="transparent"
               radius={0}
               size="sm"
@@ -69,15 +72,16 @@ export function TopToolbar({
               styles={toolbarActionIconStyles}
               onClick={onDownload}
             >
-              <IconDownload size={16} />
+              <IconDownload className="top-toolbar-action-icon" size={16} />
             </ActionIcon>
           </Tooltip>
           {visibleDefs.length > 0 && (
-            <div style={{ width: 1, height: 24, background: inlineDividerColor }} />
+            <div className="top-toolbar-divider" style={{ width: 1, height: 24, background: inlineDividerColor }} />
           )}
           {visibleDefs.map((d) => (
-            <Tooltip key={d.key} label={d.label} position="bottom" withArrow>
+            <Tooltip className="top-toolbar-tooltip" key={d.key} label={d.label} position="bottom" withArrow>
               <ActionIcon
+                className="top-toolbar-action"
                 variant="transparent"
                 radius={0}
                 size="sm"

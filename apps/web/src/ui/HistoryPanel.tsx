@@ -29,10 +29,10 @@ export default function HistoryPanel(): JSX.Element | null {
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="history-panel-anchor" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
+      <Transition className="history-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="history-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -50,26 +50,27 @@ export default function HistoryPanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <Group justify="space-between" mb={8}>
-                <Title order={6}>保存历史</Title>
-                <Button size="xs" variant="light" onClick={() => setActivePanel(null)}>
+              <div className="history-panel-arrow panel-arrow" />
+              <Group className="history-panel-header" justify="space-between" mb={8}>
+                <Title className="history-panel-title" order={6}>保存历史</Title>
+                <Button className="history-panel-close" size="xs" variant="light" onClick={() => setActivePanel(null)}>
                   关闭
                 </Button>
               </Group>
-              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
-              <Stack gap="xs">
+              <div className="history-panel-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+              <Stack className="history-panel-list" gap="xs">
                 {(!versions || versions.length === 0) && (
-                  <Text size="sm" c="dimmed">
+                  <Text className="history-panel-empty" size="sm" c="dimmed">
                     暂无历史
                   </Text>
                 )}
                 {versions.map((v) => (
-                  <Group key={v.id} justify="space-between">
-                    <Text size="sm">
+                  <Group className="history-panel-row" key={v.id} justify="space-between">
+                    <Text className="history-panel-row-text" size="sm">
                       {new Date(v.createdAt).toLocaleString()} - {v.name}
                     </Text>
                     <Button
+                      className="history-panel-rollback"
                       size="xs"
                       variant="light"
                       onClick={async () => {

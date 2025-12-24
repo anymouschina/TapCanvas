@@ -301,10 +301,10 @@ export default function ProjectPanel(): JSX.Element | null {
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 300 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="project-panel-anchor" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 300 }} data-ux-panel>
+      <Transition className="project-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="project-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -322,17 +322,18 @@ export default function ProjectPanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
+              <div className="project-panel-arrow panel-arrow" />
               <motion.div
+                className="project-panel-header-motion"
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.15 }}
                 style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}
               >
-                <Group justify="space-between" mb={8}>
-                  <Title order={6}>{$('项目')}</Title>
-                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <Button size="xs" variant="light" onClick={async () => {
+                <Group className="project-panel-header" justify="space-between" mb={8}>
+                  <Title className="project-panel-title" order={6}>{$('项目')}</Title>
+                  <motion.div className="project-panel-create-motion" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                    <Button className="project-panel-create-button" size="xs" variant="light" onClick={async () => {
                       const defaultName = $t('未命名项目 {{time}}', { time: new Date().toLocaleString() })
                       const p = await upsertProject({ name: defaultName })
                       setMyProjects(prev => [p, ...prev])
@@ -349,26 +350,30 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Group>
               </motion.div>
 
-                <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
-                <Tabs value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
-                  <Tabs.List>
+                <div className="project-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+                <Tabs className="project-panel-tabs" value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
+                  <Tabs.List className="project-panel-tab-list">
                     <motion.div
+                      className="project-panel-tab-motion"
                       layout
                       style={{ display: 'flex', gap: '4px' }}
                     >
                       <Tabs.Tab
+                        className="project-panel-tab"
                         value="my"
                         leftSection={
                         <motion.div
+                          className="project-panel-tab-icon"
                           layoutId="tab-icon-my"
                           initial={false}
                           transition={{ type: "spring", stiffness: 300, damping: 30 }}
                         >
-                          <IconWorldOff size={14} />
+                          <IconWorldOff className="project-panel-tab-icon-svg" size={14} />
                         </motion.div>
                       }
                     >
                       <motion.span
+                        className="project-panel-tab-label"
                         initial={{ opacity: 0.7 }}
                         animate={activeTab === 'my' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
                         whileHover={{ scale: 1.05, color: accentHoverColor }}
@@ -378,18 +383,21 @@ export default function ProjectPanel(): JSX.Element | null {
                       </motion.span>
                     </Tabs.Tab>
                       <Tabs.Tab
+                        className="project-panel-tab"
                         value="public"
                         leftSection={
                           <motion.div
+                            className="project-panel-tab-icon"
                             layoutId="tab-icon-public"
                             initial={false}
                             transition={{ type: "spring", stiffness: 300, damping: 30 }}
                           >
-                            <IconWorld size={14} />
+                            <IconWorld className="project-panel-tab-icon-svg" size={14} />
                           </motion.div>
                         }
                       >
                         <motion.span
+                          className="project-panel-tab-label"
                           initial={{ opacity: 0.7 }}
                           animate={activeTab === 'public' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
                           whileHover={{ scale: 1.05, color: accentHoverColor }}
@@ -401,45 +409,50 @@ export default function ProjectPanel(): JSX.Element | null {
                     </motion.div>
                   </Tabs.List>
 
-                  <Tabs.Panel value="my" pt="xs">
+                  <Tabs.Panel className="project-panel-tab-panel" value="my" pt="xs">
                     <motion.div
+                      className="project-panel-section-motion"
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.2 }}
                     >
-                      <Group mb="xs" spacing="xs">
+                      <Group className="project-panel-section-header" mb="xs" spacing="xs">
                         <motion.div
+                          className="project-panel-section-title-motion"
                           initial={{ scale: 0.98 }}
                           animate={{ scale: 1 }}
                           transition={{ duration: 0.3 }}
                         >
-                          <Text size="xs" c="dimmed">{$('我的项目')}</Text>
+                          <Text className="project-panel-section-title" size="xs" c="dimmed">{$('我的项目')}</Text>
                         </motion.div>
                         <motion.div
+                          className="project-panel-hot-badge-motion"
                           whileHover={{ scale: 1.03 }}
                           whileTap={{ scale: 0.97 }}
                         >
-                          <Badge color="blue" variant="outline">{$('热门')}</Badge>
+                          <Badge className="project-panel-hot-badge" color="blue" variant="outline">{$('热门')}</Badge>
                         </motion.div>
                       </Group>
                     </motion.div>
-                    <div>
-                    <AnimatePresence mode="wait">
+                    <div className="project-panel-my-list">
+                    <AnimatePresence className="project-panel-my-list-presence" mode="wait">
                       {myProjects.length === 0 && !loading && (
                         <motion.div
+                          className="project-panel-empty-motion"
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -10 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <Text size="xs" c="dimmed" ta="center">{$('暂无项目')}</Text>
+                          <Text className="project-panel-empty-text" size="xs" c="dimmed" ta="center">{$('暂无项目')}</Text>
                         </motion.div>
                       )}
                     </AnimatePresence>
-                    <Stack gap={6}>
+                    <Stack className="project-panel-list" gap={6}>
                       {myProjects.map((p, index) => (
                         <motion.div
+                          className="project-panel-card-motion"
                           key={p.id}
                           initial={{ opacity: 0, x: -15 }}
                           animate={{ opacity: 1, x: 0 }}
@@ -467,14 +480,16 @@ export default function ProjectPanel(): JSX.Element | null {
                             backgroundColor: projectCardBackground
                           }}
                         >
-                          <Group justify="space-between" p="sm" gap="md">
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Group gap={10} mb={6}>
+                          <Group className="project-panel-card" justify="space-between" p="sm" gap="md">
+                            <div className="project-panel-card-main" style={{ flex: 1, minWidth: 0 }}>
+                              <Group className="project-panel-card-title-row" gap={10} mb={6}>
                                 <motion.div
+                                  className="project-panel-card-title-motion"
                                   whileHover={{ scale: 1.02 }}
                                   transition={{ type: "spring", stiffness: 400 }}
                                 >
                                   <Text
+                                    className="project-panel-card-title"
                                     size="sm"
                                     fw={currentProject?.id===p.id?600:500}
                                     c={currentProject?.id===p.id?'blue':undefined}
@@ -488,6 +503,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                 </motion.div>
                                 {p.isPublic && (
                                   <motion.div
+                                    className="project-panel-public-badge-motion"
                                     initial={{ scale: 0, opacity: 0 }}
                                     animate={{ scale: 1, opacity: 1 }}
                                     transition={{
@@ -499,6 +515,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                     whileHover={{ scale: 1.1 }}
                                   >
                                     <Badge
+                                      className="project-panel-public-badge"
                                       size="xs"
                                       color="green"
                                       variant="light"
@@ -513,11 +530,13 @@ export default function ProjectPanel(): JSX.Element | null {
                               </Group>
                               {p.ownerName && (
                                 <motion.div
+                                  className="project-panel-owner-motion"
                                   initial={{ opacity: 0 }}
                                   animate={{ opacity: 1 }}
                                   transition={{ delay: index * 0.02 + 0.15 }}
                                 >
                                   <Text
+                                    className="project-panel-owner"
                                     size="xs"
                                     c="dimmed"
                                     style={{
@@ -530,8 +549,9 @@ export default function ProjectPanel(): JSX.Element | null {
                                 </motion.div>
                               )}
                             </div>
-                            <Group gap={6} align="center">
+                            <Group className="project-panel-card-actions" gap={6} align="center">
                               <motion.div
+                                className="project-panel-toggle-motion"
                                 whileHover={{
                                   scale: 1.08,
                                   rotate: p.isPublic ? 15 : -15
@@ -543,11 +563,13 @@ export default function ProjectPanel(): JSX.Element | null {
                                 transition={{ type: "spring", stiffness: 400 }}
                               >
                                 <Tooltip
+                                  className="project-panel-toggle-tooltip"
                                   label={p.isPublic ? $('设为私有') : $('设为公开')}
                                   position="top"
                                   withArrow
                                 >
                                   <ActionIcon
+                                    className="project-panel-toggle-action"
                                     size="sm"
                                     variant="subtle"
                                     color={p.isPublic ? 'green' : 'gray'}
@@ -556,22 +578,25 @@ export default function ProjectPanel(): JSX.Element | null {
                                       border: p.isPublic ? togglePublicBorder : togglePrivateBorder
                                     }}
                                   >
-                                    {p.isPublic ? <IconWorld size={14} /> : <IconWorldOff size={14} />}
+                                    {p.isPublic ? <IconWorld className="project-panel-toggle-icon" size={14} /> : <IconWorldOff className="project-panel-toggle-icon" size={14} />}
                                   </ActionIcon>
                                 </Tooltip>
                               </motion.div>
                               {p.isPublic && (
                                 <motion.div
+                                  className="project-panel-share-motion"
                                   whileHover={{ scale: 1.08 }}
                                   whileTap={{ scale: 0.96 }}
                                   transition={{ type: "spring", stiffness: 400 }}
                                 >
                                   <Tooltip
+                                    className="project-panel-share-tooltip"
                                     label={$('复制分享链接')}
                                     position="top"
                                     withArrow
                                   >
                                     <ActionIcon
+                                      className="project-panel-share-action"
                                       size="sm"
                                       variant="subtle"
                                       color="blue"
@@ -584,17 +609,19 @@ export default function ProjectPanel(): JSX.Element | null {
                                         border: isDarkTheme ? '1px solid rgba(59, 130, 246, 0.18)' : '1px solid rgba(37, 99, 235, 0.25)'
                                       }}
                                     >
-                                      <IconLink size={14} />
+                                      <IconLink className="project-panel-share-icon" size={14} />
                                     </ActionIcon>
                                   </Tooltip>
                                 </motion.div>
                               )}
                               <motion.div
+                                className="project-panel-delete-motion"
                                 whileHover={{ scale: 1.04 }}
                                 whileTap={{ scale: 0.96 }}
                                 transition={{ type: "spring", stiffness: 400 }}
                               >
                                 <Popover
+                                  className="project-panel-delete-popover"
                                   opened={popoverProjectId === p.id}
                                   onClose={closePopover}
                                   withArrow
@@ -606,13 +633,15 @@ export default function ProjectPanel(): JSX.Element | null {
                                   dropdownProps={{ withinPortal: true, zIndex: 9000 }}
                                   closeOnClickOutside
                                 >
-                                  <Popover.Target>
+                                  <Popover.Target className="project-panel-delete-target">
                                     <Tooltip
+                                      className="project-panel-delete-tooltip"
                                       label={$t('删除项目')}
                                       position="top"
                                       withArrow
                                     >
                                       <ActionIcon
+                                        className="project-panel-delete-action"
                                         size="sm"
                                         variant="subtle"
                                         color="red"
@@ -622,20 +651,21 @@ export default function ProjectPanel(): JSX.Element | null {
                                           border: deleteActionBorder
                                         }}
                                       >
-                                        <IconTrash size={14} />
+                                        <IconTrash className="project-panel-delete-icon" size={14} />
                                       </ActionIcon>
                                     </Tooltip>
                                   </Popover.Target>
-                                  <Popover.Dropdown>
-                                    <Text size="xs">{$t('确定要删除项目「{{name}}」吗？', { name: p.name })}</Text>
-                                    <Group position="right" spacing="xs" mt="xs">
-                                      <Button size="xs" variant="subtle" onClick={closePopover}>{$('取消')}</Button>
-                                      <Button size="xs" color="red" loading={deletingProjectId === p.id} onClick={() => confirmPopoverDelete(p)}>{$('删除')}</Button>
+                                  <Popover.Dropdown className="project-panel-delete-dropdown">
+                                    <Text className="project-panel-delete-text" size="xs">{$t('确定要删除项目「{{name}}」吗？', { name: p.name })}</Text>
+                                    <Group className="project-panel-delete-actions" position="right" spacing="xs" mt="xs">
+                                      <Button className="project-panel-delete-cancel" size="xs" variant="subtle" onClick={closePopover}>{$('取消')}</Button>
+                                      <Button className="project-panel-delete-confirm" size="xs" color="red" loading={deletingProjectId === p.id} onClick={() => confirmPopoverDelete(p)}>{$('删除')}</Button>
                                     </Group>
                                   </Popover.Dropdown>
                                 </Popover>
                               </motion.div>
                               <motion.div
+                                className="project-panel-select-motion"
                                 whileHover={{
                                   scale: 1.04,
                                   x: 2
@@ -647,6 +677,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                 transition={{ type: "spring", stiffness: 500 }}
                               >
                                 <Button
+                                  className="project-panel-select-button"
                                   size="xs"
                                   variant="light"
                                   onClick={async () => {
@@ -669,97 +700,107 @@ export default function ProjectPanel(): JSX.Element | null {
                   </div>
                 </Tabs.Panel>
 
-                <Tabs.Panel value="public" pt="xs">
+                <Tabs.Panel className="project-panel-tab-panel" value="public" pt="xs">
                   <motion.div
+                    className="project-panel-section-motion"
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <Group mb="xs" align="center" spacing="xs">
+                    <Group className="project-panel-section-header" mb="xs" align="center" spacing="xs">
                       <motion.div
+                        className="project-panel-section-title-motion"
                         whileHover={{ scale: 1.02 }}
                         transition={{ duration: 0.2 }}
                       >
-                        <Text size="xs" c="dimmed">{$('公开项目')}</Text>
+                        <Text className="project-panel-section-title" size="xs" c="dimmed">{$('公开项目')}</Text>
                       </motion.div>
                       <motion.div
+                        className="project-panel-public-icon-motion"
                         animate={{ rotate: activeTab === 'public' ? 0 : -5 }}
                         transition={{ duration: 0.3, type: 'spring', stiffness: 200 }}
                       >
-                        <IconWorld size={12} />
+                        <IconWorld className="project-panel-public-icon" size={12} />
                       </motion.div>
                     </Group>
                   </motion.div>
                   <motion.div
+                    className="project-panel-public-header-motion"
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <Group justify="space-between" mb={8}>
-                      <Text size="sm" fw={500}>{$('社区公开项目')}</Text>
-                      <motion.div whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.96 }}>
-                        <Tooltip label={$('刷新公开项目')}>
+                    <Group className="project-panel-public-header" justify="space-between" mb={8}>
+                      <Text className="project-panel-public-title" size="sm" fw={500}>{$('社区公开项目')}</Text>
+                      <motion.div className="project-panel-public-refresh-motion" whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.96 }}>
+                        <Tooltip className="project-panel-public-refresh-tooltip" label={$('刷新公开项目')}>
                           <ActionIcon
+                            className="project-panel-public-refresh-action"
                             size="sm"
                             variant="subtle"
                             onClick={handleRefreshPublicProjects}
                             loading={loading && activeTab === 'public'}
                           >
-                            <IconRefresh size={14} />
+                            <IconRefresh className="project-panel-public-refresh-icon" size={14} />
                           </ActionIcon>
                         </Tooltip>
                       </motion.div>
                     </Group>
                   </motion.div>
 
-                  <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
-                    <AnimatePresence mode="wait">
+                  <div className="project-panel-public-body" style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                    <AnimatePresence className="project-panel-public-presence" mode="wait">
                       {loading && activeTab === 'public' && (
                         <motion.div
+                          className="project-panel-public-loading-motion"
                           key="loading"
                           initial={{ opacity: 0, scale: 0.95 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.95 }}
                           transition={{ duration: 0.15 }}
                         >
-                          <Group justify="center" py="xl">
+                          <Group className="project-panel-public-loading" justify="center" py="xl">
                             <motion.div
+                              className="project-panel-public-loading-spinner"
                               animate={{ rotate: 360 }}
                               transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                             >
-                              <Loader size="sm" />
+                              <Loader className="project-panel-public-loading-icon" size="sm" />
                             </motion.div>
-                            <Text size="sm" c="dimmed">{$('加载中...')}</Text>
+                            <Text className="project-panel-public-loading-text" size="sm" c="dimmed">{$('加载中...')}</Text>
                           </Group>
                         </motion.div>
                       )}
 
                       {!loading && publicProjects.length === 0 && (
                         <motion.div
+                          className="project-panel-public-empty-motion"
                           key="empty"
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -10 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <Group justify="center" py="xl">
-                            <Text size="sm" c="dimmed">{$('暂无公开项目')}</Text>
+                          <Group className="project-panel-public-empty" justify="center" py="xl">
+                            <Text className="project-panel-public-empty-text" size="sm" c="dimmed">{$('暂无公开项目')}</Text>
                           </Group>
                         </motion.div>
                       )}
 
                       {!loading && publicProjects.length > 0 && (
                         <motion.div
+                          className="project-panel-public-list-motion"
                           key="projects"
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <Stack gap={6}>
+                          <Stack className="project-panel-public-list" gap={6}>
                             {publicProjects.map((p, index) => (
                               <motion.div
+                                className="project-panel-public-card-motion"
                                 key={p.id}
                                 initial={{ opacity: 0, x: 15 }}
                                 animate={{ opacity: 1, x: 0 }}
@@ -787,30 +828,33 @@ export default function ProjectPanel(): JSX.Element | null {
                                   backgroundColor: projectCardBackground
                                 }}
                               >
-                                <Group justify="space-between" p="xs">
-                                  <div style={{ flex: 1 }}>
-                                    <Group gap={8}>
-                                      <Text size="sm">{p.name}</Text>
+                                <Group className="project-panel-public-card" justify="space-between" p="xs">
+                                  <div className="project-panel-public-card-main" style={{ flex: 1 }}>
+                                    <Group className="project-panel-public-card-title-row" gap={8}>
+                                      <Text className="project-panel-public-card-title" size="sm">{p.name}</Text>
                                       <motion.div
+                                        className="project-panel-public-badge-motion"
                                         initial={{ scale: 0 }}
                                         animate={{ scale: 1 }}
                                         transition={{ type: "spring", stiffness: 600, delay: index * 0.02 + 0.05 }}
                                       >
-                                        <Badge size="xs" color="blue" variant="light">{$('公开')}</Badge>
+                                        <Badge className="project-panel-public-badge" size="xs" color="blue" variant="light">{$('公开')}</Badge>
                                       </motion.div>
                                     </Group>
                                     {p.ownerName && (
-                                      <Text size="xs" c="dimmed">{$t('作者：{{name}}', { name: p.ownerName })}</Text>
+                                      <Text className="project-panel-public-card-owner" size="xs" c="dimmed">{$t('作者：{{name}}', { name: p.ownerName })}</Text>
                                     )}
                                   </div>
                                   <motion.div
+                                    className="project-panel-public-clone-motion"
                                     whileHover={{ scale: 1.05 }}
                                     whileTap={{ scale: 0.95 }}
                                   >
                                     <Button
+                                      className="project-panel-public-clone-button"
                                       size="xs"
                                       variant="outline"
-                                      leftSection={<IconCopy size={12} />}
+                                      leftSection={<IconCopy className="project-panel-public-clone-icon" size={12} />}
                                       onClick={async () => handleCloneProject(p)}
                                     >
                                       {$('克隆')}
