@@ -259,6 +259,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
 
   return (
     <div
+      className="video-trim-modal"
       style={{
         position: 'fixed',
         inset: 0,
@@ -270,6 +271,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       }}
     >
       <div
+        className="video-trim-modal-header"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -278,16 +280,17 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           width: '100%',
         }}
       >
-        <div style={{ width: '100%', maxWidth: contentMaxWidth, padding: contentPadding, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text fw={500} style={{ color: '#f9fafb' }}>
+        <div className="video-trim-modal-header-inner" style={{ width: '100%', maxWidth: contentMaxWidth, padding: contentPadding, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text className="video-trim-modal-title" fw={500} style={{ color: '#f9fafb' }}>
             Trim your video
           </Text>
-          <ActionIcon variant="light" onClick={onClose} title="关闭">
-            <IconX size={18} />
+          <ActionIcon className="video-trim-modal-close" variant="light" onClick={onClose} title="关闭">
+            <IconX className="video-trim-modal-close-icon" size={18} />
           </ActionIcon>
         </div>
       </div>
       <div
+        className="video-trim-modal-player"
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -299,6 +302,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
         }}
       >
         <div
+          className="video-trim-modal-player-frame"
           style={{
           width: '100%',
           maxWidth: contentMaxWidth,
@@ -320,6 +324,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           }}
         >
           <video
+            className="video-trim-modal-video"
             ref={videoRef}
             src={videoUrl}
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
@@ -327,6 +332,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           />
           {loading && (
             <div
+              className="video-trim-modal-loading"
               style={{
                 position: 'absolute',
                 inset: 0,
@@ -338,9 +344,9 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 zIndex: 2,
               }}
             >
-              <Group gap="xs">
-                <Loader size="sm" />
-                <Text size="sm" c="dimmed">
+              <Group className="video-trim-modal-loading-group" gap="xs">
+                <Loader className="video-trim-modal-loading-icon" size="sm" />
+                <Text className="video-trim-modal-loading-text" size="sm" c="dimmed">
                   正在上传并创建角色
                   {typeof progressPct === 'number'
                     ? `（${Math.round(progressPct * 100)}%）`
@@ -350,16 +356,17 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             </div>
           )}
         </div>
-        <Group gap="xs">
-          <ActionIcon variant="light" onClick={togglePlay} title={playing ? '暂停' : '播放'}>
-            {playing ? <IconPlayerPause size={18} /> : <IconPlayerPlay size={18} />}
+        <Group className="video-trim-modal-player-controls" gap="xs">
+          <ActionIcon className="video-trim-modal-play" variant="light" onClick={togglePlay} title={playing ? '暂停' : '播放'}>
+            {playing ? <IconPlayerPause className="video-trim-modal-play-icon" size={18} /> : <IconPlayerPlay className="video-trim-modal-play-icon" size={18} />}
           </ActionIcon>
-          <Text size="xs" c="dimmed">
+          <Text className="video-trim-modal-time" size="xs" c="dimmed">
             {currentTime.toFixed(1)}s / {originalDuration.toFixed(1)}s
           </Text>
         </Group>
       </div>
       <div
+        className="video-trim-modal-timeline"
         style={{
           padding: '8px 0 16px',
           display: 'flex',
@@ -369,8 +376,9 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           width: '100%',
         }}
       >
-        <Stack gap={6} style={{ flex: 1, width: '100%', maxWidth: contentMaxWidth, padding: contentPadding }}>
+        <Stack className="video-trim-modal-timeline-stack" gap={6} style={{ flex: 1, width: '100%', maxWidth: contentMaxWidth, padding: contentPadding }}>
           <div
+            className="video-trim-modal-timeline-track"
             ref={timelineRef}
             style={{
               position: 'relative',
@@ -397,6 +405,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             }}
           >
             <div
+              className="video-trim-modal-timeline-thumbs"
               style={{
                 position: 'absolute',
                 left: 0,
@@ -407,9 +416,10 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             >
               {thumbnails.map((src, idx) => (
-                <div key={idx} style={{ width: THUMB_WIDTH, height: '100%', overflow: 'hidden' }}>
+                <div className="video-trim-modal-thumb" key={idx} style={{ width: THUMB_WIDTH, height: '100%', overflow: 'hidden' }}>
                   {src.startsWith('blob:') ? (
                     <video
+                      className="video-trim-modal-thumb-video"
                       src={src}
                       muted
                       playsInline
@@ -418,6 +428,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                     />
                   ) : (
                     <img
+                      className="video-trim-modal-thumb-img"
                       src={src}
                       alt={`frame-${idx}`}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -427,6 +438,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               ))}
             </div>
             <div
+              className="video-trim-modal-timeline-overlay"
               style={{
                 position: 'absolute',
                 inset: 0,
@@ -434,6 +446,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             >
               <div
+                className="video-trim-modal-timeline-mask"
                 style={{
                   position: 'absolute',
                   left: 0,
@@ -444,6 +457,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 }}
               />
               <div
+                className="video-trim-modal-timeline-mask"
                 style={{
                   position: 'absolute',
                   right: 0,
@@ -454,6 +468,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 }}
               />
               <div
+                className="video-trim-modal-timeline-range"
                 style={{
                   position: 'absolute',
                   left: startX,
@@ -467,6 +482,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             </div>
             {/* 可拖动选区块（保持长度，整体平移） */}
             <div
+              className="video-trim-modal-timeline-drag"
               style={{
                 position: 'absolute',
                 left: startX,
@@ -492,6 +508,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             />
             <div
+              className="video-trim-modal-handle"
               style={{
                 position: 'absolute',
                 left: startX - 6,
@@ -509,6 +526,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             >
               <div
+                className="video-trim-modal-handle-bar"
                 style={{
                   width: 3,
                   height: 32,
@@ -518,6 +536,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               />
             </div>
             <div
+              className="video-trim-modal-handle"
               style={{
                 position: 'absolute',
                 left: endX - 6,
@@ -535,6 +554,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             >
               <div
+                className="video-trim-modal-handle-bar"
                 style={{
                   width: 3,
                   height: 32,
@@ -544,6 +564,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               />
             </div>
             <div
+              className="video-trim-modal-playhead"
               style={{
                 position: 'absolute',
                 left: playheadX - 1,
@@ -554,13 +575,14 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               }}
             />
           </div>
-          <Group justify="space-between">
-            <Text size="xs" c="dimmed">
+          <Group className="video-trim-modal-summary" justify="space-between">
+            <Text className="video-trim-modal-summary-text" size="xs" c="dimmed">
               起点 {trimStart.toFixed(1)}s · 终点 {trimEnd.toFixed(1)}s
             </Text>
           </Group>
         </Stack>
         <ActionIcon
+          className="video-trim-modal-confirm"
           radius="xl"
           size={48}
           variant="white"
@@ -575,7 +597,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
           disabled={loading}
           title="确认裁剪"
         >
-          {loading ? <Loader size="sm" /> : <IconArrowRight size={24} />}
+          {loading ? <Loader className="video-trim-modal-confirm-loader" size="sm" /> : <IconArrowRight className="video-trim-modal-confirm-icon" size={24} />}
         </ActionIcon>
       </div>
     </div>

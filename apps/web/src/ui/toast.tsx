@@ -32,10 +32,11 @@ export function toast(message: string, type?: 'info'|'success'|'error') {
   }
 }
 
-export function ToastHost(): JSX.Element {
+export function ToastHost({ className }: { className?: string }): JSX.Element {
   const items = useToastStore((s) => s.items)
+  const hostClassName = ['tc-toast-host', className].filter(Boolean).join(' ')
   return (
-    <div className="tc-toast-host" style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 50 }}>
+    <div className={hostClassName} style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 50 }}>
       {items.map(i => (
         <div className="tc-toast-host__item" key={i.id} style={{
           padding: '8px 12px',

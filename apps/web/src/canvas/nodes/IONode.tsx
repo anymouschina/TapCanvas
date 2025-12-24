@@ -14,7 +14,7 @@ export default function IONode({ data, selected }: NodeProps<Data>): JSX.Element
   const height = Math.max(22, paddingY * 2 + types.length * itemH)
   const width = 104
   return (
-    <div style={{
+    <div className="io-node" style={{
       width,
       height,
       position: 'relative',
@@ -30,13 +30,13 @@ export default function IONode({ data, selected }: NodeProps<Data>): JSX.Element
       boxShadow: '0 8px 16px rgba(0,0,0,.2)',
       paddingTop: 4,
     }}>
-      <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 10, color: 'var(--canvas-node-subtext)' }}>{isIn ? '入口' : '出口'}</div>
+      <div className="io-node-label" style={{ position: 'absolute', top: 4, left: 6, fontSize: 10, color: 'var(--canvas-node-subtext)' }}>{isIn ? '入口' : '出口'}</div>
       {types.map((t, idx) => {
         const top = paddingY + idx * itemH
         return isIn ? (
-          <Handle key={t} id={`out-${t}`} type="source" position={Position.Right} style={{ top, right: -6, width: 8, height: 8, background: 'var(--canvas-io-handle)' }} />
+          <Handle className="io-node-handle io-node-handle--out" key={t} id={`out-${t}`} type="source" position={Position.Right} style={{ top, right: -6, width: 8, height: 8, background: 'var(--canvas-io-handle)' }} />
         ) : (
-          <Handle key={t} id={`in-${t}`} type="target" position={Position.Left} style={{ top, left: -6, width: 8, height: 8, background: 'var(--canvas-io-handle)' }} />
+          <Handle className="io-node-handle io-node-handle--in" key={t} id={`in-${t}`} type="target" position={Position.Left} style={{ top, left: -6, width: 8, height: 8, background: 'var(--canvas-io-handle)' }} />
         )
       })}
     </div>

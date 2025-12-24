@@ -11,6 +11,7 @@ export function StatusBanner({ status, lastError, httpStatus }: StatusBannerProp
   if (!(status === 'error' && lastError)) return null
   return (
     <Paper
+      className="task-node-status-banner"
       radius="md"
       p="xs"
       mb="xs"
@@ -20,14 +21,14 @@ export function StatusBanner({ status, lastError, httpStatus }: StatusBannerProp
         border: 'none',
       }}
     >
-      <Text size="xs" c="red.4" style={{ fontWeight: 500 }}>
+      <Text className="task-node-status-banner__title" size="xs" c="red.4" style={{ fontWeight: 500 }}>
         执行错误
       </Text>
-      <Text size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
+      <Text className="task-node-status-banner__message" size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
         {lastError}
       </Text>
       {httpStatus === 429 && (
-        <Text size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
+        <Text className="task-node-status-banner__hint" size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
           💡 提示：API 配额已用尽，请稍后重试或升级您的服务计划
         </Text>
       )}

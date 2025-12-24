@@ -40,34 +40,37 @@ export function StoryboardEditor({
   onNotesChange,
 }: Props) {
   return (
-    <Stack gap="xs">
+    <Stack className="storyboard-editor" gap="xs">
       <TextInput
+        className="storyboard-editor-title-input"
         label="分镜标题"
         placeholder="例如：武侠对决 · 紫禁之巅"
         value={title}
         onChange={(e) => onTitleChange(e.currentTarget.value)}
         size="xs"
       />
-      <Stack gap="xs">
+      <Stack className="storyboard-editor-scenes" gap="xs">
         {scenes.map((scene, idx) => (
           <Paper
+            className="storyboard-editor-scene"
             key={scene.id}
             radius="md"
             p="xs"
             style={{ background: lightContentBackground }}
           >
-            <Group justify="space-between" align="flex-start" mb={6}>
-              <div>
-                <Text size="sm" fw={600}>{`Scene ${idx + 1}`}</Text>
-                <Text size="xs" c="dimmed">
+            <Group className="storyboard-editor-scene-header" justify="space-between" align="flex-start" mb={6}>
+              <div className="storyboard-editor-scene-title">
+                <Text className="storyboard-editor-scene-name" size="sm" fw={600}>{`Scene ${idx + 1}`}</Text>
+                <Text className="storyboard-editor-scene-desc" size="xs" c="dimmed">
                   镜头描述与台词
                 </Text>
               </div>
-              <Group gap={4}>
-                <Badge color="blue" variant="light">
+              <Group className="storyboard-editor-scene-actions" gap={4}>
+                <Badge className="storyboard-editor-scene-duration" color="blue" variant="light">
                   {scene.duration.toFixed(1)}s
                 </Badge>
                 <Button
+                  className="storyboard-editor-scene-duration-add"
                   size="compact-xs"
                   variant="light"
                   onClick={() => onDurationDelta(scene.id, 15)}
@@ -76,6 +79,7 @@ export function StoryboardEditor({
                   +15s
                 </Button>
                 <ActionIcon
+                  className="storyboard-editor-scene-remove"
                   size="sm"
                   variant="subtle"
                   color="red"
@@ -83,11 +87,12 @@ export function StoryboardEditor({
                   disabled={scenes.length === 1}
                   title="删除该 Scene"
                 >
-                  <IconTrash size={14} />
+                  <IconTrash className="storyboard-editor-scene-remove-icon" size={14} />
                 </ActionIcon>
               </Group>
             </Group>
             <Textarea
+              className="storyboard-editor-scene-text"
               autosize
               minRows={3}
               maxRows={6}
@@ -97,8 +102,9 @@ export function StoryboardEditor({
                 onUpdateScene(scene.id, { description: e.currentTarget.value })
               }
             />
-            <Group gap="xs" mt={6} align="flex-end" wrap="wrap">
+            <Group className="storyboard-editor-scene-controls" gap="xs" mt={6} align="flex-end" wrap="wrap">
               <Select
+                className="storyboard-editor-scene-select"
                 label="镜头景别"
                 placeholder="可选"
                 data={STORYBOARD_FRAMING_OPTIONS}
@@ -113,6 +119,7 @@ export function StoryboardEditor({
                 clearable
               />
               <Select
+                className="storyboard-editor-scene-select"
                 label="镜头运动"
                 placeholder="可选"
                 data={STORYBOARD_MOVEMENT_OPTIONS}
@@ -127,6 +134,7 @@ export function StoryboardEditor({
                 clearable
               />
               <NumberInput
+                className="storyboard-editor-scene-duration-input"
                 label="时长 (秒)"
                 size="xs"
                 min={STORYBOARD_MIN_DURATION}
@@ -144,14 +152,16 @@ export function StoryboardEditor({
         ))}
       </Stack>
       <Button
+        className="storyboard-editor-add"
         variant="light"
         size="xs"
-        leftSection={<IconPlus size={14} />}
+        leftSection={<IconPlus className="storyboard-editor-add-icon" size={14} />}
         onClick={onAddScene}
       >
         添加 Scene
       </Button>
       <Textarea
+        className="storyboard-editor-notes"
         label="全局风格 / 备注"
         autosize
         minRows={2}
@@ -160,11 +170,12 @@ export function StoryboardEditor({
         value={notes}
         onChange={(e) => onNotesChange(e.currentTarget.value)}
       />
-      <Group justify="space-between">
-        <Text size="xs" c="dimmed">
+      <Group className="storyboard-editor-summary" justify="space-between">
+        <Text className="storyboard-editor-summary-text" size="xs" c="dimmed">
           当前共 {scenes.length} 个镜头。You're using {scenes.length} video gens with current settings.
         </Text>
         <Text
+          className="storyboard-editor-summary-duration"
           size="xs"
           c={totalDuration > STORYBOARD_MAX_TOTAL_DURATION ? 'red.4' : 'dimmed'}
         >

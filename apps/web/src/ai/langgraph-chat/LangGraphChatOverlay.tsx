@@ -1200,7 +1200,7 @@ function ChatMessagesView({
   onPickQuickReply: (input: string) => void
 }) {
   return (
-    <Stack gap="lg">
+    <Stack className="tc-lg-messages" gap="lg">
       {messages.map((msg, index) => {
         const isLast = index === messages.length - 1
         const isAssistant = msg.type === 'ai'
@@ -1308,16 +1308,17 @@ function InputForm({
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <Stack gap="xs">
+    <form className="tc-lg-input" onSubmit={handleSubmit}>
+      <Stack className="tc-lg-input__stack" gap="xs">
         {!!(refNodeIds && refNodeIds.length) && (
-          <Group gap={8} wrap="wrap">
+          <Group className="tc-lg-input__refs" gap={8} wrap="wrap">
             {refNodeIds.map((id) => {
               const info = getThumb(id)
               const title = info?.title || '引用节点'
               return (
-                <Tooltip key={id} label={title} withArrow>
+                <Tooltip className="tc-lg-input__ref-tooltip" key={id} label={title} withArrow>
                   <div
+                    className="tc-lg-input__ref"
                     role="button"
                     tabIndex={0}
                     aria-label="移除引用"
@@ -1338,16 +1339,18 @@ function InputForm({
                   >
                     {info?.src ? (
                       <img
+                        className="tc-lg-input__ref-image"
                         src={info.src}
                         alt=""
                         style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       />
                     ) : (
-                      <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
-                        <IconPhoto size={18} />
+                      <div className="tc-lg-input__ref-empty" style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                        <IconPhoto className="tc-lg-input__ref-icon" size={18} />
                       </div>
                     )}
                     <div
+                      className="tc-lg-input__ref-overlay"
                       style={{
                         position: 'absolute',
                         inset: 0,
@@ -1355,9 +1358,9 @@ function InputForm({
                         pointerEvents: 'none',
                       }}
                     />
-                    <div style={{ position: 'absolute', top: 4, right: 4, pointerEvents: 'none' }}>
-                      <ActionIcon size="xs" variant="filled" color="dark" aria-label="移除引用">
-                        <IconX size={10} />
+                    <div className="tc-lg-input__ref-remove" style={{ position: 'absolute', top: 4, right: 4, pointerEvents: 'none' }}>
+                      <ActionIcon className="tc-lg-input__ref-remove-icon" size="xs" variant="filled" color="dark" aria-label="移除引用">
+                        <IconX className="tc-lg-input__ref-remove-icon" size={10} />
                       </ActionIcon>
                     </div>
                   </div>
@@ -1366,8 +1369,9 @@ function InputForm({
             })}
           </Group>
         )}
-        <Group align="flex-start" gap="sm">
+        <Group className="tc-lg-input__row" align="flex-start" gap="sm">
           <Textarea
+            className="tc-lg-input__textarea"
             ref={textareaRef}
             value={value}
             onChange={(e) => setValue(e.currentTarget.value)}
@@ -1388,8 +1392,9 @@ function InputForm({
           />
           {!readOnly &&
             (isLoading ? (
-              <Group gap="xs" wrap="nowrap">
+              <Group className="tc-lg-input__actions" gap="xs" wrap="nowrap">
                 <Button
+                  className="tc-lg-input__action"
                   color="red"
                   variant="light"
                   leftSection={<IconPlayerStop size={16} />}
@@ -1398,6 +1403,7 @@ function InputForm({
                   停止
                 </Button>
                 <Button
+                  className="tc-lg-input__action"
                   type="submit"
                   variant="gradient"
                   gradient={{ from: 'indigo', to: 'cyan' }}
@@ -1408,23 +1414,25 @@ function InputForm({
                 </Button>
               </Group>
             ) : (
-              <Group gap="xs" wrap="nowrap">
-                <Tooltip label={retryDisabled ? '暂无可重试的请求' : '重试上一次请求'}>
+              <Group className="tc-lg-input__actions" gap="xs" wrap="nowrap">
+                <Tooltip className="tc-lg-input__tooltip" label={retryDisabled ? '暂无可重试的请求' : '重试上一次请求'}>
                   <ActionIcon
+                    className="tc-lg-input__action-icon"
                     variant="subtle"
                     size="lg"
                     aria-label="重试"
                     onClick={onRetry}
                     disabled={!!retryDisabled}
                   >
-                    <IconRefresh size={18} />
+                    <IconRefresh className="tc-lg-input__action-icon" size={18} />
                   </ActionIcon>
                 </Tooltip>
                 <Button
+                  className="tc-lg-input__action"
                   type="submit"
                   variant="gradient"
                   gradient={{ from: 'indigo', to: 'cyan' }}
-                  leftSection={<IconSend size={16} />}
+                  leftSection={<IconSend className="tc-lg-input__action-icon" size={16} />}
                   disabled={disabled}
                 >
                   发送
@@ -1442,6 +1450,7 @@ function WelcomeCard({ onPickWorkflow }: { onPickWorkflow: (prompt: string) => v
   const isLight = colorScheme === 'light'
   return (
     <Paper
+      className="tc-lg-welcome"
       radius="lg"
       p="xl"
       withBorder
@@ -1452,17 +1461,17 @@ function WelcomeCard({ onPickWorkflow }: { onPickWorkflow: (prompt: string) => v
         borderColor: isLight ? 'rgba(15,23,42,0.1)' : 'rgba(255,255,255,0.08)',
       }}
     >
-      <Stack gap="xs">
-        <Group gap="sm">
-          <IconRocket size={18} />
-          <Text fw={700}>小T</Text>
-          <Badge color="violet" variant="light">Beta</Badge>
+      <Stack className="tc-lg-welcome__stack" gap="xs">
+        <Group className="tc-lg-welcome__header" gap="sm">
+          <IconRocket className="tc-lg-welcome__icon" size={18} />
+          <Text className="tc-lg-welcome__title" fw={700}>小T</Text>
+          <Badge className="tc-lg-welcome__badge" color="violet" variant="light">Beta</Badge>
         </Group>
-        <Text c="dimmed" size="sm">
+        <Text className="tc-lg-welcome__subtitle" c="dimmed" size="sm">
           在画布里直接提需求：我会自动创建/连接节点并生成结果。需要细节时再展开“执行过程”查看步骤。
         </Text>
-        <Divider my="sm" label="选择一个开始" labelPosition="left" />
-        <Stack gap="sm">
+        <Divider className="tc-lg-welcome__divider" my="sm" label="选择一个开始" labelPosition="left" />
+        <Stack className="tc-lg-welcome__list" gap="sm">
           {[
             { label: '角色创建主流程', desc: '先定主角 IP 与风格，再做分镜与视频', icon: <IconUser size={16} /> },
             { label: '直接生图主流程', desc: '一句话立刻出图（可继续生成视频）', icon: <IconPhoto size={16} /> },
@@ -1471,6 +1480,7 @@ function WelcomeCard({ onPickWorkflow }: { onPickWorkflow: (prompt: string) => v
             const prompt = WORKFLOW_QUICK_REPLIES.find((r) => r.label === wf.label)?.input || ''
             return (
             <Paper
+              className="tc-lg-welcome__card"
               key={wf.label}
               p="sm"
               radius="md"
@@ -1482,25 +1492,25 @@ function WelcomeCard({ onPickWorkflow }: { onPickWorkflow: (prompt: string) => v
               }}
               onClick={() => onPickWorkflow(prompt)}
             >
-              <Group justify="space-between" gap="sm" wrap="nowrap">
-                <Group gap="sm" wrap="nowrap">
-                  <Badge color="grape" variant="light" leftSection={wf.icon}>
+              <Group className="tc-lg-welcome__card-row" justify="space-between" gap="sm" wrap="nowrap">
+                <Group className="tc-lg-welcome__card-title" gap="sm" wrap="nowrap">
+                  <Badge className="tc-lg-welcome__card-badge" color="grape" variant="light" leftSection={wf.icon}>
                     {wf.label}
                   </Badge>
-                  <Text size="xs" c="dimmed" lineClamp={1}>
+                  <Text className="tc-lg-welcome__card-desc" size="xs" c="dimmed" lineClamp={1}>
                     {wf.desc}
                   </Text>
                 </Group>
-                <IconChevronDown size={16} style={{ opacity: 0.6 }} />
+                <IconChevronDown className="tc-lg-welcome__card-icon" size={16} style={{ opacity: 0.6 }} />
               </Group>
             </Paper>
           )})}
         </Stack>
-        <Divider my="sm" />
-        <Group gap="xs">
-          <Badge color="blue" leftSection={<IconSparkles size={12} />}>自动画布操作</Badge>
-          <Badge color="grape" leftSection={<IconDiamond size={12} />}>步骤可追溯</Badge>
-          <Badge color="teal" leftSection={<IconCircleDashedCheck size={12} />}>结果可复用</Badge>
+        <Divider className="tc-lg-welcome__divider" my="sm" />
+        <Group className="tc-lg-welcome__chips" gap="xs">
+          <Badge className="tc-lg-welcome__chip" color="blue" leftSection={<IconSparkles className="tc-lg-welcome__chip-icon" size={12} />}>自动画布操作</Badge>
+          <Badge className="tc-lg-welcome__chip" color="grape" leftSection={<IconDiamond className="tc-lg-welcome__chip-icon" size={12} />}>步骤可追溯</Badge>
+          <Badge className="tc-lg-welcome__chip" color="teal" leftSection={<IconCircleDashedCheck className="tc-lg-welcome__chip-icon" size={12} />}>结果可复用</Badge>
         </Group>
       </Stack>
     </Paper>
@@ -2597,27 +2607,29 @@ function LangGraphChatOverlayInner({
   return (
     <>
       <Modal
+        className="tc-lg-modal"
         opened={clearConfirmOpen}
         onClose={() => setClearConfirmOpen(false)}
         centered
         title="清空对话记忆？"
         overlayProps={{ blur: 2, opacity: 0.35 }}
       >
-        <Stack gap="md">
-          <Text size="sm" c="dimmed">
+        <Stack className="tc-lg-modal__stack" gap="md">
+          <Text className="tc-lg-modal__text" size="sm" c="dimmed">
             该项目仅允许一个会话；清空后将从零开始新的对话记忆。
           </Text>
-          <Group justify="flex-end" gap="sm">
-            <Button variant="default" onClick={() => setClearConfirmOpen(false)}>
+          <Group className="tc-lg-modal__actions" justify="flex-end" gap="sm">
+            <Button className="tc-lg-modal__action" variant="default" onClick={() => setClearConfirmOpen(false)}>
               取消
             </Button>
-            <Button color="red" onClick={() => void handleClear()} disabled={viewOnly || blocked || thread.isLoading}>
+            <Button className="tc-lg-modal__action" color="red" onClick={() => void handleClear()} disabled={viewOnly || blocked || thread.isLoading}>
               清空
             </Button>
           </Group>
         </Stack>
       </Modal>
     <Modal
+      className="tc-lg-overlay"
       opened={open}
       onClose={close}
       radius="lg"
@@ -2649,6 +2661,7 @@ function LangGraphChatOverlayInner({
       }}
     >
       <div
+        className="tc-lg-overlay__frame"
         style={{
           position: 'fixed',
           top: 16,
@@ -2659,6 +2672,7 @@ function LangGraphChatOverlayInner({
         }}
       >
         <div
+          className="tc-lg-overlay__panel"
           style={{
             height: '100%',
             display: 'flex',
@@ -2667,17 +2681,18 @@ function LangGraphChatOverlayInner({
             pointerEvents: 'auto',
           }}
         >
-          <Group justify="space-between" align="center">
-            <Group gap="sm">
-              <IconSparkles size={18} />
-              <Text fw={700}>小T</Text>
+          <Group className="tc-lg-overlay__header" justify="space-between" align="center">
+            <Group className="tc-lg-overlay__title" gap="sm">
+              <IconSparkles className="tc-lg-overlay__title-icon" size={18} />
+              <Text className="tc-lg-overlay__title-text" fw={700}>小T</Text>
               {viewOnly && (
-                <Badge size="xs" variant="light" color="gray">
+                <Badge className="tc-lg-overlay__badge" size="xs" variant="light" color="gray">
                   只读
                 </Badge>
               )}
               {!viewOnly && projectId && (
                 <SegmentedControl
+                  className="tc-lg-overlay__segmented"
                   size="xs"
                   radius="xl"
                   value={interactionMode}
@@ -2704,49 +2719,52 @@ function LangGraphChatOverlayInner({
                 />
               )}
               {blocked && (
-                <Badge color="gray" variant="light" leftSection={<Loader size={12} type="dots" color="gray" />}>
+                <Badge className="tc-lg-overlay__badge" color="gray" variant="light" leftSection={<Loader className="tc-lg-overlay__badge-icon" size={12} type="dots" color="gray" />}>
                   加载项目会话…
                 </Badge>
               )}
             </Group>
-	            <Group gap="xs">
+	            <Group className="tc-lg-overlay__actions" gap="xs">
 	              {error && (
-	                <Group gap={6}>
-	                  <IconAlertCircle size={16} color="red" />
-	                  <Text size="sm" c="red">
+	                <Group className="tc-lg-overlay__error" gap={6}>
+	                  <IconAlertCircle className="tc-lg-overlay__error-icon" size={16} color="red" />
+	                  <Text className="tc-lg-overlay__error-text" size="sm" c="red">
 	                    {error}
 	                  </Text>
 	                </Group>
 	              )}
 	              {!viewOnly && (
-	                <Tooltip label="快速开始" position="bottom" withArrow>
+	                <Tooltip className="tc-lg-overlay__tooltip" label="快速开始" position="bottom" withArrow>
 	                  <ActionIcon
+	                    className="tc-lg-overlay__action"
 	                    variant="subtle"
 	                    aria-label="快速开始"
 	                    onClick={() => setQuickStartOpen((v) => !v)}
 	                    disabled={blocked || thread.isLoading}
 	                  >
-	                    <IconRocket size={18} />
+	                    <IconRocket className="tc-lg-overlay__action-icon" size={18} />
 	                  </ActionIcon>
 	                </Tooltip>
 	              )}
-	              <Tooltip label="清空对话记忆（项目级）" position="bottom" withArrow>
+	              <Tooltip className="tc-lg-overlay__tooltip" label="清空对话记忆（项目级）" position="bottom" withArrow>
 	                <ActionIcon
+	                  className="tc-lg-overlay__action"
 	                  variant="subtle"
 	                  aria-label="清空对话"
 	                  onClick={() => setClearConfirmOpen(true)}
                   disabled={viewOnly || blocked || thread.isLoading}
                 >
-                  <IconTrash size={18} />
+                  <IconTrash className="tc-lg-overlay__action-icon" size={18} />
                 </ActionIcon>
               </Tooltip>
-              <ActionIcon variant="subtle" aria-label="关闭" onClick={close}>
-                <IconX size={18} />
+              <ActionIcon className="tc-lg-overlay__action" variant="subtle" aria-label="关闭" onClick={close}>
+                <IconX className="tc-lg-overlay__action-icon" size={18} />
               </ActionIcon>
             </Group>
           </Group>
 
           <Paper
+            className="tc-lg-overlay__body"
             shadow="xl"
             radius="lg"
             p="lg"
@@ -2764,38 +2782,39 @@ function LangGraphChatOverlayInner({
               minHeight: 0,
             }}
           >
-            <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
+            <Stack className="tc-lg-overlay__stack" gap="md" style={{ flex: 1, minHeight: 0 }}>
               {viewOnly && (
-                <Paper withBorder radius="md" p="sm" style={{ borderStyle: 'dashed' }}>
-                  <Text size="sm" c="dimmed">
+                <Paper className="tc-lg-overlay__notice" withBorder radius="md" p="sm" style={{ borderStyle: 'dashed' }}>
+                  <Text className="tc-lg-overlay__notice-text" size="sm" c="dimmed">
                     分享只读模式：可以查看小T内容，但无法发送新消息或执行工具。
                   </Text>
                 </Paper>
               )}
               {!viewOnly && (
-                <Collapse in={quickStartOpen} transitionDuration={150}>
+                <Collapse className="tc-lg-overlay__collapse" in={quickStartOpen} transitionDuration={150}>
                   <WelcomeCard onPickWorkflow={(prompt) => setPrefill(prompt)} />
                 </Collapse>
               )}
               {showEmptyViewOnly && (
-                <Paper withBorder radius="md" p="md" style={{ borderStyle: 'dashed' }}>
-                  <Stack gap={6}>
-                    <Text fw={600}>暂无创作过程记录</Text>
-                    <Text size="sm" c="dimmed">
+                <Paper className="tc-lg-overlay__empty" withBorder radius="md" p="md" style={{ borderStyle: 'dashed' }}>
+                  <Stack className="tc-lg-overlay__empty-stack" gap={6}>
+                    <Text className="tc-lg-overlay__empty-title" fw={600}>暂无创作过程记录</Text>
+                    <Text className="tc-lg-overlay__empty-text" size="sm" c="dimmed">
                       如果你在本地开发（例如 `localhost:5173`），可能因为 LangGraph CORS 仅放行线上域名导致无法拉取历史。
                     </Text>
                   </Stack>
                 </Paper>
               )}
-              <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+              <div className="tc-lg-overlay__messages" style={{ position: 'relative', flex: 1, minHeight: 0 }}>
                 <ScrollArea
+                  className="tc-lg-overlay__scroll"
                   type="never"
                   offsetScrollbars={false}
                   viewportRef={scrollViewportRef}
                   styles={{ viewport: { overflowX: 'hidden' } }}
                   style={{ height: '100%' }}
                 >
-                  <div style={{ paddingRight: 8 }}>
+                  <div className="tc-lg-overlay__scroll-inner" style={{ paddingRight: 8 }}>
                     <ChatMessagesView
                       messages={displayMessages}
                       isLoading={thread.isLoading}
@@ -2813,8 +2832,9 @@ function LangGraphChatOverlayInner({
                   </div>
                 </ScrollArea>
                 {!isAtBottom && (
-                  <Tooltip label="滚动到底部" position="left" withArrow>
+                  <Tooltip className="tc-lg-overlay__tooltip" label="滚动到底部" position="left" withArrow>
                     <ActionIcon
+                      className="tc-lg-overlay__scroll-action"
                       aria-label="滚动到底部"
                       variant="light"
                       color="blue"
@@ -2826,21 +2846,22 @@ function LangGraphChatOverlayInner({
                         zIndex: 3,
                       }}
                     >
-                      <IconArrowDown size={18} />
+                      <IconArrowDown className="tc-lg-overlay__action-icon" size={18} />
                     </ActionIcon>
                   </Tooltip>
                 )}
               </div>
               {(thread.isLoading || queuedInputs.length > 0) && (
                 <Group
+                  className="tc-lg-overlay__status"
                   gap="xs"
                   style={{
                     paddingRight: 8,
                     marginTop: 6,
                   }}
                 >
-                  {thread.isLoading ? <Loader size="xs" type="dots" color="gray" /> : null}
-                  <Text size="xs" c="dimmed" lineClamp={1} style={{ flex: 1 }}>
+                  {thread.isLoading ? <Loader className="tc-lg-overlay__status-loader" size="xs" type="dots" color="gray" /> : null}
+                  <Text className="tc-lg-overlay__status-text" size="xs" c="dimmed" lineClamp={1} style={{ flex: 1 }}>
                     {thread.isLoading
                       ? `正在处理：${getProcessingLine(processedEventsTimeline)}`
                       : `队列中：${queuedInputs.length}（等待执行）`}
@@ -2848,7 +2869,7 @@ function LangGraphChatOverlayInner({
                   </Text>
                 </Group>
               )}
-              <Divider />
+              <Divider className="tc-lg-overlay__divider" />
               <InputForm
                 onSubmit={handleSubmit}
                 onRetry={handleRetry}
@@ -2931,20 +2952,21 @@ export function LangGraphChatOverlay() {
     if (!open) return null
     return (
       <Modal
+        className="tc-lg-modal"
         opened={open}
         onClose={close}
         centered
-        title={<Text fw={700}>沉浸式创作（小T）</Text>}
+        title={<Text className="tc-lg-modal__title" fw={700}>沉浸式创作（小T）</Text>}
         size="lg"
         styles={modalStyles}
       >
-        <Stack gap="sm">
-          <Title order={5}>请先登录</Title>
-          <Text c="dimmed" size="sm">
+        <Stack className="tc-lg-modal__stack" gap="sm">
+          <Title className="tc-lg-modal__subtitle" order={5}>请先登录</Title>
+          <Text className="tc-lg-modal__text" c="dimmed" size="sm">
             登录后才可以使用沉浸式创作（小T）。你可以选择 GitHub 登录或游客模式。
           </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={close}>
+          <Group className="tc-lg-modal__actions" justify="flex-end">
+            <Button className="tc-lg-modal__action" variant="default" onClick={close}>
               关闭
             </Button>
           </Group>
@@ -2957,29 +2979,30 @@ export function LangGraphChatOverlay() {
     if (!open) return null
     return (
       <Modal
+        className="tc-lg-modal"
         opened={open}
         onClose={close}
         centered
-        title={<Text fw={700}>沉浸式创作（小T）</Text>}
+        title={<Text className="tc-lg-modal__title" fw={700}>沉浸式创作（小T）</Text>}
         size="lg"
         styles={modalStyles}
       >
-        <Stack gap="sm">
-          <Title order={5}>当前未启用 LangGraph</Title>
-          <Text c="dimmed" size="sm">
+        <Stack className="tc-lg-modal__stack" gap="sm">
+          <Title className="tc-lg-modal__subtitle" order={5}>当前未启用 LangGraph</Title>
+          <Text className="tc-lg-modal__text" c="dimmed" size="sm">
             这是前端开关被显式关闭导致的。移除/置空 `VITE_LANGGRAPH_ENABLED`（或设为 `1`）后重启 Web，
             然后确保 LangGraph 服务可访问。
           </Text>
-          <Text size="sm">启用方式（Docker）：</Text>
-          <Text size="sm" c="dimmed">
+          <Text className="tc-lg-modal__text" size="sm">启用方式（Docker）：</Text>
+          <Text className="tc-lg-modal__text" size="sm" c="dimmed">
             1) 确保根目录 `.env.docker` 未设置 `VITE_LANGGRAPH_ENABLED=0`
             <br />
             2) `docker compose up --build -d`
             <br />
             3) `docker compose up -d --force-recreate web`
           </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={close}>
+          <Group className="tc-lg-modal__actions" justify="flex-end">
+            <Button className="tc-lg-modal__action" variant="default" onClick={close}>
               关闭
             </Button>
           </Group>

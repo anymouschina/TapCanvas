@@ -19,6 +19,7 @@ import { IconEdit, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react
 import { useSystemPromptPresets, type SystemPromptScope } from '../systemPromptPresets'
 
 type PanelProps = {
+  className?: string
   target: 'image' | 'video'
   enabled: boolean
   value: string
@@ -38,7 +39,7 @@ const scopeLabelMap: Record<SystemPromptScope, string> = {
   both: '通用',
 }
 
-export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onChange }: PanelProps) {
+export function SystemPromptPanel({ className, target, enabled, value, onEnabledChange, onChange }: PanelProps) {
   const presets = useSystemPromptPresets((state) => state.presets)
   const addPreset = useSystemPromptPresets((state) => state.addPreset)
   const updatePreset = useSystemPromptPresets((state) => state.updatePreset)
@@ -143,35 +144,43 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
   )
 
   return (
-    <Paper withBorder radius="md" p="sm" mt="sm">
-      <Group justify="space-between" align="center">
-        <div>
-          <Text size="sm" fw={600}>
+    <Paper
+      className={['system-prompt-panel', className].filter(Boolean).join(' ')}
+      withBorder
+      radius="md"
+      p="sm"
+      mt="sm"
+    >
+      <Group className="system-prompt-panel-header" justify="space-between" align="center">
+        <div className="system-prompt-panel-title">
+          <Text className="system-prompt-panel-title-text" size="sm" fw={600}>
             系统提示词
           </Text>
-          <Text size="xs" c="dimmed">
+          <Text className="system-prompt-panel-title-subtext" size="xs" c="dimmed">
             为 {target === 'video' ? '视频' : '图像'} 模型提供稳定的风格约束。
           </Text>
         </div>
-        <Group gap={6} align="center">
+        <Group className="system-prompt-panel-actions" gap={6} align="center">
           <Switch
+            className="system-prompt-panel-switch"
             size="xs"
             label="启用"
             checked={enabled}
             onChange={(event) => onEnabledChange(event.currentTarget.checked)}
           />
-          <Tooltip label="管理提示词库" withArrow>
-            <ActionIcon variant="subtle" onClick={openManager}>
-              <IconSettings size={16} />
+          <Tooltip className="system-prompt-panel-manage-tooltip" label="管理提示词库" withArrow>
+            <ActionIcon className="system-prompt-panel-manage" variant="subtle" onClick={openManager}>
+              <IconSettings className="system-prompt-panel-manage-icon" size={16} />
             </ActionIcon>
           </Tooltip>
         </Group>
       </Group>
 
       {enabled ? (
-        <Stack gap="xs" mt="sm">
+        <Stack className="system-prompt-panel-content" gap="xs" mt="sm">
           {availablePresets.length > 0 && (
             <Select
+              className="system-prompt-panel-select"
               label="从列表快速应用"
               placeholder="选择一个系统提示词"
               data={selectData}
@@ -184,6 +193,7 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
             />
           )}
           <Textarea
+            className="system-prompt-panel-textarea"
             autosize
             minRows={3}
             maxRows={6}
@@ -196,17 +206,18 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
               onChange(event.currentTarget.value)
             }}
           />
-          <Text size="xs" c="dimmed">
+          <Text className="system-prompt-panel-hint" size="xs" c="dimmed">
             建议使用英文向模型描述镜头语法、色彩与约束；内容会在生成提示词前注入。
           </Text>
         </Stack>
       ) : (
-        <Text size="xs" c="dimmed" mt="sm">
+        <Text className="system-prompt-panel-disabled" size="xs" c="dimmed" mt="sm">
           当前节点不会注入系统提示词，直接使用输入的提示文案。
         </Text>
       )}
 
       <Modal
+        className="system-prompt-panel-modal"
         opened={managerOpen}
         onClose={() => {
           setManagerOpen(false)
@@ -217,9 +228,10 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
         centered
         withinPortal
       >
-        <Stack gap="sm">
-          <Group justify="space-between" align="center">
+        <Stack className="system-prompt-panel-modal-body" gap="sm">
+          <Group className="system-prompt-panel-modal-header" justify="space-between" align="center">
             <Select
+              className="system-prompt-panel-modal-scope"
               label="显示范围"
               size="xs"
               data={['all', 'image', 'video', 'both'].map((value) => ({
@@ -236,37 +248,38 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
               value={filterScope}
               onChange={(value) => setFilterScope((value as 'all' | SystemPromptScope) || 'all')}
             />
-            <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => resetForm(target as SystemPromptScope)}>
+            <Button className="system-prompt-panel-modal-new" size="xs" leftSection={<IconPlus className="system-prompt-panel-modal-new-icon" size={14} />} onClick={() => resetForm(target as SystemPromptScope)}>
               新建提示词
             </Button>
           </Group>
-          <ScrollArea.Autosize mah={260} type="hover">
-            <Stack gap="sm">
+          <ScrollArea.Autosize className="system-prompt-panel-modal-list" mah={260} type="hover">
+            <Stack className="system-prompt-panel-modal-list-stack" gap="sm">
               {filteredPresets.map((preset) => (
-                <Paper key={preset.id} withBorder radius="md" p="sm">
-                  <Group justify="space-between" align="flex-start">
-                    <div>
-                      <Group gap={6} align="center">
-                        <Text fw={600}>{preset.title}</Text>
-                        <Badge size="xs" variant="light" color={preset.scope === 'video' ? 'grape' : preset.scope === 'image' ? 'blue' : 'gray'}>
+                <Paper className="system-prompt-panel-modal-card" key={preset.id} withBorder radius="md" p="sm">
+                  <Group className="system-prompt-panel-modal-card-header" justify="space-between" align="flex-start">
+                    <div className="system-prompt-panel-modal-card-info">
+                      <Group className="system-prompt-panel-modal-card-title" gap={6} align="center">
+                        <Text className="system-prompt-panel-modal-card-title-text" fw={600}>{preset.title}</Text>
+                        <Badge className="system-prompt-panel-modal-card-badge" size="xs" variant="light" color={preset.scope === 'video' ? 'grape' : preset.scope === 'image' ? 'blue' : 'gray'}>
                           {scopeLabelMap[preset.scope]}
                         </Badge>
                         {preset.builtIn && (
-                          <Badge size="xs" variant="light" color="green">
+                          <Badge className="system-prompt-panel-modal-card-badge" size="xs" variant="light" color="green">
                             内置
                           </Badge>
                         )}
                       </Group>
                       {preset.description && (
-                        <Text size="xs" c="dimmed">
+                        <Text className="system-prompt-panel-modal-card-desc" size="xs" c="dimmed">
                           {preset.description}
                         </Text>
                       )}
                     </div>
-                    <Group gap={4} align="center">
+                    <Group className="system-prompt-panel-modal-card-actions" gap={4} align="center">
                       {!preset.builtIn && (
-                        <Tooltip label="编辑">
+                        <Tooltip className="system-prompt-panel-modal-edit-tooltip" label="编辑">
                           <ActionIcon
+                            className="system-prompt-panel-modal-edit"
                             size="sm"
                             variant="subtle"
                             onClick={() => {
@@ -280,13 +293,14 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
                               })
                             }}
                           >
-                            <IconEdit size={14} />
+                            <IconEdit className="system-prompt-panel-modal-edit-icon" size={14} />
                           </ActionIcon>
                         </Tooltip>
                       )}
                       {!preset.builtIn && (
-                        <Tooltip label="删除">
+                        <Tooltip className="system-prompt-panel-modal-delete-tooltip" label="删除">
                           <ActionIcon
+                            className="system-prompt-panel-modal-delete"
                             size="sm"
                             variant="subtle"
                             color="red"
@@ -296,28 +310,29 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
                               }
                             }}
                           >
-                            <IconTrash size={14} />
+                            <IconTrash className="system-prompt-panel-modal-delete-icon" size={14} />
                           </ActionIcon>
                         </Tooltip>
                       )}
                     </Group>
                   </Group>
-                  <Text size="xs" c="dimmed" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
+                  <Text className="system-prompt-panel-modal-card-content" size="xs" c="dimmed" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
                     {preset.content}
                   </Text>
                 </Paper>
               ))}
               {filteredPresets.length === 0 && (
-                <Text size="xs" c="dimmed">
+                <Text className="system-prompt-panel-modal-empty" size="xs" c="dimmed">
                   当前筛选下暂无提示词，试试添加一条吧。
                 </Text>
               )}
             </Stack>
           </ScrollArea.Autosize>
 
-          <Stack gap="xs">
-            <Group align="flex-end" gap="sm">
+          <Stack className="system-prompt-panel-modal-form" gap="xs">
+            <Group className="system-prompt-panel-modal-form-row" align="flex-end" gap="sm">
               <TextInput
+                className="system-prompt-panel-modal-input"
                 style={{ flex: 1 }}
                 label={editorId ? '编辑提示词名称' : '添加新的提示词'}
                 placeholder="例如：电影摄影导演"
@@ -325,6 +340,7 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
                 onChange={(event) => setFormValue((prev) => ({ ...prev, title: event.currentTarget.value }))}
               />
               <Select
+                className="system-prompt-panel-modal-select"
                 label="适用节点"
                 data={scopeOptions}
                 value={formValue.scope}
@@ -332,12 +348,14 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
               />
             </Group>
             <TextInput
+              className="system-prompt-panel-modal-input"
               label="说明（可选）"
               placeholder="用于快速辨识的备注"
               value={formValue.description}
               onChange={(event) => setFormValue((prev) => ({ ...prev, description: event.currentTarget.value }))}
             />
             <Textarea
+              className="system-prompt-panel-modal-textarea"
               label="系统提示词"
               placeholder="描述生成提示词时需要遵循的镜头、风格或语言要求"
               autosize
@@ -346,15 +364,15 @@ export function SystemPromptPanel({ target, enabled, value, onEnabledChange, onC
               onChange={(event) => setFormValue((prev) => ({ ...prev, content: event.currentTarget.value }))}
             />
             {formError && (
-              <Text size="xs" c="red">
+              <Text className="system-prompt-panel-modal-error" size="xs" c="red">
                 {formError}
               </Text>
             )}
-            <Group justify="flex-end">
-              <Button size="xs" variant="light" onClick={resetForm}>
+            <Group className="system-prompt-panel-modal-footer" justify="flex-end">
+              <Button className="system-prompt-panel-modal-reset" size="xs" variant="light" onClick={resetForm}>
                 清空
               </Button>
-              <Button size="xs" leftSection={<IconPlus size={14} />} onClick={handleSavePreset}>
+              <Button className="system-prompt-panel-modal-save" size="xs" leftSection={<IconPlus className="system-prompt-panel-modal-save-icon" size={14} />} onClick={handleSavePreset}>
                 {editorId ? '保存修改' : '添加到列表'}
               </Button>
             </Group>

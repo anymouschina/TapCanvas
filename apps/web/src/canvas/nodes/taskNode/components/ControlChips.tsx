@@ -64,11 +64,12 @@ export function ControlChips({
   onRun,
 }: ControlChipsProps) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+    <div className="control-chips" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       {showModelMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -82,12 +83,12 @@ export function ControlChips({
               }}
               title={`模型 · ${summaryModelLabel}`}
             >
-              <span style={controlValueStyle}>{summaryModelLabel}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{summaryModelLabel}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {modelList.map((option) => (
-              <Menu.Item key={option.value} onClick={() => onModelChange(option.value)}>
+              <Menu.Item className="control-chips-menu-item" key={option.value} onClick={() => onModelChange(option.value)}>
                 {option.label}
               </Menu.Item>
             ))}
@@ -95,9 +96,10 @@ export function ControlChips({
         </Menu>
       )}
       {showTimeMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -108,12 +110,12 @@ export function ControlChips({
               }}
               title="时长"
             >
-              <span style={controlValueStyle}>{summaryDuration}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{summaryDuration}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {durationOptions.map((option) => (
-              <Menu.Item key={option.value} onClick={() => onDurationChange(Number(option.value))}>
+              <Menu.Item className="control-chips-menu-item" key={option.value} onClick={() => onDurationChange(Number(option.value))}>
                 {option.label}
               </Menu.Item>
             ))}
@@ -121,9 +123,10 @@ export function ControlChips({
         </Menu>
       )}
       {showResolutionMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -131,12 +134,12 @@ export function ControlChips({
               style={summaryChipStyles}
               title="分辨率"
             >
-              <span style={controlValueStyle}>{summaryResolution}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{summaryResolution}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'].map((value) => (
-              <Menu.Item key={value} onClick={() => onAspectChange(value)}>
+              <Menu.Item className="control-chips-menu-item" key={value} onClick={() => onAspectChange(value)}>
                 {value}
               </Menu.Item>
             ))}
@@ -144,9 +147,10 @@ export function ControlChips({
         </Menu>
       )}
       {showImageSizeMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -154,12 +158,12 @@ export function ControlChips({
               style={summaryChipStyles}
               title="图像尺寸"
             >
-              <span style={controlValueStyle}>{imageSize}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{imageSize}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {['1K', '2K', '4K'].map((value) => (
-              <Menu.Item key={value} onClick={() => onImageSizeChange(value)}>
+              <Menu.Item className="control-chips-menu-item" key={value} onClick={() => onImageSizeChange(value)}>
                 {value}
               </Menu.Item>
             ))}
@@ -167,9 +171,10 @@ export function ControlChips({
         </Menu>
       )}
       {showOrientationMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -180,15 +185,15 @@ export function ControlChips({
               }}
               title="方向"
             >
-              <span style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{orientation === 'portrait' ? '竖屏' : '横屏'}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {[
               { value: 'landscape', label: '横屏' },
               { value: 'portrait', label: '竖屏' },
             ].map((option) => (
-              <Menu.Item key={option.value} onClick={() => onOrientationChange(option.value as 'portrait' | 'landscape')}>
+              <Menu.Item className="control-chips-menu-item" key={option.value} onClick={() => onOrientationChange(option.value as 'portrait' | 'landscape')}>
                 {option.label}
               </Menu.Item>
             ))}
@@ -196,9 +201,10 @@ export function ControlChips({
         </Menu>
       )}
       {showSampleMenu && (
-        <Menu withinPortal position="bottom-start" transition="pop-top-left">
-          <Menu.Target>
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
             <Button
+              className="control-chips-button"
               type="button"
               variant="transparent"
               radius={0}
@@ -209,12 +215,12 @@ export function ControlChips({
               }}
               title="生成次数"
             >
-              <span style={controlValueStyle}>{summaryExec}</span>
+              <span className="control-chips-value" style={controlValueStyle}>{summaryExec}</span>
             </Button>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
             {sampleOptions.map((value) => (
-              <Menu.Item key={value} onClick={() => onSampleChange(value)}>
+              <Menu.Item className="control-chips-menu-item" key={value} onClick={() => onSampleChange(value)}>
                 {value}x
               </Menu.Item>
             ))}
@@ -224,11 +230,12 @@ export function ControlChips({
       {!isCharacterNode && (
         <>
           {isRunning && (
-            <ActionIcon size="md" variant="light" color="red" title="停止当前任务" onClick={onCancelRun}>
-              <IconPlayerStop size={16} />
+            <ActionIcon className="control-chips-stop" size="md" variant="light" color="red" title="停止当前任务" onClick={onCancelRun}>
+              <IconPlayerStop className="control-chips-stop-icon" size={16} />
             </ActionIcon>
           )}
           <ActionIcon
+            className="control-chips-run"
             size="md"
             title="执行节点"
             loading={isRunning}
@@ -242,7 +249,7 @@ export function ControlChips({
               boxShadow: '0 18px 30px rgba(76, 110, 245, 0.35)',
             }}
           >
-            <IconPlayerPlay size={18} />
+            <IconPlayerPlay className="control-chips-run-icon" size={18} />
           </ActionIcon>
         </>
       )}

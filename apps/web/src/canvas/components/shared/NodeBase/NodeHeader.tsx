@@ -127,13 +127,14 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
   return (
     <div className={headerClasses} style={headerStyle}>
       {/* 左侧：类型指示器和标题 */}
-      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
+      <div className="node-header-main" style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
         {/* 类型指示器 */}
-        <div style={typeIndicatorStyle} title={data.kind} />
+        <div className="node-header-type-indicator" style={typeIndicatorStyle} title={data.kind} />
 
         {/* 标题 */}
         {isEditing ? (
           <input
+            className="node-header-title-input"
             style={titleStyle}
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
@@ -143,6 +144,7 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
           />
         ) : (
           <div
+            className="node-header-title"
             style={titleStyle}
             onClick={handleEdit}
             title={displayTitle}
@@ -154,17 +156,18 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
 
       {/* 中间：副标题 */}
       {displaySubtitle && displaySubtitle !== displayTitle && (
-        <div style={subtitleStyle} title={displaySubtitle}>
+        <div className="node-header-subtitle" style={subtitleStyle} title={displaySubtitle}>
           {displaySubtitle}
         </div>
       )}
 
       {/* 右侧：状态指示器 */}
       {showStatus && (
-        <div style={statusContainerStyle}>
+        <div className="node-header-status" style={statusContainerStyle}>
           {/* 进度条 */}
           {data.progress !== null && data.progress !== undefined && (
             <div
+              className="node-header-progress-track"
               style={{
                 ...createStatusIndicator(data.status, data.progress),
                 width: '40px',
@@ -175,6 +178,7 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
               title={`Progress: ${data.progress}%`}
             >
               <div
+                className="node-header-progress-fill"
                 style={{
                   width: `${data.progress}%`,
                   height: '100%',
@@ -188,6 +192,7 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
           {/* 状态图标 */}
           {data.status && (
             <div
+              className="node-header-status-dot"
               style={{
                 width: '12px',
                 height: '12px',

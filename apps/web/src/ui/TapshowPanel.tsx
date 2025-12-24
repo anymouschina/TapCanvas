@@ -140,10 +140,10 @@ export default function TapshowPanel(): JSX.Element | null {
   if (!mounted) return null
 
   return (
-    <div style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className="tapshow-panel-anchor" style={{ position: 'fixed', left: 82, top: anchorY ? anchorY - 150 : 140, zIndex: 200 }} data-ux-panel>
+      <Transition className="tapshow-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="tapshow-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -161,21 +161,23 @@ export default function TapshowPanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
+              <div className="tapshow-panel-arrow panel-arrow" />
               <Group
+                className="tapshow-panel-header"
                 justify="space-between"
                 mb={8}
                 style={{ position: 'sticky', top: 0, zIndex: 1, background: 'transparent' }}
               >
-                <Stack gap={2}>
-                  <Title order={6}>TapShow</Title>
-                  <Text size="xs" c="dimmed">
+                <Stack className="tapshow-panel-header-info" gap={2}>
+                  <Title className="tapshow-panel-title" order={6}>TapShow</Title>
+                  <Text className="tapshow-panel-subtitle" size="xs" c="dimmed">
                     展示所有通过 TapCanvas OSS 托管的公开图片 / 视频作品
                   </Text>
                 </Stack>
-                <Group gap="xs">
-                  <Tooltip label="全屏预览" withArrow>
+                <Group className="tapshow-panel-header-actions" gap="xs">
+                  <Tooltip className="tapshow-panel-preview-tooltip" label="全屏预览" withArrow>
                     <ActionIcon
+                      className="tapshow-panel-preview-action"
                       size="sm"
                       variant="subtle"
                       onClick={() => {
@@ -190,12 +192,13 @@ export default function TapshowPanel(): JSX.Element | null {
                         }
                       }}
                     >
-                      <IconPlayerPlay size={16} />
+                      <IconPlayerPlay className="tapshow-panel-preview-icon" size={16} />
                     </ActionIcon>
                   </Tooltip>
                   {webcutUrl && (
-                    <Tooltip label="打开 WebCut" withArrow>
+                    <Tooltip className="tapshow-panel-webcut-tooltip" label="打开 WebCut" withArrow>
                       <ActionIcon
+                        className="tapshow-panel-webcut-action"
                         size="sm"
                         variant="subtle"
                         component="a"
@@ -203,32 +206,33 @@ export default function TapshowPanel(): JSX.Element | null {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        <IconExternalLink size={16} />
+                        <IconExternalLink className="tapshow-panel-webcut-icon" size={16} />
                       </ActionIcon>
                     </Tooltip>
                   )}
-                  <Tooltip label="刷新" withArrow>
+                  <Tooltip className="tapshow-panel-refresh-tooltip" label="刷新" withArrow>
                     <ActionIcon
+                      className="tapshow-panel-refresh-action"
                       size="sm"
                       variant="light"
                       onClick={handleRefresh}
                       loading={refreshing || loading}
                     >
-                      <IconRefresh size={16} />
+                      <IconRefresh className="tapshow-panel-refresh-icon" size={16} />
                     </ActionIcon>
                   </Tooltip>
-                  <Button size="xs" variant="subtle" onClick={() => setActivePanel(null)}>
+                  <Button className="tapshow-panel-close" size="xs" variant="subtle" onClick={() => setActivePanel(null)}>
                     关闭
                   </Button>
                 </Group>
               </Group>
 
-              <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
+              <div className="tapshow-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
                 {loading && !hostedAssets.length ? (
-                  <Center py="md">
-                    <Group gap="xs">
-                      <Loader size="sm" />
-                      <Text size="xs" c="dimmed">
+                  <Center className="tapshow-panel-loading" py="md">
+                    <Group className="tapshow-panel-loading-group" gap="xs">
+                      <Loader className="tapshow-panel-loading-icon" size="sm" />
+                      <Text className="tapshow-panel-loading-text" size="xs" c="dimmed">
                         加载中…
                       </Text>
                     </Group>
@@ -236,16 +240,17 @@ export default function TapshowPanel(): JSX.Element | null {
                 ) : (
                   <>
                     {!hasAnyAssets && !loading && (
-                      <Text size="xs" c="dimmed">
+                      <Text className="tapshow-panel-empty" size="xs" c="dimmed">
                         暂无公开作品。使用支持图片 / 视频生成的节点并启用 OSS 托管后，作品会自动出现在这里。
                       </Text>
                     )}
                     {hasAnyAssets && (
-                      <Group justify="space-between" align="center" mb="xs">
-                        <Text size="sm" c="dimmed">
+                      <Group className="tapshow-panel-filter" justify="space-between" align="center" mb="xs">
+                        <Text className="tapshow-panel-filter-text" size="sm" c="dimmed">
                           TapShow 公开作品（默认显示全部，可切换视频 / 图片）
                         </Text>
                         <SegmentedControl
+                          className="tapshow-panel-filter-control"
                           size="sm"
                           radius="xl"
                           variant="filled"
@@ -261,21 +266,22 @@ export default function TapshowPanel(): JSX.Element | null {
                       </Group>
                     )}
                     {hasAnyAssets && !loading && filteredAssets.length === 0 && (
-                      <Text size="xs" c="dimmed">
+                      <Text className="tapshow-panel-filter-empty" size="xs" c="dimmed">
                         当前筛选下暂无作品。
                       </Text>
                     )}
                     {visibleAssets.length > 0 && (
-                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                      <SimpleGrid className="tapshow-panel-grid" cols={{ base: 1, sm: 2 }} spacing="sm">
                         {visibleAssets.map((asset) => {
                           const isVideo = asset.type === 'video'
                           const cover = asset.thumbnailUrl || asset.url
                           const label = asset.name || (isVideo ? '视频资产' : '图片资产')
                           return (
-                            <Card key={asset.id} withBorder radius="md" shadow="sm">
+                            <Card className="tapshow-panel-card" key={asset.id} withBorder radius="md" shadow="sm">
                               {isVideo ? (
                                 asset.url ? (
                                   <div
+                                    className="tapshow-panel-card-media"
                                     style={{
                                       borderRadius: 8,
                                       overflow: 'hidden',
@@ -283,6 +289,7 @@ export default function TapshowPanel(): JSX.Element | null {
                                     }}
                                   >
                                     <video
+                                      className="tapshow-panel-card-video"
                                       src={asset.url}
                                       poster={cover || undefined}
                                       style={{
@@ -297,6 +304,7 @@ export default function TapshowPanel(): JSX.Element | null {
                                   </div>
                                 ) : (
                                   <div
+                                    className="tapshow-panel-card-fallback"
                                     style={{
                                       height: 160,
                                       borderRadius: 8,
@@ -306,9 +314,10 @@ export default function TapshowPanel(): JSX.Element | null {
                                   />
                                 )
                               ) : cover ? (
-                                <Image src={cover} alt={label} radius="sm" height={160} fit="cover" />
+                                <Image className="tapshow-panel-card-image" src={cover} alt={label} radius="sm" height={160} fit="cover" />
                               ) : (
                                 <div
+                                  className="tapshow-panel-card-fallback"
                                   style={{
                                     height: 160,
                                     borderRadius: 8,
@@ -317,48 +326,50 @@ export default function TapshowPanel(): JSX.Element | null {
                                   }}
                                 />
                               )}
-                              <Stack gap={6} mt="sm">
-                                <Group gap="xs">
+                              <Stack className="tapshow-panel-card-body" gap={6} mt="sm">
+                                <Group className="tapshow-panel-card-badges" gap="xs">
                                   <Badge
+                                    className="tapshow-panel-card-type"
                                     size="xs"
                                     color={isVideo ? 'violet' : 'teal'}
                                     leftSection={
-                                      isVideo ? <IconPlayerPlay size={12} /> : <IconPhoto size={12} />
+                                      isVideo ? <IconPlayerPlay className="tapshow-panel-card-type-icon" size={12} /> : <IconPhoto className="tapshow-panel-card-type-icon" size={12} />
                                     }
                                   >
                                     {isVideo ? '视频' : '图片'}
                                   </Badge>
                                   {asset.modelKey && (
-                                    <Badge size="xs" variant="light">
+                                    <Badge className="tapshow-panel-card-model" size="xs" variant="light">
                                       {asset.modelKey}
                                     </Badge>
                                   )}
                                   {asset.vendor && (
-                                    <Badge size="xs" variant="outline">
+                                    <Badge className="tapshow-panel-card-vendor" size="xs" variant="outline">
                                       {asset.vendor}
                                     </Badge>
                                   )}
                                   {asset.ownerLogin && (
-                                    <Badge size="xs" variant="outline">
+                                    <Badge className="tapshow-panel-card-owner" size="xs" variant="outline">
                                       {asset.ownerLogin}
                                     </Badge>
                                   )}
                                 </Group>
-                                <Text size="sm" fw={600} lineClamp={1}>
+                                <Text className="tapshow-panel-card-title" size="sm" fw={600} lineClamp={1}>
                                   {label}
                                 </Text>
                                 {asset.prompt && (
-                                  <Text size="xs" c="dimmed" lineClamp={2}>
+                                  <Text className="tapshow-panel-card-prompt" size="xs" c="dimmed" lineClamp={2}>
                                     {asset.prompt}
                                   </Text>
                                 )}
-                                <Text size="xs" c="dimmed">
+                                <Text className="tapshow-panel-card-date" size="xs" c="dimmed">
                                   {formatDate(asset.createdAt)}
                                 </Text>
-                                <Group justify="flex-end" gap={4}>
+                                <Group className="tapshow-panel-card-actions" justify="flex-end" gap={4}>
                                   {asset.url && (
-                                    <Tooltip label="预览" withArrow>
+                                    <Tooltip className="tapshow-panel-card-preview-tooltip" label="预览" withArrow>
                                       <ActionIcon
+                                        className="tapshow-panel-card-preview-action"
                                         size="sm"
                                         variant="subtle"
                                         onClick={() =>
@@ -369,13 +380,14 @@ export default function TapshowPanel(): JSX.Element | null {
                                           })
                                         }
                                       >
-                                        {isVideo ? <IconPlayerPlay size={16} /> : <IconPhoto size={16} />}
+                                        {isVideo ? <IconPlayerPlay className="tapshow-panel-card-preview-icon" size={16} /> : <IconPhoto className="tapshow-panel-card-preview-icon" size={16} />}
                                       </ActionIcon>
                                     </Tooltip>
                                   )}
                                   {asset.url && (
-                                    <Tooltip label="加入画布" withArrow>
+                                    <Tooltip className="tapshow-panel-card-add-tooltip" label="加入画布" withArrow>
                                       <ActionIcon
+                                        className="tapshow-panel-card-add-action"
                                         size="sm"
                                         variant="light"
                                         onClick={() => {
@@ -399,18 +411,19 @@ export default function TapshowPanel(): JSX.Element | null {
                                           setActivePanel(null)
                                         }}
                                       >
-                                        <IconPlus size={16} />
+                                        <IconPlus className="tapshow-panel-card-add-icon" size={16} />
                                       </ActionIcon>
                                     </Tooltip>
                                   )}
                                   {asset.url && (
-                                    <Tooltip label="复制链接" withArrow>
+                                    <Tooltip className="tapshow-panel-card-copy-tooltip" label="复制链接" withArrow>
                                       <ActionIcon
+                                        className="tapshow-panel-card-copy-action"
                                         size="sm"
                                         variant="subtle"
                                         onClick={() => handleCopy(asset.url || '')}
                                       >
-                                        <IconCopy size={16} />
+                                        <IconCopy className="tapshow-panel-card-copy-icon" size={16} />
                                       </ActionIcon>
                                     </Tooltip>
                                   )}

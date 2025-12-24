@@ -112,6 +112,7 @@ export function VideoContent({
 }: VideoContentProps) {
   return (
     <div
+      className="video-content"
       style={{
         marginTop: 6,
         width: '100%',
@@ -125,39 +126,42 @@ export function VideoContent({
         color: mediaOverlayText,
       }}
     >
-      <Group justify="space-between" gap={4}>
-        <Text size="xs" c="dimmed">
+      <Group className="video-content-header" justify="space-between" gap={4}>
+        <Text className="video-content-header-text" size="xs" c="dimmed">
           {videoResults.length > 0
             ? `共 ${videoResults.length} 个视频${videoPrimaryIndex >= 0 ? ` (主视频: 第 ${videoPrimaryIndex + 1} 个)` : ''}`
             : '视频生成中...'
           }
         </Text>
-        <Group gap={2}>
+        <Group className="video-content-header-actions" gap={2}>
           <Button
+            className="video-content-history-button"
             size="compact-xs"
             variant="subtle"
             onClick={onOpenVideoModal}
-            leftSection={<IconClock size={12} />}
+            leftSection={<IconClock className="video-content-history-icon" size={12} />}
           >
             {videoResults.length > 0 ? '选择主视频' : '查看历史'}
           </Button>
         </Group>
       </Group>
-      <Group gap={6} justify="space-between">
-        <Group gap={6}>
+      <Group className="video-content-actions-row" gap={6} justify="space-between">
+        <Group className="video-content-actions-left" gap={6}>
           <Button
+            className="video-content-capture-button"
             size="compact-xs"
             variant="light"
-            leftSection={<IconPhotoSearch size={12} />}
+            leftSection={<IconPhotoSearch className="video-content-capture-icon" size={12} />}
             loading={frameCaptureLoading}
             onClick={handleCaptureVideoFrames}
           >
             抽帧预览
           </Button>
           <Button
+            className="video-content-character-button"
             size="compact-xs"
             variant="default"
-            leftSection={<IconUserPlus size={12} />}
+            leftSection={<IconUserPlus className="video-content-character-icon" size={12} />}
             onClick={handleOpenCharacterCreatorFromVideo}
             disabled={!hasPrimaryVideo || !isSoraVideoVendor}
             title="直接生成角色卡，跳过逐帧解析"
@@ -166,14 +170,15 @@ export function VideoContent({
           </Button>
         </Group>
         {frameSamples.length > 0 && (
-          <Button size="compact-xs" variant="subtle" onClick={cleanupFrameSamples}>
+          <Button className="video-content-clear-frames" size="compact-xs" variant="subtle" onClick={cleanupFrameSamples}>
             清空帧
           </Button>
         )}
       </Group>
       {frameSamples.length > 0 && (
-        <Group gap={6} justify="space-between">
+        <Group className="video-content-compare-actions" gap={6} justify="space-between">
           <Button
+            className="video-content-compare-button"
             size="compact-xs"
             variant="default"
             loading={frameCompareLoading}
@@ -182,6 +187,7 @@ export function VideoContent({
             AI 判同人
           </Button>
           <Button
+            className="video-content-character-cards-button"
             size="compact-xs"
             variant="light"
             loading={characterCardLoading}
@@ -193,13 +199,14 @@ export function VideoContent({
         </Group>
       )}
       {isSoraVideoNode && (
-        <Text size="xs" c="dimmed" style={{ lineHeight: 1.35 }}>
+        <Text className="video-content-hint" size="xs" c="dimmed" style={{ lineHeight: 1.35 }}>
           “逐帧解析角色卡” 会抽帧+聚类；“一键生成角色卡” 直接跳到资产面板，由你自行选择截取区间。
         </Text>
       )}
 
       {videoUrl ? (
         <video
+          className="video-content-player"
           src={videoResults[videoPrimaryIndex]?.url || videoUrl}
           poster={videoResults[videoPrimaryIndex]?.thumbnailUrl || videoThumbnailUrl || undefined}
           controls
@@ -216,6 +223,7 @@ export function VideoContent({
         />
       ) : (
         <div
+          className="video-content-placeholder"
           style={{
             height: 160,
             borderRadius: 8,
@@ -230,22 +238,24 @@ export function VideoContent({
         </div>
       )}
       {videoTitle && (
-        <Text size="xs" lineClamp={1} c="dimmed">
+        <Text className="video-content-title" size="xs" lineClamp={1} c="dimmed">
           {videoTitle}
         </Text>
       )}
       {frameSamples.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 6 }}>
+        <div className="video-content-frames" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 6 }}>
           {frameSamples.map((f) => {
             const active = frameCompareTimes.includes(f.time)
             return (
               <div
+                className="video-content-frame-card"
                 key={`${f.url}-${f.time}`}
                 style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer' }}
                 onClick={() => toggleFrameCompare(f.time)}
                 title={active ? '已加入对比，点击取消' : '加入对比'}
               >
                 <div
+                  className="video-content-frame-thumb"
                   style={{
                     borderRadius: 8,
                     overflow: 'hidden',
@@ -257,12 +267,14 @@ export function VideoContent({
                   }}
                 >
                   <img
+                    className="video-content-frame-img"
                     src={f.url}
                     alt={`frame-${f.time.toFixed(2)}s`}
                     style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                   />
                 </div>
                 <Tooltip
+                  className="video-content-frame-tooltip"
                   label={(!f.describing && f.description) ? f.description : undefined}
                   disabled={!f.description || f.describing}
                   withinPortal
@@ -271,12 +283,12 @@ export function VideoContent({
                   position="top"
                   withArrow
                 >
-                  <Text size="xs" c="dimmed">
+                  <Text className="video-content-frame-time" size="xs" c="dimmed">
                     {f.time.toFixed(2)}s
                   </Text>
                 </Tooltip>
                 {f.describing && (
-                  <Text size="xs" c="dimmed">
+                  <Text className="video-content-frame-loading" size="xs" c="dimmed">
                     解析中...
                   </Text>
                 )}
@@ -286,24 +298,24 @@ export function VideoContent({
         </div>
       )}
       {frameCompareTimes.length > 0 && (
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <Group justify="space-between" gap={6}>
-            <Text size="xs" fw={600}>
+        <div className="video-content-compare" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Group className="video-content-compare-header" justify="space-between" gap={6}>
+            <Text className="video-content-compare-title" size="xs" fw={600}>
               对比视图（{frameCompareTimes.length}）
             </Text>
-            <Button size="compact-xs" variant="subtle" onClick={() => setFrameCompareTimes([])}>
+            <Button className="video-content-compare-clear" size="compact-xs" variant="subtle" onClick={() => setFrameCompareTimes([])}>
               清空对比
             </Button>
           </Group>
-          <div style={{ display: 'grid', gridTemplateColumns: frameCompareTimes.length > 1 ? 'repeat(auto-fit, minmax(120px, 1fr))' : '1fr', gap: 8 }}>
+          <div className="video-content-compare-grid" style={{ display: 'grid', gridTemplateColumns: frameCompareTimes.length > 1 ? 'repeat(auto-fit, minmax(120px, 1fr))' : '1fr', gap: 8 }}>
             {frameCompareTimes.map((t) => {
               const f = frameSamples.find((fs) => fs.time === t)
               if (!f) return null
               return (
-                <div key={`compare-${t}`} style={{ border: `1px solid ${inlineDividerColor}`, borderRadius: 10, overflow: 'hidden', background: mediaFallbackSurface }}>
-                  <img src={f.url} alt={`compare-${t}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                  <div style={{ padding: '6px 8px' }}>
-                    <Text size="xs" c="dimmed">
+                <div className="video-content-compare-card" key={`compare-${t}`} style={{ border: `1px solid ${inlineDividerColor}`, borderRadius: 10, overflow: 'hidden', background: mediaFallbackSurface }}>
+                  <img className="video-content-compare-img" src={f.url} alt={`compare-${t}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <div className="video-content-compare-meta" style={{ padding: '6px 8px' }}>
+                    <Text className="video-content-compare-time" size="xs" c="dimmed">
                       {t.toFixed(2)}s
                     </Text>
                   </div>
@@ -314,13 +326,13 @@ export function VideoContent({
         </div>
       )}
       {frameCompareResult && (
-        <Paper shadow="xs" radius="md" withBorder p="sm" style={{ marginTop: 8, background: mediaOverlayBackground, color: mediaOverlayText }}>
-          <Group justify="space-between" gap={6} mb={4}>
-            <Text size="xs" fw={600}>
+        <Paper className="video-content-compare-result" shadow="xs" radius="md" withBorder p="sm" style={{ marginTop: 8, background: mediaOverlayBackground, color: mediaOverlayText }}>
+          <Group className="video-content-compare-result-header" justify="space-between" gap={6} mb={4}>
+            <Text className="video-content-compare-result-title" size="xs" fw={600}>
               AI 判定
             </Text>
             {frameCompareVerdict && (
-              <Badge size="xs" color={frameCompareVerdict.color} variant="filled">
+              <Badge className="video-content-compare-verdict" size="xs" color={frameCompareVerdict.color} variant="filled">
                 {frameCompareVerdict.label}
               </Badge>
             )}
@@ -328,27 +340,27 @@ export function VideoContent({
           {frameCompareSummary ? (
             <>
               {frameCompareSummary.reason && (
-                <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                <Text className="video-content-compare-reason" size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   理由：{frameCompareSummary.reason}
                 </Text>
               )}
               {frameCompareSummary.tags && frameCompareSummary.tags.length > 0 && (
-                <Group gap={4} mt={frameCompareSummary.reason ? 6 : 0} wrap="wrap">
+                <Group className="video-content-compare-tags" gap={4} mt={frameCompareSummary.reason ? 6 : 0} wrap="wrap">
                   {frameCompareSummary.tags.map((tag) => (
-                    <Badge key={tag} size="xs" variant="light" color="blue">
+                    <Badge className="video-content-compare-tag" key={tag} size="xs" variant="light" color="blue">
                       {tag}
                     </Badge>
                   ))}
                 </Group>
               )}
               {frameCompareSummary.frames && frameCompareSummary.frames.length > 0 && (
-                <Stack gap={4} mt={frameCompareSummary.tags && frameCompareSummary.tags.length > 0 ? 6 : 10}>
+                <Stack className="video-content-compare-frames" gap={4} mt={frameCompareSummary.tags && frameCompareSummary.tags.length > 0 ? 6 : 10}>
                   {frameCompareSummary.frames.map((frame, idx) => (
-                    <Group key={`frame-summary-${frame.time ?? idx}`} gap={6} align="flex-start" wrap="nowrap">
-                      <Badge size="xs" variant="outline" color="gray">
+                    <Group className="video-content-compare-frame" key={`frame-summary-${frame.time ?? idx}`} gap={6} align="flex-start" wrap="nowrap">
+                      <Badge className="video-content-compare-frame-time" size="xs" variant="outline" color="gray">
                         {typeof frame.time === 'number' ? `${frame.time.toFixed(2)}s` : `帧 ${idx + 1}`}
                       </Badge>
-                      <Text size="xs" style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      <Text className="video-content-compare-frame-desc" size="xs" style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                         {frame.desc || '无描述'}
                       </Text>
                     </Group>
@@ -357,50 +369,50 @@ export function VideoContent({
               )}
             </>
           ) : (
-            <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <Text className="video-content-compare-raw" size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
               {frameCompareResult}
             </Text>
           )}
         </Paper>
       )}
       {characterCardLoading && (
-        <Text size="xs" c="dimmed" mt={8}>
+        <Text className="video-content-character-loading" size="xs" c="dimmed" mt={8}>
           正在生成角色卡… (已解析 {describedFrameCount} 帧)
         </Text>
       )}
       {characterCardError && (
-        <Text size="xs" c="red" mt={4}>
+        <Text className="video-content-character-error" size="xs" c="red" mt={4}>
           {characterCardError}
         </Text>
       )}
       {characterCards.length > 0 && (
-        <Stack gap={6} mt={8}>
-          <Text size="xs" fw={600}>
+        <Stack className="video-content-character-cards" gap={6} mt={8}>
+          <Text className="video-content-character-cards-title" size="xs" fw={600}>
             角色卡（{characterCards.length}）
           </Text>
-          <Stack gap={8}>
+          <Stack className="video-content-character-cards-list" gap={8}>
             {characterCards.map((card) => (
-              <Paper key={card.id} withBorder radius="md" p="sm" style={{ background: mediaOverlayBackground, color: mediaOverlayText }}>
-                <Group justify="space-between" gap={6} mb={6} align="flex-start">
-                  <div>
-                    <Text size="sm" fw={600}>
+              <Paper className="video-content-character-card" key={card.id} withBorder radius="md" p="sm" style={{ background: mediaOverlayBackground, color: mediaOverlayText }}>
+                <Group className="video-content-character-card-header" justify="space-between" gap={6} mb={6} align="flex-start">
+                  <div className="video-content-character-card-main">
+                    <Text className="video-content-character-name" size="sm" fw={600}>
                       {card.name}
                     </Text>
                     {card.summary && (
-                      <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text className="video-content-character-summary" size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
                         {card.summary}
                       </Text>
                     )}
                     {card.clipRange && (
-                      <Text size="xs" c="dimmed">
+                      <Text className="video-content-character-range" size="xs" c="dimmed">
                         片段 {card.clipRange.start.toFixed(2)}s - {card.clipRange.end.toFixed(2)}s（{(card.clipRange.end - card.clipRange.start).toFixed(2)}s）
                       </Text>
                     )}
                   </div>
                   {card.tags && card.tags.length > 0 && (
-                    <Group gap={4} wrap="wrap" justify="flex-end">
+                    <Group className="video-content-character-tags" gap={4} wrap="wrap" justify="flex-end">
                       {card.tags.map((tag) => (
-                        <Badge key={`${card.id}-${tag}`} size="xs" variant="light" color="blue">
+                        <Badge className="video-content-character-tag" key={`${card.id}-${tag}`} size="xs" variant="light" color="blue">
                           {tag}
                         </Badge>
                       ))}
@@ -408,47 +420,48 @@ export function VideoContent({
                   )}
                 </Group>
                 {(card.startFrame || card.endFrame) && (
-                  <Group gap={8} mb={6} align="stretch">
+                  <Group className="video-content-character-frames" gap={8} mb={6} align="stretch">
                     {card.startFrame && (
-                      <div style={{ flex: 1 }}>
-                        <Text size="xs" c="dimmed" mb={2}>
+                      <div className="video-content-character-frame" style={{ flex: 1 }}>
+                        <Text className="video-content-character-frame-label" size="xs" c="dimmed" mb={2}>
                           首次出现 {card.startFrame.time.toFixed(2)}s
                         </Text>
-                        <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                          <img src={card.startFrame.url} alt={`${card.name}-start`} style={{ width: '100%', display: 'block' }} />
+                        <div className="video-content-character-frame-thumb" style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                          <img className="video-content-character-frame-img" src={card.startFrame.url} alt={`${card.name}-start`} style={{ width: '100%', display: 'block' }} />
                         </div>
                       </div>
                     )}
                     {card.endFrame && (
-                      <div style={{ flex: 1 }}>
-                        <Text size="xs" c="dimmed" mb={2}>
+                      <div className="video-content-character-frame" style={{ flex: 1 }}>
+                        <Text className="video-content-character-frame-label" size="xs" c="dimmed" mb={2}>
                           最后出现 {card.endFrame.time.toFixed(2)}s
                         </Text>
-                        <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                          <img src={card.endFrame.url} alt={`${card.name}-end`} style={{ width: '100%', display: 'block' }} />
+                        <div className="video-content-character-frame-thumb" style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
+                          <img className="video-content-character-frame-img" src={card.endFrame.url} alt={`${card.name}-end`} style={{ width: '100%', display: 'block' }} />
                         </div>
                       </div>
                     )}
                   </Group>
                 )}
-                <Stack gap={4}>
+                <Stack className="video-content-character-frame-list" gap={4}>
                   {card.frames.map((frame) => (
-                    <Group key={`${card.id}-${frame.time}`} gap={6} align="flex-start">
-                      <Badge size="xs" variant="outline" color="gray">
+                    <Group className="video-content-character-frame-row" key={`${card.id}-${frame.time}`} gap={6} align="flex-start">
+                      <Badge className="video-content-character-frame-time" size="xs" variant="outline" color="gray">
                         {frame.time.toFixed(2)}s
                       </Badge>
-                      <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text className="video-content-character-frame-desc" size="xs" style={{ whiteSpace: 'pre-wrap' }}>
                         {frame.desc}
                       </Text>
                     </Group>
                   ))}
                 </Stack>
-                <Group justify="flex-end" gap={6} mt={8}>
-                  <Tooltip label="打开创建角色弹窗" withArrow>
+                <Group className="video-content-character-actions" justify="flex-end" gap={6} mt={8}>
+                  <Tooltip className="video-content-character-action-tooltip" label="打开创建角色弹窗" withArrow>
                     <Button
+                      className="video-content-character-action"
                       size="compact-xs"
                       variant="outline"
-                      leftSection={<IconUserPlus size={12} />}
+                      leftSection={<IconUserPlus className="video-content-character-action-icon" size={12} />}
                       onClick={() => handleOpenCharacterCreatorModal(card)}
                     >
                       一键创建角色

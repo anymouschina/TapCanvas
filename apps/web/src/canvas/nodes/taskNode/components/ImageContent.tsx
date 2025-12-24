@@ -80,10 +80,14 @@ export function ImageContent({
   }, [activeImageUrl])
 
   return (
-    <div style={{ position: 'relative', marginTop: compact ? 0 : 6, padding: compact ? 0 : '0 6px' }}>
+    <div
+      className="task-node-image__root"
+      style={{ position: 'relative', marginTop: compact ? 0 : 6, padding: compact ? 0 : '0 6px' }}
+    >
       {!hasPrimaryImage ? (
         <>
           <div
+            className="task-node-image__empty-actions"
             style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 2px' }}
             onMouseLeave={() => setHovered(null)}
           >
@@ -96,6 +100,7 @@ export function ImageContent({
               const dimOthers = hovered !== null && hovered !== idx
               return (
                 <div
+                  className="task-node-image__empty-action"
                   key={row.label}
                   onMouseEnter={() => setHovered(idx)}
                   onClick={row.onClick}
@@ -108,18 +113,28 @@ export function ImageContent({
                     opacity: dimOthers ? 0.8 : 1,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ color: active ? quickActionIconActive : quickActionIconColor }}>{row.icon}</div>
-                    <div style={{ flex: 1, color: nodeShellText, fontSize: 13 }}>{row.label}</div>
-                    <div style={{ width: 12, height: 12 }} />
+                  <div className="task-node-image__empty-action-row" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div className="task-node-image__empty-action-icon" style={{ color: active ? quickActionIconActive : quickActionIconColor }}>
+                      {row.icon}
+                    </div>
+                    <div className="task-node-image__empty-action-label" style={{ flex: 1, color: nodeShellText, fontSize: 13 }}>
+                      {row.label}
+                    </div>
+                    <div className="task-node-image__empty-action-spacer" style={{ width: 12, height: 12 }} />
                   </div>
                   {active && idx === 0 && (
-                    <div style={{ marginLeft: 36, marginTop: 4, color: quickActionHint, fontSize: 11 }}>图片大小不能超过30MB</div>
+                    <div
+                      className="task-node-image__empty-action-hint"
+                      style={{ marginLeft: 36, marginTop: 4, color: quickActionHint, fontSize: 11 }}
+                    >
+                      图片大小不能超过30MB
+                    </div>
                   )}
                 </div>
               )
             })}
             <input
+              className="task-node-image__file-input"
               ref={bindInputRef}
               type="file"
               accept="image/*"
@@ -135,110 +150,117 @@ export function ImageContent({
           </div>
         </>
       ) : (
-        <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
-          <div style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
-          <div
-            style={{
-              position: 'relative',
-              borderRadius: 10,
-              overflow: 'hidden',
-              boxShadow: darkCardShadow,
-              background: mediaFallbackSurface,
-              width: '100%',
-              height: '100%',
-            }}
-          >
-            <img
-              src={activeImageUrl}
-              alt="主图"
+        <div className="task-node-image__preview" style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
+          <div className="task-node-image__preview-wrapper" style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
+            <div
+              className="task-node-image__preview-frame"
               style={{
+                position: 'relative',
+                borderRadius: 10,
+                overflow: 'hidden',
+                boxShadow: darkCardShadow,
+                background: mediaFallbackSurface,
                 width: '100%',
                 height: '100%',
-                display: 'block',
-                objectFit: 'contain',
-                opacity: imageError ? 0 : 1,
-              }}
-              onError={() => setImageError(true)}
-            />
-            {(showStateOverlay || imageError) && (
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  borderRadius: 10,
-                  background:
-                    'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.18))',
-                  animation: 'soft-pulse 1.8s ease-in-out infinite',
-                  backdropFilter: 'blur(10px)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  pointerEvents: 'none',
-                }}
-                aria-hidden="true"
-              >
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: mediaOverlayText,
-                    opacity: 0.8,
-                    letterSpacing: 0.2,
-                  }}
-                >
-                  {imageError ? '资源不可用' : (stateLabel || '加载中')}
-                </div>
-              </div>
-            )}
-            {imageResults.length > 1 && (
-              <button
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setImageExpanded(!imageExpanded)
-                }}
-                style={{
-                  position: 'absolute',
-                  right: 12,
-                  top: 12,
-                  padding: '4px 10px',
-                  borderRadius: 999,
-                  border: '1px solid rgba(15,23,42,0.6)',
-                  background:
-                    'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(15,23,42,0.86))',
-                  boxShadow:
-                    '0 12px 32px rgba(0,0,0,0.65)',
-                  color: themeWhite,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
-              >
-                <span>{imageResults.length}</span>
-                <IconChevronRight size={12} />
-              </button>
-            )}
-          </div>
-          {imageResults.length > 1 && imageExpanded && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 'calc(100% + 12px)',
-                width: 240,
-                background: darkContentBackground,
-                borderRadius: 12,
-                boxShadow: '0 18px 36px rgba(0,0,0,0.45)',
-                padding: 10,
-                zIndex: 3,
-                border: '1px solid rgba(255,255,255,0.08)',
               }}
             >
+              <img
+                className="task-node-image__preview-image"
+                src={activeImageUrl}
+                alt="主图"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'block',
+                  objectFit: 'contain',
+                  opacity: imageError ? 0 : 1,
+                }}
+                onError={() => setImageError(true)}
+              />
+              {(showStateOverlay || imageError) && (
                 <div
+                  className="task-node-image__overlay"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: 10,
+                    background:
+                      'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.18))',
+                    animation: 'soft-pulse 1.8s ease-in-out infinite',
+                    backdropFilter: 'blur(10px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: 'none',
+                  }}
+                  aria-hidden="true"
+                >
+                  <div
+                    className="task-node-image__overlay-text"
+                    style={{
+                      fontSize: 12,
+                      color: mediaOverlayText,
+                      opacity: 0.8,
+                      letterSpacing: 0.2,
+                    }}
+                  >
+                    {imageError ? '资源不可用' : (stateLabel || '加载中')}
+                  </div>
+                </div>
+              )}
+              {imageResults.length > 1 && (
+                <button
+                  className="task-node-image__count-toggle"
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setImageExpanded(!imageExpanded)
+                  }}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: 12,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    border: '1px solid rgba(15,23,42,0.6)',
+                    background:
+                      'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(15,23,42,0.86))',
+                    boxShadow:
+                      '0 12px 32px rgba(0,0,0,0.65)',
+                    color: themeWhite,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    outline: 'none',
+                  }}
+                >
+                  <span className="task-node-image__count-text">{imageResults.length}</span>
+                  <IconChevronRight className="task-node-image__count-icon" size={12} />
+                </button>
+              )}
+            </div>
+            {imageResults.length > 1 && imageExpanded && (
+              <div
+                className="task-node-image__gallery"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 'calc(100% + 12px)',
+                  width: 240,
+                  background: darkContentBackground,
+                  borderRadius: 12,
+                  boxShadow: '0 18px 36px rgba(0,0,0,0.45)',
+                  padding: 10,
+                  zIndex: 3,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <div
+                  className="task-node-image__gallery-grid"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
@@ -247,57 +269,61 @@ export function ImageContent({
                     overflowY: 'auto',
                   }}
                 >
-                {imageResults.map((img, idx) => {
-                  const isPrimary = idx === imagePrimaryIndex
-                  return (
-                    <button
-                      key={`${idx}-${img.url}`}
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onSelectPrimary(idx, img.url)
-                        setImageExpanded(false)
-                      }}
-                      style={{
-                        padding: 0,
-                        border: isPrimary ? '1px solid rgba(125, 211, 252, 0.7)' : '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 8,
-                        overflow: 'hidden',
-                        background: mediaFallbackSurface,
-                        cursor: 'pointer',
-                      }}
-                      title={isPrimary ? '主图' : '设为主图'}
-                    >
-                      <img
-                        src={img.url}
-                        alt={`结果 ${idx + 1}`}
-                        style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }}
-                      />
-                    </button>
-                  )
-                })}
+                  {imageResults.map((img, idx) => {
+                    const isPrimary = idx === imagePrimaryIndex
+                    return (
+                      <button
+                        className="task-node-image__gallery-item"
+                        key={`${idx}-${img.url}`}
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onSelectPrimary(idx, img.url)
+                          setImageExpanded(false)
+                        }}
+                        style={{
+                          padding: 0,
+                          border: isPrimary ? '1px solid rgba(125, 211, 252, 0.7)' : '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          background: mediaFallbackSurface,
+                          cursor: 'pointer',
+                        }}
+                        title={isPrimary ? '主图' : '设为主图'}
+                      >
+                        <img
+                          className="task-node-image__gallery-image"
+                          src={img.url}
+                          alt={`结果 ${idx + 1}`}
+                          style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }}
+                        />
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-          <input
-            ref={bindInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={async (e) => {
-              const files = Array.from(e.currentTarget.files || [])
-              e.currentTarget.value = ''
-              if (!files.length) return
-              await onUpload(files)
-            }}
-          />
+            )}
+            <input
+              className="task-node-image__file-input"
+              ref={bindInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={async (e) => {
+                const files = Array.from(e.currentTarget.files || [])
+                e.currentTarget.value = ''
+                if (!files.length) return
+                await onUpload(files)
+              }}
+            />
           </div>
         </div>
       )}
       {!imageUrl && upstreamText && (
         <div
+          className="task-node-image__upstream-text"
           style={{
             marginTop: 6,
             width: '100%',
@@ -315,7 +341,7 @@ export function ImageContent({
           {upstreamText}
         </div>
       )}
-      <style>{`
+      <style className="task-node-image__style">{`
         @keyframes soft-pulse {
           0%, 100% { opacity: 0.7; }
           50% { opacity: 1; }

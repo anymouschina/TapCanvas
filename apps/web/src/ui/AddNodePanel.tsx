@@ -6,7 +6,7 @@ import { useRFStore } from '../canvas/store'
 import { $ } from '../canvas/i18n'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 
-export default function AddNodePanel(): JSX.Element | null {
+export default function AddNodePanel({ className }: { className?: string }): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
@@ -14,11 +14,13 @@ export default function AddNodePanel(): JSX.Element | null {
 
   const mounted = active === 'add'
   const maxHeight = calculateSafeMaxHeight(anchorY, 120)
+  const panelClassName = ['add-node-panel', className].filter(Boolean).join(' ')
+
   return (
-    <div style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 120 : 64), zIndex: 200 }} data-ux-panel>
-      <Transition mounted={mounted} transition="pop" duration={140} timingFunction="ease">
+    <div className={panelClassName} style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 120 : 64), zIndex: 200 }} data-ux-panel>
+      <Transition className="add-node-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
-          <div style={styles}>
+          <div className="add-node-panel-transition-inner" style={styles}>
             <Paper
               withBorder
               shadow="md"
@@ -36,16 +38,16 @@ export default function AddNodePanel(): JSX.Element | null {
               }}
               data-ux-panel
             >
-              <div className="panel-arrow" />
-              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
-                <Title order={6} mb={8}>{$('添加节点')}</Title>
-                <Stack gap={8}>
-                  {/* <Button variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'text' }); setActivePanel(null) }}>{$('文本')}</Button> */}
-                  <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
-                  <Button variant="light" leftSection={<IconPhoto size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'mosaic' }); setActivePanel(null) }}>{$('拼图')}</Button>
-                  <Button variant="light" leftSection={<IconVideo size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
-                  <Button variant="light" leftSection={<IconMovie size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'storyboard' }); setActivePanel(null) }}>{$('分镜beta')}</Button>
-                  <Button variant="light" leftSection={<IconUser size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'character' }); setActivePanel(null) }}>{$('角色')}</Button>
+              <div className="add-node-panel-arrow panel-arrow" />
+              <div className="add-node-panel-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+                <Title className="add-node-panel-title" order={6} mb={8}>{$('添加节点')}</Title>
+                <Stack className="add-node-panel-actions" gap={8}>
+                  {/* <Button className="add-node-panel__disabled-text-button" variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'text' }); setActivePanel(null) }}>{$('文本')}</Button> */}
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconPhoto className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconPhoto className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'mosaic' }); setActivePanel(null) }}>{$('拼图')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconVideo className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconMovie className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'storyboard' }); setActivePanel(null) }}>{$('分镜beta')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconUser className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'character' }); setActivePanel(null) }}>{$('角色')}</Button>
                 </Stack>
               </div>
             </Paper>

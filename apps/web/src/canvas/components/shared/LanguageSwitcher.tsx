@@ -56,16 +56,18 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
 
   return (
     <div className={`language-switcher ${className}`} style={switcherStyle}>
-      <span style={{ marginRight: '4px' }}>🌐</span>
+      <span className="language-switcher-icon" style={{ marginRight: '4px' }}>🌐</span>
       <button
+        className="language-switcher-button"
         style={currentLang === 'zh' ? activeButtonStyle : buttonStyle}
         onClick={() => handleLanguageChange('zh')}
         title="简体中文"
       >
         中文
       </button>
-      <span style={{ color: '#9ca3af' }}>|</span>
+      <span className="language-switcher-divider" style={{ color: '#9ca3af' }}>|</span>
       <button
+        className="language-switcher-button"
         style={currentLang === 'en' ? activeButtonStyle : buttonStyle}
         onClick={() => handleLanguageChange('en')}
         title="English"

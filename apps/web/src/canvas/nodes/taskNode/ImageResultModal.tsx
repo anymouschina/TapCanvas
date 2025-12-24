@@ -30,6 +30,7 @@ export function ImageResultModal({
 
   return (
     <Modal
+      className="image-result-modal"
       opened={opened}
       onClose={onClose}
       title={title}
@@ -38,17 +39,19 @@ export function ImageResultModal({
       withinPortal
       zIndex={300}
     >
-      <Stack gap="sm">
-        <Text size="xs" c="dimmed">
+      <Stack className="image-result-modal-body" gap="sm">
+        <Text className="image-result-modal-hint" size="xs" c="dimmed">
           当前共有 {images.length} 张图片。点击「设为主图」可更新本节点主图，点击「全屏预览」可放大查看。
         </Text>
         <div
+          className="image-result-modal-scroll"
           style={{
             maxHeight: '60vh',
             overflowY: 'auto',
           }}
         >
           <div
+            className="image-result-modal-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
@@ -59,6 +62,7 @@ export function ImageResultModal({
               const isPrimary = idx === primaryIndex
               return (
                 <Paper
+                  className="image-result-modal-card"
                   key={`${idx}-${img.url}`}
                   radius="md"
                   p="xs"
@@ -67,6 +71,7 @@ export function ImageResultModal({
                   }}
                 >
                   <div
+                    className="image-result-modal-thumb"
                     style={{
                       borderRadius: 8,
                       overflow: 'hidden',
@@ -76,6 +81,7 @@ export function ImageResultModal({
                     }}
                   >
                     <img
+                      className="image-result-modal-img"
                       src={img.url}
                       alt={`结果 ${idx + 1}`}
                       style={{
@@ -86,12 +92,13 @@ export function ImageResultModal({
                       }}
                     />
                   </div>
-                  <Group justify="space-between">
-                    <Text size="xs" c="dimmed">
+                  <Group className="image-result-modal-actions" justify="space-between">
+                    <Text className="image-result-modal-label" size="xs" c="dimmed">
                       {isPrimary ? `主图 · 第 ${idx + 1} 张` : `第 ${idx + 1} 张`}
                     </Text>
-                    <Group gap={4}>
+                    <Group className="image-result-modal-buttons" gap={4}>
                       <Button
+                        className="image-result-modal-preview"
                         size="xs"
                         variant="subtle"
                         onClick={() => onPreview(img.url)}
@@ -100,6 +107,7 @@ export function ImageResultModal({
                       </Button>
                       {!isPrimary && (
                         <Button
+                          className="image-result-modal-set-primary"
                           size="xs"
                           variant="subtle"
                           onClick={() => {

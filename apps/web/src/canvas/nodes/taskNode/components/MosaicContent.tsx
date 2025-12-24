@@ -21,11 +21,12 @@ export function MosaicContent({
 }: MosaicContentProps) {
   const mediaSize = 300
   return (
-    <div style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
+    <div className="mosaic-content" style={{ position: 'relative', marginTop: 6, padding: '0 6px' }}>
       {imageResults.length ? (
-        <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
-          <div style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
+        <div className="mosaic-content-frame" style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
+          <div className="mosaic-content-media" style={{ position: 'relative', width: mediaSize, height: mediaSize }}>
           <div
+            className="mosaic-content-media-shell"
             style={{
               position: 'relative',
               borderRadius: 10,
@@ -37,6 +38,7 @@ export function MosaicContent({
             }}
           >
             <img
+              className="mosaic-content-image"
               src={imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || ''}
               alt="拼图结果"
               style={{
@@ -47,11 +49,11 @@ export function MosaicContent({
               }}
             />
           </div>
-          <Group gap={6} mt={6} justify="flex-end" style={{ width: '100%' }}>
-            <Button size="xs" variant="light" onClick={onOpenModal}>
+          <Group className="mosaic-content-actions" gap={6} mt={6} justify="flex-end" style={{ width: '100%' }}>
+            <Button className="mosaic-content-action" size="xs" variant="light" onClick={onOpenModal}>
               重新拼图
             </Button>
-            <Button size="xs" variant="subtle" onClick={onSave}>
+            <Button className="mosaic-content-action" size="xs" variant="subtle" onClick={onSave}>
               保存当前选择
             </Button>
           </Group>
@@ -59,6 +61,7 @@ export function MosaicContent({
         </div>
       ) : (
         <Paper
+          className="mosaic-content-empty"
           radius="md"
           p="md"
           style={{
@@ -72,11 +75,11 @@ export function MosaicContent({
             textAlign: 'center',
           }}
         >
-          <IconLayoutGrid size={28} style={{ color: placeholderColor }} />
-          <Text size="sm" c="dimmed">
+          <IconLayoutGrid className="mosaic-content-empty-icon" size={28} style={{ color: placeholderColor }} />
+          <Text className="mosaic-content-empty-text" size="sm" c="dimmed">
             选择画布内的图片并拼成 {mosaicGrid}x{mosaicGrid} 网格。
           </Text>
-          <Button size="xs" variant="light" onClick={onOpenModal}>
+          <Button className="mosaic-content-empty-action" size="xs" variant="light" onClick={onOpenModal}>
             打开拼图设置
           </Button>
         </Paper>

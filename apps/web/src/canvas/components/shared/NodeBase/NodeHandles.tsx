@@ -101,6 +101,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 输入手柄 */}
       {showInputs && inputTypes.map((inputType, index) => (
         <Handle
+          className="node-handles-input"
           key={`input-${index}`}
           id={generateHandleId('input', inputType, index)}
           type="target"
@@ -118,6 +119,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 默认输入手柄（如果没有指定类型） */}
       {showInputs && inputTypes.length === 0 && (
         <Handle
+          className="node-handles-input"
           id={generateHandleId('input', 'any')}
           type="target"
           position={Position.Left}
@@ -131,6 +133,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 输出手柄 */}
       {showOutputs && outputTypes.map((outputType, index) => (
         <Handle
+          className="node-handles-output"
           key={`output-${index}`}
           id={generateHandleId('output', outputType, index)}
           type="source"
@@ -148,6 +151,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 默认输出手柄（如果没有指定类型） */}
       {showOutputs && outputTypes.length === 0 && (
         <Handle
+          className="node-handles-output"
           id={generateHandleId('output', 'any')}
           type="source"
           position={Position.Right}
@@ -161,6 +165,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 顶部手柄（用于特殊情况） */}
       {showInputs && inputTypes.includes('top') && (
         <Handle
+          className="node-handles-input node-handles-input--top"
           id={generateHandleId('input', 'top')}
           type="target"
           position={Position.Top}
@@ -174,6 +179,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 底部手柄（用于特殊情况） */}
       {showOutputs && outputTypes.includes('bottom') && (
         <Handle
+          className="node-handles-output node-handles-output--bottom"
           id={generateHandleId('output', 'bottom')}
           type="source"
           position={Position.Bottom}
@@ -187,6 +193,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       {/* 连接提示（当没有手柄时显示） */}
       {!showInputs && !showOutputs && (
         <div
+          className="node-handles-empty"
           style={{
             position: 'absolute',
             top: '50%',
@@ -203,7 +210,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       )}
 
       {/* 样式定义 */}
-      <style jsx>{`
+      <style className="node-handles-style" jsx>{`
         .node-handles:hover .react-flow__handle {
           transform: translate(-50%, -50%) scale(1.2);
         }

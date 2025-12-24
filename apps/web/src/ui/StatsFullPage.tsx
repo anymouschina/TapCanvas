@@ -27,15 +27,15 @@ function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   const area = `${pad},${h - pad} ${points} ${w - pad},${h - pad}`
 
   return (
-    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="tapcanvas-stats-spark-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(59,130,246,0.35)" />
-          <stop offset="100%" stopColor="rgba(59,130,246,0.02)" />
+    <svg className="stats-sparkline" width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <defs className="stats-sparkline-defs">
+        <linearGradient className="stats-sparkline-gradient" id="tapcanvas-stats-spark-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop className="stats-sparkline-stop" offset="0%" stopColor="rgba(59,130,246,0.35)" />
+          <stop className="stats-sparkline-stop" offset="100%" stopColor="rgba(59,130,246,0.02)" />
         </linearGradient>
       </defs>
-      <polyline points={area} fill="url(#tapcanvas-stats-spark-fill)" stroke="none" />
-      <polyline points={points} fill="none" stroke="rgba(59,130,246,0.9)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      <polyline className="stats-sparkline-area" points={area} fill="url(#tapcanvas-stats-spark-fill)" stroke="none" />
+      <polyline className="stats-sparkline-line" points={points} fill="none" stroke="rgba(59,130,246,0.9)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }
@@ -80,21 +80,21 @@ export default function StatsFullPage(): JSX.Element {
 
   if (!isAdmin) {
     return (
-      <div style={{ minHeight: '100vh', background }}>
-        <ToastHost />
-        <Container size="md" py={40}>
-          <Stack gap="md">
-            <Group justify="space-between">
-              <Title order={3}>{$('看板')}</Title>
-              <Button variant="subtle" component="a" href="/">
+      <div className="stats-page" style={{ minHeight: '100vh', background }}>
+        <ToastHost className="stats-page-toast" />
+        <Container className="stats-page-container" size="md" py={40}>
+          <Stack className="stats-page-stack" gap="md">
+            <Group className="stats-page-header" justify="space-between">
+              <Title className="stats-page-title" order={3}>{$('看板')}</Title>
+              <Button className="stats-page-back" variant="subtle" component="a" href="/">
                 {$('返回')}
               </Button>
             </Group>
-            <Paper withBorder radius="lg" p="md">
-              <Text size="sm" c="dimmed">
+            <Paper className="stats-page-card" withBorder radius="lg" p="md">
+              <Text className="stats-page-text" size="sm" c="dimmed">
                 {$('仅管理员可访问看板。')}
               </Text>
-              <Text size="xs" c="dimmed" mt={8}>
+              <Text className="stats-page-subtext" size="xs" c="dimmed" mt={8}>
                 {user?.login ? `login=${user.login}` : $('未登录')}
               </Text>
             </Paper>
@@ -105,96 +105,98 @@ export default function StatsFullPage(): JSX.Element {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background }}>
-      <ToastHost />
-      <Container size="xl" px="md" py="md">
-        <Box pt="md" pb="sm">
-          <Group justify="space-between" align="center" mb="md">
-            <Group gap={10} align="center">
+    <div className="stats-page" style={{ minHeight: '100vh', background }}>
+      <ToastHost className="stats-page-toast" />
+      <Container className="stats-page-container" size="xl" px="md" py="md">
+        <Box className="stats-page-hero" pt="md" pb="sm">
+          <Group className="stats-page-topbar" justify="space-between" align="center" mb="md">
+            <Group className="stats-page-topbar-left" gap={10} align="center">
               <Button
+                className="stats-page-back"
                 size="xs"
                 variant="subtle"
-                leftSection={<IconArrowLeft size={14} />}
+                leftSection={<IconArrowLeft className="stats-page-back-icon" size={14} />}
                 onClick={() => {
                   if (typeof window !== 'undefined') window.location.href = '/'
                 }}
               >
                 {$('返回 TapCanvas')}
               </Button>
-              <Badge variant="light" color="gray">
+              <Badge className="stats-page-admin-badge" variant="light" color="gray">
                 admin
               </Badge>
             </Group>
-            <Group gap={6}>
-              <Tooltip label={$('刷新')} withArrow>
-                <ActionIcon size="sm" variant="subtle" aria-label="刷新" onClick={() => void reload()} loading={loading}>
-                  <IconRefresh size={14} />
+            <Group className="stats-page-topbar-right" gap={6}>
+              <Tooltip className="stats-page-refresh-tooltip" label={$('刷新')} withArrow>
+                <ActionIcon className="stats-page-refresh" size="sm" variant="subtle" aria-label="刷新" onClick={() => void reload()} loading={loading}>
+                  <IconRefresh className="stats-page-refresh-icon" size={14} />
                 </ActionIcon>
               </Tooltip>
             </Group>
           </Group>
 
-          <Stack gap={6} mb="lg">
-            <Group gap={10} align="center">
-              <IconUsers size={18} />
-              <Title order={2}>{$('看板')}</Title>
+          <Stack className="stats-page-title-block" gap={6} mb="lg">
+            <Group className="stats-page-title-row" gap={10} align="center">
+              <IconUsers className="stats-page-title-icon" size={18} />
+              <Title className="stats-page-title" order={2}>{$('看板')}</Title>
             </Group>
-            <Text size="sm" c="dimmed" maw={720}>
+            <Text className="stats-page-subtitle" size="sm" c="dimmed" maw={720}>
               {$('在线/新增/日活统计（UTC 口径）。')}
             </Text>
           </Stack>
         </Box>
 
         {loading && !stats ? (
-          <Center mih={260}>
-            <Stack gap={8} align="center">
-              <Loader size="sm" />
-              <Text size="sm" c="dimmed">
+          <Center className="stats-page-loading" mih={260}>
+            <Stack className="stats-page-loading-stack" gap={8} align="center">
+              <Loader className="stats-page-loading-icon" size="sm" />
+              <Text className="stats-page-loading-text" size="sm" c="dimmed">
                 {$('加载中…')}
               </Text>
             </Stack>
           </Center>
         ) : !stats ? (
-          <Center mih={260}>
-            <Text size="sm" c="dimmed">
+          <Center className="stats-page-empty" mih={260}>
+            <Text className="stats-page-empty-text" size="sm" c="dimmed">
               {$('暂无数据')}
             </Text>
           </Center>
         ) : (
-          <Stack gap="md" pb="xl">
-            <Group grow>
-              <Paper withBorder radius="lg" p="md" className="glass">
-                <Group justify="space-between">
-                  <Text size="sm" fw={600}>
+          <Stack className="stats-page-content" gap="md" pb="xl">
+            <Group className="stats-page-metrics" grow>
+              <Paper className="stats-page-metric glass" withBorder radius="lg" p="md">
+                <Group className="stats-page-metric-row" justify="space-between">
+                  <Text className="stats-page-metric-label" size="sm" fw={600}>
                     {$('当前在线')}
                   </Text>
-                  <Text size="sm">{stats.onlineUsers}</Text>
+                  <Text className="stats-page-metric-value" size="sm">{stats.onlineUsers}</Text>
                 </Group>
               </Paper>
-              <Paper withBorder radius="lg" p="md" className="glass">
-                <Group justify="space-between">
-                  <Text size="sm" fw={600}>
+              <Paper className="stats-page-metric glass" withBorder radius="lg" p="md">
+                <Group className="stats-page-metric-row" justify="space-between">
+                  <Text className="stats-page-metric-label" size="sm" fw={600}>
                     {$('今日新增')}
                   </Text>
-                  <Text size="sm">{stats.newUsersToday}</Text>
+                  <Text className="stats-page-metric-value" size="sm">{stats.newUsersToday}</Text>
                 </Group>
               </Paper>
-              <Paper withBorder radius="lg" p="md" className="glass">
-                <Group justify="space-between">
-                  <Text size="sm" fw={600}>
+              <Paper className="stats-page-metric glass" withBorder radius="lg" p="md">
+                <Group className="stats-page-metric-row" justify="space-between">
+                  <Text className="stats-page-metric-label" size="sm" fw={600}>
                     {$('总计用户')}
                   </Text>
-                  <Text size="sm">{stats.totalUsers}</Text>
+                  <Text className="stats-page-metric-value" size="sm">{stats.totalUsers}</Text>
                 </Group>
               </Paper>
             </Group>
 
-            <Paper withBorder radius="lg" p="md" className="glass">
-              <Group justify="space-between" align="center" mb={10} wrap="wrap" gap={10}>
-                <Text size="sm" fw={600}>
+            <Paper className="stats-page-chart glass" withBorder radius="lg" p="md">
+              <Group className="stats-page-chart-header" justify="space-between" align="center" mb={10} wrap="wrap" gap={10}>
+                <Text className="stats-page-chart-title" size="sm" fw={600}>
                   {$('日活曲线')}
                 </Text>
                 <SegmentedControl
+                  className="stats-page-chart-control"
                   size="xs"
                   radius="xl"
                   value={dauDays}
@@ -206,16 +208,16 @@ export default function StatsFullPage(): JSX.Element {
                 />
               </Group>
               <Sparkline values={dau} />
-              <Group justify="space-between" mt={10}>
-                <Text size="xs" c="dimmed">
+              <Group className="stats-page-chart-meta" justify="space-between" mt={10}>
+                <Text className="stats-page-chart-meta-text" size="xs" c="dimmed">
                   {$('最低')}: {dau.length ? Math.min(...dau) : 0}
                 </Text>
-                <Text size="xs" c="dimmed">
+                <Text className="stats-page-chart-meta-text" size="xs" c="dimmed">
                   {$('最高')}: {dau.length ? Math.max(...dau) : 0}
                 </Text>
               </Group>
               {lastUpdated && (
-                <Text size="xs" c="dimmed" mt={10}>
+                <Text className="stats-page-chart-updated" size="xs" c="dimmed" mt={10}>
                   {$('更新时间')}: {new Date(lastUpdated).toLocaleString()}
                 </Text>
               )}
@@ -226,4 +228,3 @@ export default function StatsFullPage(): JSX.Element {
     </div>
   )
 }
-
