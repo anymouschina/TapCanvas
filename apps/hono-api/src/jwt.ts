@@ -1,22 +1,25 @@
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 function base64UrlEncode(input: string | ArrayBuffer): string {
-	const toBase64 = (str: string) => btoa(str);
+	const toBase64 = (bytes: Uint8Array) => {
+		let binary = "";
+		for (let i = 0; i < bytes.byteLength; i += 1) {
+			binary += String.fromCharCode(bytes[i]);
+		}
+		return btoa(binary);
+	};
 
 	if (typeof input === "string") {
-		return toBase64(input)
+		const bytes = encoder.encode(input);
+		return toBase64(bytes)
 			.replace(/\+/g, "-")
 			.replace(/\//g, "_")
 			.replace(/=+$/g, "");
 	}
 
 	const bytes = new Uint8Array(input);
-	let binary = "";
-	for (let i = 0; i < bytes.byteLength; i += 1) {
-		binary += String.fromCharCode(bytes[i]);
-	}
-
-	return toBase64(binary)
+	return toBase64(bytes)
 		.replace(/\+/g, "-")
 		.replace(/\//g, "_")
 		.replace(/=+$/g, "");
@@ -28,7 +31,12 @@ function base64UrlDecodeToString(segment: string): string {
 	if (pad) {
 		base64 += "=".repeat(4 - pad);
 	}
-	return atob(base64);
+	const binary = atob(base64);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i += 1) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return decoder.decode(bytes);
 }
 
 export async function signJwtHS256(
@@ -121,4 +129,3 @@ export async function verifyJwtHS256<TPayload = any>(
 
 	return payload as TPayload;
 }
-
