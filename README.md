@@ -5,7 +5,7 @@
 <h1 align="center">TapCanvas</h1>
 <p align="center">
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license" />
+    <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=flat-square" alt="license" />
   </a>
   <a href="https://github.com/anymouschina/TapCanvas">
     <img src="https://img.shields.io/github/stars/anymouschina/TapCanvas.svg?style=flat-square" alt="GitHub stars" />
@@ -80,7 +80,7 @@ curl -N http://localhost:8000/v1/chat/completions \
 
 ## 协议
 
-MIT License（详见 `LICENSE`）。
+Apache License 2.0（详见 `LICENSE`）。
 
 ## Star History
 
