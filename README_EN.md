@@ -121,4 +121,4 @@ Ensure `apps/web/.env` contains `VITE_LANGGRAPH_API_URL="https://ai.beqlee.icu"`
 
 ## License
 
-MIT
+Apache-2.0
