@@ -56,6 +56,11 @@ body,
   height: 100%;
 }
 
+html,
+body {
+  overscroll-behavior: none;
+}
+
 #root {
   position: relative;
   isolation: isolate;
