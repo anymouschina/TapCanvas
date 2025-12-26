@@ -38,6 +38,7 @@ import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
 import { CANVAS_CONFIG } from './utils/constants'
 import { buildEdgeValidator, isImageKind } from './utils/edgeRules'
 import { buildCanvasThemeColors } from './utils/canvasTheme'
+import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'
 
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
 const isValidEdgeByType = buildEdgeValidator()
@@ -112,6 +113,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const lastPointerScreenRef = useRef<{ x: number; y: number } | null>(null)
   const imageUploadInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImageUploadScreenRef = useRef<{ x: number; y: number } | null>(null)
+
+  usePreventBrowserSwipeNavigation({ rootRef, withinSelector: '.tc-canvas__flow' })
 
   const isImageFile = (file: File) => Boolean(file?.type?.startsWith('image/'))
 

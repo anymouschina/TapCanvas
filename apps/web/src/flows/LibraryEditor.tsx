@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
 import { type FlowIO } from './registry'
 import { listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersions, rollbackFlow, type FlowDto } from '../api/server'
 import { Button, Group, Title, TextInput, Stack, Text, Divider, Select, Modal } from '@mantine/core'
+import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'
 
 type Props = { flowId: string; onClose: () => void }
 
@@ -18,6 +19,9 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
   const [versions, setVersions] = useState<Array<{ id: string; createdAt: string; name: string }>>([])
   const [showHistory, setShowHistory] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  usePreventBrowserSwipeNavigation({ rootRef, withinSelector: '.tc-library-editor__flow' })
 
   // Load initial
   useEffect(() => {
@@ -98,7 +102,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
 
   return (
     <div className="tc-library-editor" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="tc-library-editor__panel" style={{ width: '92%', height: '92%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', display: 'grid', gridTemplateColumns: '1fr 320px', border: '1px solid rgba(127,127,127,.25)' }}>
+      <div className="tc-library-editor__panel" ref={rootRef} style={{ width: '92%', height: '92%', background: 'var(--mantine-color-default)', color: 'inherit', borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,.35)', display: 'grid', gridTemplateColumns: '1fr 320px', border: '1px solid rgba(127,127,127,.25)' }}>
         <div className="tc-library-editor__main" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="tc-library-editor__header" style={{ padding: 10, borderBottom: '1px solid rgba(127,127,127,.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Title className="tc-library-editor__title" order={5}>工作流编辑</Title>
