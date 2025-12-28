@@ -11,6 +11,16 @@
   --handle-color-any: #94a3b8;
   --handle-surface: rgba(4, 7, 18, 0.88);
   --handle-border: rgba(255, 255, 255, 0.42);
+
+  --tc-snap-outline: rgba(147, 197, 253, 0.55);
+  --tc-snap-shadow: 0 0 0 3px rgba(147, 197, 253, 0.7), 0 0 30px rgba(147, 197, 253, 0.35);
+
+  --tc-gen-overlay-bg: rgba(255, 255, 255, 0.07);
+  --tc-gen-overlay-border: rgba(255, 255, 255, 0.10);
+  --tc-gen-overlay-sheen: rgba(255, 255, 255, 0.28);
+  --tc-gen-overlay-body-from: rgba(0, 0, 0, 0.35);
+  --tc-gen-overlay-body-to: rgba(0, 0, 0, 0.05);
+  --tc-gen-overlay-text: rgba(255, 255, 255, 0.85);
 }
 
 :root[data-mantine-color-scheme="light"] {
@@ -22,6 +32,16 @@
   --handle-color-any: #475569;
   --handle-surface: rgba(255, 255, 255, 0.96);
   --handle-border: rgba(15, 23, 42, 0.2);
+
+  --tc-snap-outline: rgba(37, 99, 235, 0.22);
+  --tc-snap-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 0 26px rgba(37, 99, 235, 0.12);
+
+  --tc-gen-overlay-bg: rgba(15, 23, 42, 0.05);
+  --tc-gen-overlay-border: rgba(15, 23, 42, 0.10);
+  --tc-gen-overlay-sheen: rgba(15, 23, 42, 0.10);
+  --tc-gen-overlay-body-from: rgba(255, 255, 255, 0.85);
+  --tc-gen-overlay-body-to: rgba(255, 255, 255, 0.35);
+  --tc-gen-overlay-text: rgba(15, 23, 42, 0.72);
 }
 
 * {
@@ -160,6 +180,64 @@ body {
   filter: none;
   box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.8), 0 0 22px rgba(192, 132, 252, 0.4);
 }
+
+/* Magnetic snap: emphasize the nearest compatible target handle */
+.tc-handle--snap {
+  opacity: 1 !important;
+  filter: none !important;
+  outline: 3px solid var(--tc-snap-outline) !important;
+  outline-offset: 3px;
+  box-shadow: var(--tc-snap-shadow) !important;
+}
+
+.tc-connection-line__path {
+  stroke-linecap: round;
+}
+
+@keyframes tc-gen-overlay-sheen {
+  0% { transform: translateX(-60%) rotate(12deg); opacity: 0.35; }
+  50% { transform: translateX(0%) rotate(12deg); opacity: 0.55; }
+  100% { transform: translateX(60%) rotate(12deg); opacity: 0.35; }
+}
+
+.tc-task-node__gen-overlay {
+  position: absolute;
+  inset: 10px;
+  border-radius: 18px;
+  z-index: 40;
+  pointer-events: none;
+  background: var(--tc-gen-overlay-bg);
+  border: 1px solid var(--tc-gen-overlay-border);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.tc-task-node__gen-overlay-sheen {
+  position: absolute;
+  inset: -80px;
+  background: linear-gradient(90deg, transparent, var(--tc-gen-overlay-sheen), transparent);
+  animation: tc-gen-overlay-sheen 1.2s ease-in-out infinite;
+}
+
+.tc-task-node__gen-overlay-body {
+  position: relative;
+  width: 100%;
+  padding: 10px 12px;
+  background: linear-gradient(to top, var(--tc-gen-overlay-body-from), var(--tc-gen-overlay-body-to));
+}
+
+.tc-task-node__gen-overlay-title {
+  margin-bottom: 8px;
+}
+
+.tc-task-node__gen-overlay-text {
+  color: var(--tc-gen-overlay-text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 [data-connecting-active="true"][data-connecting="character"] .react-flow__handle[data-handle-type="character"],
 [data-connecting-active="true"][data-connecting="character"] .react-flow__handle[data-handle-type="any"] {
   opacity: 1;
@@ -171,7 +249,7 @@ body {
   transition: opacity 120ms ease, filter 200ms ease;
 }
 .react-flow__edge:hover .react-flow__edge-path {
-  filter: drop-shadow(0 0 14px rgba(125, 211, 252, 0.45));
+  filter: none;
   opacity: 1;
 }
 
