@@ -67,6 +67,7 @@ import { TopToolbar } from './taskNode/components/TopToolbar'
 import { TaskNodeHeader } from './taskNode/components/TaskNodeHeader'
 import { ControlChips } from './taskNode/components/ControlChips'
 import { StatusBanner } from './taskNode/components/StatusBanner'
+import { GenerationOverlay } from './taskNode/components/GenerationOverlay'
 import { PromptSection } from './taskNode/components/PromptSection'
 import { VideoContent } from './taskNode/components/VideoContent'
 import { MosaicModal } from './taskNode/components/MosaicModal'
@@ -88,6 +89,7 @@ type Data = {
 
 export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.Element {
   const status = data?.status ?? 'idle'
+  const showGenerationOverlay = status === 'running' || status === 'queued'
   const color =
     status === 'success' ? '#16a34a' :
     status === 'error' ? '#ef4444' :
@@ -2872,6 +2874,11 @@ const rewritePromptWithCharacters = React.useCallback(
         maxWidth: 720,
       } as React.CSSProperties}
     >
+      <GenerationOverlay
+        visible={showGenerationOverlay}
+        status={status}
+        progress={(data as any)?.progress}
+      />
       {!hideImageMeta && (
         <TaskNodeHeader
           NodeIcon={NodeIcon}

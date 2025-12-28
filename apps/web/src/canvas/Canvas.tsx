@@ -9,7 +9,8 @@ import {
   ConnectionLineType,
   ReactFlowProvider,
   EdgeTypes,
-  MarkerType,
+  getBezierPath,
+  type ConnectionLineComponentProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -38,6 +39,7 @@ import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
 import { CANVAS_CONFIG } from './utils/constants'
 import { buildEdgeValidator, isImageKind } from './utils/edgeRules'
 import { buildCanvasThemeColors } from './utils/canvasTheme'
+import { getTaskNodeSchema, listTaskNodeSchemas } from './nodes/taskNodeSchema'
 import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'
 
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
@@ -86,12 +88,16 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const isDarkCanvas = colorScheme === 'dark'
   const {
     backgroundGridColor,
-    connectionStrokeColor,
-    edgeMarkerColor,
     emptyGuideBackground,
     emptyGuideTextColor,
     selectionBorderColor,
   } = buildCanvasThemeColors(theme, colorScheme)
+  const connectionLineStyle = useMemo(() => ({
+    stroke: isDarkCanvas ? 'rgba(255,255,255,0.32)' : 'rgba(15,23,42,0.22)',
+    strokeWidth: 1.15,
+    strokeLinecap: 'round' as const,
+  }), [isDarkCanvas])
+  const [isConnecting, setIsConnecting] = useState(false)
   const [connectingType, setConnectingType] = useState<string | null>(null)
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
@@ -458,8 +464,88 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     return false
   }, [nodes, edges])
 
+  type SnapTarget = {
+    el: HTMLElement
+    targetNodeId: string
+    targetHandleId: string
+    screen: { x: number; y: number }
+    flow: { x: number; y: number }
+    score: number
+  }
+
+  const lastReason = React.useRef<string | null>(null)
+  const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+  const didConnectRef = useRef(false)
+  const [tapConnectSource, setTapConnectSource] = useState<{ nodeId: string } | null>(null)
+  const suppressContextMenuRef = useRef(false)
+  const rightDragRef = useRef<{ startX: number; startY: number } | null>(null)
+  const snapTargetRef = useRef<SnapTarget | null>(null)
+  const snapHandleElRef = useRef<HTMLElement | null>(null)
+  const [snapTarget, setSnapTarget] = useState<SnapTarget | null>(null)
+
+  const clearSnapTarget = useCallback(() => {
+    const prev = snapHandleElRef.current
+    if (prev) prev.classList.remove('tc-handle--snap')
+    snapHandleElRef.current = null
+    snapTargetRef.current = null
+    setSnapTarget(null)
+  }, [])
+
+  const getHandleMeta = useCallback((handleEl: HTMLElement | null) => {
+    if (!handleEl) return null
+    const targetHandleId = handleEl.getAttribute('data-handleid') || handleEl.getAttribute('id') || undefined
+    const targetNodeId =
+      (handleEl.getAttribute('data-nodeid') || undefined) ||
+      (handleEl.closest('.react-flow__node') as HTMLElement | null)?.getAttribute('data-id') ||
+      undefined
+    if (!targetHandleId || !targetNodeId) return null
+    return { targetNodeId, targetHandleId }
+  }, [])
+
+  const isCompatibleTargetHandle = useCallback((meta: { targetNodeId: string; targetHandleId: string }, opts?: { silent?: boolean }) => {
+    const from = connectFromRef.current
+    if (!from) return false
+
+    const sourceNodeId = from.nodeId
+    if (sourceNodeId === meta.targetNodeId) return false
+    if (edges.some(e => e.source === sourceNodeId && e.target === meta.targetNodeId)) return false
+    if (createsCycle({ source: sourceNodeId, target: meta.targetNodeId })) return false
+
+    const sNode = nodes.find(n => n.id === sourceNodeId)
+    const tNode = nodes.find(n => n.id === meta.targetNodeId)
+    if (!sNode || !tNode) return false
+
+    const sKind = (sNode.data as any)?.kind
+    const tKind = (tNode.data as any)?.kind
+    if (!isValidEdgeByType(sKind, tKind)) return false
+    if (isImageKind(sKind) && isImageKind(tKind)) {
+      const targetModel = (tNode.data as any)?.imageModel as string | undefined
+      if (!isImageEditModel(targetModel)) {
+        if (!opts?.silent) {
+          const reason = targetModel
+            ? '该节点当前模型不支持图片编辑，请切换至支持图片编辑的模型（如 Nano Banana 系列）'
+            : '请先为目标节点选择支持图片编辑的模型'
+          lastReason.current = reason
+          toast(reason, 'warning')
+        }
+        return false
+      }
+    }
+    return true
+  }, [createsCycle, edges, nodes])
+
+  const handleConnect = useCallback((c: any) => {
+    lastReason.current = null
+    didConnectRef.current = true
+    onConnect({ ...c, type: edgeRoute === 'orth' ? 'orth' : 'typed' })
+  }, [edgeRoute, onConnect])
+
   const onConnectStart = useCallback((_evt: any, params: { nodeId?: string|null; handleId?: string|null; handleType?: 'source'|'target' }) => {
     didConnectRef.current = false
+    if (tapConnectSource) {
+      setTapConnectSource(null)
+    }
+    setIsConnecting(true)
     const h = params.handleId || ''
     // if source handle like out-image -> type=image
     if (params.handleType === 'source' && h.startsWith('out-')) {
@@ -476,7 +562,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     } else {
       connectFromRef.current = null
     }
-  }, [nodes])
+  }, [tapConnectSource])
 
   const SNAP_DISTANCE = 96
   const NODE_SNAP_DISTANCE = 200
@@ -484,52 +570,32 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const MAX_ZOOM = 2 // 恢复更保守的放大上限
   const DEFAULT_ZOOM_MULTIPLIER = 0.5 // 默认视图相对 fitView 再缩小 4 倍
 
-  const onConnectEnd = useCallback((_evt: any) => {
+  const onConnectEnd = useCallback((evt: any) => {
     const from = connectFromRef.current
+    const release =
+      (evt && typeof evt.clientX === 'number' && typeof evt.clientY === 'number'
+        ? { x: evt.clientX as number, y: evt.clientY as number }
+        : null) ??
+      lastPointerScreenRef.current ??
+      { x: mouse.x, y: mouse.y }
 
     // Auto-snap to nearest compatible target handle / node
     const autoSnap = () => {
       if (!from) return false
 
-      const tryConnectWithHandle = (handleEl: HTMLElement | null) => {
+      const tryConnectWithHandle = (handleEl: HTMLElement | null, opts?: { silent?: boolean }) => {
         if (!handleEl) return false
-        const targetHandle = handleEl.getAttribute('data-handleid') || handleEl.getAttribute('id') || undefined
-        const targetNodeId =
-          (handleEl.getAttribute('data-nodeid') || undefined) ||
-         (handleEl.closest('.react-flow__node') as HTMLElement | null)?.getAttribute('data-id') ||
-         undefined
-       if (!targetHandle || !targetNodeId) return false
-
+        const meta = getHandleMeta(handleEl)
+        if (!meta) return false
         const sourceNodeId = from.nodeId
         const sourceHandleId = from.handleId || 'out-any'
-
-        const sNode = nodes.find(n => n.id === sourceNodeId)
-        const tNode = nodes.find(n => n.id === targetNodeId)
-        if (!sNode || !tNode) return false
-
-        if (sourceNodeId === targetNodeId) return false
-        if (edges.some(e => e.source === sourceNodeId && e.target === targetNodeId)) return false
-        if (createsCycle({ source: sourceNodeId, target: targetNodeId })) return false
-        const sKind = (sNode.data as any)?.kind
-        const tKind = (tNode.data as any)?.kind
-        if (!isValidEdgeByType(sKind, tKind)) return false
-        if (isImageKind(sKind) && isImageKind(tKind)) {
-          const targetModel = (tNode.data as any)?.imageModel as string | undefined
-          if (!isImageEditModel(targetModel)) {
-            const reason = targetModel
-              ? '该节点当前模型不支持图片编辑，请切换至支持图片编辑的模型（如 Nano Banana 系列）'
-              : '请先为目标节点选择支持图片编辑的模型'
-            lastReason.current = reason
-            toast(reason, 'warning')
-            return false
-          }
-        }
+        if (!isCompatibleTargetHandle(meta, opts)) return false
 
         handleConnect({
           source: sourceNodeId,
           sourceHandle: sourceHandleId,
-          target: targetNodeId,
-          targetHandle,
+          target: meta.targetNodeId,
+          targetHandle: meta.targetHandleId,
         })
         return true
       }
@@ -557,62 +623,63 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         return tryConnectWithHandle(handleEl)
       }
 
-      let touched = false
-      const hoveredElement = document.elementFromPoint(mouse.x, mouse.y) as HTMLElement | null
+      const hoveredElement = document.elementFromPoint(release.x, release.y) as HTMLElement | null
       if (hoveredElement) {
-        touched = true
-        const hoveredHandle = hoveredElement.closest('.tc-handle.react-flow__handle-target') as HTMLElement | null
+        const hoveredHandle = hoveredElement.closest('.react-flow__handle-target') as HTMLElement | null
         if (tryConnectWithHandle(hoveredHandle)) return true
         const hoveredNode = hoveredElement.closest('.react-flow__node') as HTMLElement | null
         if (tryConnectViaNode(hoveredNode)) return true
       }
 
-      const handles = Array.from(document.querySelectorAll('.tc-handle.react-flow__handle-target')) as HTMLElement[]
-      if (!handles.length) return touched
+      // Prefer the live snap preview if we have one.
+      if (snapTargetRef.current) {
+        if (tryConnectWithHandle(snapTargetRef.current.el)) return true
+      }
 
-      let best: { el: HTMLElement; dist: number } | null = null
+      const handles = Array.from(document.querySelectorAll('.react-flow__handle-target')) as HTMLElement[]
+      if (!handles.length) return false
+
+      const scored: { el: HTMLElement; dist: number }[] = []
       for (const el of handles) {
         const rect = el.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) continue
         const cx = rect.left + rect.width / 2
         const cy = rect.top + rect.height / 2
-        const dist = Math.hypot(cx - mouse.x, cy - mouse.y)
-        if (dist > SNAP_DISTANCE) continue
-        if (!best || dist < best.dist) best = { el, dist }
+        const dist = Math.hypot(cx - release.x, cy - release.y)
+        scored.push({ el, dist })
       }
-      if (!best) {
-        // Fallback: pick globally最近 compatible handle even超出 SNAP_DISTANCE
-        for (const el of handles) {
-          const rect = el.getBoundingClientRect()
-          const cx = rect.left + rect.width / 2
-          const cy = rect.top + rect.height / 2
-          const dist = Math.hypot(cx - mouse.x, cy - mouse.y)
-          if (!best || dist < best.dist) best = { el, dist }
-        }
+      scored.sort((a, b) => a.dist - b.dist)
+
+      // Try near handles first; fall back to farther ones if needed (but stay compatible).
+      for (const { el, dist } of scored) {
+        if (dist > SNAP_DISTANCE) break
+        if (tryConnectWithHandle(el, { silent: true })) return true
       }
+      for (const { el } of scored) {
+        if (tryConnectWithHandle(el, { silent: true })) return true
+      }
+
       // If still not found, try snapping to the nearest node body
-      if (!best) {
+      {
         const nodeEls = Array.from(document.querySelectorAll('.react-flow__node')) as HTMLElement[]
         let bestNode: { el: HTMLElement; dist: number } | null = null
         for (const el of nodeEls) {
           const nodeId = el.getAttribute('data-id')
           if (!nodeId || nodeId === from.nodeId) continue
           const rect = el.getBoundingClientRect()
-          const dx = Math.max(rect.left - mouse.x, 0, mouse.x - rect.right)
-          const dy = Math.max(rect.top - mouse.y, 0, mouse.y - rect.bottom)
+          const dx = Math.max(rect.left - release.x, 0, release.x - rect.right)
+          const dy = Math.max(rect.top - release.y, 0, release.y - rect.bottom)
           const dist = Math.hypot(dx, dy)
-          if (dist > NODE_SNAP_DISTANCE && !(mouse.x >= rect.left && mouse.x <= rect.right && mouse.y >= rect.top && mouse.y <= rect.bottom)) continue
+          if (dist > NODE_SNAP_DISTANCE && !(release.x >= rect.left && release.x <= rect.right && release.y >= rect.top && release.y <= rect.bottom)) continue
           if (!bestNode || dist < bestNode.dist) bestNode = { el, dist }
         }
         if (bestNode) {
-          touched = true
           if (tryConnectViaNode(bestNode.el)) {
             return true
           }
         }
       }
-      if (!best) return touched
-
-      return tryConnectWithHandle(best.el)
+      return false
     }
 
     if (!didConnectRef.current && from) {
@@ -620,18 +687,20 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       if (!snapped) {
         // 从 text 节点拖出并松手在空白处：打开插入菜单
         useInsertMenuStore.getState().openMenu({
-          x: mouse.x,
-          y: mouse.y,
+          x: release.x,
+          y: release.y,
           fromNodeId: from.nodeId,
           fromHandle: from.handleId || 'out-any',
         })
       }
     }
     setConnectingType(null)
+    setIsConnecting(false)
     lastReason.current = null
     connectFromRef.current = null
     didConnectRef.current = false
-  }, [connectingType, mouse.x, mouse.y])
+    clearSnapTarget()
+  }, [clearSnapTarget, connectingType, getHandleMeta, handleConnect, isCompatibleTargetHandle, mouse.x, mouse.y])
 
   // removed pane mouse handlers (not supported by current reactflow typings). Root listeners are used instead.
 
@@ -645,7 +714,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }, [])
 
   const onPaneClick = useCallback(() => {
-    tapConnectSourceRef.current = null
+    setTapConnectSource(null)
+    setConnectingType(null)
   }, [])
 
   const onNodeContextMenu = useCallback((evt: React.MouseEvent, node: any) => {
@@ -669,6 +739,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>(() => rf.getViewport?.() || { x: 0, y: 0, zoom: 1 })
   const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * viewport.zoom + viewport.x, y: p.y * viewport.zoom + viewport.y }), [viewport.x, viewport.y, viewport.zoom])
   const screenToFlow = useCallback((p: { x: number; y: number }) => rf.screenToFlowPosition ? rf.screenToFlowPosition(p) : p, [rf])
+
+  const insertMenuRef = useRef<HTMLDivElement | null>(null)
 
   const onNodeDragStart = useCallback(() => setDragging(true), [])
   const onNodeDrag = useCallback((_evt: any, node: any) => {
@@ -728,29 +800,125 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     onNodesChange(snapped)
   }, [nodes, onNodesChange])
 
-  const lastReason = React.useRef<string | null>(null)
-  const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
-  const didConnectRef = useRef(false)
-  const tapConnectSourceRef = useRef<{ nodeId: string } | null>(null)
-  const suppressContextMenuRef = useRef(false)
-  const rightDragRef = useRef<{ startX: number; startY: number } | null>(null)
+  const computeBestSnapTarget = useCallback((client: { x: number; y: number }): SnapTarget | null => {
+    const from = connectFromRef.current
+    if (!from) return null
+
+    const targetHandles = Array.from(document.querySelectorAll('.react-flow__handle-target')) as HTMLElement[]
+    if (!targetHandles.length) return null
+
+    const candidates: SnapTarget[] = []
+    for (const el of targetHandles) {
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) continue
+      const meta = getHandleMeta(el)
+      if (!meta) continue
+      if (meta.targetNodeId === from.nodeId) continue
+      if (!isCompatibleTargetHandle(meta, { silent: true })) continue
+
+      const cx = rect.left + rect.width / 2
+      const cy = rect.top + rect.height / 2
+      const dist = Math.hypot(cx - client.x, cy - client.y)
+
+      const handleType = (el.getAttribute('data-handle-type') || '').toLowerCase()
+      const want = (connectingType || '').toLowerCase()
+      const typePenalty = !want || handleType === want || handleType === 'any' || handleType === '' ? 0 : 120
+
+      candidates.push({
+        el,
+        targetNodeId: meta.targetNodeId,
+        targetHandleId: meta.targetHandleId,
+        screen: { x: cx, y: cy },
+        flow: screenToFlow({ x: cx, y: cy }),
+        score: dist + typePenalty,
+      })
+    }
+
+    if (!candidates.length) return null
+    candidates.sort((a, b) => a.score - b.score)
+    return candidates[0]
+  }, [connectingType, getHandleMeta, isCompatibleTargetHandle, screenToFlow])
 
   useEffect(() => {
     const hasNode = (id?: string | null) => !!id && nodes.some(n => n.id === id)
-    if (tapConnectSourceRef.current && !hasNode(tapConnectSourceRef.current.nodeId)) {
-      tapConnectSourceRef.current = null
+    if (tapConnectSource && !hasNode(tapConnectSource.nodeId)) {
+      setTapConnectSource(null)
+      setConnectingType(null)
     }
     if (connectFromRef.current && !hasNode(connectFromRef.current.nodeId)) {
       connectFromRef.current = null
       setConnectingType(null)
+      setIsConnecting(false)
+      clearSnapTarget()
     }
-  }, [nodes])
+  }, [clearSnapTarget, nodes, tapConnectSource])
 
-  const handleConnect = useCallback((c: any) => {
-    lastReason.current = null
-    didConnectRef.current = true
-    onConnect({ ...c, type: edgeRoute === 'orth' ? 'orth' : 'typed' })
-  }, [edgeRoute, onConnect])
+  // While connecting, preview magnetic snap to the nearest compatible target handle.
+  useEffect(() => {
+    if (!isConnecting) {
+      clearSnapTarget()
+      return
+    }
+    if (!connectFromRef.current) return
+
+    let raf = 0
+    raf = window.requestAnimationFrame(() => {
+      const best = computeBestSnapTarget({ x: mouse.x, y: mouse.y })
+      if (!best) {
+        clearSnapTarget()
+        return
+      }
+
+      // Only snap when close enough; otherwise keep visuals clean.
+      const SNAP_PREVIEW_RADIUS = 96
+      const dist = Math.hypot(best.screen.x - mouse.x, best.screen.y - mouse.y)
+      if (dist > SNAP_PREVIEW_RADIUS) {
+        clearSnapTarget()
+        return
+      }
+
+      snapTargetRef.current = best
+      setSnapTarget(best)
+
+      const prev = snapHandleElRef.current
+      if (prev && prev !== best.el) prev.classList.remove('tc-handle--snap')
+      best.el.classList.add('tc-handle--snap')
+      snapHandleElRef.current = best.el
+    })
+
+    return () => {
+      window.cancelAnimationFrame(raf)
+    }
+  }, [clearSnapTarget, computeBestSnapTarget, isConnecting, mouse.x, mouse.y])
+
+  const MagneticConnectionLine = useCallback((props: ConnectionLineComponentProps) => {
+    const tx = snapTarget?.flow?.x ?? props.toX
+    const ty = snapTarget?.flow?.y ?? props.toY
+    const [path] = getBezierPath({
+      sourceX: props.fromX,
+      sourceY: props.fromY,
+      sourcePosition: props.fromPosition,
+      targetX: tx,
+      targetY: ty,
+      targetPosition: props.toPosition,
+      curvature: 0.35,
+    })
+    return (
+      <g className="tc-connection-line">
+        <path className="tc-connection-line__path" d={path} style={props.connectionLineStyle} fill="none" />
+        {snapTarget && (
+          <circle
+            className="tc-connection-line__snap-dot"
+            cx={tx}
+            cy={ty}
+            r={4}
+            fill={String((props.connectionLineStyle as any)?.stroke || '#93c5fd')}
+            opacity={0.9}
+          />
+        )}
+      </g>
+    )
+  }, [snapTarget])
 
   const pickDefaultSourceHandle = useCallback((kind?: string | null) => {
     if (!kind) return 'out-any'
@@ -789,7 +957,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const sourceNode = nodes.find(n => n.id === sourceId)
     const targetNode = nodes.find(n => n.id === targetId)
     if (!sourceNode || !targetNode) {
-      tapConnectSourceRef.current = null
+      setTapConnectSource(null)
       setConnectingType(null)
       return false
     }
@@ -828,19 +996,29 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const onNodeClick = useCallback((_evt: React.MouseEvent, node: any) => {
     if (!node?.id) return
-    const pending = tapConnectSourceRef.current
+    const pending = tapConnectSource
     if (pending?.nodeId === node.id) {
-      tapConnectSourceRef.current = null
+      setTapConnectSource(null)
+      setConnectingType(null)
       return
     }
     if (pending && pending.nodeId !== node.id) {
       quickConnectNodes(pending.nodeId, node.id, { showInvalidToast: false })
-      tapConnectSourceRef.current = null
+      setTapConnectSource(null)
       setConnectingType(null)
       return
     }
-    tapConnectSourceRef.current = { nodeId: node.id }
-  }, [quickConnectNodes])
+    const kind = String(node?.data?.kind || '').toLowerCase()
+    const derivedType =
+      kind === 'image' || kind === 'texttoimage' ? 'image'
+      : kind === 'composevideo' || kind === 'video' || kind === 'storyboard' ? 'video'
+      : kind === 'tts' || kind === 'audio' ? 'audio'
+      : kind === 'subtitlealign' || kind === 'subtitle' ? 'subtitle'
+      : kind === 'character' ? 'character'
+      : null
+    setTapConnectSource({ nodeId: node.id })
+    setConnectingType(derivedType)
+  }, [quickConnectNodes, tapConnectSource])
   // MiniMap drag-to-pan and smart click
   const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect; startPos: { x: number; y: number } }|null>(null)
   const minimapClickRef = useRef<{ downTime: number; startPos: { x: number; y: number } }|null>(null)
@@ -990,8 +1168,15 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   // 旧的宫格/水平布局已合并为“格式化”（树形，自上而下，32px 间距）
 
+  const parseHandleTypeFromId = (handleId?: string | null): string => {
+    const raw = String(handleId || '')
+    if (raw.startsWith('out-')) return raw.slice(4).split('-')[0] || 'any'
+    if (raw.startsWith('in-')) return raw.slice(3).split('-')[0] || 'any'
+    return 'any'
+  }
+
   const handleInsertNodeAt = (
-    kind: 'text' | 'image' | 'video',
+    targetKind: string,
     menuState: { x: number; y: number; fromNodeId?: string; fromHandle?: string | null },
   ) => {
     const posFlow = screenToFlow({ x: menuState.x, y: menuState.y })
@@ -999,36 +1184,30 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       ? useRFStore.getState().nodes.find(n => n.id === menuState.fromNodeId)
       : undefined
     const upstreamPrompt = upstreamNode ? ((upstreamNode.data as any)?.prompt as string | undefined) : undefined
+    const sourceKind = upstreamNode ? ((upstreamNode.data as any)?.kind as string | undefined) : undefined
 
     useRFStore.setState(s => {
       const before = s.nextId
       const id = `${uuid()}${before}`
-      let label = 'Text'
-      let nodeKind: string = 'textToImage'
-      if (kind === 'image') {
-        label = 'Image'
-        nodeKind = 'image'
-      } else if (kind === 'video') {
-        label = 'Video'
-        nodeKind = 'composeVideo'
-      }
-      const data: any = { label, kind: nodeKind }
-      if (upstreamPrompt) data.prompt = upstreamPrompt
+      const schema = getTaskNodeSchema(targetKind)
+      const label = schema.label || schema.kind || 'Node'
+      const data: any = { label, kind: schema.kind }
+      if (upstreamPrompt && schema.features?.includes('prompt')) data.prompt = upstreamPrompt
 
       const node = { id, type: 'taskNode' as const, position: posFlow, data }
 
       let edgesNext = s.edges
       if (menuState.fromNodeId) {
+        const fromHandle = menuState.fromHandle || pickDefaultSourceHandle(sourceKind)
         const edgeId = `e-${menuState.fromNodeId}-${id}-${Date.now().toString(36)}`
-        const targetHandle = kind === 'image' || kind === 'video' ? 'in-image' : 'in-any'
         const edge: any = {
           id: edgeId,
           source: menuState.fromNodeId,
           target: id,
-          sourceHandle: menuState.fromHandle || 'out-any',
-          targetHandle,
+          sourceHandle: fromHandle,
+          targetHandle: pickDefaultTargetHandle(schema.kind, sourceKind),
           type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-          animated: true,
+          animated: false,
         }
         edgesNext = [...edgesNext, edge]
       }
@@ -1263,18 +1442,30 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     })
   }, [applyDefaultZoom, nodes.length, rf, viewOnly])
 
+  useEffect(() => {
+    if (!insertMenu.open) return
+    const onDown = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null
+      if (!target) return
+      if (insertMenuRef.current && insertMenuRef.current.contains(target)) return
+      closeInsertMenu()
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [closeInsertMenu, insertMenu.open])
+
 
   return (
     <div className={joinClassNames('tc-canvas', className)}
       style={{ height: '100%', width: '100%', position: 'relative' }}
       data-connecting={connectingType || ''}
-      data-connecting-active={connectingType ? 'true' : 'false'}
+      data-connecting-active={(isConnecting || !!tapConnectSource) ? 'true' : 'false'}
       data-dragging={dragging ? 'true' : 'false'}
       data-tour="canvas"
       ref={rootRef}
       onMouseMove={(e) => {
         lastPointerScreenRef.current = { x: e.clientX, y: e.clientY }
-        if (connectingType) setMouse({ x: e.clientX, y: e.clientY })
+        if (isConnecting) setMouse({ x: e.clientX, y: e.clientY })
       }}
       onDrop={viewOnly ? undefined : onDrop}
       onDragOver={viewOnly ? undefined : onDragOver}
@@ -1440,15 +1631,16 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         }}
         snapToGrid
         snapGrid={[16, 16]}
+        connectionRadius={28}
         defaultEdgeOptions={{
           animated: false,
           type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-          style: { strokeWidth: 1.5 },
+          style: { strokeWidth: 1.15, strokeLinecap: 'round' },
           interactionWidth: 1,
-          markerEnd: { type: MarkerType.ArrowClosed, color: edgeMarkerColor, width: 16, height: 16 },
         }}
-        connectionLineType={ConnectionLineType.SmoothStep}
-        connectionLineStyle={{ stroke: connectionStrokeColor, strokeWidth: 1.5 }}
+        connectionLineComponent={MagneticConnectionLine}
+        connectionLineType={ConnectionLineType.SimpleBezier}
+        connectionLineStyle={connectionLineStyle}
       >
         <MiniMap className="tc-canvas__minimap" style={{ width: 160, height: 110 }} />
         <Controls className="tc-canvas__controls" position="bottom-left" />
@@ -1646,8 +1838,35 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       )}
       {insertMenu.open && (() => {
         const fromNode = nodes.find(n => n.id === insertMenu.fromNodeId)
-        const fromKind = fromNode?.data?.kind as string | undefined
-        const isFromImage = fromKind === 'image'
+        const fromKind = (fromNode?.data as any)?.kind as string | undefined
+        const fromLabel = (fromNode?.data as any)?.label as string | undefined
+        const sourceType = parseHandleTypeFromId(insertMenu.fromHandle)
+
+        const schemaTargets = listTaskNodeSchemas()
+        const candidates = schemaTargets
+          .filter((schema) => {
+            const handles = schema.handles as any
+            const targetDefs = handles?.dynamic ? [{ type: 'any' }] : (handles?.targets || [])
+            if (!Array.isArray(targetDefs) || targetDefs.length === 0) return false
+            const acceptsType = targetDefs.some((h: any) => {
+              const t = String(h?.type || 'any').toLowerCase()
+              return t === 'any' || t === sourceType
+            })
+            if (!acceptsType) return false
+            if (!fromKind) return true
+            return isValidEdgeByType(fromKind, schema.kind)
+          })
+          .sort((a, b) => {
+            const order: Record<string, number> = { image: 10, video: 20, composer: 30, storyboard: 40, subflow: 90, generic: 100 }
+            const ai = order[a.category] ?? 999
+            const bi = order[b.category] ?? 999
+            if (ai !== bi) return ai - bi
+            return String(a.label || a.kind).localeCompare(String(b.label || b.kind))
+          })
+
+        const title = fromLabel
+          ? `从「${fromLabel}」继续（${getHandleTypeLabel(sourceType)}）`
+          : `继续（${getHandleTypeLabel(sourceType)}）`
 
         return (
           <Paper
@@ -1659,55 +1878,33 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
               left: insertMenu.x,
               top: insertMenu.y,
               zIndex: 70,
-              minWidth: 180,
+              minWidth: 220,
+              transform: 'translate(10px, 10px)',
             }}
-            onMouseLeave={closeInsertMenu}
+            ref={insertMenuRef}
           >
-            <Stack className="tc-canvas__insert-menu-stack" gap={4} p="xs">
-              <Text className="tc-canvas__insert-menu-title" size="xs" c="dimmed">
-                {isFromImage ? '从图片继续' : '从文本继续'}
-              </Text>
-              {isFromImage ? (
-                <>
-                  <Button
-                    className="tc-canvas__insert-menu-action"
-                    variant="subtle"
-                    size="xs"
-                    onClick={() => {
-                      handleInsertNodeAt('video', {
-                        x: insertMenu.x,
-                        y: insertMenu.y,
-                        fromNodeId: insertMenu.fromNodeId,
-                        fromHandle: insertMenu.fromHandle,
-                      })
-                    }}
-                  >
-                    图生视频
-                  </Button>
-                  <Button
-                    className="tc-canvas__insert-menu-action"
-                    variant="subtle"
-                    size="xs"
-                    onClick={() => {
-                      handleInsertNodeAt('text', {
-                        x: insertMenu.x,
-                        y: insertMenu.y,
-                        fromNodeId: insertMenu.fromNodeId,
-                        fromHandle: insertMenu.fromHandle,
-                      })
-                    }}
-                  >
-                    反推提示词
-                  </Button>
-                </>
+            <Stack className="tc-canvas__insert-menu-stack" gap={6} p="xs">
+              <Group className="tc-canvas__insert-menu-header" justify="space-between" gap={8} wrap="nowrap">
+                <Text className="tc-canvas__insert-menu-title" size="xs" c="dimmed" lineClamp={1} title={title}>
+                  {title}
+                </Text>
+                <Button className="tc-canvas__insert-menu-close" variant="subtle" size="xs" onClick={closeInsertMenu}>
+                  关闭
+                </Button>
+              </Group>
+              {candidates.length === 0 ? (
+                <Text className="tc-canvas__insert-menu-empty" size="xs" c="dimmed">
+                  暂无可用选项
+                </Text>
               ) : (
-                <>
+                candidates.map((schema) => (
                   <Button
+                    key={schema.kind}
                     className="tc-canvas__insert-menu-action"
                     variant="subtle"
                     size="xs"
                     onClick={() => {
-                      handleInsertNodeAt('image', {
+                      handleInsertNodeAt(schema.kind, {
                         x: insertMenu.x,
                         y: insertMenu.y,
                         fromNodeId: insertMenu.fromNodeId,
@@ -1715,24 +1912,9 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
                       })
                     }}
                   >
-                    文生图
+                    {schema.label || schema.kind}
                   </Button>
-                  <Button
-                    className="tc-canvas__insert-menu-action"
-                    variant="subtle"
-                    size="xs"
-                    onClick={() => {
-                      handleInsertNodeAt('video', {
-                        x: insertMenu.x,
-                        y: insertMenu.y,
-                        fromNodeId: insertMenu.fromNodeId,
-                        fromHandle: insertMenu.fromHandle,
-                      })
-                    }}
-                  >
-                    文生视频
-                  </Button>
-                </>
+                ))
               )}
             </Stack>
           </Paper>

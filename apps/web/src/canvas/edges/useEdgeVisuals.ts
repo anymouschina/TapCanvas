@@ -24,6 +24,9 @@ export function useEdgeVisuals(type?: string | null) {
       return color
     }
 
+    // Match infinite-creative-canvas: thin, subtle, uniform edge stroke.
+    const edgeStroke = isLight ? 'rgba(15,23,42,0.22)' : 'rgba(255,255,255,0.32)'
+
     const palette: Record<EdgeKind, { light: string; dark: string }> = {
       image: { light: theme.colors.blue[6], dark: theme.colors.blue[4] },
       audio: { light: theme.colors.teal[5], dark: theme.colors.teal[4] },
@@ -33,12 +36,13 @@ export function useEdgeVisuals(type?: string | null) {
     }
 
     const base = palette[edgeType] || palette.any
-    const stroke = rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.96 : 0.85)
+    const baseStroke = base[isLight ? 'light' : 'dark']
+    const stroke = edgeStroke
 
     const edgeStyle: CSSProperties = {
       stroke,
-      strokeWidth: isLight ? 4.8 : 4.2,
-      opacity: 0.95,
+      strokeWidth: 1.15,
+      opacity: 1,
       strokeLinecap: 'round',
       strokeLinejoin: 'round',
     }
@@ -62,8 +66,8 @@ export function useEdgeVisuals(type?: string | null) {
       letterSpacing: 0.2,
     }
 
-    const startCapColor = rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.95 : 0.9)
-    const endCapColor = rgba(base[isLight ? 'light' : 'dark'], isLight ? 0.85 : 0.8)
+    const startCapColor = rgba(baseStroke, isLight ? 0.75 : 0.7)
+    const endCapColor = rgba(baseStroke, isLight ? 0.65 : 0.6)
 
     return { stroke, edgeStyle, labelStyle, isLight, directionChipStyle, startCapColor, endCapColor }
   }, [colorScheme, theme, type])

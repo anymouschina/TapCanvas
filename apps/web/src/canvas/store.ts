@@ -424,7 +424,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       : addEdge(
           {
             ...connection,
-            animated: true,
+            animated: (connection as any)?.animated ?? false,
             type: (connection as any)?.type || 'typed',
           },
           s.edges,

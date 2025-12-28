@@ -4,7 +4,7 @@ import { IconTrash } from '@tabler/icons-react'
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
+  getBezierPath,
   type EdgeProps,
 } from '@xyflow/react'
 import { useRFStore } from '../store'
@@ -24,13 +24,14 @@ export default function TypedEdge(props: EdgeProps<any>) {
   const viewOnly = useUIStore(s => s.viewOnly)
   const showDelete = useUIStore(s => s.hoveredEdgeId === props.id) || props.selected
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     sourcePosition: props.sourcePosition,
     targetX: props.targetX,
     targetY: props.targetY,
     targetPosition: props.targetPosition,
+    curvature: 0.35,
   })
 
   return (
