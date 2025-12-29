@@ -34,7 +34,7 @@ import { getHandleTypeLabel } from './utils/handleLabels'
 import { isImageEditModel } from '../config/models'
 import { subscribeTaskProgress, type TaskProgressEventMessage } from '../api/taskProgress'
 import { useAuth } from '../auth/store'
-import { uploadSoraImage } from '../api/server'
+import { uploadServerAssetFile, uploadSoraImage } from '../api/server'
 import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
 import { CANVAS_CONFIG } from './utils/constants'
 import { buildEdgeValidator, isImageKind } from './utils/edgeRules'
@@ -185,7 +185,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
     const { updateNodeData } = useRFStore.getState()
     let successCount = 0
-    for (const { id, file, localUrl } of prepared) {
+    for (const { id, file, localUrl, label } of prepared) {
       let localDataUrl: string | undefined
       try {
         localDataUrl = await blobToDataUrl(file)
@@ -197,25 +197,54 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       }
 
       try {
-        const result: any = await uploadSoraImage(undefined, file)
-        const remoteUrl =
-          result?.url ||
-          result?.asset_pointer ||
-          result?.azure_asset_pointer ||
-          localUrl
+        let hostedUrl: string | null = null
+        let hostedAssetId: string | null = null
+        try {
+          const hosted = await uploadServerAssetFile(file, label)
+          const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+          if (url) {
+            hostedUrl = url
+            hostedAssetId = hosted.id
+            successCount += 1
+          }
+        } catch (error) {
+          console.error('Failed to upload image to OSS:', error)
+          toast('上传图片到 OSS 失败，将使用本地预览', 'error')
+        }
+
+        let soraResult: any = null
+        try {
+          soraResult = await uploadSoraImage(undefined, file)
+          if (soraResult?.file_id) {
+            successCount += 1
+          }
+        } catch (error) {
+          console.error('Failed to upload image to Sora:', error)
+        }
+
+        const soraUrlCandidate =
+          typeof soraResult?.url === 'string'
+            ? soraResult.url
+            : typeof soraResult?.asset_pointer === 'string'
+              ? soraResult.asset_pointer
+              : typeof soraResult?.azure_asset_pointer === 'string'
+                ? soraResult.azure_asset_pointer
+                : ''
+        const bestUrl = hostedUrl || soraUrlCandidate || localUrl
+
         updateNodeData(id, {
-          imageUrl: remoteUrl,
-          soraFileId: result?.file_id,
-          assetPointer: result?.asset_pointer,
+          imageUrl: bestUrl,
+          serverAssetId: hostedAssetId,
+          soraFileId: soraResult?.file_id,
+          assetPointer: soraResult?.asset_pointer,
           reverseImageData: localDataUrl,
         })
-        successCount += 1
-        if (remoteUrl !== localUrl) {
+        if (bestUrl !== localUrl) {
           URL.revokeObjectURL(localUrl)
         }
       } catch (error) {
-        console.error('Failed to upload image:', error)
-        toast('上传图片失败，请稍后再试', 'error')
+        console.error('Failed to process pasted image:', error)
+        toast('处理粘贴图片失败，请稍后再试', 'error')
       }
     }
 
