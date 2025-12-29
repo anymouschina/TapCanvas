@@ -1696,6 +1696,17 @@ export async function deleteServerAsset(id: string): Promise<void> {
   if (!r.ok) throw new Error(`delete asset failed: ${r.status}`)
 }
 
+export async function uploadServerAssetFile(file: File, name?: string): Promise<ServerAssetDto> {
+  const form = new FormData()
+  form.append('file', file)
+  if (typeof name === 'string' && name.trim()) {
+    form.append('name', name.trim())
+  }
+  const r = await apiFetch(`${API_BASE}/assets/upload`, withAuth({ method: 'POST', body: form }))
+  if (!r.ok) throw new Error(`upload asset failed: ${r.status}`)
+  return r.json()
+}
+
 export type PublicAssetDto = {
   id: string
   name: string

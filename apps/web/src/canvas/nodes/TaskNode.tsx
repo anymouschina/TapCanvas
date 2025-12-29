@@ -13,7 +13,7 @@ import {
   IconUsers,
   IconTrash,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
+import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadServerAssetFile, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
 import {
   getDefaultModel,
   getModelLabel,
@@ -1955,18 +1955,40 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         }
         updateNodeData(nodeId, { imageUrl: localUrl, reverseImageData: localDataUrl })
 
-        const result: any = await uploadImageWithRetry(file)
-        if (!result?.file_id) return false
+        let hostedUrl: string | null = null
+        let hostedAssetId: string | null = null
+        try {
+          const hosted = await uploadServerAssetFile(file, (file as any)?.name || 'Image')
+          const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+          if (url) {
+            hostedUrl = url
+            hostedAssetId = hosted.id
+          }
+        } catch (error) {
+          console.error('Failed to upload image to OSS:', error)
+        }
 
-        const remoteUrl =
-          result.url ||
-          result.asset_pointer ||
-          result.azure_asset_pointer ||
-          localUrl
+        let result: any = null
+        try {
+          result = await uploadImageWithRetry(file)
+        } catch (error) {
+          console.error('Failed to upload image to Sora:', error)
+          result = null
+        }
+
+        if (!result?.file_id && !hostedUrl) return false
+
+        const soraUrlCandidate =
+          result?.url ||
+          result?.asset_pointer ||
+          result?.azure_asset_pointer ||
+          ''
+        const remoteUrl = hostedUrl || soraUrlCandidate || localUrl
         updateNodeData(nodeId, {
           imageUrl: remoteUrl,
-          soraFileId: result.file_id,
-          assetPointer: result.asset_pointer,
+          serverAssetId: hostedAssetId,
+          soraFileId: result?.file_id,
+          assetPointer: result?.asset_pointer,
           reverseImageData: localDataUrl,
         })
         if (remoteUrl !== localUrl) {

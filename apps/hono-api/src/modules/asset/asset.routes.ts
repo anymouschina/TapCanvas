@@ -35,6 +35,41 @@ function getPublicBase(env: AppEnv["Bindings"]): string {
 	return rawBase.trim().replace(/\/+$/, "");
 }
 
+function detectUploadExtension(file: File): string {
+	const name = (file as any).name as string | undefined;
+	const rawType = file.type || "";
+	const contentType = rawType.split(";")[0].trim();
+	const known: Record<string, string> = {
+		"image/png": "png",
+		"image/jpeg": "jpg",
+		"image/webp": "webp",
+		"image/gif": "gif",
+		"image/avif": "avif",
+		"video/mp4": "mp4",
+		"video/webm": "webm",
+		"video/quicktime": "mov",
+	};
+	if (contentType && known[contentType]) return known[contentType];
+	if (name && typeof name === "string") {
+		const match = name.match(/\.([a-zA-Z0-9]+)$/);
+		if (match && match[1]) return match[1].toLowerCase();
+	}
+	if (contentType.startsWith("image/")) {
+		return contentType.slice("image/".length) || "png";
+	}
+	return "bin";
+}
+
+function buildUserUploadKey(userId: string, ext: string): string {
+	const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+	const now = new Date();
+	const datePrefix = `${now.getUTCFullYear()}${String(
+		now.getUTCMonth() + 1,
+	).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}`;
+	const random = crypto.randomUUID();
+	return `uploads/user/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
+}
+
 function isHostedUrl(url: string, publicBase: string): boolean {
 	const trimmed = (url || "").trim();
 	if (!trimmed) return false;
@@ -159,6 +194,87 @@ assetRouter.delete("/:id", authMiddleware, async (c) => {
 	const id = c.req.param("id");
 	await deleteAssetRow(c.env.DB, userId, id);
 	return c.body(null, 204);
+});
+
+// Upload a user asset file to OSS (R2) and persist it as an asset row.
+assetRouter.post("/upload", authMiddleware, async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+	if (!bucket) {
+		return c.json({ error: "OSS storage is not configured" }, 500);
+	}
+
+	const form = await c.req.formData();
+	const file = form.get("file");
+	if (!(file instanceof File)) {
+		return c.json({ error: "file is required" }, 400);
+	}
+
+	const MAX_BYTES = 30 * 1024 * 1024;
+	if (typeof file.size === "number" && file.size > MAX_BYTES) {
+		return c.json({ error: "file is too large (max 30MB)" }, 413);
+	}
+
+	const rawType = file.type || "application/octet-stream";
+	const contentType = rawType.split(";")[0].trim();
+	const isImage = contentType.startsWith("image/");
+	const isVideo = contentType.startsWith("video/");
+	if (!isImage && !isVideo) {
+		return c.json({ error: "only image/video files are allowed" }, 400);
+	}
+
+	const ext = detectUploadExtension(file);
+	const key = buildUserUploadKey(userId, ext);
+	const body = await file.arrayBuffer();
+	await bucket.put(key, body, {
+		httpMetadata: {
+			contentType,
+			cacheControl: "public, max-age=31536000, immutable",
+		},
+	});
+
+	const publicBase = getPublicBase(c.env);
+	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+
+	const nameValue = form.get("name");
+	const rawName =
+		typeof nameValue === "string" && nameValue.trim()
+			? nameValue.trim()
+			: ((file as any).name as string | undefined) || "";
+	const fallbackName = isVideo ? "Video" : "Image";
+	const name = rawName.trim() || fallbackName;
+
+	const nowIso = new Date().toISOString();
+	const row = await createAssetRow(
+		c.env.DB,
+		userId,
+		{
+			name,
+			data: {
+				kind: "upload",
+				type: isVideo ? "video" : "image",
+				url,
+				contentType,
+				size: typeof file.size === "number" ? file.size : null,
+				originalName: (file as any).name || null,
+				key,
+			},
+			projectId: null,
+		},
+		nowIso,
+	);
+	const payload = ServerAssetSchema.parse({
+		id: row.id,
+		name: row.name,
+		data: row.data ? JSON.parse(row.data) : null,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+		userId: row.owner_id,
+		projectId: row.project_id,
+	});
+	return c.json(payload);
 });
 
 // Public TapShow feed: all OSS-hosted image/video assets
