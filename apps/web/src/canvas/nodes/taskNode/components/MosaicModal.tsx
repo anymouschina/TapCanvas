@@ -1,6 +1,7 @@
 import React from 'react'
 import { ActionIcon, Badge, Button, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text } from '@mantine/core'
 import { IconArrowDown, IconArrowUp, IconTrash } from '@tabler/icons-react'
+import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 
 const MOSAIC_GRID_OPTIONS = [
   { value: '1', label: '1x1' },
@@ -107,7 +108,14 @@ export function MosaicModal({
                       {idx + 1}
                     </Badge>
                     <div className="mosaic-modal-order-thumb" style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                      <img className="mosaic-modal-order-thumb-img" src={url} alt={`order-${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      <img
+                        className="mosaic-modal-order-thumb-img"
+                        src={url}
+                        alt={`order-${idx + 1}`}
+                        draggable
+                        onDragStart={(evt) => setTapImageDragData(evt, url)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
                     </div>
                     <Group className="mosaic-modal-order-actions" gap={4} mt={6} justify="space-between">
                       <ActionIcon className="mosaic-modal-order-move-up" variant="subtle" size="xs" onClick={() => onMoveItem(url, -1)} disabled={idx === 0}>
@@ -168,7 +176,14 @@ export function MosaicModal({
                     </Badge>
                   )}
                   <div className="mosaic-modal-library-thumb" style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: `1px solid ${inlineDividerColor}` }}>
-                    <img className="mosaic-modal-library-thumb-img" src={url} alt="候选图片" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <img
+                      className="mosaic-modal-library-thumb-img"
+                      src={url}
+                      alt="候选图片"
+                      draggable
+                      onDragStart={(evt) => setTapImageDragData(evt, url)}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
                   </div>
                 </Paper>
               )

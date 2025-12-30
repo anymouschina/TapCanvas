@@ -23,38 +23,50 @@ export function WebCutVideoEditModal(props: WebCutVideoEditModalProps): JSX.Elem
       withCloseButton={false}
       padding={0}
       styles={{
-        content: { background: 'rgba(0,0,0,.95)' },
-        body: { padding: 0, height: '100vh', display: 'flex', flexDirection: 'column' },
+        content: { background: 'rgba(0,0,0,.95)', overflow: 'hidden' },
+        body: {
+          padding: 0,
+          height: '100dvh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        },
       }}
     >
-      <Group className="webcut-video-edit-modal__header" justify="space-between" px="md" py="sm" style={{ borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-        <Group className="webcut-video-edit-modal__header-left" gap="xs">
-          <Text className="webcut-video-edit-modal__title" size="sm" fw={600} c="gray.1">
-            WebCut · 视频剪辑（仅当前节点）
-          </Text>
-          {loading && (
-            <Group className="webcut-video-edit-modal__uploading" gap={6}>
-              <Loader className="webcut-video-edit-modal__uploading-icon" size="xs" />
-              <Text className="webcut-video-edit-modal__uploading-text" size="xs" c="dimmed">
-                正在上传剪辑结果…
-              </Text>
-            </Group>
-          )}
-        </Group>
-        <ActionIcon className="webcut-video-edit-modal__close" variant="subtle" color="gray" onClick={onClose} disabled={loading} title="关闭">
-          <IconX className="webcut-video-edit-modal__close-icon" size={18} />
-        </ActionIcon>
-      </Group>
-      <div className="webcut-video-edit-modal__frame" style={{ flex: 1, minHeight: 0 }}>
+      <div className="webcut-video-edit-modal__frame" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div className="webcut-video-edit-modal__overlay" style={{ position: 'absolute', top: 10, left: 10, right: 10, zIndex: 2, pointerEvents: 'none' }}>
+          <Group className="webcut-video-edit-modal__overlay-bar" justify="space-between" wrap="nowrap">
+            <div className="webcut-video-edit-modal__overlay-left" style={{ pointerEvents: 'none' }}>
+              {loading && (
+                <Group className="webcut-video-edit-modal__uploading" gap={6} style={{ pointerEvents: 'none' }}>
+                  <Loader className="webcut-video-edit-modal__uploading-icon" size="xs" />
+                  <Text className="webcut-video-edit-modal__uploading-text" size="xs" c="dimmed">
+                    正在上传剪辑结果…
+                  </Text>
+                </Group>
+              )}
+            </div>
+            <ActionIcon
+              className="webcut-video-edit-modal__close"
+              variant="subtle"
+              color="gray"
+              onClick={onClose}
+              disabled={loading}
+              title="关闭"
+              style={{ pointerEvents: 'auto', background: 'rgba(0,0,0,.35)' }}
+            >
+              <IconX className="webcut-video-edit-modal__close-icon" size={18} />
+            </ActionIcon>
+          </Group>
+        </div>
         <iframe
           className="webcut-video-edit-modal__iframe"
           src={iframeSrc}
           title="WebCut Editor"
-          style={{ width: '100%', height: '100%', border: 0, background: 'black' }}
+          style={{ width: '100%', height: '100%', border: 0, background: 'black', display: 'block' }}
           allow="clipboard-read; clipboard-write"
         />
       </div>
     </Modal>
   )
 }
-

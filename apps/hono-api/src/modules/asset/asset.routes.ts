@@ -514,10 +514,21 @@ assetRouter.get("/proxy-video", authMiddleware, async (c) => {
 	// Safety: avoid becoming a general-purpose open proxy (even though it's auth-protected).
 	// Extend this allowlist if you need to support more upstreams.
 	const host = parsed.hostname.toLowerCase();
+	let r2PublicHost: string | null = null;
+	try {
+		const r2PublicBase = (c.env.R2_PUBLIC_BASE_URL || "").trim();
+		if (r2PublicBase) {
+			r2PublicHost = new URL(r2PublicBase).hostname.toLowerCase();
+		}
+	} catch {
+		r2PublicHost = null;
+	}
+
 	const allowed =
 		host === "videos.openai.com" ||
 		host.endsWith(".openai.com") ||
-		host.endsWith(".openaiusercontent.com");
+		host.endsWith(".openaiusercontent.com") ||
+		(!!r2PublicHost && host === r2PublicHost);
 	if (!allowed) {
 		return c.json({ message: "upstream host is not allowed" }, 400);
 	}

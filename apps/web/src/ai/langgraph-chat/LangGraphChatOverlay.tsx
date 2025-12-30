@@ -51,6 +51,7 @@ import { useUIStore } from '../../ui/uiStore'
 import { functionHandlers } from '../canvasService'
 import { useRFStore } from '../../canvas/store'
 import { buildCanvasContext } from '../../canvas/utils/buildCanvasContext'
+import { setTapImageDragData } from '../../canvas/dnd/setTapImageDragData'
 import { useAuth } from '../../auth/store'
 import { LANGGRAPH_SUBMIT_EVENT, type LangGraphChatEventDetail } from './submitEvent'
 import { buildNodeRefTokenFromNode } from './buildNodeIntentPrompt'
@@ -936,6 +937,8 @@ function MessageBubble({
                         src={thumb}
                         alt=""
                         loading="lazy"
+                        draggable
+                        onDragStart={(evt) => setTapImageDragData(evt, thumb)}
                         style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       />
                     ) : (
@@ -1033,6 +1036,8 @@ function MessageBubble({
                         src={m.url}
                         alt=""
                         loading="lazy"
+                        draggable
+                        onDragStart={(evt) => setTapImageDragData(evt, m.url)}
                         style={{
                           width: 88,
                           height: 50,

@@ -1,5 +1,6 @@
 import React from 'react'
 import { Button, Group, Modal, Paper, Stack, Text } from '@mantine/core'
+import { setTapImageDragData } from '../../dnd/setTapImageDragData'
 
 type ImageResult = { url: string }
 
@@ -84,6 +85,8 @@ export function ImageResultModal({
                       className="image-result-modal-img"
                       src={img.url}
                       alt={`结果 ${idx + 1}`}
+                      draggable
+                      onDragStart={(evt) => setTapImageDragData(evt, img.url)}
                       style={{
                         width: '100%',
                         height: 180,

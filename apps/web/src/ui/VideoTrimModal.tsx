@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Button, Group, Loader, Stack, Text } from '@mantine/core'
 import { IconPlayerPause, IconPlayerPlay, IconX, IconArrowRight } from '@tabler/icons-react'
+import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 
 type VideoTrimModalProps = {
   opened: boolean
@@ -431,6 +432,8 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                       className="video-trim-modal-thumb-img"
                       src={src}
                       alt={`frame-${idx}`}
+                      draggable
+                      onDragStart={(evt) => setTapImageDragData(evt, src)}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   )}

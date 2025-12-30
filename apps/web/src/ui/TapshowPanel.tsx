@@ -23,6 +23,7 @@ import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
 import { toast } from './toast'
+import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 import { useRFStore } from '../canvas/store'
 import { useAuth } from '../auth/store'
 
@@ -314,7 +315,16 @@ export default function TapshowPanel(): JSX.Element | null {
                                   />
                                 )
                               ) : cover ? (
-                                <Image className="tapshow-panel-card-image" src={cover} alt={label} radius="sm" height={160} fit="cover" />
+                                <Image
+                                  className="tapshow-panel-card-image"
+                                  src={cover}
+                                  alt={label}
+                                  radius="sm"
+                                  height={160}
+                                  fit="cover"
+                                  draggable
+                                  onDragStart={(evt) => setTapImageDragData(evt as any, cover)}
+                                />
                               ) : (
                                 <div
                                   className="tapshow-panel-card-fallback"

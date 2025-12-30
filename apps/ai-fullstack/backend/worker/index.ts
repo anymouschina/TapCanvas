@@ -117,10 +117,99 @@ export class AgentBackend {
   private readonly ctx: any;
   private readonly env: Env;
   private starting: Promise<void> | null = null;
+  private schemaReady: boolean = false;
 
   constructor(ctx: any, env: Env) {
     this.ctx = ctx;
     this.env = env;
+  }
+
+  private get sql(): any | null {
+    try {
+      const storage = (this.ctx as any)?.storage;
+      const sql = storage?.sql;
+      if (sql && typeof sql.exec === "function") return sql;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private ensureSqlSchema(): void {
+    if (this.schemaReady) return;
+    const sql = this.sql;
+    if (!sql) return;
+    sql.exec(
+      `
+      CREATE TABLE IF NOT EXISTS thread_aliases (
+        alias TEXT PRIMARY KEY,
+        internal_thread_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        refresh_count INTEGER NOT NULL DEFAULT 0
+      )
+    `,
+    );
+    this.schemaReady = true;
+  }
+
+  private getThreadMapping(alias: string): { internal: string; refreshCount: number } | null {
+    this.ensureSqlSchema();
+    const sql = this.sql;
+    if (!sql) return null;
+    try {
+      const row = sql
+        .exec(
+          `SELECT internal_thread_id, refresh_count FROM thread_aliases WHERE alias = ? LIMIT 1`,
+          alias,
+        )
+        .one() as any;
+      const internal = typeof row?.internal_thread_id === "string" ? row.internal_thread_id : "";
+      const refreshCount = Number(row?.refresh_count ?? 0) || 0;
+      if (!internal) return null;
+      return { internal, refreshCount };
+    } catch {
+      return null;
+    }
+  }
+
+  private upsertThreadMapping(alias: string, internal: string, opts?: { bumpRefresh?: boolean }): void {
+    this.ensureSqlSchema();
+    const sql = this.sql;
+    if (!sql) return;
+    const nowIso = new Date().toISOString();
+    const bump = opts?.bumpRefresh ? 1 : 0;
+    sql.exec(
+      `
+      INSERT INTO thread_aliases (alias, internal_thread_id, created_at, updated_at, refresh_count)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(alias) DO UPDATE SET
+        internal_thread_id = excluded.internal_thread_id,
+        updated_at = excluded.updated_at,
+        refresh_count = thread_aliases.refresh_count + ?
+    `,
+      alias,
+      internal,
+      nowIso,
+      nowIso,
+      0,
+      bump,
+    );
+  }
+
+  private parseThreadIdFromPath(pathname: string): string | null {
+    const m = pathname.match(/^\/threads\/([^\/?#]+)/);
+    if (!m) return null;
+    const id = (m[1] || "").trim();
+    return id ? decodeURIComponent(id) : null;
+  }
+
+  private rewriteThreadPath(pathname: string, alias: string, internal: string): string {
+    if (!alias || !internal) return pathname;
+    return pathname.replace(
+      /^\/threads\/([^\/?#]+)/,
+      `/threads/${encodeURIComponent(internal)}`,
+    );
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -163,6 +252,25 @@ export class AgentBackend {
     });
   }
 
+  private async bufferRequestForRetry(
+    request: Request,
+  ): Promise<{ request: Request; body: ArrayBuffer | null }> {
+    const method = request.method.toUpperCase();
+    if (method === "GET" || method === "HEAD" || !request.body) {
+      return { request, body: null };
+    }
+
+    const body = await request.arrayBuffer();
+    return {
+      request: new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body,
+      }),
+      body,
+    };
+  }
+
   private async ensureStarted(): Promise<void> {
     if (this.ctx.container.running) {
       await this.waitForReady();
@@ -189,12 +297,132 @@ export class AgentBackend {
     await this.starting;
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const buffered = await this.bufferRequest(request);
+  private async createUpstreamThread(): Promise<string> {
     await this.ensureStarted();
-    return this.ctx.container
-      .getTcpPort(8080)
-      .fetch(toContainerRequest(buffered));
+    const port = this.ctx.container.getTcpPort(8080);
+    const res = await port.fetch(
+      new Request("http://127.0.0.1:8080/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    const text = await res.text().catch(() => "");
+    if (!res.ok) throw new Error(`create thread failed: ${res.status} ${text}`.trim());
+    try {
+      const parsed = JSON.parse(text);
+      const threadId =
+        typeof parsed?.thread_id === "string"
+          ? parsed.thread_id
+          : typeof parsed?.id === "string"
+            ? parsed.id
+            : "";
+      if (!threadId) throw new Error("missing thread_id in response");
+      return threadId;
+    } catch (err) {
+      throw new Error(`invalid create thread response: ${String(err)} ${text.slice(0, 200)}`.trim());
+    }
+  }
+
+  private async maybePatchThreadIdInJsonResponse(res: Response, alias: string, internal: string): Promise<Response> {
+    try {
+      const ct = res.headers.get("Content-Type") || "";
+      if (!ct.toLowerCase().includes("application/json")) return res;
+      // Never buffer streaming responses.
+      if (ct.toLowerCase().includes("text/event-stream")) return res;
+      const text = await res.text();
+      if (!text) return res;
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return res;
+      }
+      const replace = (v: any): any => {
+        if (!v || typeof v !== "object") return v;
+        if (typeof v.thread_id === "string" && v.thread_id === internal) {
+          v = { ...v, thread_id: alias };
+        }
+        return v;
+      };
+      const next = Array.isArray(parsed) ? parsed.map(replace) : replace(parsed);
+      const body = JSON.stringify(next);
+      const headers = new Headers(res.headers);
+      headers.set("Content-Length", String(new TextEncoder().encode(body).byteLength));
+      return new Response(body, { status: res.status, statusText: res.statusText, headers });
+    } catch {
+      return res;
+    }
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const bufferedPayload = await this.bufferRequestForRetry(request);
+    const buffered = bufferedPayload.request;
+    const bufferedBody = bufferedPayload.body;
+
+    // Stable threadId aliasing:
+    // - Client continues to use the same threadId (alias).
+    // - DO maps alias -> current upstream thread_id, and silently recreates upstream threads when expired.
+    const url = new URL(buffered.url);
+    const alias = this.parseThreadIdFromPath(url.pathname);
+    const mapping = alias ? this.getThreadMapping(alias) : null;
+    const internal = alias ? (mapping?.internal || alias) : null;
+    if (alias && !mapping) {
+      // First-seen alias: assume upstream thread_id equals alias for now.
+      this.upsertThreadMapping(alias, internal || alias);
+    }
+
+    const initialPath = alias && internal ? this.rewriteThreadPath(url.pathname, alias, internal) : url.pathname;
+    const rewrittenUrl = new URL(buffered.url);
+    rewrittenUrl.pathname = initialPath;
+
+    await this.ensureStarted();
+    const port = this.ctx.container.getTcpPort(8080);
+    const upstreamReq = new Request(
+      `http://127.0.0.1:8080${rewrittenUrl.pathname}${rewrittenUrl.search}`,
+      {
+        method: buffered.method,
+        headers: buffered.headers,
+        body: bufferedBody,
+      },
+    );
+    let res = await port.fetch(upstreamReq);
+
+    // If upstream says thread not found, recreate and retry transparently.
+    if (alias && res.status === 404) {
+      try {
+        const newInternal = await this.createUpstreamThread();
+        this.upsertThreadMapping(alias, newInternal, { bumpRefresh: true });
+        const retryUrl = new URL(buffered.url);
+        retryUrl.pathname = this.rewriteThreadPath(url.pathname, alias, newInternal);
+        const retryReq = new Request(
+          `http://127.0.0.1:8080${retryUrl.pathname}${retryUrl.search}`,
+          {
+            method: buffered.method,
+            headers: buffered.headers,
+            body: bufferedBody,
+          },
+        );
+        res = await port.fetch(retryReq);
+        res = await this.maybePatchThreadIdInJsonResponse(res, alias, newInternal);
+        const headers = new Headers(res.headers);
+        headers.set("x-thread-alias", alias);
+        headers.set("x-thread-refreshed", "1");
+        return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+      } catch {
+        // fall through to original response
+      }
+    }
+
+    // For JSON responses, hide internal thread id to keep client stable.
+    if (alias && internal) {
+      res = await this.maybePatchThreadIdInJsonResponse(res, alias, internal);
+      const headers = new Headers(res.headers);
+      headers.set("x-thread-alias", alias);
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    }
+
+    return res;
   }
 }
 

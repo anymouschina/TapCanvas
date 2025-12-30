@@ -33,8 +33,6 @@ export const NODE_TYPES = {
   TASK: 'taskNode',
   GROUP: 'groupNode',
   IO: 'ioNode',
-  INPUT: 'input',
-  OUTPUT: 'output',
 } as const;
 
 // 节点种类
@@ -48,14 +46,6 @@ export const NODE_KINDS = {
   SUBFLOW: 'subflow',
   RUN: 'run',
   EMPTY: 'empty',
-  IMAGE_UPSCALE: 'image-upscale',
-  TEXT_TO_SPEECH: 'text-to-speech',
-  SPEECH_TO_TEXT: 'speech-to-text',
-  BACKGROUND_REMOVE: 'background-remove',
-  VIDEO_MERGE: 'video-merge',
-  IMAGE_TO_VIDEO: 'image-to-video',
-  VIDEO_CROP: 'video-crop',
-  VIDEO_REMOVE: 'video-remove',
 } as const;
 
 // 边类型

@@ -41,7 +41,6 @@ import { prefillLangGraphChatWithRefs } from '../../ai/langgraph-chat/submitEven
 import {
   applyMentionFallback,
   blobToDataUrl,
-  clampCharacterClipWindow,
   computeHandleLayout,
   extractTextFromTaskResult,
   genTaskNodeId,
@@ -50,8 +49,6 @@ import {
   MAX_VEO_REFERENCE_IMAGES,
   MAX_FRAME_ANALYSIS_SAMPLES,
   normalizeVeoReferenceUrls,
-  parseCharacterCardResult,
-  parseFrameCompareSummary,
   resolveImageForReversePrompt,
 } from './taskNodeHelpers'
 import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
@@ -78,7 +75,7 @@ import { renderFeatureBlocks } from './taskNode/featureRenderers'
 import { REMOTE_IMAGE_URL_REGEX, normalizeClipRange } from './taskNode/utils'
 import { runNodeRemote } from '../../runner/remoteRunner'
 import { BASE_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION } from './taskNode/constants'
-import type { CharacterCard, FrameSample } from './taskNode/types'
+import type { FrameSample } from './taskNode/types'
 
 type Data = {
   label: string
@@ -604,43 +601,8 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [data, videoPrimaryIndex, videoResults])
   const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
   const frameSampleUrlsRef = React.useRef<string[]>([])
-  const frameSampleUploadsRef = React.useRef<Map<string, string>>(new Map())
   const [frameSamples, setFrameSamples] = React.useState<FrameSample[]>([])
   const [frameCaptureLoading, setFrameCaptureLoading] = React.useState(false)
-  const [frameCompareTimes, setFrameCompareTimes] = React.useState<number[]>([])
-  const [frameCompareResult, setFrameCompareResult] = React.useState<string | null>(null)
-  const [frameCompareLoading, setFrameCompareLoading] = React.useState(false)
-  const frameCompareSummary = React.useMemo(() => parseFrameCompareSummary(frameCompareResult), [frameCompareResult])
-  const frameCompareVerdict = React.useMemo(() => {
-    if (!frameCompareSummary) return null
-    if (frameCompareSummary.same === true) {
-      return { label: '同一角色', color: 'teal' as const }
-    }
-    if (frameCompareSummary.same === false) {
-      return { label: '不同角色', color: 'red' as const }
-    }
-    return { label: '无法确定', color: 'gray' as const }
-  }, [frameCompareSummary])
-  const [characterCards, setCharacterCards] = React.useState<CharacterCard[]>([])
-  const [characterCardLoading, setCharacterCardLoading] = React.useState(false)
-  const [characterCardError, setCharacterCardError] = React.useState<string | null>(null)
-  const describedFrameCount = React.useMemo(() => frameSamples.filter((sample) => Boolean(sample.description)).length, [frameSamples])
-  const findNearestFrameSample = React.useCallback(
-    (time?: number | null): FrameSample | null => {
-      if (typeof time !== 'number' || !Number.isFinite(time) || frameSamples.length === 0) return null
-      let best: FrameSample | null = null
-      let bestDiff = Number.POSITIVE_INFINITY
-      frameSamples.forEach((sample) => {
-        const diff = Math.abs(sample.time - time)
-        if (diff < bestDiff) {
-          best = sample
-          bestDiff = diff
-        }
-      })
-      return best
-    },
-    [frameSamples],
-  )
 
   const cleanupFrameSamples = React.useCallback(() => {
     frameSampleUrlsRef.current.forEach((u) => {
@@ -651,13 +613,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       }
     })
     frameSampleUrlsRef.current = []
-    frameSampleUploadsRef.current.clear()
     setFrameSamples([])
-    setFrameCompareTimes([])
-    setFrameCompareResult(null)
-    setCharacterCards([])
-    setCharacterCardError(null)
-    setCharacterCardLoading(false)
   }, [])
 
   React.useEffect(() => {
@@ -697,7 +653,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     try {
       const { frames } = await captureFramesAtTimes({ type: 'url', url: src }, sampleTimes)
       frameSampleUrlsRef.current = frames.map((f) => f.objectUrl)
-      frameSampleUploadsRef.current.clear()
       setFrameSamples(
         frames.map((f) => ({
           url: f.objectUrl,
@@ -723,136 +678,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       setFrameCaptureLoading(false)
     }
   }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
-
-  const toggleFrameCompare = React.useCallback((time: number) => {
-    setFrameCompareTimes((prev) =>
-      prev.includes(time) ? prev.filter((t) => t !== time) : [...prev, time],
-    )
-  }, [])
-
-  const uploadImageWithRetry = React.useCallback(async (file: File, maxRetry = 2) => {
-    let lastError: any = null
-    for (let attempt = 0; attempt <= maxRetry; attempt++) {
-      try {
-        return await uploadSoraImage(undefined, file)
-      } catch (err) {
-        lastError = err
-        if (attempt === maxRetry) {
-          throw err
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
-      }
-    }
-    throw lastError
-  }, [])
-
-  const ensureFrameRemoteUrl = React.useCallback(
-    async (frame: FrameSample): Promise<string> => {
-      const cached = frameSampleUploadsRef.current.get(frame.url)
-      if (cached) return cached
-
-      let blob = frame.blob
-      if (!blob) {
-        const res = await fetch(frame.url)
-        if (!res.ok) {
-          throw new Error('读取帧数据失败')
-        }
-        blob = await res.blob()
-      }
-      const mime = blob.type || 'image/png'
-      const ext = mime.includes('jpeg') || mime.includes('jpg')
-        ? 'jpg'
-        : mime.includes('webp')
-          ? 'webp'
-          : 'png'
-      const fileName = `frame-${Math.round(frame.time * 1000)}.${ext}`
-      const file = new File([blob], fileName, { type: mime })
-      const result = await uploadImageWithRetry(file)
-      const remoteUrl = result.url || result.asset_pointer || (result as any)?.azure_asset_pointer
-      if (!remoteUrl) {
-        throw new Error('帧上传失败，请稍后重试')
-      }
-      frameSampleUploadsRef.current.set(frame.url, remoteUrl)
-      return remoteUrl
-    },
-    [uploadImageWithRetry],
-  )
-
-  const updateFrameSample = React.useCallback((time: number, patch: Partial<FrameSample>) => {
-    setFrameSamples((prev) =>
-      prev.map((fs) => (fs.time === time ? { ...fs, ...patch } : fs)),
-    )
-  }, [])
-
-  const handleCompareCharacters = React.useCallback(async () => {
-    const sources = frameCompareTimes.length
-      ? frameCompareTimes
-          .map((t) => frameSamples.find((f) => f.time === t))
-          .filter((f): f is { url: string; time: number } => Boolean(f))
-      : frameSamples
-
-    const picks = sources.slice(0, 4)
-    if (!picks.length) {
-      toast('请先抽帧或选择帧', 'error')
-      return
-    }
-
-    setFrameCompareLoading(true)
-    setFrameCompareResult(null)
-    try {
-      const descriptions: Array<{ time: number; text: string }> = []
-      for (const f of picks) {
-        const remoteUrl = await ensureFrameRemoteUrl(f)
-        updateFrameSample(f.time, { remoteUrl })
-        const persist = useUIStore.getState().assetPersistenceEnabled
-        const task = await runTaskByVendor('openai', {
-          kind: 'image_to_prompt',
-          prompt: '用简短中文描述画面中的人物外观、性别、年龄段、发型、服饰、表情、动作。不要写场景或镜头信息。',
-          extras: {
-            imageUrl: remoteUrl,
-            systemPrompt:
-              '你是人物识别助手。请用中文一两句话只描述人物的外观（性别、年龄段、脸型、发型、服饰颜色款式、表情、动作），不要写镜头、背景、光线。',
-            nodeId: id,
-            persistAssets: persist,
-          },
-        })
-        const text = extractTextFromTaskResult(task)
-        descriptions.push({ time: f.time, text: text || '(无描述)' })
-      }
-
-      const list = descriptions
-        .map((d, idx) => `${idx + 1}. t=${d.time.toFixed(2)}s -> ${d.text}`)
-        .join('\n')
-      const judgePrompt = [
-        '你是镜头连续性助手。下面是同一段视频中不同时间点的帧描述，请判断这些帧中的主体是否为同一角色。',
-        '输出严格的 JSON，不要额外文字：',
-        '{ "same": true | false | "unknown", "reason": "简要中文理由", "tags": ["外观标签"], "frames": [{"time": number, "desc": "原描述"}]}',
-        '判断标准：只有在高度确定是同一人时 same=true；明显不同 same=false；不确定则 same="unknown"。',
-        '帧描述列表：',
-        list,
-      ].join('\n')
-
-      const persistJudge = useUIStore.getState().assetPersistenceEnabled
-      const judgeTask = await runTaskByVendor('openai', {
-        kind: 'prompt_refine',
-        prompt: judgePrompt,
-        extras: {
-          systemPrompt:
-            '你是一个严谨的镜头角色判定助手。只输出 JSON，键使用英文，内容使用中文，避免幻觉，不确定则 same="unknown".',
-          modelKey: 'gpt-5.2',
-          persistAssets: persistJudge,
-        },
-      })
-      const resultText = extractTextFromTaskResult(judgeTask)
-      setFrameCompareResult(resultText?.trim() || '无结果')
-    } catch (err: any) {
-      console.error('handleCompareCharacters error', err)
-      toast(err?.message || '角色判定失败，请稍后重试', 'error')
-    } finally {
-      setFrameCompareLoading(false)
-    }
-  }, [frameCompareTimes, frameSamples, ensureFrameRemoteUrl, id, updateFrameSample])
-
 
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
@@ -941,136 +766,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     setVeoLastFrameUrl(((data as any)?.veoLastFrameUrl as string | undefined) || '')
   }, [(data as any)?.veoLastFrameUrl])
 
-  const handleGenerateCharacterCards = React.useCallback(async () => {
-    if (!frameSamples.length) {
-      toast('请先抽帧后再生成角色卡', 'error')
-      return
-    }
-
-    setCharacterCardLoading(true)
-    setCharacterCardError(null)
-    setCharacterCards([])
-    try {
-      const ordered = [...frameSamples].sort((a, b) => a.time - b.time)
-      const descriptions: Array<{ time: number; desc: string; remoteUrl: string }> = []
-
-      for (const frame of ordered) {
-        try {
-          updateFrameSample(frame.time, { describing: true })
-          const remoteUrl = await ensureFrameRemoteUrl(frame)
-          updateFrameSample(frame.time, { remoteUrl })
-          let desc = frame.description?.trim()
-          if (!desc) {
-            const describeTask = await runTaskByVendor('openai', {
-              kind: 'image_to_prompt',
-              prompt: '用一句中文总结画面里人物的性别/年龄段/发型/服饰/神态/动作。不要描述背景。',
-              extras: {
-                imageUrl: remoteUrl,
-                systemPrompt:
-                  '你是视频角色识别助手。限定用简洁中文，只描述人物的外观特征与动作，不要写镜头或背景。',
-                modelKey: 'gpt-5.2',
-                nodeId: id,
-              },
-            })
-            desc = extractTextFromTaskResult(describeTask).trim() || '(无描述)'
-            updateFrameSample(frame.time, { description: desc })
-          }
-          descriptions.push({ time: frame.time, desc, remoteUrl })
-        } catch (frameErr) {
-          console.error('handleGenerateCharacterCards frame error', frameErr)
-          const message = frameErr instanceof Error ? frameErr.message : '解析帧失败'
-          toast(`帧 ${frame.time.toFixed(2)}s 处理失败：${message}`, 'error')
-        } finally {
-          updateFrameSample(frame.time, { describing: false })
-        }
-      }
-
-      if (!descriptions.length) {
-        setCharacterCardError('没有可用的帧描述')
-        return
-      }
-
-      const list = descriptions
-        .map((d, idx) => `${idx + 1}. t=${d.time.toFixed(2)}s -> ${d.desc}`)
-        .join('\n')
-      const cardPrompt = [
-        '你是角色卡生成助手，请把下面帧描述按角色聚类。',
-        '输出严格 JSON：{ "characters": [ { "name": "string", "summary": "中文概述", "tags": ["特征"], "frames": [{ "time": number, "desc": "原描述" }], "keyframes": { "start": number, "end": number } } ] }',
-        '要求：',
-        '1. 同一角色至少包含 2 帧；',
-        '2. name 可自拟（如 “角色A”），summary 用 1-2 句中文概括外貌/动作/情绪；',
-        '3. tags 最多 5 个；',
-        '4. keyframes.start/ end 取该角色最早/最晚出现的 time，且片段长度控制在 1.2-3 秒。',
-        '帧描述列表：',
-        list,
-      ].join('\n')
-
-      const cardsTask = await runTaskByVendor('openai', {
-        kind: 'prompt_refine',
-        prompt: cardPrompt,
-        extras: {
-          systemPrompt:
-            '只输出 JSON，键使用英文，值使用中文，不要加入解释。严格聚类，无法判断时 characters 返回空数组。',
-          modelKey: 'gpt-5.2',
-        },
-      })
-      const rawText = extractTextFromTaskResult(cardsTask)
-      const parsed = parseCharacterCardResult(rawText)
-      if (!parsed) {
-        setCharacterCardError('角色卡结果解析失败')
-        return
-      }
-
-      const cards: CharacterCard[] = parsed.characters
-        .map((char: any, idx: number) => {
-          const frames = Array.isArray(char?.frames)
-            ? char.frames
-                .map((frame: any) => {
-                  const time = typeof frame?.time === 'number' ? frame.time : Number(frame?.time)
-                  const desc = typeof frame?.desc === 'string' ? frame.desc.trim() : ''
-                  return Number.isFinite(time) && desc
-                    ? { time, desc }
-                    : null
-                })
-                .filter((f: { time: number; desc: string } | null): f is { time: number; desc: string } => Boolean(f))
-                .sort((a, b) => a.time - b.time)
-            : []
-          if (!frames.length) return null
-          const clipWindow = clampCharacterClipWindow(frames, activeVideoDuration)
-          const clampedFrames = frames.filter((frame) => frame.time >= clipWindow.start - 0.05 && frame.time <= clipWindow.end + 0.05)
-          const framesForCard = clampedFrames.length > 0 ? clampedFrames : frames
-          const startFrame = findNearestFrameSample(clipWindow.start)
-          const endFrame = findNearestFrameSample(clipWindow.end)
-          return {
-            id: `character-${idx}`,
-            name: typeof char?.name === 'string' && char.name.trim() ? char.name.trim() : `角色 ${idx + 1}`,
-            summary: typeof char?.summary === 'string' ? char.summary.trim() : undefined,
-            tags: Array.isArray(char?.tags)
-              ? char.tags
-                  .map((tag: any) => (typeof tag === 'string' ? tag.trim() : ''))
-                  .filter((tag: string) => Boolean(tag))
-                  .slice(0, 5)
-              : undefined,
-            frames: framesForCard,
-            startFrame: startFrame ? { time: clipWindow.start, url: startFrame.url } : undefined,
-            endFrame: endFrame ? { time: clipWindow.end, url: endFrame.url } : undefined,
-            clipRange: clipWindow,
-          }
-        })
-        .filter((card): card is CharacterCard => Boolean(card))
-
-      if (!cards.length) {
-        setCharacterCardError('模型未返回有效的角色卡')
-        return
-      }
-      setCharacterCards(cards)
-    } catch (error: any) {
-      console.error('handleGenerateCharacterCards error', error)
-      setCharacterCardError(error?.message || '角色卡生成失败')
-    } finally {
-      setCharacterCardLoading(false)
-    }
-  }, [frameSamples, ensureFrameRemoteUrl, findNearestFrameSample, id, updateFrameSample, activeVideoDuration])
 
   const selectedCharacterTokenId: string | null = (data as any)?.soraTokenId ?? null
   const selectedCharacter = React.useMemo(() => {
@@ -1444,160 +1139,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
   }, [data, mosaicGrid, mosaicModalOpen])
 
-  const handleOpenCharacterCreatorModal = React.useCallback(
-    (card: CharacterCard) => {
-      if (resolvedVideoVendor === 'sora2api' || resolvedVideoVendor === 'grsai') {
-        requestCharacterCreator({
-          source: 'character-card',
-          name: card.name,
-          summary: card.summary,
-          tags: card.tags,
-          clipRange: card.clipRange,
-          videoVendor: resolvedVideoVendor,
-          soraTokenId: selectedCharacterTokenId || null,
-        })
-        toast('已提交角色创建任务', 'info')
-        return
-      }
-      openCharacterCreatorModal({
-        source: 'character-card',
-        name: card.name,
-        summary: card.summary,
-        tags: card.tags,
-        clipRange: card.clipRange,
-        videoVendor: resolvedVideoVendor,
-        soraTokenId: selectedCharacterTokenId || null,
-      })
-      setActivePanel('assets')
-    },
-    [openCharacterCreatorModal, requestCharacterCreator, resolvedVideoVendor, selectedCharacterTokenId, setActivePanel, toast],
-  )
-
-  const handleOpenCharacterCreatorFromVideo = React.useCallback(() => {
-    if (!isVideoNode || !isSoraVideoVendor) {
-      toast('该功能仅支持 Sora 视频节点', 'error')
-      return
-    }
-    if (!hasPrimaryVideo) {
-      toast('暂无可用的视频结果，无法创建角色', 'error')
-      return
-    }
-    const activeVideo = videoResults[videoPrimaryIndex] || null
-    const primaryUrl = activeVideo?.url || videoUrl || null
-    if (!primaryUrl) {
-      toast('暂无可用的视频结果，无法创建角色', 'error')
-      return
-    }
-    const displayTitle = activeVideo?.title || videoTitle || 'Sora 角色'
-    const quickCard: CharacterCard = {
-      id: `video-${Date.now().toString(36)}`,
-      name: displayTitle,
-      summary: videoPrompt || prompt || undefined,
-      frames: [],
-    }
-    const effectiveTokenId = selectedCharacterTokenId || videoTokenId || characterTokens[0]?.id || null
-    if (resolvedVideoVendor === 'sora2api' || resolvedVideoVendor === 'grsai') {
-      const defaultRange =
-        videoClipRange ||
-        {
-          start: 0,
-          end: Math.min(3, activeVideoDuration || 3),
-        }
-      openVideoTrimModal({
-        videoUrl: primaryUrl,
-        originalDuration: activeVideoDuration || 10,
-        thumbnails: [],
-        defaultRange,
-        onConfirm: async (range) => {
-          requestCharacterCreator({
-            source: 'video-node',
-            name: quickCard.name,
-            summary: quickCard.summary,
-            tags: quickCard.tags,
-            videoVendor: resolvedVideoVendor,
-            soraTokenId: effectiveTokenId,
-            videoTokenId: videoTokenId || effectiveTokenId,
-            videoUrl: primaryUrl,
-            videoTitle: displayTitle,
-            clipRange: range,
-          })
-          toast('已提交角色创建任务', 'info')
-        },
-      })
-      return
-    }
-    openCharacterCreatorModal({
-      source: 'video-node',
-      name: quickCard.name,
-      summary: quickCard.summary,
-      tags: quickCard.tags,
-      videoVendor: resolvedVideoVendor,
-      soraTokenId: effectiveTokenId,
-      videoTokenId: videoTokenId || effectiveTokenId,
-      videoUrl: primaryUrl,
-      videoTitle: displayTitle,
-    })
-    setActivePanel('assets')
-  }, [
-    isVideoNode,
-    isSoraVideoVendor,
-    hasPrimaryVideo,
-    videoResults,
-    videoPrimaryIndex,
-    videoUrl,
-    videoTitle,
-    videoPrompt,
-    prompt,
-    videoTokenId,
-    selectedCharacterTokenId,
-    characterTokens,
-    resolvedVideoVendor,
-    videoClipRange,
-    requestCharacterCreator,
-    toast,
-  ])
-
-  const handleOpenWebCutVideoEditModal = React.useCallback(() => {
-    if (!hasPrimaryVideo) {
-      toast('暂无可用的视频结果，无法剪辑', 'error')
-      return
-    }
-    const activeVideo = videoResults[videoPrimaryIndex] || null
-    const primaryUrl = activeVideo?.url || videoUrl || null
-    if (!primaryUrl) {
-      toast('当前没有可用的视频链接', 'error')
-      return
-    }
-    const displayTitle = activeVideo?.title || videoTitle || (data as any)?.label || '视频'
-    openWebCutVideoEditModal({
-      nodeId: id,
-      videoUrl: primaryUrl,
-      videoTitle: displayTitle,
-      onApply: ({ url, thumbnailUrl }) => {
-        const rawResults = (data as any)?.videoResults
-        if (Array.isArray(rawResults) && rawResults.length > 0) {
-          const nextResults = rawResults.map((v: any) => ({ ...(v || {}) }))
-          const idx = Math.max(0, Math.min(nextResults.length - 1, videoPrimaryIndex))
-          nextResults[idx] = {
-            ...(nextResults[idx] || {}),
-            url,
-            ...(thumbnailUrl ? { thumbnailUrl } : {}),
-          }
-          updateNodeData(id, {
-            videoResults: nextResults,
-            videoUrl: url,
-            ...(thumbnailUrl ? { videoThumbnailUrl: thumbnailUrl } : {}),
-          })
-          return
-        }
-        updateNodeData(id, {
-          videoUrl: url,
-          ...(thumbnailUrl ? { videoThumbnailUrl: thumbnailUrl } : {}),
-        })
-      },
-    })
-  }, [data, hasPrimaryVideo, id, openWebCutVideoEditModal, toast, updateNodeData, videoPrimaryIndex, videoResults, videoTitle, videoUrl])
-
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = hasDuration
   const showResolutionMenu = hasAspect && (isVideoNode || hasImageResults)
@@ -1876,27 +1417,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         videoUrl={videoUrl}
         videoThumbnailUrl={videoThumbnailUrl}
         videoTitle={videoTitle}
-        hasPrimaryVideo={hasPrimaryVideo}
-        isSoraVideoVendor={isSoraVideoVendor}
-        isSoraVideoNode={isSoraVideoNode}
         frameCaptureLoading={frameCaptureLoading}
-        frameCompareLoading={frameCompareLoading}
-        characterCardLoading={characterCardLoading}
-        characterCardError={characterCardError}
-        frameCompareResult={frameCompareResult}
-        frameCompareSummary={frameCompareSummary}
-        frameCompareVerdict={frameCompareVerdict}
         frameSamples={frameSamples}
-        frameCompareTimes={frameCompareTimes}
-        characterCards={characterCards}
-        describedFrameCount={describedFrameCount}
         handleCaptureVideoFrames={handleCaptureVideoFrames}
-        handleOpenCharacterCreatorFromVideo={handleOpenCharacterCreatorFromVideo}
-        handleCompareCharacters={handleCompareCharacters}
-        handleGenerateCharacterCards={handleGenerateCharacterCards}
         cleanupFrameSamples={cleanupFrameSamples}
-        toggleFrameCompare={toggleFrameCompare}
-        setFrameCompareTimes={setFrameCompareTimes}
         mediaOverlayBackground={mediaOverlayBackground}
         mediaOverlayText={mediaOverlayText}
         mediaFallbackSurface={mediaFallbackSurface}
@@ -1905,9 +1429,58 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         accentPrimary={accentPrimary}
         rgba={rgba}
         videoSurface={videoSurface}
-        handleOpenCharacterCreatorModal={handleOpenCharacterCreatorModal}
         onOpenVideoModal={() => setVideoExpanded(true)}
-        onOpenVideoEditModal={handleOpenWebCutVideoEditModal}
+        onOpenWebCut={
+          viewOnly
+            ? undefined
+            : () => {
+              const src = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+              if (!src) {
+                toast('暂无可剪辑的视频', 'error')
+                return
+              }
+
+              const baseTitle =
+                (videoResults[videoPrimaryIndex]?.title || videoTitle || '').trim() ||
+                'clip'
+              const nextTitle = `${baseTitle}-剪辑`
+
+              openWebCutVideoEditModal({
+                nodeId: id,
+                videoUrl: src,
+                videoTitle: baseTitle,
+                onApply: async (result) => {
+                  const before = useRFStore.getState()
+                  const beforeIds = new Set(before.nodes.map((n) => n.id))
+
+                  addNode('taskNode', undefined, {
+                    kind: 'composeVideo',
+                    videoUrl: result.url,
+                    videoThumbnailUrl: result.thumbnailUrl || null,
+                    videoTitle: nextTitle,
+                    serverAssetId: result.assetId,
+                  })
+
+                  const after = useRFStore.getState()
+                  const newNode = after.nodes.find((n) => !beforeIds.has(n.id))
+                  if (!newNode) {
+                    toast('剪辑已上传，但未能创建新视频节点', 'error')
+                    return
+                  }
+
+                  const sourceNode = after.nodes.find((n) => n.id === id)
+                  const targetPos = {
+                    x: (sourceNode?.position?.x || 0) + 520,
+                    y: sourceNode?.position?.y || 0,
+                  }
+                  after.onNodesChange([
+                    { id: newNode.id, type: 'position', position: targetPos, dragging: false },
+                    { id: newNode.id, type: 'select', selected: true },
+                  ])
+                },
+              })
+            }
+        }
       />
     )
 
@@ -1935,6 +1508,22 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     onOpenModal: () => setMosaicModalOpen(true),
     onSave: handleMosaicSave,
   }
+
+  const uploadImageWithRetry = React.useCallback(async (file: File, maxRetry = 2) => {
+    let lastError: any = null
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      try {
+        return await uploadSoraImage(undefined, file)
+      } catch (err) {
+        lastError = err
+        if (attempt === maxRetry) {
+          throw err
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
+      }
+    }
+    throw lastError
+  }, [])
 
   const handleImageUpload = React.useCallback(async (files: File[]) => {
     if (!supportsImageUpload) return
@@ -2129,14 +1718,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const isImageExpired = Boolean((data as any)?.expired || (data as any)?.imageExpired)
   const showImageStateOverlay = Boolean(isImageNode && (status === 'running' || status === 'queued' || isImageExpired))
   const imageStateLabel = isImageExpired ? '已过期' : (status === 'running' || status === 'queued' ? '加载中' : null)
-
-  React.useEffect(() => {
-    // Image-node UX: the primary-image picker is mutually exclusive with node focus.
-    // If the image node becomes focused/selected, always close the picker.
-    if (isImageNode && !hideImageMeta && imageExpanded) {
-      setImageExpanded(false)
-    }
-  }, [hideImageMeta, imageExpanded, isImageNode])
 
   const imageProps = {
     hasPrimaryImage,
@@ -3033,7 +2614,12 @@ const rewritePromptWithCharacters = React.useCallback(
                       background: mediaFallbackSurface,
                     }}
                   >
-                      <img className="tc-task-node__veo-preview-image" src={trimmedFirstFrameUrl} alt="首帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img
+                        className="tc-task-node__veo-preview-image nodrag nopan"
+                        src={trimmedFirstFrameUrl}
+                        alt="首帧"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
                     </div>
                     <Group className="tc-task-node__veo-preview-actions" gap={4} style={{ flex: 1 }}>
                       <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" onClick={() => openVeoModal('first')}>
@@ -3073,7 +2659,12 @@ const rewritePromptWithCharacters = React.useCallback(
                       background: mediaFallbackSurface,
                     }}
                   >
-                      <img className="tc-task-node__veo-preview-image" src={trimmedLastFrameUrl} alt="尾帧" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img
+                        className="tc-task-node__veo-preview-image nodrag nopan"
+                        src={trimmedLastFrameUrl}
+                        alt="尾帧"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
                     </div>
                     <Group className="tc-task-node__veo-preview-actions" gap={4} style={{ flex: 1 }}>
                       <Button className="tc-task-node__veo-preview-action" size="compact-xs" variant="subtle" onClick={() => openVeoModal('last')}>
@@ -3122,7 +2713,12 @@ const rewritePromptWithCharacters = React.useCallback(
                         background: mediaFallbackSurface,
                       }}
                     >
-                      <img className="tc-task-node__veo-ref-image" src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img
+                        className="tc-task-node__veo-ref-image nodrag nopan"
+                        src={url}
+                        alt="参考图"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
                     </div>
                     <ActionIcon className="tc-task-node__veo-ref-remove" size="xs" variant="subtle" onClick={() => handleRemoveReferenceImage(url)}>
                       <IconTrash size={12} />

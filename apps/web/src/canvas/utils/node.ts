@@ -198,14 +198,6 @@ export function getNodeInputTypes(node: Node<NodeData>): string[] {
       return [];
     case NODE_KINDS.SUBTITLE:
       return ['subtitle'];
-    case NODE_KINDS.VIDEO_MERGE:
-      return ['video', 'audio', 'subtitle'];
-    case NODE_KINDS.IMAGE_TO_VIDEO:
-      return ['image'];
-    case NODE_KINDS.TEXT_TO_SPEECH:
-      return ['text'];
-    case NODE_KINDS.SPEECH_TO_TEXT:
-      return ['audio'];
     default:
       return ['any'];
   }
@@ -224,8 +216,6 @@ export function getNodeOutputTypes(node: Node<NodeData>): string[] {
       return ['text'];
     case NODE_KINDS.IMAGE:
       return ['image'];
-    case NODE_KINDS.IMAGE_UPSCALE:
-      return ['image'];
     case NODE_KINDS.VIDEO:
       return ['video'];
     case NODE_KINDS.CHARACTER:
@@ -234,18 +224,6 @@ export function getNodeOutputTypes(node: Node<NodeData>): string[] {
       return ['audio'];
     case NODE_KINDS.SUBTITLE:
       return ['subtitle'];
-    case NODE_KINDS.VIDEO_MERGE:
-      return ['video'];
-    case NODE_KINDS.IMAGE_TO_VIDEO:
-      return ['video'];
-    case NODE_KINDS.TEXT_TO_SPEECH:
-      return ['audio'];
-    case NODE_KINDS.SPEECH_TO_TEXT:
-      return ['text'];
-    case NODE_KINDS.BACKGROUND_REMOVE:
-      return ['video', 'image'];
-    case NODE_KINDS.VIDEO_CROP:
-      return ['video'];
     default:
       return ['any'];
   }
@@ -298,14 +276,6 @@ export function getNodeDisplayText(node: Node<NodeData>): string {
     [NODE_KINDS.SUBFLOW]: 'Subflow',
     [NODE_KINDS.RUN]: 'Run',
     [NODE_KINDS.EMPTY]: 'Empty',
-    [NODE_KINDS.IMAGE_UPSCALE]: 'Image Upscale',
-    [NODE_KINDS.TEXT_TO_SPEECH]: 'Text to Speech',
-    [NODE_KINDS.SPEECH_TO_TEXT]: 'Speech to Text',
-    [NODE_KINDS.BACKGROUND_REMOVE]: 'Background Remove',
-    [NODE_KINDS.VIDEO_MERGE]: 'Video Merge',
-    [NODE_KINDS.IMAGE_TO_VIDEO]: 'Image to Video',
-    [NODE_KINDS.VIDEO_CROP]: 'Video Crop',
-    [NODE_KINDS.VIDEO_REMOVE]: 'Video Remove',
   };
 
   return kindNames[node.data.kind] || 'Unknown';
@@ -443,10 +413,6 @@ export const NodeConfigTemplates = {
   [NODE_KINDS.SUBTITLE]: {
     language: 'zh',
     format: 'srt',
-  },
-  [NODE_KINDS.VIDEO_MERGE]: {
-    backgroundMusic: false,
-    subtitlePosition: 'bottom',
   },
 } as const;
 

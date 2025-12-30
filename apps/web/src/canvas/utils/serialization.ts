@@ -189,22 +189,27 @@ export function deepClone(obj: any, visited = new WeakSet()): any {
  * @returns 清理后的节点数组
  */
 export function sanitizeNodes(nodes: Node[]): Node[] {
-  return nodes.map(node => ({
-    ...node,
-    data: {
-      id: node.data.id,
-      label: node.data.label,
-      kind: node.data.kind,
-      config: node.data.config || {},
-      // 移除运行时状态
-      progress: undefined,
-      status: undefined,
-      logs: undefined,
-    },
-    // 移除React Flow的内部状态
-    selected: false,
-    dragging: false,
-  }));
+  return nodes.map((node: any) => {
+    // Never export `dragHandle`: it can make imported nodes appear "undraggable".
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { dragHandle: _dragHandle, ...rest } = (node && typeof node === 'object') ? node : { ...node }
+    return {
+      ...rest,
+      data: {
+        id: node.data.id,
+        label: node.data.label,
+        kind: node.data.kind,
+        config: node.data.config || {},
+        // 移除运行时状态
+        progress: undefined,
+        status: undefined,
+        logs: undefined,
+      },
+      // 移除React Flow的内部状态
+      selected: false,
+      dragging: false,
+    } as Node
+  });
 }
 
 /**
@@ -252,16 +257,24 @@ function validateSerializedData(data: any): boolean {
  * @returns 迁移后的数据
  */
 function migrateData(data: SerializedCanvas): SerializedCanvas {
+  const nodes = (data.nodes || []).map((n: any) => {
+    if (!n || typeof n !== 'object') return n
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { dragHandle: _dragHandle, ...rest } = n
+    return rest
+  }) as Node[]
+
   // 目前只有一个版本，未来可以在这里添加迁移逻辑
   switch (data.version) {
     case '1.0.0':
-      return data;
+      return { ...data, nodes };
     default:
       // 尝试迁移未知版本到当前版本
       console.warn(`Unknown canvas version: ${data.version}, attempting migration`);
       return {
         ...data,
         version: '1.0.0',
+        nodes,
       };
   }
 }
