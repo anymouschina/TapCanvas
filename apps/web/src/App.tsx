@@ -42,6 +42,7 @@ import AssetPanel from './ui/AssetPanel'
 import TapshowPanel from './ui/TapshowPanel'
 import { CharacterCreatorModal } from './ui/CharacterCreatorModal'
 import { VideoTrimModalHost } from './ui/VideoTrimModalHost'
+import { WebCutVideoEditModalHost } from './ui/WebCutVideoEditModalHost'
 import ModelPanel from './ui/ModelPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ExecutionPanel from './ui/ExecutionPanel'
@@ -1122,6 +1123,7 @@ function CanvasApp(): JSX.Element {
       <PreviewModal />
       <CharacterCreatorModal />
       <VideoTrimModalHost />
+      <WebCutVideoEditModalHost />
       {subflowNodeId && (<SubflowEditor nodeId={subflowNodeId} onClose={closeSubflow} />)}
       {libraryFlowId && (<LibraryEditor flowId={libraryFlowId} onClose={closeLibraryFlow} />)}
     </AppShell>

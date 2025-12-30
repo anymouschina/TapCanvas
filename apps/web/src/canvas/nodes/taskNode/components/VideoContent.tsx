@@ -1,6 +1,6 @@
 import React from 'react'
 import { Badge, Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
-import { IconClock, IconPhotoSearch, IconUserPlus } from '@tabler/icons-react'
+import { IconClock, IconPhotoSearch, IconScissors, IconUserPlus } from '@tabler/icons-react'
 
 type FrameSample = {
   url: string
@@ -70,6 +70,7 @@ type VideoContentProps = {
   characterCards: CharacterCard[]
   handleOpenCharacterCreatorModal: (card: CharacterCard) => void
   onOpenVideoModal: () => void
+  onOpenVideoEditModal: () => void
 }
 
 export function VideoContent({
@@ -109,6 +110,7 @@ export function VideoContent({
   characterCards,
   handleOpenCharacterCreatorModal,
   onOpenVideoModal,
+  onOpenVideoEditModal,
 }: VideoContentProps) {
   return (
     <div
@@ -134,6 +136,17 @@ export function VideoContent({
           }
         </Text>
         <Group className="video-content-header-actions" gap={2}>
+          <Button
+            className="video-content-edit-button"
+            size="compact-xs"
+            variant="light"
+            onClick={onOpenVideoEditModal}
+            disabled={!hasPrimaryVideo}
+            leftSection={<IconScissors className="video-content-edit-icon" size={12} />}
+            title="使用 WebCut 剪辑当前主视频（仅限该节点）"
+          >
+            剪辑
+          </Button>
           <Button
             className="video-content-history-button"
             size="compact-xs"

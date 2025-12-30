@@ -37,6 +37,14 @@ export type VideoTrimPayload = {
   onClose?: () => void
 }
 
+export type WebCutVideoEditPayload = {
+  nodeId: string
+  videoUrl: string
+  videoTitle?: string | null
+  onApply: (result: { url: string; thumbnailUrl?: string | null; assetId: string }) => void | Promise<void>
+  onClose?: () => void
+}
+
 type UIState = {
   viewOnly: boolean
   setViewOnly: (v: boolean) => void
@@ -89,6 +97,9 @@ type UIState = {
   openVideoTrimModal: (payload: VideoTrimPayload) => void
   updateVideoTrimModal: (patch: Partial<VideoTrimPayload>) => void
   closeVideoTrimModal: () => void
+  webcutVideoEditModal: { open: boolean; payload?: WebCutVideoEditPayload | null }
+  openWebCutVideoEditModal: (payload: WebCutVideoEditPayload) => void
+  closeWebCutVideoEditModal: () => void
   characterCreatorModal: { open: boolean; payload?: CharacterCreatorPayload | null }
   openCharacterCreatorModal: (payload: CharacterCreatorPayload) => void
   closeCharacterCreatorModal: () => void
@@ -165,12 +176,16 @@ export const useUIStore = create<UIState>((set) => ({
   videoTrimModal: { open: false, payload: null },
   openVideoTrimModal: (payload) => set({ videoTrimModal: { open: true, payload } }),
   updateVideoTrimModal: (patch) =>
-    set((s) => ({
-      videoTrimModal: s.videoTrimModal.open
-        ? { open: true, payload: { ...(s.videoTrimModal.payload || {}), ...patch } }
-        : s.videoTrimModal,
-    })),
+    set((s) => {
+      if (!s.videoTrimModal.open || !s.videoTrimModal.payload) {
+        return { videoTrimModal: s.videoTrimModal }
+      }
+      return { videoTrimModal: { open: true, payload: { ...s.videoTrimModal.payload, ...patch } } }
+    }),
   closeVideoTrimModal: () => set({ videoTrimModal: { open: false, payload: null } }),
+  webcutVideoEditModal: { open: false, payload: null },
+  openWebCutVideoEditModal: (payload) => set({ webcutVideoEditModal: { open: true, payload } }),
+  closeWebCutVideoEditModal: () => set({ webcutVideoEditModal: { open: false, payload: null } }),
   characterCreatorModal: { open: false, payload: null },
   openCharacterCreatorModal: (payload) => set({ characterCreatorModal: { open: true, payload } }),
   closeCharacterCreatorModal: () => set({ characterCreatorModal: { open: false, payload: null } }),
