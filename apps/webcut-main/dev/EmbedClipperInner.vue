@@ -193,6 +193,7 @@ function cancel() {
   border-bottom: 1px solid var(--webcut-line-color);
   background: var(--webcut-background-color);
   color: var(--text-color-base);
+  flex: 0 0 auto;
 }
 .webcut-embed-clipper-topbar-left {
   display: flex;
@@ -216,27 +217,30 @@ function cancel() {
   flex: 1;
   min-height: 0;
   display: grid;
-  overflow: hidden;
-  grid-template-rows: 1fr clamp(160px, 32vh, 280px);
+  grid-template-rows: minmax(160px, 1fr) minmax(220px, 45dvh);
 }
 .webcut-embed-clipper-player {
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 12px;
+  padding: clamp(6px, 2vw, 12px);
   gap: 8px;
   background: #000;
+  min-height: 0;
 }
 .webcut-embed-clipper-player-screen {
   width: 100%;
   height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 .webcut-embed-clipper-player-controls {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
+  flex: 0 0 auto;
 }
 .webcut-embed-clipper-timeline {
   min-height: 0;
@@ -274,10 +278,16 @@ function cancel() {
 
 @media (max-height: 700px) {
   .webcut-embed-clipper-main {
-    grid-template-rows: 1fr clamp(140px, 28vh, 220px);
+    grid-template-rows: minmax(120px, 1fr) minmax(180px, 48dvh);
   }
   .webcut-embed-clipper-player {
     padding: 8px;
+  }
+}
+
+@media (min-height: 900px) {
+  .webcut-embed-clipper-main {
+    grid-template-rows: minmax(220px, 1fr) minmax(280px, 44dvh);
   }
 }
 </style>
