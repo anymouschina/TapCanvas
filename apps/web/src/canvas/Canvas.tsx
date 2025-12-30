@@ -99,6 +99,10 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }), [isDarkCanvas])
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectingType, setConnectingType] = useState<string | null>(null)
+  const lastReason = useRef<string | null>(null)
+  const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+  const didConnectRef = useRef(false)
+  const [tapConnectSource, setTapConnectSource] = useState<{ nodeId: string } | null>(null)
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
   const [guides, setGuides] = useState<{ vx?: number; hy?: number } | null>(null)
@@ -423,14 +427,53 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const onDrop = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
+    // Dropping external files can end with a mouseup event inside the canvas.
+    // If a stale "connecting" state exists (e.g. an interrupted connect gesture),
+    // it may accidentally auto-snap to another node. Always cancel connecting on drop.
+    setIsConnecting(false)
+    setConnectingType(null)
+    setTapConnectSource(null)
+    connectFromRef.current = null
+    didConnectRef.current = false
+    lastReason.current = null
     const tplName = evt.dataTransfer.getData('application/tap-template')
     const rfdata = evt.dataTransfer.getData('application/reactflow')
     const flowRef = evt.dataTransfer.getData('application/tapflow')
+    const tapImageUrl = evt.dataTransfer.getData('application/tap-image-url')
     const pos = rf.screenToFlowPosition({ x: evt.clientX, y: evt.clientY })
     const imageFiles = Array.from(evt.dataTransfer.files || []).filter(isImageFile)
     if (imageFiles.length) {
       void importImagesFromFiles(imageFiles, pos)
       return
+    }
+    if (tapImageUrl) {
+      let url = ''
+      try {
+        const parsed = JSON.parse(tapImageUrl) as any
+        url = typeof parsed === 'string' ? parsed : (parsed?.url as string) || ''
+      } catch {
+        url = tapImageUrl
+      }
+      const trimmed = typeof url === 'string' ? url.trim() : ''
+      if (trimmed) {
+        useRFStore.setState((s) => {
+          const id = `${uuid()}${s.nextId}`
+          const node = {
+            id,
+            type: 'taskNode' as const,
+            position: pos,
+            data: {
+              label: 'Image',
+              kind: 'image',
+              imageUrl: trimmed,
+              imageResults: [{ url: trimmed }],
+              imagePrimaryIndex: 0,
+            },
+          }
+          return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
+        })
+        return
+      }
     }
     if (tplName) {
       applyTemplateAt(tplName, pos)
@@ -502,10 +545,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     score: number
   }
 
-  const lastReason = React.useRef<string | null>(null)
-  const connectFromRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
-  const didConnectRef = useRef(false)
-  const [tapConnectSource, setTapConnectSource] = useState<{ nodeId: string } | null>(null)
   const suppressContextMenuRef = useRef(false)
   const rightDragRef = useRef<{ startX: number; startY: number } | null>(null)
   const snapTargetRef = useRef<SnapTarget | null>(null)
@@ -682,9 +721,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       // Try near handles first; fall back to farther ones if needed (but stay compatible).
       for (const { el, dist } of scored) {
         if (dist > SNAP_DISTANCE) break
-        if (tryConnectWithHandle(el, { silent: true })) return true
-      }
-      for (const { el } of scored) {
         if (tryConnectWithHandle(el, { silent: true })) return true
       }
 

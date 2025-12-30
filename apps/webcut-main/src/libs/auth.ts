@@ -98,9 +98,18 @@ export function maybeAuthFetch(
 		const currentOrigin =
 			typeof window !== "undefined" ? window.location.origin : parsed.origin;
 
-		const apiBase =
-			(import.meta.env.VITE_API_BASE as string | undefined) ||
-			"https://hono-api.beqlee.icu";
+		const apiBase = (() => {
+			const configured = (import.meta.env.VITE_API_BASE as string | undefined) || "";
+			if (configured.trim()) return configured.trim();
+			// Local dev fallback: WebCut often runs on `localhost:5174` while API runs on `localhost:8788`.
+			if (typeof window !== "undefined") {
+				const host = window.location.hostname;
+				if (host === "localhost" || host === "127.0.0.1") {
+					return "http://localhost:8788";
+				}
+			}
+			return "https://hono-api.beqlee.icu";
+		})();
 		let apiOrigin = "";
 		try {
 			apiOrigin = new URL(apiBase).origin;

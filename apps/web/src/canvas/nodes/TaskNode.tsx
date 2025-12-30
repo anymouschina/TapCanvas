@@ -274,6 +274,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const requestCharacterCreator = useUIStore(s => s.requestCharacterCreator)
   const openVideoTrimModal = useUIStore(s => s.openVideoTrimModal)
+  const openWebCutVideoEditModal = useUIStore(s => s.openWebCutVideoEditModal)
   const edgeRoute = useUIStore(s => s.edgeRoute)
   const openCharacterCreatorModal = useUIStore(s => s.openCharacterCreatorModal)
   const openLangGraphChat = useUIStore(s => s.openLangGraphChat)
@@ -1556,6 +1557,47 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     toast,
   ])
 
+  const handleOpenWebCutVideoEditModal = React.useCallback(() => {
+    if (!hasPrimaryVideo) {
+      toast('暂无可用的视频结果，无法剪辑', 'error')
+      return
+    }
+    const activeVideo = videoResults[videoPrimaryIndex] || null
+    const primaryUrl = activeVideo?.url || videoUrl || null
+    if (!primaryUrl) {
+      toast('当前没有可用的视频链接', 'error')
+      return
+    }
+    const displayTitle = activeVideo?.title || videoTitle || (data as any)?.label || '视频'
+    openWebCutVideoEditModal({
+      nodeId: id,
+      videoUrl: primaryUrl,
+      videoTitle: displayTitle,
+      onApply: ({ url, thumbnailUrl }) => {
+        const rawResults = (data as any)?.videoResults
+        if (Array.isArray(rawResults) && rawResults.length > 0) {
+          const nextResults = rawResults.map((v: any) => ({ ...(v || {}) }))
+          const idx = Math.max(0, Math.min(nextResults.length - 1, videoPrimaryIndex))
+          nextResults[idx] = {
+            ...(nextResults[idx] || {}),
+            url,
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
+          }
+          updateNodeData(id, {
+            videoResults: nextResults,
+            videoUrl: url,
+            ...(thumbnailUrl ? { videoThumbnailUrl: thumbnailUrl } : {}),
+          })
+          return
+        }
+        updateNodeData(id, {
+          videoUrl: url,
+          ...(thumbnailUrl ? { videoThumbnailUrl: thumbnailUrl } : {}),
+        })
+      },
+    })
+  }, [data, hasPrimaryVideo, id, openWebCutVideoEditModal, toast, updateNodeData, videoPrimaryIndex, videoResults, videoTitle, videoUrl])
+
   const rewriteModelOptions = useModelOptions('text')
   const showTimeMenu = hasDuration
   const showResolutionMenu = hasAspect && (isVideoNode || hasImageResults)
@@ -1865,6 +1907,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         videoSurface={videoSurface}
         handleOpenCharacterCreatorModal={handleOpenCharacterCreatorModal}
         onOpenVideoModal={() => setVideoExpanded(true)}
+        onOpenVideoEditModal={handleOpenWebCutVideoEditModal}
       />
     )
 
@@ -2088,10 +2131,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const imageStateLabel = isImageExpired ? '已过期' : (status === 'running' || status === 'queued' ? '加载中' : null)
 
   React.useEffect(() => {
-    if (hideImageMeta && imageExpanded) {
+    // Image-node UX: the primary-image picker is mutually exclusive with node focus.
+    // If the image node becomes focused/selected, always close the picker.
+    if (isImageNode && !hideImageMeta && imageExpanded) {
       setImageExpanded(false)
     }
-  }, [hideImageMeta, imageExpanded])
+  }, [hideImageMeta, imageExpanded, isImageNode])
 
   const imageProps = {
     hasPrimaryImage,
