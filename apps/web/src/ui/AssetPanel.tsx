@@ -36,6 +36,7 @@ import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { toast } from './toast'
 import { listServerAssets, renameServerAsset, deleteServerAsset, type ServerAssetDto } from '../api/server'
 import { extractFirstFrame } from './videoThumb'
+import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 
 type GenerationAssetData = {
   kind?: string
@@ -477,6 +478,8 @@ export default function AssetPanel(): JSX.Element | null {
             radius="sm"
             height={160}
             fit="cover"
+            draggable
+            onDragStart={(evt) => setTapImageDragData(evt as any, cover)}
           />
         ) : (
           <PlaceholderImage label={label} />

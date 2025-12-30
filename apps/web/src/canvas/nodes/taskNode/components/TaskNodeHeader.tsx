@@ -75,7 +75,7 @@ export function TaskNodeHeader({
   }
 
   return (
-    <div className="task-node-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+    <div className="task-node-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12, cursor: 'grab' }}>
       <div className="task-node-header-main" style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
         {showIcon && (
           <div

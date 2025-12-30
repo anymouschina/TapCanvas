@@ -1,6 +1,7 @@
 import React from 'react'
 import { ActionIcon, Badge, Button, Group, Modal, Paper, Stack, Text, TextInput } from '@mantine/core'
 import { IconTrash } from '@tabler/icons-react'
+import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 
 type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
 
@@ -110,7 +111,14 @@ export function VeoImageModal({
                         background: mediaFallbackSurface,
                       }}
                     >
-                      <img className="veo-image-modal-reference-img" src={url} alt="参考图" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img
+                        className="veo-image-modal-reference-img"
+                        src={url}
+                        alt="参考图"
+                        draggable
+                        onDragStart={(evt) => setTapImageDragData(evt, url)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
                     </div>
                     <ActionIcon className="veo-image-modal-reference-remove" size="xs" variant="subtle" onClick={() => onRemoveReferenceImage(url)}>
                       <IconTrash className="veo-image-modal-reference-remove-icon" size={12} />
@@ -152,7 +160,14 @@ export function VeoImageModal({
                       background: mediaFallbackSurface,
                     }}
                   >
-                    <img className="veo-image-modal-candidate-img" src={candidate.url} alt={candidate.label} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
+                    <img
+                      className="veo-image-modal-candidate-img"
+                      src={candidate.url}
+                      alt={candidate.label}
+                      draggable
+                      onDragStart={(evt) => setTapImageDragData(evt, candidate.url)}
+                      style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }}
+                    />
                   </div>
                   <Text className="veo-image-modal-candidate-label" size="xs" c="dimmed" lineClamp={1}>
                     {candidate.label}

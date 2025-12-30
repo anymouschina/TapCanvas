@@ -1,5 +1,6 @@
 import React from 'react'
 import { IconChevronRight, IconTexture, IconUpload, IconVideo } from '@tabler/icons-react'
+import { createPortal } from 'react-dom'
 import { useReactFlow } from '@xyflow/react'
 import { useRFStore } from '../../../store'
 
@@ -80,6 +81,7 @@ export function ImageContent({
   const rf = useReactFlow()
   const [dragPreviewUrl, setDragPreviewUrl] = React.useState<string | null>(null)
   const [dragPreviewVisible, setDragPreviewVisible] = React.useState(false)
+  const [dragPreviewSize, setDragPreviewSize] = React.useState<{ w: number; h: number } | null>(null)
   const dragPreviewElRef = React.useRef<HTMLDivElement | null>(null)
   const dragPreviewFrameRef = React.useRef<number | null>(null)
   const dragPreviewPendingRef = React.useRef<null | { x: number; y: number; visible: boolean; url: string }>(null)
@@ -137,6 +139,7 @@ export function ImageContent({
     dragPreviewStateRef.current = { visible: false, url: null }
     setDragPreviewVisible(false)
     setDragPreviewUrl(null)
+    setDragPreviewSize(null)
   }, [])
 
   const startPointerDrag = React.useCallback((evt: React.PointerEvent, url: string) => {
@@ -148,6 +151,10 @@ export function ImageContent({
     const rect = pickerEl?.getBoundingClientRect()
       ?? (evt.currentTarget as HTMLElement | null)?.getBoundingClientRect()
     if (!rect) return
+    const draggedRect = (evt.currentTarget as HTMLElement | null)?.getBoundingClientRect?.()
+    if (draggedRect) {
+      setDragPreviewSize({ w: draggedRect.width, h: draggedRect.height })
+    }
     const cur = {
       pointerId: evt.pointerId,
       startX: evt.clientX,
@@ -272,7 +279,7 @@ export function ImageContent({
       className="task-node-image__root"
       style={{ position: 'relative', marginTop: compact ? 0 : 6, padding: compact ? 0 : '0 6px' }}
     >
-      {dragPreviewVisible && dragPreviewUrl && (
+      {dragPreviewVisible && dragPreviewUrl && typeof document !== 'undefined' && createPortal(
         <div
           className="task-node-image__drag-preview"
           ref={dragPreviewElRef}
@@ -280,13 +287,13 @@ export function ImageContent({
             position: 'fixed',
             left: 0,
             top: 0,
-            width: mediaSize,
-            height: mediaSize,
+            width: dragPreviewSize?.w ?? mediaSize,
+            height: dragPreviewSize?.h ?? mediaSize,
             transform:
               'translate3d(var(--tc-drag-x, 0px), var(--tc-drag-y, 0px), 0) translate3d(-50%, -50%, 0) scale(0.98)',
             borderRadius: 10,
             overflow: 'hidden',
-            zIndex: 9999,
+            zIndex: 2147483647,
             pointerEvents: 'none',
             boxShadow: '0 18px 46px rgba(0,0,0,0.5)',
             border: '1px solid rgba(255,255,255,0.14)',
@@ -302,7 +309,8 @@ export function ImageContent({
             alt=""
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', opacity: 0.88 }}
           />
-        </div>
+        </div>,
+        document.body,
       )}
       {!hasPrimaryImage ? (
         <>
@@ -433,7 +441,16 @@ export function ImageContent({
                   className="task-node-image__count-toggle nodrag nopan"
                   ref={capsuleRef}
                   type="button"
-                  onPointerDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => {
+                    // Prevent React Flow node-drag from starting on the underlying node wrapper.
+                    e.stopPropagation()
+                    e.preventDefault()
+                  }}
+                  onMouseDown={(e) => {
+                    // Some browsers still dispatch mouse events after pointer events unless prevented.
+                    e.stopPropagation()
+                    e.preventDefault()
+                  }}
                   onClick={(e) => {
                     e.stopPropagation()
                     setImageExpanded(!imageExpanded)
@@ -657,11 +674,11 @@ export function ImageContent({
           @keyframes tc-image-drag-preview-in {
             from {
               opacity: 0;
-              transform: translate(-50%, -50%) scale(0.96);
+              transform: translate3d(var(--tc-drag-x, 0px), var(--tc-drag-y, 0px), 0) translate3d(-50%, -50%, 0) scale(0.96);
             }
             to {
               opacity: 1;
-              transform: translate(-50%, -50%) scale(0.98);
+              transform: translate3d(var(--tc-drag-x, 0px), var(--tc-drag-y, 0px), 0) translate3d(-50%, -50%, 0) scale(0.98);
             }
           }
 	      `}</style>

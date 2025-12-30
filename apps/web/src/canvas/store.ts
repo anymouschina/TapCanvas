@@ -34,7 +34,6 @@ type RFState = {
   redo: () => void
   // mock run
   runSelected: () => Promise<void>
-  runAll: () => Promise<void>
   runDag: (concurrency: number) => Promise<void>
   setNodeStatus: (id: string, status: 'idle'|'queued'|'running'|'success'|'error', patch?: Partial<any>) => void
   appendLog: (id: string, line: string) => void
@@ -42,8 +41,6 @@ type RFState = {
   endRunToken: (id: string) => void
   cancelNode: (id: string) => void
   isCanceled: (id: string) => boolean
-  cancelAll: () => void
-  retryFailed: () => void
   deleteNode: (id: string) => void
   deleteEdge: (id: string) => void
   duplicateNode: (id: string) => void
@@ -61,8 +58,6 @@ type RFState = {
   runSelectedGroup: () => Promise<void>
   renameSelectedGroup: () => void
   formatTree: () => void
-  autoLayoutSelectedDag: () => void
-  autoLayoutAllDag: () => void
   autoLayoutAllDagVertical: () => void
   autoLayoutForParent: (parentId: string|null) => void
 }
@@ -663,13 +658,6 @@ export const useRFStore = create<RFState>((set, get) => ({
       await runNodeMock(selected.id, get, set)
     }
   },
-  runAll: async () => {
-    const s = get()
-    for (const n of s.nodes) {
-      // skip if already success recently
-      await runNodeMock(n.id, get, set)
-    }
-  },
   runDag: async (concurrency: number) => {
     await runFlowDag(Math.max(1, Math.min(8, Math.floor(concurrency || 2))), get, set)
   },
@@ -734,19 +722,6 @@ export const useRFStore = create<RFState>((set, get) => ({
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
   }),
-  cancelAll: () => set((s) => ({
-    nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, canceled: true } }))
-  })),
-  retryFailed: () => set((s) => ({
-    nodes: s.nodes.map((n) => {
-      const st = (n.data as any)?.status
-      if (st === 'error' || st === 'canceled') {
-        const { logs, lastError, progress, status, ...rest } = (n.data as any) || {}
-        return { ...n, data: { ...rest, status: 'idle', progress: 0 } }
-      }
-      return n
-    })
-  })),
   deleteNode: (id) => set((s) => ({
     nodes: s.nodes.filter(n => n.id !== id),
     edges: s.edges.filter(e => e.source !== id && e.target !== id),
@@ -964,88 +939,6 @@ export const useRFStore = create<RFState>((set, get) => ({
       return { nodes: updated, historyPast: past, historyFuture: [] }
     })
   },
-  // DAG auto layout for selected nodes (per parent container)
-  autoLayoutSelectedDag: () => set((s) => {
-    const sel = s.nodes.filter(n => n.selected)
-    if (sel.length < 2) return {}
-    const byParent = new Map<string, typeof sel>()
-    sel.forEach(n => {
-      const p = (n.parentNode as string) || ''
-      if (!byParent.has(p)) byParent.set(p, [])
-      byParent.get(p)!.push(n)
-    })
-    const edgesBySel = s.edges.filter(e => sel.some(n=>n.id===e.source) && sel.some(n=>n.id===e.target))
-    const updated = [...s.nodes]
-    const gapX = 320, gapY = 180
-    byParent.forEach(nodesInParent => {
-      const idSet = new Set(nodesInParent.map(n=>n.id))
-      const adj = new Map<string,string[]>()
-      const indeg = new Map<string,number>()
-      nodesInParent.forEach(n=>{ adj.set(n.id, []); indeg.set(n.id, 0) })
-      edgesBySel.forEach(e=>{ if(idSet.has(e.source) && idSet.has(e.target)) { adj.get(e.source)!.push(e.target); indeg.set(e.target, (indeg.get(e.target)||0)+1) } })
-      const q:string[]=[]; indeg.forEach((v,k)=>{ if(v===0) q.push(k) })
-      const layers: string[][] = []
-      const layerOf = new Map<string,number>()
-      while(q.length){
-        const levelSize = q.length
-        const layer: string[] = []
-        for(let i=0;i<levelSize;i++){
-          const u = q.shift()!
-          layer.push(u); layerOf.set(u, layers.length)
-          for(const v of adj.get(u)||[]){ const nv=(indeg.get(v)||0)-1; indeg.set(v,nv); if(nv===0) q.push(v) }
-        }
-        layers.push(layer)
-      }
-      const minX = Math.min(...nodesInParent.map(n=>n.position.x))
-      const minY = Math.min(...nodesInParent.map(n=>n.position.y))
-      layers.forEach((layer, li) => {
-        const sorted = layer.map(id => nodesInParent.find(n=>n.id===id)!).filter(Boolean).sort((a,b)=> a.position.y-b.position.y)
-        sorted.forEach((n, idx) => {
-          const i = updated.findIndex(x=>x.id===n.id)
-          if (i>=0) updated[i] = { ...updated[i], position: { x: minX + li*gapX, y: minY + idx*gapY } }
-        })
-      })
-    })
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, historyPast: past, historyFuture: [] }
-  }),
-  // DAG auto layout for the whole graph, per parent container
-  autoLayoutAllDag: () => set((s) => {
-    const byParent = new Map<string, Node[]>()
-    s.nodes.forEach(n => { const p=(n.parentNode as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
-    const updated = [...s.nodes]
-    const gapX = 320, gapY = 180
-    byParent.forEach(nodesInParent => {
-      const idSet = new Set(nodesInParent.map(n=>n.id))
-      const adj = new Map<string,string[]>()
-      const indeg = new Map<string,number>()
-      nodesInParent.forEach(n=>{ adj.set(n.id, []); indeg.set(n.id, 0) })
-      s.edges.forEach(e=>{ if(idSet.has(e.source) && idSet.has(e.target)) { adj.get(e.source)!.push(e.target); indeg.set(e.target, (indeg.get(e.target)||0)+1) } })
-      const q:string[]=[]; indeg.forEach((v,k)=>{ if(v===0) q.push(k) })
-      const layers: string[][] = []
-      while(q.length){
-        const levelSize = q.length
-        const layer: string[] = []
-        for(let i=0;i<levelSize;i++){
-          const u = q.shift()!
-          layer.push(u)
-          for(const v of adj.get(u)||[]){ const nv=(indeg.get(v)||0)-1; indeg.set(v,nv); if(nv===0) q.push(v) }
-        }
-        layers.push(layer)
-      }
-      const minX = Math.min(...nodesInParent.map(n=>n.position.x))
-      const minY = Math.min(...nodesInParent.map(n=>n.position.y))
-      layers.forEach((layer, li) => {
-        const sorted = layer.map(id => nodesInParent.find(n=>n.id===id)!).filter(Boolean).sort((a,b)=> a.position.y-b.position.y)
-        sorted.forEach((n, idx) => {
-          const i = updated.findIndex(x=>x.id===n.id)
-          if (i>=0) updated[i] = { ...updated[i], position: { x: minX + li*gapX, y: minY + idx*gapY } }
-        })
-      })
-    })
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, historyPast: past, historyFuture: [] }
-  }),
   // DAG auto layout (top-down tree style) for the whole graph
   autoLayoutAllDagVertical: () => set((s) => {
     const byParent = new Map<string, Node[]>()
@@ -1108,7 +1001,14 @@ export const useRFStore = create<RFState>((set, get) => ({
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {
   const state = useRFStore.getState()
-  const payload = JSON.stringify({ nodes: state.nodes, edges: state.edges, groups: state.groups })
+  // Never persist `dragHandle`: it can make nodes appear "undraggable" if the selector is missing.
+  const nodes = (state.nodes || []).map((n: any) => {
+    if (!n || typeof n !== 'object') return n
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { dragHandle: _dragHandle, ...rest } = n
+    return rest
+  })
+  const payload = JSON.stringify({ nodes, edges: state.edges, groups: state.groups })
   localStorage.setItem(key, payload)
 }
 
@@ -1116,7 +1016,16 @@ export function restoreFromLocalStorage(key = 'tapcanvas-flow') {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null
-    return JSON.parse(raw) as { nodes: Node[]; edges: Edge[]; groups?: GroupRec[] }
+    const parsed = JSON.parse(raw) as { nodes: Node[]; edges: Edge[]; groups?: GroupRec[] }
+    // Backward-compat: older saves may contain `dragHandle` which restricts dragging to a selector.
+    // Strip it so "dragging a node" always drags the node.
+    const nodes = (parsed.nodes || []).map((n: any) => {
+      if (!n || typeof n !== 'object') return n
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { dragHandle: _dragHandle, ...rest } = n
+      return rest
+    }) as Node[]
+    return { ...parsed, nodes }
   } catch {
     return null
   }

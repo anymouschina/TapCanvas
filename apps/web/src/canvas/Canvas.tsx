@@ -273,6 +273,155 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }
   }, [getFallbackScreenPoint, langGraphChatOpen, rf, viewOnly])
 
+  const importImageNodeFromDraggedFrame = useCallback(async (
+    payload: { url?: string; remoteUrl?: string | null; time?: number },
+    posFlow: { x: number; y: number },
+  ) => {
+    if (viewOnly) return
+    if (langGraphChatOpen) return
+    const remoteUrl = typeof payload?.remoteUrl === 'string' ? payload.remoteUrl.trim() : ''
+    const srcUrl = typeof payload?.url === 'string' ? payload.url.trim() : ''
+    const preferred = remoteUrl || srcUrl
+    if (!preferred) return
+
+    if (!preferred.startsWith('blob:')) {
+      const nodeId = genTaskNodeId()
+      useRFStore.setState((s) => {
+        const time = typeof payload?.time === 'number' && Number.isFinite(payload.time) ? payload.time : null
+        const label = time !== null ? `Frame ${time.toFixed(2)}s` : 'Frame'
+        const node = {
+          id: nodeId,
+          type: 'taskNode' as const,
+          position: posFlow,
+          data: {
+            label,
+            kind: 'image',
+            imageUrl: preferred,
+          },
+          selected: false,
+        }
+        return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
+      })
+      if ((window as any).silentSaveProject) {
+        (window as any).silentSaveProject()
+      }
+      return
+    }
+
+    let blob: Blob
+    try {
+      const res = await fetch(preferred)
+      if (!res.ok) {
+        toast('读取帧图片失败，请稍后重试', 'error')
+        return
+      }
+      blob = await res.blob()
+    } catch (error) {
+      console.error('Failed to fetch dragged frame:', error)
+      toast('读取帧图片失败，请稍后重试', 'error')
+      return
+    }
+
+    const MAX_BYTES = 30 * 1024 * 1024
+    const size = typeof (blob as any)?.size === 'number' ? (blob as any).size : 0
+    if (size > MAX_BYTES) {
+      toast('该帧图片超过 30MB，已取消导入', 'error')
+      return
+    }
+
+    const time = typeof payload?.time === 'number' && Number.isFinite(payload.time) ? payload.time : null
+    const ms = Math.max(0, Math.round((time ?? 0) * 1000))
+    const mime = blob.type || 'image/png'
+    const ext = mime.includes('jpeg') || mime.includes('jpg')
+      ? 'jpg'
+      : mime.includes('webp')
+        ? 'webp'
+        : 'png'
+    const fileName = `frame-${ms || Date.now()}.${ext}`
+    const label = time !== null ? `Frame ${time.toFixed(2)}s` : 'Frame'
+    const file = new File([blob], fileName, { type: mime })
+
+    const nodeId = genTaskNodeId()
+    const localUrl = URL.createObjectURL(file)
+
+    useRFStore.setState((s) => {
+      const node = {
+        id: nodeId,
+        type: 'taskNode' as const,
+        position: posFlow,
+        data: {
+          label,
+          kind: 'image',
+          imageUrl: localUrl,
+        },
+        selected: false,
+      }
+      return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
+    })
+
+    const { updateNodeData } = useRFStore.getState()
+    let localDataUrl: string | undefined
+    try {
+      localDataUrl = await blobToDataUrl(file)
+    } catch {
+      localDataUrl = undefined
+    }
+    if (localDataUrl) {
+      updateNodeData(nodeId, { reverseImageData: localDataUrl })
+    }
+
+    try {
+      let hostedUrl: string | null = null
+      let hostedAssetId: string | null = null
+      try {
+        const hosted = await uploadServerAssetFile(file, deriveLabelFromFileName(fileName))
+        const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+        if (url) {
+          hostedUrl = url
+          hostedAssetId = hosted.id
+        }
+      } catch (error) {
+        console.error('Failed to upload frame to OSS:', error)
+      }
+
+      let soraResult: any = null
+      try {
+        soraResult = await uploadSoraImage(undefined, file)
+      } catch (error) {
+        console.error('Failed to upload frame to Sora:', error)
+        soraResult = null
+      }
+
+      const soraUrlCandidate =
+        typeof soraResult?.url === 'string'
+          ? soraResult.url
+          : typeof soraResult?.asset_pointer === 'string'
+            ? soraResult.asset_pointer
+            : typeof soraResult?.azure_asset_pointer === 'string'
+              ? soraResult.azure_asset_pointer
+              : ''
+      const bestUrl = hostedUrl || soraUrlCandidate || localUrl
+
+      updateNodeData(nodeId, {
+        imageUrl: bestUrl,
+        serverAssetId: hostedAssetId,
+        soraFileId: soraResult?.file_id,
+        assetPointer: soraResult?.asset_pointer,
+        reverseImageData: localDataUrl,
+      })
+
+      if (bestUrl !== localUrl) {
+        URL.revokeObjectURL(localUrl)
+      }
+      if ((window as any).silentSaveProject) {
+        (window as any).silentSaveProject()
+      }
+    } catch (error) {
+      console.error('Failed to process dragged frame:', error)
+      toast('处理帧图片失败，请稍后再试', 'error')
+    }
+  }, [deriveLabelFromFileName, langGraphChatOpen, viewOnly])
+
   const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
     if (!event || !event.nodeId) return
     const { setNodeStatus, appendLog } = useRFStore.getState()
@@ -419,10 +568,28 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     initialFitAppliedRef.current = true
   }, [restoreViewport, rf, setCanvasViewport, setRestoreViewport])
 
+  // Backward-compat: some persisted canvases may include `dragHandle` on nodes, which restricts
+  // dragging to a selector and can make nodes appear "undraggable". Strip it on mount.
+  useEffect(() => {
+    useRFStore.setState((s) => {
+      const hasDragHandle = (s.nodes || []).some((n: any) => typeof n?.dragHandle !== 'undefined')
+      if (!hasDragHandle) return {}
+      const nodes = (s.nodes || []).map((n: any) => {
+        if (!n || typeof n !== 'object') return n
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { dragHandle: _dragHandle, ...rest } = n
+        return rest
+      })
+      return { nodes }
+    })
+  }, [])
+
   const onDragOver = useCallback((evt: React.DragEvent) => {
     evt.preventDefault()
-    const hasFiles = Array.from(evt.dataTransfer.types || []).includes('Files')
-    evt.dataTransfer.dropEffect = hasFiles ? 'copy' : 'move'
+    const types = Array.from(evt.dataTransfer.types || [])
+    const hasFiles = types.includes('Files')
+    const hasTapImage = types.includes('application/tap-image-url') || types.includes('application/tap-frame-sample')
+    evt.dataTransfer.dropEffect = (hasFiles || hasTapImage) ? 'copy' : 'move'
   }, [])
 
   const onDrop = useCallback((evt: React.DragEvent) => {
@@ -440,11 +607,21 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const rfdata = evt.dataTransfer.getData('application/reactflow')
     const flowRef = evt.dataTransfer.getData('application/tapflow')
     const tapImageUrl = evt.dataTransfer.getData('application/tap-image-url')
+    const tapFrameSample = evt.dataTransfer.getData('application/tap-frame-sample')
     const pos = rf.screenToFlowPosition({ x: evt.clientX, y: evt.clientY })
     const imageFiles = Array.from(evt.dataTransfer.files || []).filter(isImageFile)
     if (imageFiles.length) {
       void importImagesFromFiles(imageFiles, pos)
       return
+    }
+    if (tapFrameSample) {
+      try {
+        const payload = JSON.parse(tapFrameSample) as { url?: string; remoteUrl?: string | null; time?: number }
+        void importImageNodeFromDraggedFrame(payload, pos)
+        return
+      } catch {
+        // fallthrough
+      }
     }
     if (tapImageUrl) {
       let url = ''
@@ -456,6 +633,10 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       }
       const trimmed = typeof url === 'string' ? url.trim() : ''
       if (trimmed) {
+        if (trimmed.startsWith('blob:')) {
+          void importImageNodeFromDraggedFrame({ url: trimmed, remoteUrl: null }, pos)
+          return
+        }
         useRFStore.setState((s) => {
           const id = `${uuid()}${s.nextId}`
           const node = {
@@ -504,7 +685,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
       })
     }
-  }, [importImagesFromFiles, isImageFile, rf])
+  }, [importImageNodeFromDraggedFrame, importImagesFromFiles, isImageFile, rf])
 
   const createsCycle = useCallback((proposed: { source?: string|null; target?: string|null }) => {
     const sId = proposed.source

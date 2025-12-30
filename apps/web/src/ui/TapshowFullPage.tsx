@@ -33,6 +33,7 @@ import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
 import { useAuth } from '../auth/store'
+import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 
 type MediaFilter = 'all' | 'image' | 'video'
 type SortKey = 'createdAt' | 'duration'
@@ -145,7 +146,14 @@ function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Ele
             }}
           />
         ) : cover ? (
-          <img src={cover} alt={label} className="tapshow-card-image" loading="lazy" />
+          <img
+            src={cover}
+            alt={label}
+            className="tapshow-card-image"
+            loading="lazy"
+            draggable
+            onDragStart={(evt) => setTapImageDragData(evt, cover)}
+          />
         ) : (
           <div className="tapshow-card-placeholder" />
         )}
@@ -315,7 +323,14 @@ function PublicProjectCard({ item, onOpen, className }: PublicProjectCardProps):
             }}
           />
         ) : (
-          <img src={cover.url} alt={label} className="tapshow-card-image" loading="lazy" />
+          <img
+            src={cover.url}
+            alt={label}
+            className="tapshow-card-image"
+            loading="lazy"
+            draggable
+            onDragStart={(evt) => setTapImageDragData(evt, cover.url)}
+          />
         )}
 
         <div className="tapshow-card-overlay">

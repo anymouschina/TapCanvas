@@ -6,6 +6,7 @@ import { textToImageSchema, composeVideoSchema, subtitleAlignSchema, defaultsFor
 import { TextInput, Textarea, NumberInput, Select, Button, Title, Divider, Text, Group } from '@mantine/core'
 import { listModelProviders, listModelTokens, type ModelTokenDto } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
+import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 
 export default function NodeInspector(): JSX.Element {
   const nodes = useRFStore((s) => s.nodes)
@@ -300,7 +301,14 @@ export default function NodeInspector(): JSX.Element {
       <Divider className="tc-node-inspector__divider" my={12} />
       <Title className="tc-node-inspector__section-title" order={6}>预览</Title>
         {result?.preview?.type === 'image' && result.preview.src && (
-          <img className="tc-node-inspector__preview" src={result.preview.src} alt={String((selected.data as any)?.label || '')} style={{ width: '100%', borderRadius: 8, border: '1px solid rgba(127,127,127,.25)' }} />
+          <img
+            className="tc-node-inspector__preview"
+            src={result.preview.src}
+            alt={String((selected.data as any)?.label || '')}
+            draggable
+            onDragStart={(evt) => setTapImageDragData(evt, result.preview.src)}
+            style={{ width: '100%', borderRadius: 8, border: '1px solid rgba(127,127,127,.25)' }}
+          />
         )}
         {result?.preview?.type === 'audio' && (
           <Text className="tc-node-inspector__hint" size="xs" c="dimmed">（音频占位，暂未生成音频数据）</Text>

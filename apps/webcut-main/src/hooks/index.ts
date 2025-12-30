@@ -503,6 +503,13 @@ export function useWebCutPlayer() {
                 }
                 else {
                     const res = await maybeAuthFetch(source);
+                    if (!res.ok || !res.body) {
+                        throw new Error(`Fetch video failed: ${res.status}`);
+                    }
+                    const ct = (res.headers.get('content-type') || '').toLowerCase();
+                    if (ct && !ct.startsWith('video/') && !ct.includes('mp4') && !ct.includes('octet-stream')) {
+                        throw new Error(`Fetch video returned non-video content-type: ${ct}`);
+                    }
                     url = source;
                     clip = new MP4Clip(res.body!, options);
                 }
@@ -512,6 +519,8 @@ export function useWebCutPlayer() {
                     clip1.destroy();
                     clip = clip2;
                 }
+                // Ensure MP4 meta is ready (duration/size), avoiding `<video src>` which cannot send Authorization headers.
+                await clip.ready;
             }
             else if (type === 'audio') {
                 const options = meta.audio || {};
@@ -536,6 +545,13 @@ export function useWebCutPlayer() {
                 }
                 else {
                     const res = await maybeAuthFetch(source);
+                    if (!res.ok || !res.body) {
+                        throw new Error(`Fetch audio failed: ${res.status}`);
+                    }
+                    const ct = (res.headers.get('content-type') || '').toLowerCase();
+                    if (ct && !ct.startsWith('audio/') && !ct.includes('octet-stream')) {
+                        throw new Error(`Fetch audio returned non-audio content-type: ${ct}`);
+                    }
                     url = source;
                     clip = new AudioClip(res.body!, options);
                 }
@@ -544,6 +560,7 @@ export function useWebCutPlayer() {
                     clip1.destroy();
                     clip = clip2;
                 }
+                await clip.ready;
             }
             else if (type === 'image') {
                 if (source instanceof File) {
@@ -566,6 +583,13 @@ export function useWebCutPlayer() {
                 }
                 else {
                     const res = await maybeAuthFetch(source);
+                    if (!res.ok || !res.body) {
+                        throw new Error(`Fetch image failed: ${res.status}`);
+                    }
+                    const ct = (res.headers.get('content-type') || '').toLowerCase();
+                    if (ct && !ct.startsWith('image/') && !ct.includes('octet-stream')) {
+                        throw new Error(`Fetch image returned non-image content-type: ${ct}`);
+                    }
                     url = source;
                     clip = new ImgClip(res.body!);
                 }
@@ -588,13 +612,24 @@ export function useWebCutPlayer() {
             }
             // 自动适配
             else if (meta.autoFitRect && ['image', 'video'].includes(type)) {
+                const size = (() => {
+                    if (type === 'video') {
+                        const w = (clip as MP4Clip).meta.width || 0;
+                        const h = (clip as MP4Clip).meta.height || 0;
+                        return { width: w, height: h };
+                    }
+                    return { width: 0, height: 0 };
+                })();
                 const src = (file || url) as string;
-                const size = type === 'image' ? await measureImageSize(src) : await measureVideoSize(src);
+                const finalSize =
+                    type === 'image'
+                        ? await measureImageSize(src)
+                        : (size.width > 0 && size.height > 0 ? size : await measureVideoSize(src));
                 const canvasSize = {
                     width: width.value,
                     height: height.value,
                 };
-                const { w, h, x, y } = autoFitRect(canvasSize, size, meta.autoFitRect);
+                const { w, h, x, y } = autoFitRect(canvasSize, finalSize, meta.autoFitRect);
                 spr.rect.w = w;
                 spr.rect.h = h;
                 spr.rect.x = x;
@@ -619,12 +654,10 @@ export function useWebCutPlayer() {
                 spr.time.duration = meta.time.duration;
             }
             else if (type === 'video') {
-                const src = (file || url) as string;
-                spr.time.duration = await measureVideoDuration(src) * 1e6;
+                spr.time.duration = (clip as MP4Clip).meta.duration;
             }
             else if (type === 'audio') {
-                const src = (file || url) as string;
-                spr.time.duration = await measureAudioDuration(src) * 1e6;
+                spr.time.duration = (clip as AudioClip).meta.duration;
             }
             else {
                 spr.time.duration = 2 * 1e6;

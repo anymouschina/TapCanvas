@@ -31,3 +31,80 @@ This is an example project made to be used as a quick start into building OpenAP
   - `DEBUG_HTTP_LOG=1` enable logging
   - `DEBUG_HTTP_LOG_BODY_LIMIT=16384` max bytes captured per body snippet
   - `DEBUG_HTTP_LOG_UNSAFE=1` disable redaction (use only locally)
+
+## SmallT Server-Orchestrated Chat (SSE)
+
+TapCanvas already has a front-end driven "小T" (LangGraph overlay). In addition, the Worker backend now provides a **server-orchestrated chat SSE** API inspired by mainstream agent runtimes:
+
+- `POST /ai/chat/submit_messages` (SSE `text/event-stream`)
+- `POST /ai/chat/update_message` (store UI option selections / message kwargs)
+- `GET /ai/chat/sessions` / `GET /ai/chat/history` / `PATCH|DELETE /ai/chat/sessions/:id` (basic persistence via D1: `chat_sessions`, `chat_messages`)
+
+This is a minimal scaffold that:
+- asks for film meta via `selectFilmMeta`
+- after receiving a `CONTINUE` payload, asks for emotion keyword via `selectFilmEmotionKeyword`
+
+### Quick curl loop
+
+1) Submit initial user message (expect SSE with `selectFilmMeta`):
+
+```bash
+curl -N 'http://localhost:8788/ai/chat/submit_messages' \
+  -H 'Authorization: Bearer <YOUR_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "conversation": { "type": "conversation", "data": { "id": "demo-conv-1", "status": "streaming" } },
+    "localizationOptions": { "language": "zh" },
+    "messages": [
+      { "type": "human", "data": { "id": "human_1", "content": "一个转学生来到异世界高中，发现同学们都有各种超能力", "additional_kwargs": {} } }
+    ],
+    "tools": [],
+    "workspace": { "workspaceId": "demo-workspace-1", "name": "demo" }
+  }'
+```
+
+2) (Optional) Record UI selection via `update_message` (matches the oiioii pattern; stored into `chat_messages.raw`):
+
+```bash
+curl 'http://localhost:8788/ai/chat/update_message' \
+  -H 'Authorization: Bearer <YOUR_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "conversation": { "type": "conversation", "data": { "id": "demo-conv-1" } },
+    "messageId": "<MESSAGE_ID_TO_UPDATE>",
+    "kwargsUpdates": {
+      "optionArgs": {
+        "filmMeta": { "aspectRatio": "9x16", "duration": "long" },
+        "optionChoosed": true
+      }
+    }
+  }'
+```
+
+3) Continue with `CONTINUE` payload (expect SSE with `selectFilmEmotionKeyword`):
+
+```bash
+curl -N 'http://localhost:8788/ai/chat/submit_messages' \
+  -H 'Authorization: Bearer <YOUR_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "conversation": { "type": "conversation", "data": { "id": "demo-conv-1", "status": "streaming" } },
+    "messages": [
+      { "type": "human", "data": { "id": "human_2", "content": "信息已确认\n```hide\nCONTINUE\n{\"questionType\":\"selectFilmMeta\",\"filmMeta\":{\"aspectRatio\":\"9x16\",\"duration\":\"long\"}}\n```" } }
+    ]
+  }'
+```
+
+4) Continue with emotion keyword:
+
+```bash
+curl -N 'http://localhost:8788/ai/chat/submit_messages' \
+  -H 'Authorization: Bearer <YOUR_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "conversation": { "type": "conversation", "data": { "id": "demo-conv-1", "status": "streaming" } },
+    "messages": [
+      { "type": "human", "data": { "id": "human_3", "content": "信息已确认\n```hide\nCONTINUE\n{\"questionType\":\"selectFilmEmotionKeyword\",\"value\":\"诡秘\"}\n```" } }
+    ]
+  }'
+```

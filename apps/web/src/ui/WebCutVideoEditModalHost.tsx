@@ -1,6 +1,7 @@
 import React from 'react'
 import { nanoid } from 'nanoid'
 import { API_BASE, uploadServerAssetFile } from '../api/server'
+import { getAuthToken, getAuthTokenFromCookie } from '../auth/store'
 import { useAuth } from '../auth/store'
 import { toast } from './toast'
 import { useUIStore } from './uiStore'
@@ -22,7 +23,11 @@ function buildProxyVideoUrl(rawVideoUrl: string, webCutBaseUrl: string): string 
   }
 
   const base = (API_BASE || '').trim()
-  if (!base) return rawVideoUrl
+  if (!base) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    if (!origin) return rawVideoUrl
+    return `${origin.replace(/\/+$/, '')}/assets/proxy-video?url=${encodeURIComponent(rawVideoUrl)}`
+  }
   return `${base.replace(/\/+$/, '')}/assets/proxy-video?url=${encodeURIComponent(rawVideoUrl)}`
 }
 
@@ -68,15 +73,23 @@ export function WebCutVideoEditModalHost(): JSX.Element | null {
   const [loading, setLoading] = React.useState(false)
 
   const requestId = React.useMemo(() => (open ? nanoid() : ''), [open])
-  const baseUrl = import.meta.env.VITE_WEBCUT_URL || import.meta.env.VITE_WEBCUT_APP_URL || import.meta.env.DEV ? 'http://localhost:5174' : 'https://webcut.beqlee.icu/'
+  const baseUrl =
+    import.meta.env.VITE_WEBCUT_URL ||
+    import.meta.env.VITE_WEBCUT_APP_URL ||
+    (import.meta.env.DEV ? 'http://localhost:5174' : 'https://webcut.beqlee.icu/')
   const iframeSrc = React.useMemo(() => {
     if (!open || !payload) return ''
     const proxiedVideoUrl = buildProxyVideoUrl(payload.videoUrl, baseUrl)
+    const tapToken =
+      token ||
+      getAuthToken() ||
+      getAuthTokenFromCookie() ||
+      (typeof localStorage !== 'undefined' ? localStorage.getItem('tap_token') : null)
     return buildWebCutEmbedUrl({
       baseUrl,
       requestId,
       videoUrl: proxiedVideoUrl,
-      tapToken: token || (typeof localStorage !== 'undefined' ? localStorage.getItem('tap_token') : null),
+      tapToken,
     })
   }, [baseUrl, open, payload, requestId, token])
 
