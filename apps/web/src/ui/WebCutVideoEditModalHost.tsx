@@ -130,9 +130,16 @@ export function WebCutVideoEditModalHost(): JSX.Element | null {
         const nextUrl = typeof asset?.data?.url === 'string' ? asset.data.url.trim() : ''
         if (!nextUrl) throw new Error('上传成功但未返回可用的 url')
         const nextThumb = typeof asset?.data?.thumbnailUrl === 'string' ? asset.data.thumbnailUrl : null
-        await payload.onApply({ url: nextUrl, thumbnailUrl: nextThumb, assetId: asset.id })
-        toast('已应用 WebCut 剪辑结果', 'success')
-        close()
+        try {
+          await payload.onApply({ url: nextUrl, thumbnailUrl: nextThumb, assetId: asset.id })
+          toast('已应用 WebCut 剪辑结果', 'success')
+        } catch (err: any) {
+          const msg = typeof err?.message === 'string' ? err.message : '剪辑结果应用失败'
+          toast(msg, 'error')
+        } finally {
+          payload?.onClose?.()
+          close()
+        }
       } catch (err: any) {
         const msg = typeof err?.message === 'string' ? err.message : '剪辑结果应用失败'
         toast(msg, 'error')
