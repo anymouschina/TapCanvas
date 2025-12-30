@@ -486,3 +486,97 @@ assetRouter.get("/proxy-image", authMiddleware, async (c) => {
 		);
 	}
 });
+
+// Proxy video: /assets/proxy-video?url=...
+// Used by WebCut (which loads MP4 via fetch/streams and thus needs CORS-compatible responses).
+assetRouter.get("/proxy-video", authMiddleware, async (c) => {
+	const raw = (c.req.query("url") || "").trim();
+	if (!raw) {
+		return c.json({ message: "url is required" }, 400);
+	}
+	let target = raw;
+	try {
+		target = decodeURIComponent(raw);
+	} catch {
+		// ignore
+	}
+	if (!/^https?:\/\//i.test(target)) {
+		return c.json({ message: "only http/https urls are allowed" }, 400);
+	}
+
+	let parsed: URL;
+	try {
+		parsed = new URL(target);
+	} catch {
+		return c.json({ message: "invalid url" }, 400);
+	}
+
+	// Safety: avoid becoming a general-purpose open proxy (even though it's auth-protected).
+	// Extend this allowlist if you need to support more upstreams.
+	const host = parsed.hostname.toLowerCase();
+	const allowed =
+		host === "videos.openai.com" ||
+		host.endsWith(".openai.com") ||
+		host.endsWith(".openaiusercontent.com");
+	if (!allowed) {
+		return c.json({ message: "upstream host is not allowed" }, 400);
+	}
+
+	try {
+		const range = c.req.header("range") || c.req.header("Range") || null;
+		const resp = await fetchWithHttpDebugLog(
+			c,
+			target,
+			{
+				headers: {
+					Origin: "https://tapcanvas.local",
+					...(range ? { Range: range } : null),
+				},
+			},
+			{ tag: "asset:proxy-video" },
+		);
+
+		// Allow 200/206 only
+		if (!(resp.status === 200 || resp.status === 206)) {
+			return c.json(
+				{ message: `fetch upstream failed: ${resp.status}` },
+				502,
+			);
+		}
+
+		const ct = resp.headers.get("content-type") || "";
+		if (!/^video\//i.test(ct) && !/mp4/i.test(ct)) {
+			return c.json({ message: `upstream is not a video: ${ct || "unknown"}` }, 400);
+		}
+
+		const headers = new Headers();
+		headers.set("Content-Type", ct || "video/mp4");
+		const contentLength = resp.headers.get("content-length");
+		if (contentLength) headers.set("Content-Length", contentLength);
+		const acceptRanges = resp.headers.get("accept-ranges");
+		if (acceptRanges) headers.set("Accept-Ranges", acceptRanges);
+		const contentRange = resp.headers.get("content-range");
+		if (contentRange) headers.set("Content-Range", contentRange);
+		const origin = c.req.header("origin") || "";
+		headers.set("Access-Control-Allow-Origin", origin || "*");
+		headers.set("Access-Control-Allow-Credentials", "true");
+		headers.set(
+			"Access-Control-Expose-Headers",
+			"Content-Length,Content-Range,Accept-Ranges",
+		);
+		headers.set("Vary", "Origin");
+
+		// Signed URLs should not be cached for long.
+		headers.set("Cache-Control", "private, max-age=60");
+
+		return new Response(resp.body, {
+			status: resp.status,
+			headers,
+		});
+	} catch (err: any) {
+		return c.json(
+			{ message: err?.message || "proxy video failed" },
+			500,
+		);
+	}
+});

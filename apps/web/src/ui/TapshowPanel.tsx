@@ -55,7 +55,7 @@ export default function TapshowPanel(): JSX.Element | null {
   const [visibleCount, setVisibleCount] = React.useState(10)
 
   const webcutUrl = React.useMemo(() => {
-    const raw = (import.meta as any).env?.VITE_WEBCUT_URL
+    const raw = import.meta.env.VITE_WEBCUT_URL
     const base = typeof raw === 'string' && raw.trim() ? raw.trim() : null
     if (!base) return null
     if (!token) return base

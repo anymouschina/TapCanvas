@@ -200,6 +200,18 @@ type TapcanvasActionsPayload = {
   actions?: Array<{ label?: string; input?: string }>
 }
 
+type SelectBlockOption = {
+  title: string
+  value: string
+  intention?: string
+}
+
+type SelectBlock = {
+  kind: string
+  payload: any
+  options: SelectBlockOption[]
+}
+
 type RoleMeta = {
   roleId?: string
   roleName?: string
@@ -530,6 +542,65 @@ const parseTapcanvasActionsFromText = (
   }
 }
 
+const parseSelectBlocksFromText = (
+  text: string,
+): { cleanedText: string; blocks: SelectBlock[] } => {
+  const source = typeof text === 'string' ? text : String(text ?? '')
+  if (!source.trim()) return { cleanedText: source, blocks: [] }
+
+  const blocks: SelectBlock[] = []
+  const ranges: Array<{ start: number; end: number }> = []
+
+  const fenceRe = /```([a-zA-Z0-9_-]+)\n([\s\S]*?)```/g
+  let m: RegExpExecArray | null
+  while ((m = fenceRe.exec(source))) {
+    const kind = (m[1] || '').trim()
+    if (!kind || !kind.toLowerCase().startsWith('select')) continue
+    const raw = (m[2] || '').trim()
+    if (!raw) continue
+
+    let payload: any = null
+    try {
+      payload = JSON.parse(raw)
+    } catch {
+      payload = null
+    }
+    if (!payload || typeof payload !== 'object') continue
+
+    const optionsRaw = (payload as any)?.options
+    const options: SelectBlockOption[] = Array.isArray(optionsRaw)
+      ? optionsRaw
+          .map((item: any) => ({
+            title: typeof item?.title === 'string' ? item.title.trim() : '',
+            value: typeof item?.value === 'string' ? item.value.trim() : '',
+            intention: typeof item?.intention === 'string' ? item.intention.trim() : undefined,
+          }))
+          .filter((o: SelectBlockOption) => o.title && o.value)
+          .slice(0, 24)
+      : []
+
+    blocks.push({ kind, payload, options })
+    ranges.push({ start: m.index, end: m.index + m[0].length })
+  }
+
+  if (!ranges.length) return { cleanedText: source, blocks }
+
+  ranges.sort((a, b) => a.start - b.start)
+  let cleaned = ''
+  let cursor = 0
+  ranges.forEach((r) => {
+    cleaned += source.slice(cursor, r.start)
+    cursor = r.end
+  })
+  cleaned += source.slice(cursor)
+  cleaned = cleaned
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim()
+
+  return { cleanedText: cleaned, blocks }
+}
+
 function pickPrimaryMediaFromNode(node: any): {
   nodeId: string
   label: string | null
@@ -651,6 +722,8 @@ function MessageBubble({
   nodesById,
   nodeIdByLabel,
   toolCallBindings,
+  selectAnswers,
+  onSubmitSelect,
   onCopy,
   copied,
   onPickQuickReply,
@@ -665,6 +738,13 @@ function MessageBubble({
   nodesById: Map<string, any>
   nodeIdByLabel: Map<string, string>
   toolCallBindings: Record<string, string>
+  selectAnswers: Record<string, any>
+  onSubmitSelect: (args: {
+    replyToMessageId: string
+    kind: string
+    value: any
+    label?: string
+  }) => void
   onCopy: (text: string, id?: string) => void
   copied: boolean
   onPickQuickReply: (input: string) => void
@@ -675,7 +755,9 @@ function MessageBubble({
   const isLight = colorScheme === 'light'
   const isHuman = message.type === 'human'
   const parsedTapActions = useMemo(() => parseTapcanvasActionsFromText(parsedNodeRefs.cleanedText), [parsedNodeRefs.cleanedText])
-  const displayText = parsedTapActions?.cleanedText ?? parsedNodeRefs.cleanedText
+  const displayBaseText = parsedTapActions?.cleanedText ?? parsedNodeRefs.cleanedText
+  const parsedSelectBlocks = useMemo(() => parseSelectBlocksFromText(displayBaseText), [displayBaseText])
+  const displayText = parsedSelectBlocks.cleanedText
   const bubbleBg = isHuman
     ? isLight
       ? 'rgba(15,23,42,0.04)'
@@ -751,6 +833,24 @@ function MessageBubble({
     }
     return results
   }, [isHuman, nodeIdByLabel, nodesById, toolCallBindings, toolCalls])
+
+  const selectAnswerKey = useCallback((kind: string) => `${message.id || ''}:${kind}`, [message.id])
+
+  const [filmMetaDraft, setFilmMetaDraft] = useState<{ aspectRatio: string; duration: string }>({
+    aspectRatio: '9x16',
+    duration: 'long',
+  })
+
+  useEffect(() => {
+    const key = selectAnswerKey('selectFilmMeta')
+    const answered = selectAnswers[key]
+    const meta = answered?.filmMeta
+    if (!meta || typeof meta !== 'object') return
+    const aspectRatio = typeof meta.aspectRatio === 'string' ? meta.aspectRatio : ''
+    const duration = typeof meta.duration === 'string' ? meta.duration : ''
+    if (!aspectRatio || !duration) return
+    setFilmMetaDraft({ aspectRatio, duration })
+  }, [selectAnswerKey, selectAnswers])
 
   return (
     <Stack className="tc-lg-message" align={align === 'right' ? 'flex-end' : 'flex-start'} gap={6} w="100%">
@@ -1116,6 +1216,154 @@ function MessageBubble({
             {displayText.trim() ? displayText : '…'}
           </ReactMarkdown>
         )}
+
+        {!isHuman && parsedSelectBlocks.blocks.length > 0 && (
+          <Stack className="tc-lg-message__select" gap={8} mt="sm">
+            {parsedSelectBlocks.blocks.map((block, idx) => {
+              const replyToMessageId = String(message.id || '')
+              if (!replyToMessageId) return null
+              const key = selectAnswerKey(block.kind)
+              const answered = selectAnswers[key]
+              const answeredLabel =
+                typeof answered?.label === 'string'
+                  ? answered.label
+                  : typeof answered?.value === 'string'
+                    ? answered.value
+                    : ''
+
+              if (block.kind === 'selectFilmMeta') {
+                const filmMeta = answered?.filmMeta
+                const summary =
+                  filmMeta && typeof filmMeta === 'object'
+                    ? `${String((filmMeta as any).aspectRatio || '')} · ${String((filmMeta as any).duration || '')}`
+                    : ''
+                return (
+                  <Paper
+                    className="tc-lg-message__select-panel"
+                    key={`${block.kind}-${idx}`}
+                    p="sm"
+                    radius="md"
+                    style={{ background: subPanelBg, border: subPanelBorder }}
+                  >
+                    <Stack className="tc-lg-message__select-panel-stack" gap={8}>
+                      <Group className="tc-lg-message__select-panel-head" justify="space-between" gap="sm">
+                        <Text className="tc-lg-message__select-title" size="sm" fw={600}>
+                          影片基础信息
+                        </Text>
+                        {summary ? (
+                          <Badge className="tc-lg-message__select-badge" size="sm" variant="light" color="blue">
+                            {summary}
+                          </Badge>
+                        ) : null}
+                      </Group>
+                      <Group className="tc-lg-message__select-row" gap="sm" wrap="wrap">
+                        <Text className="tc-lg-message__select-label" size="xs" c="dimmed">
+                          宽高比
+                        </Text>
+                        <SegmentedControl
+                          className="tc-lg-message__select-control"
+                          size="xs"
+                          value={filmMetaDraft.aspectRatio}
+                          onChange={(value) =>
+                            setFilmMetaDraft((prev) => ({ ...prev, aspectRatio: String(value) }))
+                          }
+                          data={[
+                            { label: '9:16', value: '9x16' },
+                            { label: '16:9', value: '16x9' },
+                            { label: '1:1', value: '1x1' },
+                          ]}
+                          disabled={readOnly || isLoading || !!answered}
+                        />
+                      </Group>
+                      <Group className="tc-lg-message__select-row" gap="sm" wrap="wrap">
+                        <Text className="tc-lg-message__select-label" size="xs" c="dimmed">
+                          时长
+                        </Text>
+                        <SegmentedControl
+                          className="tc-lg-message__select-control"
+                          size="xs"
+                          value={filmMetaDraft.duration}
+                          onChange={(value) =>
+                            setFilmMetaDraft((prev) => ({ ...prev, duration: String(value) }))
+                          }
+                          data={[
+                            { label: '短', value: 'short' },
+                            { label: '中', value: 'medium' },
+                            { label: '长', value: 'long' },
+                          ]}
+                          disabled={readOnly || isLoading || !!answered}
+                        />
+                      </Group>
+                      <Group className="tc-lg-message__select-actions" justify="flex-end" gap="sm">
+                        <Button
+                          className="tc-lg-message__select-submit"
+                          size="xs"
+                          variant="light"
+                          disabled={readOnly || isLoading || !!answered}
+                          onClick={() =>
+                            onSubmitSelect({
+                              replyToMessageId,
+                              kind: block.kind,
+                              value: { filmMeta: { ...filmMetaDraft } },
+                              label: `${filmMetaDraft.aspectRatio} · ${filmMetaDraft.duration}`,
+                            })
+                          }
+                        >
+                          确认
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Paper>
+                )
+              }
+
+              return (
+                <Paper
+                  className="tc-lg-message__select-panel"
+                  key={`${block.kind}-${idx}`}
+                  p="sm"
+                  radius="md"
+                  style={{ background: subPanelBg, border: subPanelBorder }}
+                >
+                  <Stack className="tc-lg-message__select-panel-stack" gap={8}>
+                    <Group className="tc-lg-message__select-panel-head" justify="space-between" gap="sm">
+                      <Text className="tc-lg-message__select-title" size="sm" fw={600}>
+                        请选择
+                      </Text>
+                      {answeredLabel ? (
+                        <Badge className="tc-lg-message__select-badge" size="sm" variant="light" color="blue">
+                          {answeredLabel}
+                        </Badge>
+                      ) : null}
+                    </Group>
+                    <Group className="tc-lg-message__select-options" gap="xs" wrap="wrap">
+                      {block.options.map((opt) => (
+                        <Button
+                          className="tc-lg-message__select-option"
+                          key={`${block.kind}:${opt.value}`}
+                          size="xs"
+                          variant="light"
+                          disabled={readOnly || isLoading || !!answered}
+                          onClick={() =>
+                            onSubmitSelect({
+                              replyToMessageId,
+                              kind: block.kind,
+                              value: opt.value,
+                              label: opt.title,
+                            })
+                          }
+                        >
+                          {opt.title}
+                        </Button>
+                      ))}
+                    </Group>
+                  </Stack>
+                </Paper>
+              )
+            })}
+          </Stack>
+        )}
+
         {!isHuman && parsedTapActions?.payload?.actions?.length ? (
           <Group className="tc-lg-message__quick-actions" gap="xs" mt="sm" wrap="wrap">
             {parsedTapActions.payload.actions
@@ -1182,6 +1430,8 @@ function ChatMessagesView({
   nodesById,
   nodeIdByLabel,
   toolCallBindings,
+  selectAnswers,
+  onSubmitSelect,
   onCopy,
   copiedId,
   onPickQuickReply,
@@ -1195,6 +1445,13 @@ function ChatMessagesView({
   nodesById: Map<string, any>
   nodeIdByLabel: Map<string, string>
   toolCallBindings: Record<string, string>
+  selectAnswers: Record<string, any>
+  onSubmitSelect: (args: {
+    replyToMessageId: string
+    kind: string
+    value: any
+    label?: string
+  }) => void
   onCopy: (text: string, id?: string) => void
   copiedId: string | null
   onPickQuickReply: (input: string) => void
@@ -1222,6 +1479,8 @@ function ChatMessagesView({
             nodesById={nodesById}
             nodeIdByLabel={nodeIdByLabel}
             toolCallBindings={toolCallBindings}
+            selectAnswers={selectAnswers}
+            onSubmitSelect={onSubmitSelect}
             onCopy={onCopy}
             copied={copiedId === (msg.id || '')}
             onPickQuickReply={onPickQuickReply}
@@ -2027,6 +2286,7 @@ function LangGraphChatOverlayInner({
     effort: string
   }
   const [queuedInputs, setQueuedInputs] = useState<QueuedInput[]>([])
+  const [selectAnswers, setSelectAnswers] = useState<Record<string, any>>({})
 
   const liveMessages = (thread.messages || []) as Message[]
   const baseMessages = useMemo(() => {
@@ -2604,6 +2864,61 @@ function LangGraphChatOverlayInner({
     [blocked, handleSubmit, thread.isLoading, viewOnly],
   )
 
+  const handleSubmitSelect = useCallback(
+    (args: { replyToMessageId: string; kind: string; value: any; label?: string }) => {
+      if (viewOnly) return
+      if (blocked) return
+
+      const replyToMessageId = String(args.replyToMessageId || '').trim()
+      const kind = String(args.kind || '').trim()
+      if (!replyToMessageId || !kind) return
+
+      const answerKey = `${replyToMessageId}:${kind}`
+      setSelectAnswers((prev) => {
+        if (prev[answerKey]) return prev
+        if (kind === 'selectFilmMeta') {
+          const meta = args.value?.filmMeta
+          const aspectRatio = typeof meta?.aspectRatio === 'string' ? meta.aspectRatio : ''
+          const duration = typeof meta?.duration === 'string' ? meta.duration : ''
+          return {
+            ...prev,
+            [answerKey]: {
+              kind,
+              label: args.label || '',
+              filmMeta: { aspectRatio, duration },
+              submittedAt: Date.now(),
+            },
+          }
+        }
+        return {
+          ...prev,
+          [answerKey]: {
+            kind,
+            label: args.label || '',
+            value: args.value,
+            submittedAt: Date.now(),
+          },
+        }
+      })
+
+      const payload =
+        kind === 'selectFilmMeta'
+          ? {
+              replyTo: replyToMessageId,
+              questionType: kind,
+              ...(args.value && typeof args.value === 'object' ? args.value : {}),
+            }
+          : {
+              replyTo: replyToMessageId,
+              questionType: kind,
+              value: args.value,
+            }
+      const input = `信息已确认\n\`\`\`hide\nCONTINUE\n${JSON.stringify(payload)}\n\`\`\``
+      handleSubmit(input, 'medium')
+    },
+    [blocked, handleSubmit, viewOnly],
+  )
+
   return (
     <>
       <Modal
@@ -2825,6 +3140,8 @@ function LangGraphChatOverlayInner({
                       nodesById={nodesById}
                       nodeIdByLabel={nodeIdByLabel}
                       toolCallBindings={toolCallBindings}
+                      selectAnswers={selectAnswers}
+                      onSubmitSelect={handleSubmitSelect}
                       onCopy={handleCopy}
                       copiedId={copiedId}
                       onPickQuickReply={handlePickQuickReply}

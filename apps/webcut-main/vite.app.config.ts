@@ -1,9 +1,20 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { resolve } from "path";
 
 // SPA 构建配置：用于部署到 Cloudflare Worker 静态站点（共用根目录 dist）
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+	const env = loadEnv(mode, __dirname, "VITE_");
+	const apiBaseRaw = (env.VITE_API_BASE || "http://localhost:8788").trim();
+	const apiOrigin = (() => {
+		try {
+			return new URL(apiBaseRaw).origin;
+		} catch {
+			return "http://localhost:8788";
+		}
+	})();
+
+	return {
 	plugins: [vue()],
 	resolve: {
 		alias: {
@@ -21,5 +32,18 @@ export default defineConfig({
 	server: {
 		host: true,
 		port: 5174,
+		proxy: {
+			// Make `/assets/*` available on the WebCut origin in local dev
+			// so the embed clipper can load `/assets/proxy-video?...` with auth headers.
+			"/assets": {
+				target: apiOrigin,
+				changeOrigin: true,
+			},
+			"/auth": {
+				target: apiOrigin,
+				changeOrigin: true,
+			},
+		},
 	},
+	};
 });
