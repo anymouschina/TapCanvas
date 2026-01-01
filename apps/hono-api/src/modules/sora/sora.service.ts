@@ -1381,9 +1381,11 @@ export async function uploadSoraImage(
 	const random = crypto.randomUUID();
 	const key = `uploads/sora/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
 
-	const body = await file.arrayBuffer();
-
-	await bucket.put(key, body, {
+	const stream =
+		typeof (file as any).stream === "function"
+			? ((file as any).stream() as ReadableStream<Uint8Array>)
+			: null;
+	await bucket.put(key, stream ?? (await file.arrayBuffer()), {
 		httpMetadata: {
 			contentType,
 			cacheControl: "public, max-age=31536000, immutable",
