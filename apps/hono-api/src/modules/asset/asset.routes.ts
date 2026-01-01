@@ -27,6 +27,81 @@ function clampNumber(value: number | undefined, min: number, max: number): numbe
 	return Math.max(min, Math.min(max, value));
 }
 
+function normalizeContentType(raw: string | null | undefined): string {
+	const ct = typeof raw === "string" ? raw : "";
+	return (ct.split(";")[0] || "").trim().toLowerCase() || "application/octet-stream";
+}
+
+function sanitizeUploadName(raw: unknown): string {
+	if (typeof raw !== "string") return "";
+	return raw
+		.trim()
+		.slice(0, 160)
+		.replace(/[\u0000-\u001F\u007F]/g, "")
+		.replace(/[\\/]/g, "_");
+}
+
+function detectUploadExtensionFromMeta(options: {
+	contentType: string;
+	fileName?: string;
+}): string {
+	const name = options.fileName || "";
+	const contentType = normalizeContentType(options.contentType);
+	const known: Record<string, string> = {
+		"image/png": "png",
+		"image/jpeg": "jpg",
+		"image/webp": "webp",
+		"image/gif": "gif",
+		"image/avif": "avif",
+		"video/mp4": "mp4",
+		"video/webm": "webm",
+		"video/quicktime": "mov",
+	};
+	if (contentType && known[contentType]) return known[contentType];
+	if (name) {
+		const match = name.match(/\.([a-zA-Z0-9]+)$/);
+		if (match && match[1]) return match[1].toLowerCase();
+	}
+	if (contentType.startsWith("image/")) {
+		return contentType.slice("image/".length) || "png";
+	}
+	return "bin";
+}
+
+function inferMediaKind(options: {
+	contentType: string;
+	fileName?: string;
+}): "image" | "video" | null {
+	const contentType = normalizeContentType(options.contentType);
+	if (contentType.startsWith("image/")) return "image";
+	if (contentType.startsWith("video/")) return "video";
+	const name = options.fileName || "";
+	const ext = (name.split(".").pop() || "").toLowerCase();
+	if (!ext) return null;
+	if (["png", "jpg", "jpeg", "webp", "gif", "avif"].includes(ext)) return "image";
+	if (["mp4", "webm", "mov"].includes(ext)) return "video";
+	return null;
+}
+
+function limitReadableStream(
+	stream: ReadableStream<Uint8Array>,
+	maxBytes: number,
+): ReadableStream<Uint8Array> {
+	if (!Number.isFinite(maxBytes) || maxBytes <= 0) return stream;
+	let seen = 0;
+	const limiter = new TransformStream<Uint8Array, Uint8Array>({
+		transform(chunk, controller) {
+			seen += chunk.byteLength || 0;
+			if (seen > maxBytes) {
+				controller.error(new Error("file is too large"));
+				return;
+			}
+			controller.enqueue(chunk);
+		},
+	});
+	return stream.pipeThrough(limiter);
+}
+
 function getPublicBase(env: AppEnv["Bindings"]): string {
 	const rawBase =
 		typeof (env as any).R2_PUBLIC_BASE_URL === "string"
@@ -206,45 +281,114 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		return c.json({ error: "OSS storage is not configured" }, 500);
 	}
 
-	const form = await c.req.formData();
-	const file = form.get("file");
-	if (!(file instanceof File)) {
-		return c.json({ error: "file is required" }, 400);
-	}
-
 	const MAX_BYTES = 30 * 1024 * 1024;
-	if (typeof file.size === "number" && file.size > MAX_BYTES) {
-		return c.json({ error: "file is too large (max 30MB)" }, 413);
+	const contentTypeHeader = normalizeContentType(c.req.header("content-type"));
+	const isMultipart = contentTypeHeader.includes("multipart/form-data");
+
+	let kind: "image" | "video" | null = null;
+	let contentType = contentTypeHeader;
+	let originalName: string | null = null;
+	let size: number | null = null;
+	let bodyStream: ReadableStream<Uint8Array> | null = null;
+	let name = "";
+
+	if (isMultipart) {
+		const form = await c.req.formData();
+		const file = form.get("file");
+		if (!(file instanceof File)) {
+			return c.json({ error: "file is required" }, 400);
+		}
+
+		originalName = sanitizeUploadName((file as any).name || "");
+		contentType = normalizeContentType(file.type);
+		kind = inferMediaKind({ contentType, fileName: originalName });
+		if (!kind) {
+			return c.json({ error: "only image/video files are allowed" }, 400);
+		}
+
+		if (typeof file.size === "number") {
+			size = file.size;
+			if (size > MAX_BYTES) {
+				return c.json({ error: "file is too large (max 30MB)" }, 413);
+			}
+		}
+
+		const nameValue = form.get("name");
+		const rawName =
+			typeof nameValue === "string" && nameValue.trim()
+				? nameValue.trim()
+				: originalName || "";
+		name = sanitizeUploadName(rawName) || (kind === "video" ? "Video" : "Image");
+
+		bodyStream =
+			typeof (file as any).stream === "function"
+				? (file as any).stream()
+				: null;
+		if (!bodyStream) {
+			const buf = await file.arrayBuffer();
+			bodyStream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new Uint8Array(buf));
+					controller.close();
+				},
+			});
+		}
+	} else {
+		originalName = sanitizeUploadName(c.req.header("x-file-name") || "");
+		contentType = contentTypeHeader;
+		kind = inferMediaKind({ contentType, fileName: originalName || undefined });
+		if (!kind) {
+			return c.json({ error: "only image/video files are allowed" }, 400);
+		}
+
+		const contentLengthHeader = c.req.header("content-length");
+		const parsedLen =
+			typeof contentLengthHeader === "string" && contentLengthHeader
+				? Number(contentLengthHeader)
+				: NaN;
+		if (Number.isFinite(parsedLen) && parsedLen > MAX_BYTES) {
+			return c.json({ error: "file is too large (max 30MB)" }, 413);
+		}
+		size = Number.isFinite(parsedLen) ? parsedLen : null;
+		if (size == null) {
+			const declaredSizeHeader = c.req.header("x-file-size");
+			const declaredSize =
+				typeof declaredSizeHeader === "string" && declaredSizeHeader
+					? Number(declaredSizeHeader)
+					: NaN;
+			size = Number.isFinite(declaredSize) ? declaredSize : null;
+		}
+
+		name = sanitizeUploadName(c.req.query("name") || "") || (kind === "video" ? "Video" : "Image");
+		bodyStream = c.req.raw.body as ReadableStream<Uint8Array> | null;
+		if (!bodyStream) {
+			return c.json({ error: "request body is required" }, 400);
+		}
 	}
 
-	const rawType = file.type || "application/octet-stream";
-	const contentType = rawType.split(";")[0].trim();
-	const isImage = contentType.startsWith("image/");
-	const isVideo = contentType.startsWith("video/");
-	if (!isImage && !isVideo) {
-		return c.json({ error: "only image/video files are allowed" }, 400);
-	}
-
-	const ext = detectUploadExtension(file);
-	const key = buildUserUploadKey(userId, ext);
-	const body = await file.arrayBuffer();
-	await bucket.put(key, body, {
-		httpMetadata: {
-			contentType,
-			cacheControl: "public, max-age=31536000, immutable",
-		},
+	const ext = detectUploadExtensionFromMeta({
+		contentType,
+		fileName: originalName || undefined,
 	});
+	const key = buildUserUploadKey(userId, ext);
+	const limited = limitReadableStream(bodyStream, MAX_BYTES);
+	try {
+		await bucket.put(key, limited, {
+			httpMetadata: {
+				contentType,
+				cacheControl: "public, max-age=31536000, immutable",
+			},
+		});
+	} catch (err: any) {
+		const msg = String(err?.message || "");
+		if (/too large/i.test(msg)) {
+			return c.json({ error: "file is too large (max 30MB)" }, 413);
+		}
+		throw err;
+	}
 
 	const publicBase = getPublicBase(c.env);
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
-
-	const nameValue = form.get("name");
-	const rawName =
-		typeof nameValue === "string" && nameValue.trim()
-			? nameValue.trim()
-			: ((file as any).name as string | undefined) || "";
-	const fallbackName = isVideo ? "Video" : "Image";
-	const name = rawName.trim() || fallbackName;
 
 	const nowIso = new Date().toISOString();
 	const row = await createAssetRow(
@@ -254,11 +398,11 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 			name,
 			data: {
 				kind: "upload",
-				type: isVideo ? "video" : "image",
+				type: kind,
 				url,
 				contentType,
-				size: typeof file.size === "number" ? file.size : null,
-				originalName: (file as any).name || null,
+				size,
+				originalName: originalName || null,
 				key,
 			},
 			projectId: null,
@@ -470,14 +614,13 @@ assetRouter.get("/proxy-image", authMiddleware, async (c) => {
 			{ tag: "asset:proxy-image" },
 		);
 		const ct = resp.headers.get("content-type") || "application/octet-stream";
-		const buf = await resp.arrayBuffer();
-		return new Response(buf, {
+		const headers = new Headers();
+		headers.set("Content-Type", ct);
+		headers.set("Cache-Control", "public, max-age=60");
+		headers.set("Access-Control-Allow-Origin", "*");
+		return new Response(resp.body ?? (await resp.arrayBuffer()), {
 			status: resp.status,
-			headers: {
-				"Content-Type": ct,
-				"Cache-Control": "public, max-age=60",
-				"Access-Control-Allow-Origin": "*",
-			},
+			headers,
 		});
 	} catch (err: any) {
 		return c.json(

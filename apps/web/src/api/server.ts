@@ -1697,12 +1697,24 @@ export async function deleteServerAsset(id: string): Promise<void> {
 }
 
 export async function uploadServerAssetFile(file: File, name?: string): Promise<ServerAssetDto> {
-  const form = new FormData()
-  form.append('file', file)
+  const qs = new URLSearchParams()
   if (typeof name === 'string' && name.trim()) {
-    form.append('name', name.trim())
+    qs.set('name', name.trim())
   }
-  const r = await apiFetch(`${API_BASE}/assets/upload`, withAuth({ method: 'POST', body: form }))
+  const url = qs.toString() ? `${API_BASE}/assets/upload?${qs.toString()}` : `${API_BASE}/assets/upload`
+  const contentType = (file?.type || '').split(';')[0].trim() || 'application/octet-stream'
+  const headers: Record<string, string> = {
+    'Content-Type': contentType,
+    'x-tap-no-retry': '1',
+  }
+  if (typeof (file as any)?.name === 'string' && (file as any).name.trim()) {
+    headers['X-File-Name'] = (file as any).name.trim()
+  }
+  if (typeof (file as any)?.size === 'number' && Number.isFinite((file as any).size)) {
+    headers['X-File-Size'] = String((file as any).size)
+  }
+  const body: any = typeof (file as any)?.stream === 'function' ? (file as any).stream() : file
+  const r = await apiFetch(url, withAuth({ method: 'POST', headers, body }))
   if (!r.ok) throw new Error(`upload asset failed: ${r.status}`)
   return r.json()
 }

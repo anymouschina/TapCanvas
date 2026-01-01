@@ -104,14 +104,6 @@ async function uploadToR2FromUrl(options: {
 		return null;
 	}
 
-	let body: ArrayBuffer;
-	try {
-		body = await res.arrayBuffer();
-	} catch (err: any) {
-		console.warn("[asset-hosting] read source body failed", err?.message || err);
-		return null;
-	}
-
 	const rawContentType =
 		res.headers.get("content-type") || "application/octet-stream";
 	const contentType = rawContentType.split(";")[0].trim();
@@ -119,13 +111,25 @@ async function uploadToR2FromUrl(options: {
 	const key = buildR2Key(userId, ext, options.prefix);
 
 	try {
-		const obj = await bucket.put(key, body, {
-			httpMetadata: {
-				contentType,
-				cacheControl: "public, max-age=31536000, immutable",
-			},
-		});
-		console.log("[asset-hosting] R2 put ok", obj);
+		const stream = res.body;
+		if (stream) {
+			const obj = await bucket.put(key, stream, {
+				httpMetadata: {
+					contentType,
+					cacheControl: "public, max-age=31536000, immutable",
+				},
+			});
+			console.log("[asset-hosting] R2 put ok", obj);
+		} else {
+			const buf = await res.arrayBuffer();
+			const obj = await bucket.put(key, buf, {
+				httpMetadata: {
+					contentType,
+					cacheControl: "public, max-age=31536000, immutable",
+				},
+			});
+			console.log("[asset-hosting] R2 put ok", obj);
+		}
 	} catch (err: any) {
 		console.warn("[asset-hosting] R2 put failed", err?.message || err);
 		return null;
