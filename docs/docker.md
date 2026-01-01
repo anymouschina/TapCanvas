@@ -6,6 +6,8 @@
 
 - `docker-compose.yml`：Web + Hono API + LangGraph（默认全启动）
 - `docker-compose.minimal.yml`：仅 Web + Hono API（不含 LangGraph / 小T）
+- `docker-compose.minimal.remote.yml`：仅 Web（API 使用 Cloudflare 已部署版本；不跑 Wrangler/workerd）
+- `docker-compose.minimal.localapi.yml`：仅 Web（API 在宿主机本地 `pnpm dev:api` 启动；Docker 内不跑 Wrangler/workerd）
 
 > 说明：当前主后端为 `apps/hono-api`（Cloudflare Workers + Hono），本地通过 Wrangler + D1 local（SQLite）运行；不再依赖 PostgreSQL/Redis 作为必需组件。
 
@@ -38,6 +40,29 @@ docker compose up -d
 
 ```bash
 docker compose -f docker-compose.minimal.yml up -d
+```
+
+### 2.1) 启动最小化（不走 Wrangler，直接连 Cloudflare 已部署 API）
+
+当你不希望在 Docker 内跑 `wrangler dev`（例如遇到 `workerd` 出站连接超时/内部错误）时可用：
+
+```bash
+TAPCANVAS_API_BASE="https://your-worker.yourdomain.workers.dev" \
+docker compose -f docker-compose.minimal.remote.yml up -d
+```
+
+### 2.2) 启动最小化（API 用宿主机本地 dev，不在 Docker 内跑 Wrangler）
+
+1) 在宿主机启动 API（本地 Wrangler）：
+
+```bash
+pnpm dev:api
+```
+
+2) 启动 Web（Docker）并指向宿主机 API：
+
+```bash
+docker compose -f docker-compose.minimal.localapi.yml up -d
 ```
 
 ### 3) LangGraph（小T）

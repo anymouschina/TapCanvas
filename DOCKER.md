@@ -12,6 +12,11 @@
 
 - 仅 Web + API：
   - `docker compose up -d`
+- 仅 Web（API 在宿主机本地 dev 启动，不在 Docker 内跑 Wrangler/workerd）：
+  - 先在宿主机跑：`pnpm dev:api`
+  - 再启动 Web：`docker compose -f docker-compose.minimal.localapi.yml up -d`
+- 仅 Web（API 使用 Cloudflare 已部署版本，不走 Wrangler/workerd）：
+  - `TAPCANVAS_API_BASE="https://your-worker.yourdomain.workers.dev" docker compose -f docker-compose.minimal.remote.yml up -d`
 - 需要使用「沉浸式创作（小T）」：额外启动 `langgraph` profile
   - `docker compose --profile langgraph up -d`
 
