@@ -1,0 +1,43 @@
+services:
+  # Minimal dev stack without Wrangler inside Docker:
+  # - API runs on the host via `pnpm dev:api` (Wrangler on host)
+  # - Web runs in Docker and calls the host API via host.docker.internal
+  web:
+    image: ${DOCKERHUB_REGISTRY:-docker.1ms.run}/library/node:20-bookworm-slim
+    working_dir: /app
+    command: sh -lc "sh ./scripts/docker-dev.sh pnpm --filter @tapcanvas/web dev --host 0.0.0.0 --port 5173"
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_LANGGRAPH_ENABLED: "0"
+      # API runs on the host; from inside Docker it is reachable via host.docker.internal.
+      # Override if your host API uses a different port/base:
+      # TAPCANVAS_API_BASE=http://host.docker.internal:8788
+      VITE_API_BASE: ${TAPCANVAS_API_BASE:-http://host.docker.internal:8788}
+    extra_hosts:
+      # For Linux Docker Engine compatibility (Docker Desktop already provides this hostname).
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - pnpm_store:/app/.pnpm-store
+      - web_node_modules:/app/apps/web/node_modules
+      - schemas_node_modules:/app/packages/schemas/node_modules
+      - sdk_node_modules:/app/packages/sdk/node_modules
+
+volumes:
+  root_node_modules:
+    driver: local
+  pnpm_store:
+    driver: local
+  web_node_modules:
+    driver: local
+  schemas_node_modules:
+    driver: local
+  sdk_node_modules:
+    driver: local
+
