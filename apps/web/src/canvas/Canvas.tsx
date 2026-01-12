@@ -93,7 +93,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   } = buildCanvasThemeColors(theme, colorScheme)
   const connectionLineStyle = useMemo(() => ({
     stroke: isDarkCanvas ? 'rgba(255,255,255,0.32)' : 'rgba(15,23,42,0.22)',
-    strokeWidth: 1.15,
+    strokeWidth: 2,
     strokeLinecap: 'round' as const,
   }), [isDarkCanvas])
   const [isConnecting, setIsConnecting] = useState(false)
@@ -1890,7 +1890,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         defaultEdgeOptions={{
           animated: false,
           type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
-          style: { strokeWidth: 1.15, strokeLinecap: 'round' },
+          style: { strokeWidth: 2, strokeLinecap: 'round' },
           interactionWidth: 1,
         }}
         connectionLineComponent={MagneticConnectionLine}

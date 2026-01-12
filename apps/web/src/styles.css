@@ -246,7 +246,12 @@ body {
 }
 [data-connecting-active="true"] .react-flow__edge-path { opacity: 0.6 }
 .react-flow__edge-path {
+  stroke-width: 2px;
   transition: opacity 120ms ease, filter 200ms ease;
+}
+.react-flow__connection-path {
+  stroke-width: 2px;
+  stroke-linecap: round;
 }
 .react-flow__edge:hover .react-flow__edge-path {
   filter: none;
