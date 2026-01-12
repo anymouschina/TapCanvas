@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
-import { IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconPlus, IconSparkles, IconTrash } from '@tabler/icons-react'
 
 import {
   STORYBOARD_DURATION_STEP,
@@ -18,6 +18,9 @@ type Props = {
   notes: string
   totalDuration: number
   lightContentBackground: string
+  onGenerateScript?: () => void
+  generateScriptLoading?: boolean
+  generateScriptDisabled?: boolean
   onTitleChange: (value: string) => void
   onAddScene: () => void
   onRemoveScene: (id: string) => void
@@ -32,6 +35,9 @@ export function StoryboardEditor({
   notes,
   totalDuration,
   lightContentBackground,
+  onGenerateScript,
+  generateScriptLoading,
+  generateScriptDisabled,
   onTitleChange,
   onAddScene,
   onRemoveScene,
@@ -49,6 +55,22 @@ export function StoryboardEditor({
         onChange={(e) => onTitleChange(e.currentTarget.value)}
         size="xs"
       />
+      <Group className="storyboard-editor-script-actions" justify="space-between" align="center" wrap="wrap" gap="xs">
+        <Text className="storyboard-editor-script-hint" size="xs" c="dimmed">
+          可连接文本/图片节点作为参考，自动生成分镜脚本与镜头参数。
+        </Text>
+        <Button
+          className="storyboard-editor-script-generate"
+          size="xs"
+          variant="light"
+          leftSection={<IconSparkles className="storyboard-editor-script-generate-icon" size={14} />}
+          onClick={onGenerateScript}
+          disabled={!onGenerateScript || !!generateScriptDisabled}
+          loading={!!generateScriptLoading}
+        >
+          生成脚本
+        </Button>
+      </Group>
       <Stack className="storyboard-editor-scenes" gap="xs">
         {scenes.map((scene, idx) => (
           <Paper

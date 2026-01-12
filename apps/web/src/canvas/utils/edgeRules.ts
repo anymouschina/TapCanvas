@@ -8,7 +8,7 @@ const defaultEdgeRules: EdgeRuleMap = {
   video: ['composeVideo', 'storyboard', 'video'],
   composeVideo: ['composeVideo', 'storyboard', 'video'],
   storyboard: ['composeVideo', 'storyboard', 'video'],
-  tts: ['composeVideo', 'video'],
+  tts: ['composeVideo', 'storyboard', 'video'],
   subtitleAlign: ['composeVideo', 'video', 'storyboard'],
   character: ['composeVideo', 'storyboard', 'video', 'character'],
   subflow: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission', 'character', 'subflow'],

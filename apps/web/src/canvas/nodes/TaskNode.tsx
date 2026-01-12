@@ -28,6 +28,7 @@ import {
   createScene,
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
+  STORYBOARD_DURATION_STEP,
   STORYBOARD_MIN_DURATION,
   STORYBOARD_MAX_DURATION,
   STORYBOARD_MAX_TOTAL_DURATION,
@@ -1712,6 +1713,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
           aspect: '3:4',
           sampleCount: 1,
           imageSize: '2K',
+          imageModel: 'nano-banana-pro',
         }
       }
       if (targetKind === 'image' || targetKind === 'textToImage') {
@@ -2027,6 +2029,123 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     },
     [applyStoryboardChange, clampStoryboardDuration],
   )
+
+  const [storyboardScriptLoading, setStoryboardScriptLoading] = React.useState(false)
+
+  const handleGenerateStoryboardScript = React.useCallback(async () => {
+    if (viewOnly) return
+    if (!isStoryboardNode) return
+    if (storyboardScriptLoading) return
+
+    const desiredCount = Math.max(4, Math.min(16, Math.floor(storyboardScenes.length || 4)))
+    const orientation = normalizeOrientation(orientationRef.current)
+    const aspectRatio = orientation === 'portrait' ? '9:16' : '16:9'
+
+    const mentionList = connectedCharacterOptions
+      .map((opt) => String(opt.username || '').replace(/^@/, '').trim())
+      .filter(Boolean)
+      .map((u) => `@${u}`)
+      .join(' ')
+
+    const title = storyboardTitle.trim()
+    const notes = storyboardNotes.trim()
+    const refText = typeof upstreamText === 'string' ? upstreamText.trim() : ''
+
+    const systemPrompt = [
+      '你是一个分镜脚本生成助手。',
+      '你必须严格按用户指定格式输出；不要解释、不要 Markdown、不要代码块。',
+      '输出必须从第一行就以 "Shot 1:" 开始。',
+      '每个 Shot 必须包含 duration/framing/movement/Scene 四项；framing 仅可用 close/medium/wide；movement 仅可用 static/push/pull/pan/tilt。',
+      '全文保持中文；@username 前后必须各留一个空格（例如："... @alice ..."）。',
+    ].join('\n')
+
+    const promptText = [
+      `目标镜头数：${desiredCount}`,
+      `画幅比例：${aspectRatio}`,
+      title ? `标题：${title}` : null,
+      notes ? `全局备注：${notes}` : null,
+      refText ? `参考文本：${refText}` : null,
+      mentionList ? `可用角色：${mentionList}` : null,
+      '',
+      '请生成分镜脚本，严格输出以下格式（示例，注意从第一行就开始）：',
+      'Shot 1:',
+      'duration: 5.0sec',
+      'framing: medium',
+      'movement: static',
+      'Scene: （用中文写镜头提示词，尽量一行写完）',
+      '',
+      `要求：`,
+      `- 一共输出 ${desiredCount} 个 Shot，编号从 1 递增；`,
+      `- 总时长不超过 ${STORYBOARD_MAX_TOTAL_DURATION} 秒；`,
+      '- 只输出脚本正文，不要添加任何前缀/解释/总结；',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    try {
+      setStoryboardScriptLoading(true)
+      const persist = useUIStore.getState().assetPersistenceEnabled
+      const task = await runTaskByVendor('gemini', {
+        kind: 'prompt_refine',
+        prompt: promptText,
+        extras: {
+          systemPrompt,
+          modelKey: 'gemini-2.5-flash',
+          persistAssets: persist,
+        },
+      })
+      const raw = extractTextFromTaskResult(task).trim()
+      if (!raw) {
+        toast('模型未返回分镜脚本，请稍后重试', 'error')
+        return
+      }
+
+      const trimmed = raw.trim()
+      const firstShotIdx = trimmed.search(/Shot\\s+1:\\s*/i)
+      const normalizedText = firstShotIdx >= 0 ? trimmed.slice(firstShotIdx) : trimmed
+
+      const fallbackDuration = (() => {
+        const per = STORYBOARD_MAX_TOTAL_DURATION / Math.max(1, desiredCount)
+        const stepped = Math.floor(per / STORYBOARD_DURATION_STEP) * STORYBOARD_DURATION_STEP
+        return clampStoryboardDuration(Math.min(STORYBOARD_DEFAULT_DURATION, Math.max(STORYBOARD_MIN_DURATION, stepped || STORYBOARD_MIN_DURATION)))
+      })()
+
+      const parsedScenes = (() => {
+        if (/Shot\\s+\\d+:\\s*/i.test(normalizedText)) {
+          return enforceStoryboardTotalLimit(normalizeStoryboardScenes(normalizedText, null))
+        }
+        const lines = normalizedText
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, desiredCount)
+        if (!lines.length) {
+          return [createScene({ description: normalizedText, duration: fallbackDuration })]
+        }
+        return enforceStoryboardTotalLimit(lines.map((desc) => createScene({ description: desc, duration: fallbackDuration })))
+      })()
+
+      applyStoryboardChange(() => parsedScenes)
+      toast('已生成分镜脚本', 'success')
+    } catch (error: any) {
+      const message = typeof error?.message === 'string' ? error.message : '生成脚本失败'
+      toast(message, 'error')
+    } finally {
+      setStoryboardScriptLoading(false)
+    }
+  }, [
+    applyStoryboardChange,
+    clampStoryboardDuration,
+    connectedCharacterOptions,
+    isStoryboardNode,
+    orientationRef,
+    storyboardNotes,
+    storyboardScenes.length,
+    storyboardScriptLoading,
+    storyboardTitle,
+    upstreamText,
+    viewOnly,
+  ])
 
 const rewritePromptWithCharacters = React.useCallback(
   async ({
@@ -3515,6 +3634,9 @@ const rewritePromptWithCharacters = React.useCallback(
                   notes={storyboardNotes}
                   totalDuration={storyboardTotalDuration}
                   lightContentBackground={lightContentBackground}
+                  onGenerateScript={viewOnly ? undefined : handleGenerateStoryboardScript}
+                  generateScriptLoading={storyboardScriptLoading}
+                  generateScriptDisabled={viewOnly}
                   onTitleChange={(value) => setStoryboardTitle(value)}
                   onAddScene={handleAddScene}
                   onRemoveScene={handleRemoveScene}
