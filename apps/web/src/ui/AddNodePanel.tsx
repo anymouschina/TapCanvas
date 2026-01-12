@@ -1,6 +1,6 @@
 import React from 'react'
 import { Paper, Title, Stack, Button, Transition } from '@mantine/core'
-import { IconTypography, IconPhoto, IconVideo, IconUser, IconMovie } from '@tabler/icons-react'
+import { IconTypography, IconPhoto, IconVideo, IconUser, IconMovie, IconLayoutGrid, IconPhotoEdit } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { useRFStore } from '../canvas/store'
 import { $ } from '../canvas/i18n'
@@ -44,6 +44,8 @@ export default function AddNodePanel({ className }: { className?: string }): JSX
                 <Stack className="add-node-panel-actions" gap={8}>
                   {/* <Button className="add-node-panel__disabled-text-button" variant="light" leftSection={<IconTypography size={16} />} onClick={() => { addNode('taskNode', '文本', { kind: 'text' }); setActivePanel(null) }}>{$('文本')}</Button> */}
                   <Button className="add-node-panel-button" variant="light" leftSection={<IconPhoto className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'image' }); setActivePanel(null) }}>{$('图像')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconPhotoEdit className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'imageFission' }); setActivePanel(null) }}>{$('图像裂变')}</Button>
+                  <Button className="add-node-panel-button" variant="light" leftSection={<IconLayoutGrid className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'storyboardImage' }); setActivePanel(null) }}>{$('分镜图')}</Button>
                   <Button className="add-node-panel-button" variant="light" leftSection={<IconPhoto className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'mosaic' }); setActivePanel(null) }}>{$('拼图')}</Button>
                   <Button className="add-node-panel-button" variant="light" leftSection={<IconVideo className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'composeVideo' }); setActivePanel(null) }}>{$('视频')}</Button>
                   <Button className="add-node-panel-button" variant="light" leftSection={<IconMovie className="add-node-panel-icon" size={16} />} onClick={() => { addNode('taskNode', undefined, { kind: 'storyboard' }); setActivePanel(null) }}>{$('分镜beta')}</Button>

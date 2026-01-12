@@ -47,6 +47,8 @@ export const VIDEO_MODELS: ModelOption[] = [
 export type NodeKind =
   | 'text'
   | 'image'
+  | 'storyboardImage'
+  | 'imageFission'
   | 'mosaic'
   | 'video'
   | 'composeVideo'
@@ -58,6 +60,8 @@ export type NodeKind =
 export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
   switch (kind) {
     case 'image':
+    case 'storyboardImage':
+    case 'imageFission':
     case 'mosaic':
       return IMAGE_MODELS
     case 'composeVideo':
@@ -79,7 +83,7 @@ export function getModelLabel(kind: NodeKind | undefined, modelValue: string): s
 }
 
 export function getDefaultModel(kind?: NodeKind): string {
-  if (kind === 'image') {
+  if (kind === 'image' || kind === 'storyboardImage' || kind === 'imageFission') {
     return DEFAULT_IMAGE_MODEL_VALUE
   }
   const models = getAllowedModelsByKind(kind)

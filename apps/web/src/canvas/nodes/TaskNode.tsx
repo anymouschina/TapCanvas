@@ -2274,6 +2274,14 @@ const rewritePromptWithCharacters = React.useCallback(
           onClick: () => openPoseEditor(),
         },
       ]
+      if (kind === 'storyboardImage' || kind === 'imageFission') {
+        tools.push({
+          key: 'params',
+          label: '参数',
+          icon: <IconAdjustments size={16} />,
+          onClick: () => openParamFor(id),
+        })
+      }
       if (supportsReversePrompt) {
         tools.push({
           key: 'reverse',
@@ -2290,7 +2298,7 @@ const rewritePromptWithCharacters = React.useCallback(
       { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
       { key: 'params', label: '参数', icon: <IconAdjustments size={16} />, onClick: () => openParamFor(id) },
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
-  }, [hasImageResults, id, insertRefToLittleT, isCharacterNode, isMosaicNode, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt, viewOnly])
+  }, [hasImageResults, id, insertRefToLittleT, isCharacterNode, isMosaicNode, kind, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt, viewOnly])
 
   type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
   const veoCandidateImages = useRFStore((s) => {

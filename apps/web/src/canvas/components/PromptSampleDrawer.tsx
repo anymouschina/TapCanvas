@@ -40,7 +40,7 @@ const nodeKindLabel: Record<PromptSampleDto['nodeKind'], string> = {
 
 const normalizeKindForRequest = (kind?: string) => {
   if (!kind) return undefined
-  if (kind === 'image' || kind === 'textToImage') return 'image'
+  if (kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') return 'image'
   if (kind === 'composeVideo' || kind === 'video') return 'composeVideo'
   if (kind === 'storyboard') return 'storyboard'
   return undefined

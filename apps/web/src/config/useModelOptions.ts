@@ -29,7 +29,7 @@ function normalizeModelId(value: string): string {
 }
 
 function filterHiddenOptionsByKind(options: ModelOption[], kind?: NodeKind): ModelOption[] {
-  if (kind !== 'image' && kind !== 'mosaic') return options
+  if (kind !== 'image' && kind !== 'mosaic' && kind !== 'storyboardImage' && kind !== 'imageFission') return options
   return options.filter((opt) => !HIDDEN_IMAGE_MODEL_ID_RE.test(normalizeModelId(opt.value)))
 }
 
@@ -142,6 +142,8 @@ function normalizeProfiles(items: ModelProfileDto[]): ModelOption[] {
 function getProfileKindsForNode(kind?: NodeKind): ProfileKind[] {
   switch (kind) {
     case 'image':
+    case 'storyboardImage':
+    case 'imageFission':
       return ['text_to_image']
     case 'composeVideo':
     case 'storyboard':
@@ -175,7 +177,7 @@ function filterRemoteOptionsByKind(options: ModelOption[], kind?: NodeKind): Mod
   if (!kind || kind === 'text' || kind === 'character' || kind === 'audio' || kind === 'subtitle') {
     return options.filter((opt) => isTextModelValue(opt.value))
   }
-  if (kind === 'image' || kind === 'mosaic') {
+  if (kind === 'image' || kind === 'mosaic' || kind === 'storyboardImage' || kind === 'imageFission') {
     return options.filter((opt) => isImageModelValue(opt.value))
   }
   if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video') {
