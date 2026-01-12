@@ -533,6 +533,18 @@ export const useRFStore = create<RFState>((set, get) => ({
           }
         }
       }
+
+      if (kindValue === 'storyboardImage') {
+        const hasCount = typeof (dataExtra as any).storyboardCount === 'number' && Number.isFinite((dataExtra as any).storyboardCount)
+        const hasAspect = typeof (dataExtra as any).storyboardAspectRatio === 'string' && (dataExtra as any).storyboardAspectRatio.trim()
+        const hasStyle = typeof (dataExtra as any).storyboardStyle === 'string' && (dataExtra as any).storyboardStyle.trim()
+        dataExtra = {
+          ...dataExtra,
+          ...(hasCount ? null : { storyboardCount: 4 }),
+          ...(hasAspect ? null : { storyboardAspectRatio: '16:9' }),
+          ...(hasStyle ? null : { storyboardStyle: 'realistic' }),
+        }
+      }
     }
 
     const node: Node = {
@@ -652,7 +664,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (kind === 'mosaic') {
       const { runNodeMosaic } = await import('../runner/mosaicRunner')
       await runNodeMosaic(selected.id, get, set)
-    } else if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image' || kind === 'textToImage') {
+    } else if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') {
       await runNodeRemote(selected.id, get, set)
     } else {
       await runNodeMock(selected.id, get, set)

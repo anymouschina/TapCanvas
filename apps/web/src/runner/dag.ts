@@ -149,7 +149,9 @@ export async function runFlowDag(
         kind === 'storyboard' ||
         kind === 'tts' ||
         kind === 'subtitleAlign' ||
-        kind === 'image'
+        kind === 'image' ||
+        kind === 'storyboardImage' ||
+        kind === 'imageFission'
       if (shouldRemote) {
         await runNodeRemote(id, get, set)
       } else if (kind === 'mosaic') {

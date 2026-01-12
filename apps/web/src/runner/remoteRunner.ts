@@ -1,12 +1,14 @@
 import type { Node } from '@xyflow/react'
 import type { TaskKind, TaskResultDto } from '../api/server'
 import {
+  API_BASE,
   runTaskByVendor,
   createSoraVideo,
   listSoraPendingVideos,
   getSoraVideoDraftByTask,
   listModelProviders,
   listModelTokens,
+  uploadServerAssetFile,
   fetchVeoTaskResult,
   fetchSora2ApiTaskResult,
 } from '../api/server'
@@ -16,6 +18,7 @@ import { notifyAssetRefresh } from '../ui/assetEvents'
 import { isAnthropicModel } from '../config/modelSource'
 import { getDefaultModel, isImageEditModel } from '../config/models'
 import { normalizeOrientation, type Orientation } from '../utils/orientation'
+import { getAuthToken } from '../auth/store'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -57,7 +60,7 @@ function nowLabel() {
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
 const SORA_POLL_TIMEOUT_MS = 300_000
 const MAX_VIDEO_DURATION_SECONDS = 15
-const IMAGE_NODE_KINDS = new Set(['image', 'textToImage', 'mosaic'])
+const IMAGE_NODE_KINDS = new Set(['image', 'textToImage', 'mosaic', 'storyboardImage', 'imageFission'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
 const VEO_RESULT_POLL_INTERVAL_MS = 4000
@@ -66,6 +69,122 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
+
+type StoryboardImageStyle = 'realistic' | 'comic' | 'sketch' | 'strip'
+type StoryboardImageAspectRatio = '16:9' | '9:16'
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(n)))
+}
+
+function normalizeStoryboardImageStyle(value: unknown): StoryboardImageStyle {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (v === 'comic' || v === 'sketch' || v === 'strip' || v === 'realistic') return v
+  return 'realistic'
+}
+
+function normalizeStoryboardImageAspectRatio(value: unknown): StoryboardImageAspectRatio {
+  return value === '9:16' ? '9:16' : '16:9'
+}
+
+function toAbsoluteHttpUrl(raw: string): string | null {
+  const trimmed = (raw || '').trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (typeof window === 'undefined') return null
+  try {
+    const u = new URL(trimmed, window.location.href)
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString()
+    return null
+  } catch {
+    return null
+  }
+}
+
+function buildProxyImageUrl(rawUrl: string): string | null {
+  const abs = toAbsoluteHttpUrl(rawUrl)
+  if (!abs) return null
+  const base = (API_BASE || '').replace(/\/+$/, '')
+  return `${base}/assets/proxy-image?url=${encodeURIComponent(abs)}`
+}
+
+async function fetchBlob(url: string, init?: RequestInit): Promise<Blob> {
+  const resp = await fetch(url, init)
+  if (!resp.ok) throw new Error(`下载失败（${resp.status}）`)
+  return await resp.blob()
+}
+
+async function fetchImageBlob(url: string): Promise<Blob> {
+  const trimmed = (url || '').trim()
+  if (!trimmed) throw new Error('缺少图片 URL')
+  try {
+    return await fetchBlob(trimmed)
+  } catch (directErr) {
+    const proxyUrl = buildProxyImageUrl(trimmed)
+    if (!proxyUrl) throw directErr
+    const token = getAuthToken()
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+    return await fetchBlob(proxyUrl, {
+      headers,
+      credentials: 'include',
+    })
+  }
+}
+
+async function splitGridToBlobs(options: {
+  url: string
+  rows: number
+  cols: number
+  take: number
+}): Promise<Blob[]> {
+  const { url, rows, cols, take } = options
+  const blob = await fetchImageBlob(url)
+  const bitmap = await createImageBitmap(blob)
+  const w = bitmap.width
+  const h = bitmap.height
+  if (!w || !h) {
+    bitmap.close()
+    throw new Error('图片尺寸异常')
+  }
+
+  const out: Blob[] = []
+  const total = Math.max(0, Math.min(rows * cols, Math.floor(take)))
+  for (let idx = 0; idx < total; idx++) {
+    const r = Math.floor(idx / cols)
+    const c = idx % cols
+    const sx = Math.floor((w * c) / cols)
+    const ex = Math.floor((w * (c + 1)) / cols)
+    const sy = Math.floor((h * r) / rows)
+    const ey = Math.floor((h * (r + 1)) / rows)
+    const sw = Math.max(1, ex - sx)
+    const sh = Math.max(1, ey - sy)
+
+    const canvas = document.createElement('canvas')
+    canvas.width = sw
+    canvas.height = sh
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      bitmap.close()
+      throw new Error('Canvas 初始化失败')
+    }
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh)
+    // eslint-disable-next-line no-await-in-loop
+    const part = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('导出图片失败'))), 'image/png')
+    })
+    out.push(part)
+  }
+  bitmap.close()
+  return out
+}
+
+function extractFirstImageAssetUrl(res: any): string | null {
+  const assets = Array.isArray(res?.assets) ? res.assets : []
+  const first = assets.find((a: any) => a?.type === 'image' && typeof a.url === 'string' && a.url.trim())
+  return first?.url ? String(first.url).trim() : null
+}
 async function runAnthropicTextTask(modelKey: string | undefined, prompt: string, systemPrompt?: string) {
   const providers = await listModelProviders()
   const provider = providers.find((p) => p.vendor === 'anthropic' || (p.baseUrl || '').toLowerCase().includes('anthropic'))
@@ -458,6 +577,16 @@ function computeSampleMeta(kind: string, data: any) {
 
 function ensurePrompt(ctx: RunnerContext): boolean {
   if (ctx.prompt.trim()) return true
+  if (ctx.kind === 'imageFission') return true
+  if (ctx.kind === 'storyboardImage') {
+    const script =
+      typeof (ctx.data as any)?.storyboardScript === 'string'
+        ? ((ctx.data as any).storyboardScript as string).trim()
+        : typeof (ctx.data as any)?.storyboard === 'string'
+          ? ((ctx.data as any).storyboard as string).trim()
+          : ''
+    if (script) return true
+  }
   ctx.appendLog(ctx.id, `[${nowLabel()}] 缺少提示词，已跳过`)
   return false
 }
@@ -480,6 +609,15 @@ export async function runNodeRemote(id: string, get: Getter, set: Setter) {
   if (!ensurePrompt(ctx)) return
 
   beginQueuedRun(ctx)
+
+  if (ctx.kind === 'storyboardImage') {
+    await runStoryboardImageTask(ctx)
+    return
+  }
+  if (ctx.kind === 'imageFission') {
+    await runImageFissionTask(ctx)
+    return
+  }
 
   
   if (ctx.isVideoTask) {
@@ -1847,6 +1985,447 @@ function applyVeoTaskResult(
 
   if (result.assets && result.assets.length) {
     notifyAssetRefresh()
+  }
+}
+
+async function runStoryboardImageTask(ctx: RunnerContext) {
+  const { id, data, kind, setNodeStatus, appendLog, isCanceled, state } = ctx
+
+  try {
+    const storyboardCount = clampInt((data as any)?.storyboardCount, 4, 16, 4)
+    const storyboardAspect = normalizeStoryboardImageAspectRatio((data as any)?.storyboardAspectRatio)
+    const storyboardStyle = normalizeStoryboardImageStyle((data as any)?.storyboardStyle)
+
+    const rawScript =
+      typeof (data as any)?.storyboardScript === 'string'
+        ? ((data as any).storyboardScript as string).trim()
+        : typeof (data as any)?.storyboard === 'string'
+          ? ((data as any).storyboard as string).trim()
+          : ''
+    const rawTheme = typeof (data as any)?.prompt === 'string' ? ((data as any).prompt as string).trim() : ''
+    const fallback = rawTheme || ctx.prompt.trim() || String((data as any)?.label || '').trim()
+    const script = rawScript || fallback
+
+    if (!script) {
+      const msg = '缺少分镜脚本：请先填写「分镜脚本」或在 Prompt 中描述剧情主题。'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      return
+    }
+
+    const extractShotPrompts = (text: string) => {
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      const prompts: string[] = []
+      for (const line of lines) {
+        const m =
+          line.match(/^(?:[-*]\s*)?(?:镜头|分镜)\s*(\d+)?\s*[：:.\u3001-]?\s*(.+)$/) ??
+          line.match(/^\s*(\d+)[.)\u3001-]\s*(.+)$/)
+        const prompt = (m?.[2] ?? line).trim()
+        if (prompt) prompts.push(prompt)
+      }
+      return prompts
+    }
+
+    const extracted = extractShotPrompts(script)
+    const fallbackBase = extracted[0] || script
+    const shotPrompts = Array.from({ length: storyboardCount }, (_, i) =>
+      (extracted[i] || fallbackBase).trim(),
+    ).filter(Boolean)
+
+    const styleSuffix = (() => {
+      switch (storyboardStyle) {
+        case 'comic':
+          return '美漫风格，粗线条，高对比，漫画渲染，统一角色设定'
+        case 'sketch':
+          return '手绘草图风格，铅笔线稿，素描质感，统一角色设定'
+        case 'strip':
+          return '条漫风格，黑白线稿，分镜漫画，统一角色设定'
+        case 'realistic':
+        default:
+          return '写实摄影风格，电影级光影，真实质感，统一角色设定'
+      }
+    })()
+
+    const gridLayout = (() => {
+      if (storyboardCount <= 4) {
+        return { rows: 2, cols: 2, sheetAspectRatio: storyboardAspect as string }
+      }
+      if (storyboardCount <= 9) {
+        return { rows: 3, cols: 3, sheetAspectRatio: storyboardAspect as string }
+      }
+      if (storyboardCount <= 12) {
+        return storyboardAspect === '16:9'
+          ? { rows: 4, cols: 3, sheetAspectRatio: '4:3' }
+          : { rows: 3, cols: 4, sheetAspectRatio: '3:4' }
+      }
+      return { rows: 4, cols: 4, sheetAspectRatio: storyboardAspect as string }
+    })()
+
+    const totalCells = gridLayout.rows * gridLayout.cols
+    const gridPrompt = [
+      '请生成一张“分镜网格图”（storyboard contact sheet）。',
+      rawTheme && rawTheme !== script ? `主题/补充：${rawTheme}` : '',
+      `画面为 ${gridLayout.rows} 行 × ${gridLayout.cols} 列等分网格（总共 ${totalCells} 格），每格大小一致、边界对齐，便于按网格裁切。`,
+      '每格为独立画面，按从左到右、从上到下排列。',
+      `每格画面构图比例为 ${storyboardAspect}。`,
+      '不要在画面中出现任何文字、数字、字幕、对白气泡或水印。',
+      `统一角色设定与连续性；风格要求：${styleSuffix}。`,
+      '镜头列表（按顺序填入网格）：',
+      ...shotPrompts.map((p, i) => `镜头 ${i + 1}：${p}`),
+      totalCells > storyboardCount ? `剩余 ${totalCells - storyboardCount} 格保持空白纯色背景（不要内容）。` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const selectedModel = (data.imageModel as string) || DEFAULT_IMAGE_MODEL
+    const modelLower = selectedModel.toLowerCase()
+    const explicitVendor = typeof (data as any)?.imageModelVendor === 'string' ? (data as any).imageModelVendor : null
+    const vendor = explicitVendor || (
+      modelLower.includes('gemini')
+        ? 'gemini'
+        : modelLower.includes('gpt') || modelLower.includes('openai') || modelLower.includes('dall') || modelLower.includes('o3-')
+          ? 'openai'
+          : 'qwen'
+    )
+
+    const systemPromptOpt =
+      (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
+        ? (data as any).systemPrompt
+        : undefined
+    const promptForModel = systemPromptOpt ? `${systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
+
+    const referenceImagesRaw = collectReferenceImages(state, id)
+    const referenceImages = Array.from(new Set(referenceImagesRaw.filter((u) => typeof u === 'string' && u.trim()))).slice(0, 3)
+    const wantsImageEdit = referenceImages.length > 0
+    if (wantsImageEdit && !isImageEditModel(selectedModel)) {
+      const msg = '当前模型不支持图片编辑参考图，请切换到支持图片编辑的模型（如 Nano Banana 系列）或断开参考图连接'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      return
+    }
+
+    const imageSizeSetting =
+      typeof (data as any)?.imageSize === 'string' && (data as any).imageSize.trim()
+        ? (data as any).imageSize.trim()
+        : undefined
+
+    setNodeStatus(id, 'running', {
+      progress: 5,
+      lastError: undefined,
+    })
+    appendLog(id, `[${nowLabel()}] 生成分镜网格图（${gridLayout.rows}x${gridLayout.cols}，${storyboardCount} 镜头）…`)
+
+    const persist = useUIStore.getState().assetPersistenceEnabled
+    const res = await runTaskByVendor(vendor, {
+      kind: wantsImageEdit ? 'image_edit' : 'text_to_image',
+      prompt: promptForModel,
+      extras: {
+        nodeKind: kind,
+        nodeId: id,
+        modelKey: selectedModel,
+        aspectRatio: gridLayout.sheetAspectRatio,
+        ...(selectedModel === 'nano-banana-pro' && imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
+        ...(wantsImageEdit ? { referenceImages } : {}),
+        ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
+        persistAssets: persist,
+      },
+    })
+
+    const gridUrl = extractFirstImageAssetUrl(res)
+    if (!gridUrl) {
+      throw new Error('分镜网格生成失败：未返回图片结果')
+    }
+
+    const existing = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults : []
+    const gridItem = { url: gridUrl, title: `分镜网格 ${gridLayout.rows}x${gridLayout.cols}` }
+    const baseIndex = existing.length
+
+    setNodeStatus(id, 'running', {
+      progress: 55,
+      imageUrl: gridUrl,
+      imageResults: [...existing, gridItem],
+      imagePrimaryIndex: baseIndex,
+      lastResult: {
+        id: res?.id,
+        at: Date.now(),
+        kind,
+        preview: { type: 'image', src: gridUrl },
+      },
+    })
+
+    if (isCanceled(id)) {
+      const msg = '任务已取消'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] ${msg}`)
+      return
+    }
+
+    appendLog(id, `[${nowLabel()}] 网格已生成，开始切帧并上传镜头图…`)
+
+    const shotBlobs = await splitGridToBlobs({
+      url: gridUrl,
+      rows: gridLayout.rows,
+      cols: gridLayout.cols,
+      take: storyboardCount,
+    })
+
+    const shotUrls: string[] = []
+    const now = Date.now()
+    for (let i = 0; i < shotBlobs.length; i++) {
+      if (isCanceled(id)) {
+        const msg = '任务已取消'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] ${msg}`)
+        return
+      }
+
+      const blob = shotBlobs[i]!
+      const file = new File([blob], `storyboard-${id}-${now}-shot-${i + 1}.png`, { type: 'image/png' })
+      // eslint-disable-next-line no-await-in-loop
+      const asset = await uploadServerAssetFile(file, `分镜图-镜头${i + 1}`)
+      const uploadedUrl = typeof (asset?.data as any)?.url === 'string' ? String((asset.data as any).url).trim() : ''
+      if (!uploadedUrl) {
+        throw new Error('镜头图上传失败：未返回 url')
+      }
+      shotUrls.push(uploadedUrl)
+
+      const p = 55 + Math.round(((i + 1) / shotBlobs.length) * 40)
+      setNodeStatus(id, 'running', { progress: Math.max(55, Math.min(95, p)) })
+    }
+
+    const shotItems = shotUrls.map((url, idx) => ({
+      url,
+      title: `镜头 ${idx + 1}/${storyboardCount}`,
+    }))
+
+    const merged = [...existing, gridItem, ...shotItems]
+    setNodeStatus(id, 'success', {
+      progress: 100,
+      imageUrl: gridUrl,
+      imageResults: merged,
+      imagePrimaryIndex: baseIndex,
+      lastResult: {
+        id: res?.id,
+        at: Date.now(),
+        kind,
+        preview: { type: 'image', src: gridUrl },
+      },
+    })
+
+    notifyAssetRefresh()
+    appendLog(id, `[${nowLabel()}] 分镜图完成：网格 1 张 + 镜头 ${shotItems.length} 张。`)
+  } catch (err: any) {
+    const msg = err?.message || '分镜图生成失败'
+    toast(msg, 'error')
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    ctx.endRunToken(id)
+  }
+}
+
+async function runImageFissionTask(ctx: RunnerContext) {
+  const {
+    id,
+    data,
+    kind,
+    sampleCount,
+    setNodeStatus,
+    appendLog,
+    isCanceled,
+    state,
+  } = ctx
+
+  try {
+    const desiredGrids = Math.max(1, Math.min(4, Math.floor(sampleCount || 1)))
+    const selectedModel = (data.imageModel as string) || DEFAULT_IMAGE_MODEL
+    const modelLower = selectedModel.toLowerCase()
+    const explicitVendor = typeof (data as any)?.imageModelVendor === 'string' ? (data as any).imageModelVendor : null
+    const vendor = explicitVendor || (
+      modelLower.includes('gemini')
+        ? 'gemini'
+        : modelLower.includes('gpt') || modelLower.includes('openai') || modelLower.includes('dall') || modelLower.includes('o3-')
+          ? 'openai'
+          : 'qwen'
+    )
+
+    const aspectRatio =
+      typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
+        ? (data as any).aspect.trim()
+        : 'auto'
+    const imageSizeSetting =
+      typeof (data as any)?.imageSize === 'string' && (data as any).imageSize.trim()
+        ? (data as any).imageSize.trim()
+        : undefined
+
+    const systemPromptOpt =
+      (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
+        ? (data as any).systemPrompt
+        : undefined
+
+    const upstreamRefs = collectReferenceImages(state, id)
+    const selfPrimary = (() => {
+      const results = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults : []
+      const primaryIndex =
+        typeof (data as any)?.imagePrimaryIndex === 'number' &&
+        (data as any).imagePrimaryIndex >= 0 &&
+        (data as any).imagePrimaryIndex < results.length
+          ? (data as any).imagePrimaryIndex
+          : 0
+      const fromResults =
+        results[primaryIndex] && typeof results[primaryIndex].url === 'string'
+          ? String(results[primaryIndex].url).trim()
+          : ''
+      const fromNode = typeof (data as any)?.imageUrl === 'string' ? String((data as any).imageUrl).trim() : ''
+      return fromResults || fromNode || ''
+    })()
+
+    const referenceImages = Array.from(
+      new Set(
+        [...upstreamRefs, ...(selfPrimary ? [selfPrimary] : [])]
+          .filter((u) => typeof u === 'string' && u.trim())
+          .map((u) => u.trim()),
+      ),
+    ).slice(0, 3)
+
+    if (referenceImages.length === 0) {
+      const msg = '图像裂变需要至少一张参考图：请连接一个上游图像节点，或先在本节点上传/选择一张图片。'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      return
+    }
+
+    if (!isImageEditModel(selectedModel)) {
+      const msg = '当前模型不支持图片编辑裂变，请切换到支持图片编辑的模型（如 Nano Banana 系列）'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      toast(msg, 'warning')
+      return
+    }
+
+    const userHint = ctx.prompt.trim()
+    const gridPrompt = [
+      '请基于参考图生成一个 2x2 变体网格图（四宫格）。',
+      userHint ? `变体方向/要求：${userHint}` : '',
+      '网格必须严格等分、边界对齐，便于按 2x2 裁切。',
+      '每格为同一主体的不同变体（细节变化但保持人物/主体一致），整体风格保持一致。',
+      '不要在画面中出现任何文字、数字、水印或字幕。',
+      '不要在单格画面里拼接多张图，不要跨格子。',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const promptForModel = systemPromptOpt ? `${systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
+    const persist = useUIStore.getState().assetPersistenceEnabled
+
+    const existing = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults : []
+    const baseResults = existing.length
+      ? existing
+      : typeof (data as any)?.imageUrl === 'string' && (data as any).imageUrl.trim()
+        ? [{ url: String((data as any).imageUrl).trim(), title: '参考图' }]
+        : []
+
+    setNodeStatus(id, 'running', { progress: 5, lastError: undefined })
+    appendLog(id, `[${nowLabel()}] 图像裂变：生成 2x2 变体网格 x${desiredGrids}…`)
+
+    const newItems: { url: string; title?: string }[] = []
+    let primaryUrl: string | null = null
+    let lastRes: any = null
+
+    for (let gridIdx = 0; gridIdx < desiredGrids; gridIdx++) {
+      if (isCanceled(id)) {
+        const msg = '任务已取消'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] ${msg}`)
+        return
+      }
+
+      const progressBase = 5 + Math.floor((45 * gridIdx) / Math.max(1, desiredGrids))
+      setNodeStatus(id, 'running', { progress: progressBase })
+      appendLog(id, `[${nowLabel()}] 生成裂变网格（${gridIdx + 1}/${desiredGrids}）…`)
+
+      // eslint-disable-next-line no-await-in-loop
+      const res = await runTaskByVendor(vendor, {
+        kind: 'image_edit',
+        prompt: promptForModel,
+        extras: {
+          nodeKind: kind,
+          nodeId: id,
+          modelKey: selectedModel,
+          aspectRatio,
+          ...(selectedModel === 'nano-banana-pro' && imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
+          referenceImages,
+          ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
+          persistAssets: persist,
+        },
+      })
+
+      lastRes = res
+      const gridUrl = extractFirstImageAssetUrl(res)
+      if (!gridUrl) {
+        throw new Error('裂变失败：未返回网格图')
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const quadrants = await splitGridToBlobs({ url: gridUrl, rows: 2, cols: 2, take: 4 })
+      const now = Date.now()
+      for (let i = 0; i < quadrants.length; i++) {
+        if (isCanceled(id)) {
+          const msg = '任务已取消'
+          setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+          appendLog(id, `[${nowLabel()}] ${msg}`)
+          return
+        }
+        const blob = quadrants[i]!
+        const file = new File([blob], `fission-${id}-${now}-${gridIdx + 1}-${i + 1}.png`, { type: 'image/png' })
+        // eslint-disable-next-line no-await-in-loop
+        const asset = await uploadServerAssetFile(file, `裂变-${gridIdx + 1}-${i + 1}`)
+        const uploadedUrl = typeof (asset?.data as any)?.url === 'string' ? String((asset.data as any).url).trim() : ''
+        if (!uploadedUrl) {
+          throw new Error('裂变上传失败：未返回 url')
+        }
+        if (!primaryUrl) primaryUrl = uploadedUrl
+        newItems.push({ url: uploadedUrl, title: `裂变 ${gridIdx + 1}-${i + 1}` })
+
+        const doneParts = gridIdx * 4 + (i + 1)
+        const totalParts = desiredGrids * 4
+        const p = 50 + Math.round((doneParts / Math.max(1, totalParts)) * 45)
+        setNodeStatus(id, 'running', { progress: Math.max(50, Math.min(95, p)) })
+      }
+    }
+
+    if (!primaryUrl || newItems.length === 0) {
+      throw new Error('裂变失败：未产出候选图')
+    }
+
+    const merged = [...newItems, ...baseResults]
+    const primaryIndex = 0
+
+    setNodeStatus(id, 'success', {
+      progress: 100,
+      imageUrl: primaryUrl,
+      imageResults: merged,
+      imagePrimaryIndex: primaryIndex,
+      lastResult: {
+        id: lastRes?.id,
+        at: Date.now(),
+        kind,
+        preview: { type: 'image', src: primaryUrl },
+      },
+    })
+
+    notifyAssetRefresh()
+    appendLog(id, `[${nowLabel()}] 图像裂变完成：生成候选 ${newItems.length} 张。`)
+  } catch (err: any) {
+    const msg = err?.message || '图像裂变失败'
+    toast(msg, 'error')
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    ctx.endRunToken(id)
   }
 }
 
