@@ -4,21 +4,28 @@ import type { TaskNodeFeatureFlags } from './features'
 import { CharacterContent } from './components/CharacterContent'
 import { MosaicContent } from './components/MosaicContent'
 import { ImageContent } from './components/ImageContent'
+import { StoryboardImageContent } from './components/StoryboardImageContent'
 
 export type FeatureRendererContext = {
+  nodeKind?: string
   featureFlags: TaskNodeFeatureFlags
   isMosaicNode: boolean
   videoContent: React.ReactNode | null
   characterProps: React.ComponentProps<typeof CharacterContent> | null
   mosaicProps: React.ComponentProps<typeof MosaicContent>
   imageProps: React.ComponentProps<typeof ImageContent>
+  storyboardImageProps: React.ComponentProps<typeof StoryboardImageContent>
 }
 
 type Renderer = (ctx: FeatureRendererContext) => React.ReactNode
 
 const featureRenderers: Partial<Record<TaskNodeFeature, Renderer>> = {
   character: (ctx) => (ctx.characterProps ? <CharacterContent {...ctx.characterProps} /> : null),
-  image: (ctx) => (ctx.isMosaicNode ? <MosaicContent {...ctx.mosaicProps} /> : <ImageContent {...ctx.imageProps} />),
+  image: (ctx) => {
+    if (ctx.isMosaicNode) return <MosaicContent {...ctx.mosaicProps} />
+    if (ctx.nodeKind === 'storyboardImage') return <StoryboardImageContent {...ctx.storyboardImageProps} />
+    return <ImageContent {...ctx.imageProps} />
+  },
   video: (ctx) => ctx.videoContent,
 }
 

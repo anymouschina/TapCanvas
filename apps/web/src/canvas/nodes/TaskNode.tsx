@@ -1,9 +1,9 @@
 import React from 'react'
 import type { NodeProps } from '@xyflow/react'
-import { Position, NodeToolbar } from '@xyflow/react'
+import { Position, NodeResizeControl, NodeToolbar } from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
-import { ActionIcon, Group, Paper, Button, Text, Stack, TextInput, Select, Loader, Badge, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { ActionIcon, Group, Paper, Button, Text, Stack, TextInput, Select, Loader, Badge, Slider, useMantineColorScheme, useMantineTheme } from '@mantine/core'
 import {
   IconArrowsDiagonal2,
   IconAdjustments,
@@ -12,6 +12,7 @@ import {
   IconSparkles,
   IconUsers,
   IconTrash,
+  IconLayoutGrid,
 } from '@tabler/icons-react'
 import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadServerAssetFile, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
 import {
@@ -1399,6 +1400,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       patch.storyboardTitle = storyboardTitle
       patch.storyboard = nextPrompt
     }
+    if (kind === 'storyboardImage') {
+      patch.storyboardScript = nextPrompt
+    }
     const featurePatch = buildFeaturePatch(nextPrompt)
     Object.assign(patch, featurePatch)
     if (hasImage) {
@@ -1685,17 +1689,48 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     const all = useRFStore.getState().nodes
     const self = all.find((n) => n.id === id)
     if (!self) return
-    const pos = { x: self.position.x + 260, y: self.position.y }
+    const selfWidthRaw = Number((self.data as any)?.nodeWidth ?? (self as any)?.width)
+    const selfWidth = Number.isFinite(selfWidthRaw) && selfWidthRaw > 0 ? selfWidthRaw : 260
+    const gapX = 72
+    const pos = { x: self.position.x + selfWidth + gapX, y: self.position.y }
+    const mediaDefaults = (() => {
+      if (targetKind === 'storyboardImage') {
+        return {
+          nodeWidth: 210,
+          nodeHeight: 118,
+          storyboardCount: 4,
+          storyboardAspectRatio: '16:9',
+          storyboardStyle: 'realistic',
+          imageModel: 'nano-banana-pro',
+        }
+      }
+      if (targetKind === 'imageFission') {
+        return {
+          nodeWidth: 120,
+          nodeHeight: 210,
+          imageFission: { mode: 'creative', count: 1, aspectRatio: '3:4', hd: false },
+          aspect: '3:4',
+          sampleCount: 1,
+          imageSize: '2K',
+        }
+      }
+      if (targetKind === 'image' || targetKind === 'textToImage') {
+        return { nodeWidth: 120, nodeHeight: 210 }
+      }
+      return {}
+    })()
     const newId =
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? (crypto as any).randomUUID()
         : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     useRFStore.setState((s: any) => {
+      const past = [...s.historyPast, JSON.parse(JSON.stringify({ nodes: s.nodes, edges: s.edges }))].slice(-50)
       const node = {
         id: newId,
         type: 'taskNode' as const,
         position: pos,
-        data: { label: targetLabel, kind: targetKind },
+        data: { label: targetLabel, kind: targetKind, ...mediaDefaults },
+        selected: true,
       }
       const edge: any = {
         id: `e-${id}-${newId}-${Date.now().toString(36)}`,
@@ -1707,8 +1742,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         animated: true,
       }
       return {
-        nodes: [...s.nodes, node],
+        nodes: [...s.nodes.map((n: any) => ({ ...n, selected: false })), node],
         edges: [...s.edges, edge],
+        historyPast: past,
+        historyFuture: [],
       }
     })
   }
@@ -1724,40 +1761,95 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const showImageStateOverlay = Boolean(isImageNode && (status === 'running' || status === 'queued' || isImageExpired))
   const imageStateLabel = isImageExpired ? '已过期' : (status === 'running' || status === 'queued' ? '加载中' : null)
 
+  const isCanvasMediaNode =
+    kind === 'image' ||
+    kind === 'textToImage' ||
+    kind === 'storyboardImage' ||
+    kind === 'imageFission'
+
+  const clampFinite = (value: unknown, min: number, max: number, fallback: number) => {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(max, Math.round(n)))
+  }
+
+  const mediaDefaults = React.useMemo(() => {
+    if (kind === 'storyboardImage') return { width: 210, height: 118 }
+    return { width: 120, height: 210 }
+  }, [kind])
+
+  const nodeWidth = isCanvasMediaNode
+    ? clampFinite((data as any)?.nodeWidth, 110, 420, mediaDefaults.width)
+    : typeof (data as any)?.nodeWidth === 'number' && Number.isFinite((data as any)?.nodeWidth)
+      ? Math.max(320, Math.min(720, Number((data as any)?.nodeWidth)))
+      : (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard') ? 460 : 420
+
+  const nodeHeight = isCanvasMediaNode
+    ? clampFinite((data as any)?.nodeHeight, 90, 420, mediaDefaults.height)
+    : null
+
+  const variantsOpen = Boolean((data as any)?.variantsOpen)
+  const variantsBaseWidthRaw = Number((data as any)?.variantsBaseWidth)
+  const variantsBaseHeightRaw = Number((data as any)?.variantsBaseHeight)
+  const variantsBaseWidth = Number.isFinite(variantsBaseWidthRaw) && variantsBaseWidthRaw > 0 ? variantsBaseWidthRaw : null
+  const variantsBaseHeight = Number.isFinite(variantsBaseHeightRaw) && variantsBaseHeightRaw > 0 ? variantsBaseHeightRaw : null
+
+  const storyboardCount = React.useMemo(() => {
+    if (kind !== 'storyboardImage') return 4
+    const raw = Number((data as any)?.storyboardCount)
+    if (!Number.isFinite(raw)) return 4
+    return Math.max(4, Math.min(16, Math.floor(raw)))
+  }, [data, kind])
+
   const imageProps = {
+    nodeId: id,
+    nodeKind: kind,
+    nodeWidth,
+    nodeHeight: nodeHeight ?? mediaDefaults.height,
+    variantsOpen,
+    variantsBaseWidth,
+    variantsBaseHeight,
     hasPrimaryImage,
     imageResults,
     imagePrimaryIndex,
     primaryImageUrl,
-    imageExpanded,
     fileRef,
     onUpload: handleImageUpload,
-    connectToRight,
     onSelectPrimary: (idx: number, url: string) => {
       setImagePrimaryIndex(idx)
       updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
     },
-    showChrome: !hideImageMeta,
     compact: hideImageMeta,
     showStateOverlay: showImageStateOverlay,
     stateLabel: imageStateLabel,
-    hovered,
-    setHovered,
-    quickActionBackgroundActive,
-    quickActionIconActive,
-    quickActionIconColor,
-    quickActionHint,
+    onUpdateNodeData: (patch: Record<string, any>) => updateNodeData(id, patch),
     nodeShellText,
-    darkContentBackground,
     darkCardShadow,
-    mediaFallbackSurface,
     mediaOverlayText,
     subtleOverlayBackground,
-    soraFileId,
     imageUrl,
     themeWhite: theme.white,
-    setImageExpanded,
-    upstreamText,
+  }
+
+  const storyboardImageProps = {
+    nodeId: id,
+    nodeWidth,
+    nodeHeight: nodeHeight ?? mediaDefaults.height,
+    variantsOpen,
+    variantsBaseWidth,
+    variantsBaseHeight,
+    imageResults,
+    imagePrimaryIndex,
+    primaryImageUrl,
+    storyboardCount,
+    onUpdateNodeData: (patch: Record<string, any>) => updateNodeData(id, patch),
+    showStateOverlay: showImageStateOverlay,
+    stateLabel: imageStateLabel,
+    nodeShellText,
+    darkCardShadow,
+    subtleOverlayBackground,
+    mediaOverlayText,
+    themeWhite: theme.white,
   }
 
   const toolbarPreview = React.useMemo(() => {
@@ -1801,12 +1893,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [data?.label, kind, toolbarPreview])
 
   const featureBlocks = renderFeatureBlocks(schema.features, {
+    nodeKind: kind,
     featureFlags,
     isMosaicNode,
     videoContent,
     characterProps: characterContentProps,
     mosaicProps,
     imageProps,
+    storyboardImageProps,
   })
   const [mentionOpen, setMentionOpen] = React.useState(false)
   const [mentionFilter, setMentionFilter] = React.useState('')
@@ -2279,6 +2373,22 @@ const rewritePromptWithCharacters = React.useCallback(
           onClick: () => openPoseEditor(),
         },
       ]
+      if (kind === 'image' || kind === 'textToImage') {
+        tools.push(
+          {
+            key: 'derivative-fission',
+            label: '图像裂变',
+            icon: <IconSparkles size={16} />,
+            onClick: () => connectToRight('imageFission', '图像裂变'),
+          },
+          {
+            key: 'derivative-storyboard',
+            label: '分镜图',
+            icon: <IconLayoutGrid size={16} />,
+            onClick: () => connectToRight('storyboardImage', '分镜图'),
+          },
+        )
+      }
       if (kind === 'storyboardImage' || kind === 'imageFission') {
         tools.push({
           key: 'params',
@@ -2505,11 +2615,6 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const visibleDefs = uniqueDefs
 
-  const nodeWidth =
-    typeof (data as any)?.nodeWidth === 'number' && Number.isFinite((data as any)?.nodeWidth)
-      ? Math.max(320, Math.min(720, Number((data as any)?.nodeWidth)))
-      : (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard') ? 460 : 420
-
   const shellBackground = 'transparent'
   const shellBorder = 'none'
   const shellShadowResolved = 'none'
@@ -2533,6 +2638,7 @@ const rewritePromptWithCharacters = React.useCallback(
         boxSizing: 'border-box',
         width: nodeWidth,
         maxWidth: 720,
+        ...(isCanvasMediaNode && nodeHeight ? { height: nodeHeight } : null),
       } as React.CSSProperties}
     >
       <GenerationOverlay
@@ -2540,7 +2646,7 @@ const rewritePromptWithCharacters = React.useCallback(
         status={status}
         progress={(data as any)?.progress}
       />
-      {!hideImageMeta && (
+      {!hideImageMeta && !isCanvasMediaNode && (
         <TaskNodeHeader
           NodeIcon={NodeIcon}
           editing={editing}
@@ -2587,6 +2693,17 @@ const rewritePromptWithCharacters = React.useCallback(
         defaultOutputType={defaultOutputType}
         wideHandleBase={wideHandleBase}
       />
+      {isCanvasMediaNode && selected && !variantsOpen && (
+        <NodeResizeControl
+          className="tc-task-node__media-resize nodrag"
+          position="bottom-right"
+          keepAspectRatio
+          minWidth={110}
+          minHeight={90}
+        >
+          <div className="tc-task-node__media-resize-handle" style={{ width: 10, height: 10, borderRight: '2px solid rgba(255,255,255,0.55)', borderBottom: '2px solid rgba(255,255,255,0.55)' }} />
+        </NodeResizeControl>
+      )}
       {/* Content Area for Character/Image/Video/Text kinds */}
       {featureBlocks}
       {isVideoNode && resolvedVideoVendor === 'veo' && (
@@ -2797,12 +2914,12 @@ const rewritePromptWithCharacters = React.useCallback(
                 setVideoDuration(num)
                 updateNodeData(id, { videoDurationSeconds: num })
               }}
-              showResolutionMenu={showResolutionMenu}
+              showResolutionMenu={showResolutionMenu && kind !== 'imageFission'}
               onAspectChange={(value) => {
                 setAspect(value)
                 updateNodeData(id, { aspect: value })
               }}
-              showImageSizeMenu={hasImageSize}
+              showImageSizeMenu={hasImageSize && kind !== 'imageFission'}
               imageSize={imageSize}
               onImageSizeChange={(value) => {
                 setImageSize(value)
@@ -2816,7 +2933,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 setOrientation(normalized)
                 updateNodeData(id, { orientation: normalized })
               }}
-              showSampleMenu={hasSampleCount}
+              showSampleMenu={hasSampleCount && kind !== 'imageFission'}
               sampleOptions={SAMPLE_OPTIONS}
               sampleCount={sampleCount}
               onSampleChange={(value) => {
@@ -2828,6 +2945,245 @@ const rewritePromptWithCharacters = React.useCallback(
               onCancelRun={handleCancelRun}
               onRun={runNode}
             />
+
+            {kind === 'imageFission' && (
+              <Paper
+                className="tc-task-node__fission-panel"
+                radius="md"
+                p="xs"
+                style={{ background: lightContentBackground }}
+              >
+                <Stack className="tc-task-node__fission-stack" gap={8}>
+                  <Group className="tc-task-node__fission-header" justify="space-between" gap={6}>
+                    <Text className="tc-task-node__fission-title" size="sm" fw={600}>
+                      图像裂变
+                    </Text>
+                    <Badge className="tc-task-node__fission-badge" size="xs" color="teal" variant="light">
+                      2×2
+                    </Badge>
+                  </Group>
+
+                  <Group className="tc-task-node__fission-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__fission-label" size="xs" c="dimmed">
+                      模式
+                    </Text>
+                    {(
+                      [
+                        { key: 'model', label: '模特' },
+                        { key: 'creative', label: '创意' },
+                        { key: 'detail', label: '细节' },
+                        { key: 'all', label: '全能' },
+                      ] as const
+                    ).map((opt) => {
+                      const mode = ((data as any)?.imageFission?.mode || 'creative') as string
+                      const active = mode === opt.key
+                      return (
+                        <Button
+                          key={opt.key}
+                          className="tc-task-node__fission-mode"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => {
+                            const prev = ((data as any)?.imageFission || {}) as any
+                            updateNodeData(id, { imageFission: { ...prev, mode: opt.key } })
+                          }}
+                          disabled={isRunning}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </Group>
+
+                  <Group className="tc-task-node__fission-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__fission-label" size="xs" c="dimmed">
+                      数量
+                    </Text>
+                    {[1, 2, 3, 4].map((n) => {
+                      const count = Number((data as any)?.imageFission?.count || (data as any)?.sampleCount || 1)
+                      const active = count === n
+                      return (
+                        <Button
+                          key={n}
+                          className="tc-task-node__fission-count"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => {
+                            const prev = ((data as any)?.imageFission || {}) as any
+                            updateNodeData(id, { imageFission: { ...prev, count: n }, sampleCount: n })
+                            setSampleCount(n)
+                          }}
+                          disabled={isRunning}
+                        >
+                          {n}×
+                        </Button>
+                      )
+                    })}
+                  </Group>
+
+                  <Group className="tc-task-node__fission-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__fission-label" size="xs" c="dimmed">
+                      比例
+                    </Text>
+                    {(
+                      [
+                        { key: '4:3', label: '4:3' },
+                        { key: '3:4', label: '3:4' },
+                      ] as const
+                    ).map((opt) => {
+                      const aspectRatio = String((data as any)?.imageFission?.aspectRatio || (data as any)?.aspect || '3:4')
+                      const active = aspectRatio === opt.key
+                      return (
+                        <Button
+                          key={opt.key}
+                          className="tc-task-node__fission-aspect"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => {
+                            const prev = ((data as any)?.imageFission || {}) as any
+                            updateNodeData(id, { imageFission: { ...prev, aspectRatio: opt.key }, aspect: opt.key })
+                            setAspect(opt.key)
+                          }}
+                          disabled={isRunning}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </Group>
+
+                  <Group className="tc-task-node__fission-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__fission-label" size="xs" c="dimmed">
+                      清晰度
+                    </Text>
+                    {(
+                      [
+                        { key: '2K', label: '2K', hd: false },
+                        { key: '4K', label: '4K', hd: true },
+                      ] as const
+                    ).map((opt) => {
+                      const hd = Boolean((data as any)?.imageFission?.hd)
+                      const active = hd === opt.hd
+                      return (
+                        <Button
+                          key={opt.key}
+                          className="tc-task-node__fission-size"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => {
+                            const prev = ((data as any)?.imageFission || {}) as any
+                            updateNodeData(id, {
+                              imageFission: { ...prev, hd: opt.hd },
+                              imageSize: opt.hd ? '4K' : '2K',
+                            })
+                            setImageSize(opt.hd ? '4K' : '2K')
+                          }}
+                          disabled={isRunning}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </Group>
+                </Stack>
+              </Paper>
+            )}
+
+            {kind === 'storyboardImage' && (
+              <Paper
+                className="tc-task-node__storyboard-image-panel"
+                radius="md"
+                p="xs"
+                style={{ background: lightContentBackground }}
+              >
+                <Stack className="tc-task-node__storyboard-image-stack" gap={8}>
+                  <Group className="tc-task-node__storyboard-image-header" justify="space-between" gap={6}>
+                    <Text className="tc-task-node__storyboard-image-title" size="sm" fw={600}>
+                      分镜图
+                    </Text>
+                    <Badge className="tc-task-node__storyboard-image-badge" size="xs" color="violet" variant="light">
+                      Contact Sheet
+                    </Badge>
+                  </Group>
+
+                  <Group className="tc-task-node__storyboard-image-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__storyboard-image-label" size="xs" c="dimmed">
+                      风格
+                    </Text>
+                    {(
+                      [
+                        { key: 'realistic', label: '写实' },
+                        { key: 'comic', label: '美漫' },
+                        { key: 'sketch', label: '草图' },
+                        { key: 'strip', label: '条漫' },
+                      ] as const
+                    ).map((opt) => {
+                      const style = String((data as any)?.storyboardStyle || 'realistic')
+                      const active = style === opt.key
+                      return (
+                        <Button
+                          key={opt.key}
+                          className="tc-task-node__storyboard-image-style"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => updateNodeData(id, { storyboardStyle: opt.key })}
+                          disabled={isRunning}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </Group>
+
+                  <div className="tc-task-node__storyboard-image-row">
+                    <Group className="tc-task-node__storyboard-image-count-header" justify="space-between" gap={6} mb={4}>
+                      <Text className="tc-task-node__storyboard-image-label" size="xs" c="dimmed">
+                        分镜数
+                      </Text>
+                      <Text className="tc-task-node__storyboard-image-count" size="xs" fw={700}>
+                        {storyboardCount}
+                      </Text>
+                    </Group>
+                    <Slider
+                      className="tc-task-node__storyboard-image-count-slider"
+                      min={4}
+                      max={16}
+                      step={1}
+                      value={storyboardCount}
+                      onChange={(value) => updateNodeData(id, { storyboardCount: value })}
+                      disabled={isRunning}
+                    />
+                  </div>
+
+                  <Group className="tc-task-node__storyboard-image-row" gap={6} wrap="wrap">
+                    <Text className="tc-task-node__storyboard-image-label" size="xs" c="dimmed">
+                      比例
+                    </Text>
+                    {(
+                      [
+                        { key: '16:9', label: '16:9' },
+                        { key: '9:16', label: '9:16' },
+                      ] as const
+                    ).map((opt) => {
+                      const ar = String((data as any)?.storyboardAspectRatio || '16:9')
+                      const active = ar === opt.key
+                      return (
+                        <Button
+                          key={opt.key}
+                          className="tc-task-node__storyboard-image-aspect"
+                          size="compact-xs"
+                          variant={active ? 'light' : 'subtle'}
+                          onClick={() => updateNodeData(id, { storyboardAspectRatio: opt.key })}
+                          disabled={isRunning}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </Group>
+                </Stack>
+              </Paper>
+            )}
           </div>
           {isCharacterNode ? (
             <Text className="tc-task-node__panel-hint" size="xs" c="dimmed" mb={6}>挑选或创建角色，供后续节点通过 @角色名 自动引用。</Text>
@@ -3175,6 +3531,15 @@ const rewritePromptWithCharacters = React.useCallback(
                   prompt={prompt}
                   setPrompt={setPrompt}
                   onUpdateNodeData={(patch) => updateNodeData(id, patch)}
+                  placeholder={
+                    kind === 'storyboardImage'
+                      ? '分镜脚本：建议每行一个镜头提示词，例如「镜头 1：...」。也可以只写主题描述。'
+                      : kind === 'imageFission'
+                        ? '可选：补充裂变方向（例如：不同角度/姿态/构图，但保持主体一致）。'
+                        : undefined
+                  }
+                  minRows={kind === 'storyboardImage' ? 4 : 2}
+                  maxRows={kind === 'storyboardImage' ? 10 : 6}
                   suggestionsAllowed={suggestionsAllowed}
                   suggestionsEnabled={suggestionsEnabled}
                   setSuggestionsEnabled={setSuggestionsEnabled}

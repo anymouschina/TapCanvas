@@ -180,6 +180,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           label,
           kind: 'image',
           imageUrl: localUrl,
+          nodeWidth: 120,
+          nodeHeight: 210,
         },
         selected: false,
       }))
@@ -296,6 +298,10 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
             label,
             kind: 'image',
             imageUrl: preferred,
+            imageResults: [{ url: preferred }],
+            imagePrimaryIndex: 0,
+            nodeWidth: 120,
+            nodeHeight: 210,
           },
           selected: false,
         }
@@ -352,6 +358,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           label,
           kind: 'image',
           imageUrl: localUrl,
+          nodeWidth: 120,
+          nodeHeight: 210,
         },
         selected: false,
       }
@@ -648,6 +656,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
               imageUrl: trimmed,
               imageResults: [{ url: trimmed }],
               imagePrimaryIndex: 0,
+              nodeWidth: 120,
+              nodeHeight: 210,
             },
           }
           return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }

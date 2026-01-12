@@ -418,7 +418,43 @@ export const useRFStore = create<RFState>((set, get) => ({
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
-    const updated = autoFitGroupNodes(applyNodeChanges(changes, s.nodes)).map(enforceNodeSelectability)
+    const dimChanges = new Map<string, { width?: number; height?: number }>()
+    for (const change of changes as any[]) {
+      if (!change || typeof change !== 'object') continue
+      if (change.type !== 'dimensions') continue
+      const id = typeof change.id === 'string' ? change.id : ''
+      if (!id) continue
+      const width = Number(change.dimensions?.width)
+      const height = Number(change.dimensions?.height)
+      dimChanges.set(id, {
+        ...(Number.isFinite(width) && width > 0 ? { width: Math.round(width) } : null),
+        ...(Number.isFinite(height) && height > 0 ? { height: Math.round(height) } : null),
+      })
+    }
+
+    const rawUpdated = applyNodeChanges(changes, s.nodes)
+    const updatedWithDims = rawUpdated.map((node) => {
+      const dims = dimChanges.get(node.id)
+      if (!dims) return node
+      const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind) : ''
+      const isCanvasMediaKind =
+        kind === 'image' ||
+        kind === 'textToImage' ||
+        kind === 'storyboardImage' ||
+        kind === 'imageFission'
+      if (!isCanvasMediaKind) return node
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          ...(typeof dims.width === 'number' ? { nodeWidth: dims.width } : null),
+          ...(typeof dims.height === 'number' ? { nodeHeight: dims.height } : null),
+        },
+      }
+    })
+
+    const updated = autoFitGroupNodes(updatedWithDims).map(enforceNodeSelectability)
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
@@ -558,11 +594,50 @@ export const useRFStore = create<RFState>((set, get) => ({
         const hasCount = typeof (dataExtra as any).storyboardCount === 'number' && Number.isFinite((dataExtra as any).storyboardCount)
         const hasAspect = typeof (dataExtra as any).storyboardAspectRatio === 'string' && (dataExtra as any).storyboardAspectRatio.trim()
         const hasStyle = typeof (dataExtra as any).storyboardStyle === 'string' && (dataExtra as any).storyboardStyle.trim()
+        const hasModel = typeof (dataExtra as any).imageModel === 'string' && (dataExtra as any).imageModel.trim()
         dataExtra = {
           ...dataExtra,
           ...(hasCount ? null : { storyboardCount: 4 }),
           ...(hasAspect ? null : { storyboardAspectRatio: '16:9' }),
           ...(hasStyle ? null : { storyboardStyle: 'realistic' }),
+          ...(hasModel ? null : { imageModel: 'nano-banana-pro' }),
+        }
+      }
+
+      if (kindValue === 'imageFission') {
+        const hasFission = !!(dataExtra as any).imageFission && typeof (dataExtra as any).imageFission === 'object'
+        const hasAspect = typeof (dataExtra as any).aspect === 'string' && (dataExtra as any).aspect.trim()
+        const hasSampleCount = typeof (dataExtra as any).sampleCount === 'number' && Number.isFinite((dataExtra as any).sampleCount)
+        const hasImageSize = typeof (dataExtra as any).imageSize === 'string' && (dataExtra as any).imageSize.trim()
+        dataExtra = {
+          ...dataExtra,
+          ...(hasFission
+            ? null
+            : { imageFission: { mode: 'creative', count: 1, aspectRatio: '3:4', hd: false } }),
+          ...(hasAspect ? null : { aspect: '3:4' }),
+          ...(hasSampleCount ? null : { sampleCount: 1 }),
+          ...(hasImageSize ? null : { imageSize: '2K' }),
+        }
+      }
+
+      const isCanvasMediaKind =
+        kindValue === 'image' ||
+        kindValue === 'textToImage' ||
+        kindValue === 'storyboardImage' ||
+        kindValue === 'imageFission'
+      if (isCanvasMediaKind) {
+        const hasNodeWidth =
+          typeof (dataExtra as any).nodeWidth === 'number' && Number.isFinite((dataExtra as any).nodeWidth)
+        const hasNodeHeight =
+          typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
+        const defaults =
+          kindValue === 'storyboardImage'
+            ? { nodeWidth: 210, nodeHeight: 118 }
+            : { nodeWidth: 120, nodeHeight: 210 }
+        dataExtra = {
+          ...dataExtra,
+          ...(hasNodeWidth ? null : { nodeWidth: defaults.nodeWidth }),
+          ...(hasNodeHeight ? null : { nodeHeight: defaults.nodeHeight }),
         }
       }
     }

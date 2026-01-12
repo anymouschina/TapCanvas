@@ -2239,7 +2239,15 @@ async function runImageFissionTask(ctx: RunnerContext) {
   } = ctx
 
   try {
-    const desiredGrids = Math.max(1, Math.min(4, Math.floor(sampleCount || 1)))
+    type ImageFissionMode = 'model' | 'creative' | 'detail' | 'all'
+    type ImageFissionConfig = {
+      mode?: ImageFissionMode
+      count?: 1 | 2 | 3 | 4
+      aspectRatio?: '3:4' | '4:3'
+      hd?: boolean
+    }
+    const cfg: ImageFissionConfig = ((data as any)?.imageFission || {}) as ImageFissionConfig
+    const desiredGrids = clampInt(cfg.count ?? sampleCount, 1, 4, 1)
     const selectedModel = (data.imageModel as string) || DEFAULT_IMAGE_MODEL
     const modelLower = selectedModel.toLowerCase()
     const explicitVendor = typeof (data as any)?.imageModelVendor === 'string' ? (data as any).imageModelVendor : null
@@ -2251,14 +2259,19 @@ async function runImageFissionTask(ctx: RunnerContext) {
           : 'qwen'
     )
 
-    const aspectRatio =
-      typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim()
-        ? (data as any).aspect.trim()
-        : 'auto'
+    const mode: ImageFissionMode = (cfg.mode ?? 'creative') as ImageFissionMode
+    const resolvedAspect = cfg.aspectRatio === '4:3' || cfg.aspectRatio === '3:4'
+      ? cfg.aspectRatio
+      : typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim() === '4:3'
+        ? '4:3'
+        : '3:4'
+    const hd = !!cfg.hd
+    const resolvedImageSize: '2K' | '4K' = hd ? '4K' : '2K'
     const imageSizeSetting =
-      typeof (data as any)?.imageSize === 'string' && (data as any).imageSize.trim()
+      resolvedImageSize ||
+      (typeof (data as any)?.imageSize === 'string' && (data as any).imageSize.trim()
         ? (data as any).imageSize.trim()
-        : undefined
+        : undefined)
 
     const systemPromptOpt =
       (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
@@ -2306,17 +2319,26 @@ async function runImageFissionTask(ctx: RunnerContext) {
       return
     }
 
+    const FISSION_TEMPLATES: Record<ImageFissionMode, string> = {
+      model:
+        'You are an efficient image variation engine. Generate a single 2x2 grid image (4 equal quadrants) containing 4 unique variations. The output MUST be a {RES} resolution image. Each quadrant should strictly follow the aspect ratio of {AR}.\nCRITICAL: Do NOT include the original reference image in the grid. Generate 4 NEW and DISTINCT variations that differ from the reference image in terms of pose, angle, or framing. MODE: Model Shot. Analyze the reference model\'s face, body, and clothing. Each quadrant shows the same character from different camera angles, in different shot sizes, and in different professional poses. Maintain exact detail fidelity but ensure all 4 poses differ from the reference.',
+      creative:
+        'You are an efficient image variation engine. Generate a single 2x2 grid image (4 equal quadrants) containing 4 unique variations. The output MUST be a {RES} resolution image. Each quadrant should strictly follow the aspect ratio of {AR}.\nCRITICAL: Do NOT include the original reference image in the grid. Generate 4 NEW and DISTINCT variations that differ from the reference image in terms of pose, angle, or framing. MODE: Clothing Creative. Keep the model, background, and lighting identical to the reference. Each quadrant shows different logical states of the garment (e.g. open vs closed, sleeves up vs down, different accessorizing). Fixed camera perspective. All 4 quadrants must be variations.',
+      detail:
+        'You are an efficient image variation engine. Generate a single 2x2 grid image (4 equal quadrants) containing 4 unique variations. The output MUST be a {RES} resolution image. Each quadrant should strictly follow the aspect ratio of {AR}.\nCRITICAL: Do NOT include the original reference image in the grid. Generate 4 NEW and DISTINCT variations that differ from the reference image in terms of pose, angle, or framing. MODE: Clothing Detail. Macro/Close-up focus. Quadrants show collar, fabric texture, prints, and stitching. Professional e-commerce detail photography.',
+      all:
+        'You are an efficient image variation engine. Generate a single 2x2 grid image (4 equal quadrants) containing 4 unique variations. The output MUST be a {RES} resolution image. Each quadrant should strictly follow the aspect ratio of {AR}.\nCRITICAL: Do NOT include the original reference image in the grid. Generate 4 NEW and DISTINCT variations that differ from the reference image in terms of pose, angle, or framing. MODE: Product Detail. High focus on product logos, material textures (brushed metal, wood grain), and component details. Sharp industrial product photography.',
+    }
+    const template = FISSION_TEMPLATES[mode] || FISSION_TEMPLATES.creative
+    const compiled = template
+      .split('{AR}')
+      .join(resolvedAspect)
+      .split('{RES}')
+      .join(resolvedImageSize)
     const userHint = ctx.prompt.trim()
-    const gridPrompt = [
-      '请基于参考图生成一个 2x2 变体网格图（四宫格）。',
-      userHint ? `变体方向/要求：${userHint}` : '',
-      '网格必须严格等分、边界对齐，便于按 2x2 裁切。',
-      '每格为同一主体的不同变体（细节变化但保持人物/主体一致），整体风格保持一致。',
-      '不要在画面中出现任何文字、数字、水印或字幕。',
-      '不要在单格画面里拼接多张图，不要跨格子。',
-    ]
-      .filter(Boolean)
-      .join('\n')
+    const gridPrompt = userHint
+      ? `${compiled}\n\nAdditional constraints:\n${userHint}`
+      : compiled
 
     const promptForModel = systemPromptOpt ? `${systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
     const persist = useUIStore.getState().assetPersistenceEnabled
@@ -2329,7 +2351,7 @@ async function runImageFissionTask(ctx: RunnerContext) {
         : []
 
     setNodeStatus(id, 'running', { progress: 5, lastError: undefined })
-    appendLog(id, `[${nowLabel()}] 图像裂变：生成 2x2 变体网格 x${desiredGrids}…`)
+    appendLog(id, `[${nowLabel()}] 图像裂变：${mode} / ${resolvedAspect} / ${resolvedImageSize}，生成 2x2 变体网格 x${desiredGrids}…`)
 
     const newItems: { url: string; title?: string }[] = []
     let primaryUrl: string | null = null
@@ -2355,7 +2377,7 @@ async function runImageFissionTask(ctx: RunnerContext) {
           nodeKind: kind,
           nodeId: id,
           modelKey: selectedModel,
-          aspectRatio,
+          aspectRatio: resolvedAspect,
           ...(selectedModel === 'nano-banana-pro' && imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
           referenceImages,
           ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
