@@ -49,7 +49,56 @@ export default function ParamModal(): JSX.Element {
               </Group>
             </>
           )}
-          {(kind === 'composeVideo' || kind === 'storyboard' || kind === 'image' || kind === 'textToImage') && (
+          {kind === 'storyboardImage' && (
+            <>
+              <Group className="param-modal-row" grow mt={2}>
+                <NumberInput
+                  className="param-modal-field"
+                  label="分镜数"
+                  min={4}
+                  max={16}
+                  value={form.storyboardCount ?? 4}
+                  onChange={(v) => setField('storyboardCount', Math.max(4, Math.min(16, Math.floor(Number(v) || 4))))}
+                />
+                <Select
+                  className="param-modal-field"
+                  label="镜头比例"
+                  data={[
+                    { value: '16:9', label: '16:9 横屏' },
+                    { value: '9:16', label: '9:16 竖屏' },
+                  ]}
+                  value={form.storyboardAspectRatio === '9:16' ? '9:16' : '16:9'}
+                  onChange={(v) => setField('storyboardAspectRatio', v === '9:16' ? '9:16' : '16:9')}
+                  withinPortal
+                />
+              </Group>
+              <Select
+                className="param-modal-field"
+                mt={8}
+                label="风格"
+                data={[
+                  { value: 'realistic', label: '写实' },
+                  { value: 'comic', label: '美漫' },
+                  { value: 'sketch', label: '草图' },
+                  { value: 'strip', label: '条漫' },
+                ]}
+                value={form.storyboardStyle || 'realistic'}
+                onChange={(v) => setField('storyboardStyle', v || 'realistic')}
+                withinPortal
+              />
+              <Textarea
+                className="param-modal-field"
+                mt={8}
+                label="分镜脚本（可选）"
+                autosize
+                minRows={6}
+                value={form.storyboardScript || ''}
+                onChange={(e) => setField('storyboardScript', e.currentTarget.value)}
+                placeholder="建议每行一个镜头提示词；若留空，将使用 Prompt 作为剧情主题。"
+              />
+            </>
+          )}
+          {(kind === 'composeVideo' || kind === 'storyboard' || kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') && (
             <>
               <Textarea
                 className="param-modal-field"

@@ -19,10 +19,12 @@ const REMOTE_RUN_KINDS = new Set([
   'tts',
   'subtitleAlign',
   'image',
+  'storyboardImage',
+  'imageFission',
   'textToImage',
 ])
 
-const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage'])
+const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage', 'storyboardimage', 'imagefission'])
 
 const IMAGE_MODEL_WHITELIST = new Set([
   'nano-banana',
@@ -264,12 +266,16 @@ export class CanvasService {
       'texttoimage',
       'text_to_image',
       'textToImage',
+      'storyboardimage',
+      'storyboardImage',
+      'imagefission',
+      'imageFission',
       'composevideo',
       'composeVideo',
       'video',
     ])
     if (!allowedRawTypes.has(rawType.toLowerCase())) {
-      throw new Error('当前仅支持 image/textToImage/composeVideo/video 节点')
+      throw new Error('当前仅支持 image/textToImage/storyboardImage/imageFission/composeVideo/video 节点')
     }
 
     let nodeType = rawType
@@ -282,6 +288,10 @@ export class CanvasService {
       // 兼容 AI 直接传入内部 kind 名称的情况，例如 type: "textToImage"
       textToImage: 'textToImage',
       text_to_image: 'textToImage',
+      storyboardImage: 'storyboardImage',
+      storyboardimage: 'storyboardImage',
+      imageFission: 'imageFission',
+      imagefission: 'imageFission',
     }
 
     if (logicalKinds[rawType]) {
@@ -328,6 +338,12 @@ export class CanvasService {
       case 'textToImage':
       case 'text_to_image':
         return '图像'
+      case 'storyboardImage':
+      case 'storyboardimage':
+        return '分镜图'
+      case 'imageFission':
+      case 'imagefission':
+        return '图像裂变'
       case 'video':
       case 'composeVideo':
         return '文生视频'
@@ -944,7 +960,7 @@ export class CanvasService {
 
   private static sanitizeModels(kind: string | undefined, data: Record<string, any>): Record<string, any> {
     const next = { ...data }
-    if (kind === 'image' || kind === 'textToImage') {
+    if (kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') {
       const model = typeof next.imageModel === 'string' ? next.imageModel : ''
       if (!IMAGE_MODEL_WHITELIST.has(model)) {
         next.imageModel = 'nano-banana-fast'
