@@ -11,6 +11,9 @@ type PromptSectionProps = {
   prompt: string
   setPrompt: (value: string) => void
   onUpdateNodeData: (patch: any) => void
+  placeholder?: string
+  minRows?: number
+  maxRows?: number
   suggestionsAllowed: boolean
   suggestionsEnabled: boolean
   setSuggestionsEnabled: (value: boolean) => void
@@ -65,6 +68,9 @@ export function PromptSection({
   isDarkUi,
   nodeShellText,
   onOpenPromptSamples,
+  placeholder,
+  minRows,
+  maxRows,
 }: PromptSectionProps) {
   return (
     <div className="task-node-prompt__root" style={{ position: 'relative' }}>
@@ -115,9 +121,9 @@ export function PromptSection({
       <Textarea
         className="task-node-prompt__textarea"
         autosize
-        minRows={2}
-        maxRows={6}
-        placeholder="在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)"
+        minRows={typeof minRows === 'number' ? minRows : 2}
+        maxRows={typeof maxRows === 'number' ? maxRows : 6}
+        placeholder={placeholder || '在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)'}
         value={prompt}
         onChange={(e) => {
           const el = e.currentTarget
