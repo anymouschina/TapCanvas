@@ -1713,7 +1713,7 @@ export async function uploadServerAssetFile(file: File, name?: string): Promise<
   if (typeof (file as any)?.size === 'number' && Number.isFinite((file as any).size)) {
     headers['X-File-Size'] = String((file as any).size)
   }
-  const body: any = typeof (file as any)?.stream === 'function' ? (file as any).stream() : file
+  const body: RequestInit['body'] = file
   const r = await apiFetch(url, withAuth({ method: 'POST', headers, body }))
   if (!r.ok) throw new Error(`upload asset failed: ${r.status}`)
   return r.json()
