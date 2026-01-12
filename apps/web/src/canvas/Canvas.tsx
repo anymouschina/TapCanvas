@@ -1178,7 +1178,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const pickDefaultSourceHandle = useCallback((kind?: string | null) => {
     if (!kind) return 'out-any'
     const k = kind.toLowerCase()
-    if (k === 'image' || k === 'texttoimage') return 'out-image'
+    if (k === 'image' || k === 'texttoimage' || k === 'storyboardimage' || k === 'imagefission' || k === 'mosaic') return 'out-image'
     if (k === 'composevideo' || k === 'video' || k === 'storyboard') return 'out-video'
     if (k === 'tts' || k === 'audio') return 'out-audio'
     if (k === 'subtitlealign' || k === 'subtitle') return 'out-subtitle'
@@ -1196,7 +1196,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       if (sk === 'subtitlealign' || sk === 'subtitle') return 'in-subtitle'
       return 'in-video'
     }
-    if (tk === 'image' || tk === 'texttoimage') return 'in-image'
+    if (tk === 'image' || tk === 'texttoimage' || tk === 'storyboardimage' || tk === 'imagefission' || tk === 'mosaic') return 'in-image'
     if (tk === 'tts' || tk === 'audio') return 'in-audio'
     if (tk === 'subtitlealign' || tk === 'subtitle') return 'in-subtitle'
     if (tk === 'character') return 'in-character'

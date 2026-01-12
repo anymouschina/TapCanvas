@@ -351,6 +351,16 @@ function upgradeVideoKind(node: Node): Node {
   return { ...node, data: nextData }
 }
 
+function upgradeImageFissionModel(node: Node): Node {
+  if (node.type !== 'taskNode') return node
+  const data: any = node.data || {}
+  const kind = typeof data.kind === 'string' ? data.kind.trim() : ''
+  if (kind !== 'imageFission') return node
+  const hasModel = typeof data.imageModel === 'string' && data.imageModel.trim()
+  if (hasModel) return node
+  return { ...node, data: { ...data, imageModel: 'nano-banana-pro' } }
+}
+
 function enforceNodeSelectability(node: Node): Node {
   if (node.type !== 'taskNode') return node
   const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind).trim() : ''
@@ -617,6 +627,7 @@ export const useRFStore = create<RFState>((set, get) => ({
         const hasAspect = typeof (dataExtra as any).aspect === 'string' && (dataExtra as any).aspect.trim()
         const hasSampleCount = typeof (dataExtra as any).sampleCount === 'number' && Number.isFinite((dataExtra as any).sampleCount)
         const hasImageSize = typeof (dataExtra as any).imageSize === 'string' && (dataExtra as any).imageSize.trim()
+        const hasModel = typeof (dataExtra as any).imageModel === 'string' && (dataExtra as any).imageModel.trim()
         dataExtra = {
           ...dataExtra,
           ...(hasFission
@@ -625,6 +636,7 @@ export const useRFStore = create<RFState>((set, get) => ({
           ...(hasAspect ? null : { aspect: '3:4' }),
           ...(hasSampleCount ? null : { sampleCount: 1 }),
           ...(hasImageSize ? null : { imageSize: '2K' }),
+          ...(hasModel ? null : { imageModel: 'nano-banana-pro' }),
         }
       }
 
@@ -664,7 +676,10 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (!data) return
     // support optional groups in payload
     const anyData = data as any
-    const upgradedNodes = (data.nodes || []).map(upgradeVideoKind).map(enforceNodeSelectability)
+    const upgradedNodes = (data.nodes || [])
+      .map(upgradeVideoKind)
+      .map(upgradeImageFissionModel)
+      .map(enforceNodeSelectability)
     set((s) => ({
       nodes: upgradedNodes,
       edges: data.edges,
