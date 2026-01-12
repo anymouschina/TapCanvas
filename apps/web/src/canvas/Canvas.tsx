@@ -80,7 +80,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const pasteFromClipboardAt = useRFStore(s => s.pasteFromClipboardAt)
   const importWorkflow = useRFStore(s => s.importWorkflow)
   const formatTree = useRFStore(s => s.formatTree)
-  const runSelected = useRFStore(s => s.runSelected)
   const cancelNode = useRFStore(s => s.cancelNode)
   const rf = useReactFlow()
   const theme = useMantineTheme()
@@ -2073,7 +2072,16 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
                   <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</Button>
                   <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</Button>
                   <Divider className="tc-canvas__context-menu-divider" my={2} />
-                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { runSelected(); setMenu(null) }}>运行该节点</Button>
+                  <Button
+                    className="tc-canvas__context-menu-action"
+                    variant="subtle"
+                    onClick={async () => {
+                      await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: new Set([menu.id!]) })
+                      setMenu(null)
+                    }}
+                  >
+                    运行该节点
+                  </Button>
                   <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</Button>
                 </>
               )

@@ -81,6 +81,14 @@ function cloneGraph(nodes: Node[], edges: Edge[]) {
 type TreeLayoutPoint = { x: number; y: number }
 type TreeLayoutSize = { w: number; h: number }
 
+const UNSELECTABLE_TASK_NODE_KINDS = new Set([
+  'image',
+  'textToImage',
+  'mosaic',
+  'storyboardImage',
+  'imageFission',
+])
+
 function parseNumericStyle(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
@@ -347,6 +355,18 @@ function upgradeVideoKind(node: Node): Node {
   return { ...node, data: nextData }
 }
 
+function enforceNodeSelectability(node: Node): Node {
+  if (node.type !== 'taskNode') return node
+  const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind).trim() : ''
+  if (!kind || !UNSELECTABLE_TASK_NODE_KINDS.has(kind)) return node
+  return {
+    ...node,
+    selectable: false,
+    focusable: false,
+    selected: false,
+  }
+}
+
 function getRemixTargetIdFromNode(node?: Node) {
   const data = node?.data as any
   if (!data) return null
@@ -398,7 +418,7 @@ export const useRFStore = create<RFState>((set, get) => ({
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
-    const updated = autoFitGroupNodes(applyNodeChanges(changes, s.nodes))
+    const updated = autoFitGroupNodes(applyNodeChanges(changes, s.nodes)).map(enforceNodeSelectability)
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
@@ -554,14 +574,14 @@ export const useRFStore = create<RFState>((set, get) => ({
       data: { label: finalLabel, ...dataExtra },
     }
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: [...s.nodes, node], nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
+    return { nodes: [...s.nodes, enforceNodeSelectability(node)], nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
   }),
   reset: () => set({ nodes: [], edges: [], nextId: 1 }),
   load: (data) => {
     if (!data) return
     // support optional groups in payload
     const anyData = data as any
-    const upgradedNodes = (data.nodes || []).map(upgradeVideoKind)
+    const upgradedNodes = (data.nodes || []).map(upgradeVideoKind).map(enforceNodeSelectability)
     set((s) => ({
       nodes: upgradedNodes,
       edges: data.edges,
@@ -713,7 +733,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       .filter((e) => e.source !== e.target)
 
     return {
-      nodes: [...s.nodes, ...newNodes],
+      nodes: [...s.nodes, ...newNodes.map(enforceNodeSelectability)],
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
@@ -755,7 +775,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       position: { x: n.position.x + 24, y: n.position.y + 24 },
       selected: false,
     }
-    return { nodes: [...s.nodes, dup], nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
+    return { nodes: [...s.nodes, enforceNodeSelectability(dup)], nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
   }),
   pasteFromClipboardAt: (pos) => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
@@ -767,7 +787,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       const newId = genNodeId()
       idMap.set(n.id, newId)
       const upgraded = upgradeVideoKind(n)
-      return { ...upgraded, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } }
+      return enforceNodeSelectability({ ...upgraded, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } })
     })
     const newEdges: Edge[] = s.clipboard.edges.map((e) => ({
       ...e,
@@ -798,7 +818,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       const newId = genNodeId()
       idMap.set(n.id, newId)
       const upgraded = upgradeVideoKind(n)
-      return {
+      return enforceNodeSelectability({
         ...upgraded,
         id: newId,
         selected: false,
@@ -813,7 +833,7 @@ export const useRFStore = create<RFState>((set, get) => ({
           canceled: undefined,
           lastError: undefined
         }
-      }
+      })
     })
     const newEdges: Edge[] = workflowData.edges.map((e) => ({
       ...e,
@@ -832,7 +852,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     }
   }),
   selectAll: () => set((s) => ({
-    nodes: s.nodes.map(n => ({ ...n, selected: true })),
+    nodes: s.nodes.map(n => ({ ...n, selected: n.selectable === false ? false : true })),
     edges: s.edges.map(e => ({ ...e, selected: true })),
   })),
   clearSelection: () => set((s) => ({
@@ -840,7 +860,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     edges: s.edges.map(e => ({ ...e, selected: false })),
   })),
   invertSelection: () => set((s) => ({
-    nodes: s.nodes.map(n => ({ ...n, selected: !n.selected })),
+    nodes: s.nodes.map(n => ({ ...n, selected: n.selectable === false ? false : !n.selected })),
     edges: s.edges.map(e => ({ ...e, selected: !e.selected })),
   })),
   addGroupForSelection: (name) => set((s) => {

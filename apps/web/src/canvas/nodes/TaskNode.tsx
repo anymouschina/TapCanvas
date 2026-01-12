@@ -1713,7 +1713,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     })
   }
 
-  const isImageNode = kind === 'image'
+  const isImageNode =
+    kind === 'image' ||
+    kind === 'textToImage' ||
+    kind === 'storyboardImage' ||
+    kind === 'imageFission' ||
+    kind === 'mosaic'
   const hideImageMeta = isImageNode && !selected
   const isImageExpired = Boolean((data as any)?.expired || (data as any)?.imageExpired)
   const showImageStateOverlay = Boolean(isImageNode && (status === 'running' || status === 'queued' || isImageExpired))
