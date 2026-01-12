@@ -81,13 +81,9 @@ function cloneGraph(nodes: Node[], edges: Edge[]) {
 type TreeLayoutPoint = { x: number; y: number }
 type TreeLayoutSize = { w: number; h: number }
 
-const UNSELECTABLE_TASK_NODE_KINDS = new Set([
-  'image',
-  'textToImage',
-  'mosaic',
-  'storyboardImage',
-  'imageFission',
-])
+// 允许图像类节点可选中（用于展示提示词/模型等面板与交互）。
+// 若未来有确实需要禁用选择的 taskNode kind，可再加入该集合。
+const UNSELECTABLE_TASK_NODE_KINDS = new Set<string>()
 
 function parseNumericStyle(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -358,12 +354,24 @@ function upgradeVideoKind(node: Node): Node {
 function enforceNodeSelectability(node: Node): Node {
   if (node.type !== 'taskNode') return node
   const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind).trim() : ''
-  if (!kind || !UNSELECTABLE_TASK_NODE_KINDS.has(kind)) return node
+  if (!kind) return node
+  if (UNSELECTABLE_TASK_NODE_KINDS.has(kind)) {
+    return {
+      ...node,
+      selectable: false,
+      focusable: false,
+      selected: false,
+    }
+  }
+
+  // 兼容旧数据：之前部分节点会被强制设置为不可选中；这里在加载/创建时恢复可选中状态。
+  const nextSelectable = node.selectable === false ? true : undefined
+  const nextFocusable = (node as any).focusable === false ? true : undefined
+  if (nextSelectable == null && nextFocusable == null) return node
   return {
     ...node,
-    selectable: false,
-    focusable: false,
-    selected: false,
+    ...(nextSelectable != null ? { selectable: nextSelectable } : null),
+    ...(nextFocusable != null ? { focusable: nextFocusable } : null),
   }
 }
 
