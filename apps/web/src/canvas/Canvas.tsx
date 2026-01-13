@@ -843,6 +843,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
       const tryConnectWithHandle = (handleEl: HTMLElement | null, opts?: { silent?: boolean }) => {
         if (!handleEl) return false
+        // Wide handles are kept only for legacy edge anchoring; never use them for new connections.
+        if (handleEl.classList.contains('tc-handle--wide')) return false
         const meta = getHandleMeta(handleEl)
         if (!meta) return false
         const sourceNodeId = from.nodeId
@@ -861,8 +863,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       const pickHandleForNode = (nodeEl: HTMLElement | null) => {
         if (!nodeEl) return null
         const handlesInNode = Array.from(
-          nodeEl.querySelectorAll('.tc-handle.react-flow__handle-target, .react-flow__handle-target')
-        ) as HTMLElement[]
+          nodeEl.querySelectorAll('.tc-handle.react-flow__handle-target, .react-flow__handle-target'),
+        ).filter((el) => !el.classList.contains('tc-handle--wide')) as HTMLElement[]
         if (!handlesInNode.length) return null
         if (!connectingType) return handlesInNode[0]
         const exact = handlesInNode.find(el => (el.getAttribute('data-handle-type') || '') === connectingType)
@@ -894,7 +896,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         if (tryConnectWithHandle(snapTargetRef.current.el)) return true
       }
 
-      const handles = Array.from(document.querySelectorAll('.react-flow__handle-target')) as HTMLElement[]
+      const handles = Array.from(document.querySelectorAll('.react-flow__handle-target'))
+        .filter((el) => !(el as HTMLElement).classList.contains('tc-handle--wide')) as HTMLElement[]
       if (!handles.length) return false
 
       const scored: { el: HTMLElement; dist: number }[] = []
@@ -1059,7 +1062,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const from = connectFromRef.current
     if (!from) return null
 
-    const targetHandles = Array.from(document.querySelectorAll('.react-flow__handle-target')) as HTMLElement[]
+    const targetHandles = Array.from(document.querySelectorAll('.react-flow__handle-target'))
+      .filter((el) => !(el as HTMLElement).classList.contains('tc-handle--wide')) as HTMLElement[]
     if (!targetHandles.length) return null
 
     const candidates: SnapTarget[] = []
@@ -1249,8 +1253,17 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     return true
   }, [createsCycle, edges, handleConnect, nodes, pickDefaultSourceHandle, pickDefaultTargetHandle])
 
-  const onNodeClick = useCallback((_evt: React.MouseEvent, node: any) => {
+  const onNodeClick = useCallback((evt: React.MouseEvent, node: any) => {
     if (!node?.id) return
+    // “点击节点两步连线”容易误触（尤其在刚创建新节点后点击查看参数时）。
+    // 仅在按住 Alt/Option 时启用该模式；普通点击将视为取消待连线状态。
+    if (!evt.altKey) {
+      if (tapConnectSource) {
+        setTapConnectSource(null)
+        setConnectingType(null)
+      }
+      return
+    }
     const pending = tapConnectSource
     if (pending?.nodeId === node.id) {
       setTapConnectSource(null)

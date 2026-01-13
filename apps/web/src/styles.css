@@ -1,8 +1,9 @@
 :root {
   color-scheme: light dark;
-  --handle-hit-outside: 32px;
-  --handle-hit-inside: 10px;
-  --handle-hit-vertical: 30px;
+  /* 连线句柄热区：越大越容易误触；适当收紧以提升精确度 */
+  --handle-hit-outside: 20px;
+  --handle-hit-inside: 8px;
+  --handle-hit-vertical: 18px;
   --handle-color-image: #7dd3fc;
   --handle-color-audio: #34d399;
   --handle-color-subtitle: #facc15;
@@ -338,6 +339,7 @@ body {
   border-style: dashed;
   box-shadow: none;
   background: transparent;
+  pointer-events: none;
 }
 .tc-handle-layer .tc-handle.tc-handle--wide::before {
   display: none;
