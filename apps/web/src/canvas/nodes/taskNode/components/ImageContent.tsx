@@ -75,6 +75,8 @@ export function ImageContent(props: ImageContentProps) {
   const frameBorderColor = isDarkUi
     ? 'rgba(255,255,255,0.12)'
     : 'rgba(15,23,42,0.12)'
+  const frameBorderWidth = hasPrimaryImage ? 1 : 1.5
+  const frameBorderStyle = hasPrimaryImage ? 'solid' : 'dashed'
   const frameBackground = isDarkUi
     ? 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))'
     : 'linear-gradient(135deg, rgba(255,255,255,0.88), rgba(255,255,255,0.72))'
@@ -156,7 +158,7 @@ export function ImageContent(props: ImageContentProps) {
           overflow: !isExpanded && hasVariants ? 'visible' : 'hidden',
           width: '100%',
           height: '100%',
-          border: `1px solid ${frameBorderColor}`,
+          border: `${frameBorderWidth}px ${frameBorderStyle} ${frameBorderColor}`,
           background: frameBackground,
           backdropFilter: 'blur(18px)',
           WebkitBackdropFilter: 'blur(18px)',
@@ -241,9 +243,9 @@ export function ImageContent(props: ImageContentProps) {
             className="task-node-image__placeholder"
             style={{
               position: 'absolute',
-              inset: 10,
-              borderRadius: frameRadius - 10,
-              border: `1.5px dashed ${frameBorderColor}`,
+              inset: 0,
+              borderRadius: frameRadius,
+              border: 'none',
               background: subtleOverlayBackground,
               display: 'flex',
               alignItems: 'center',

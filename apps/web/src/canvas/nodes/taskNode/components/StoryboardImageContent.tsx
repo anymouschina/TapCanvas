@@ -61,14 +61,15 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
     themeWhite,
   } = props
 
+  const coverUrl = (primaryImageUrl || imageResults[imagePrimaryIndex]?.url || '').trim() || null
   const isDarkUi = nodeShellText === themeWhite
   const frameRadius = 18
   const frameBorderColor = isDarkUi ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.12)'
+  const frameBorderWidth = coverUrl ? 1 : 1.5
+  const frameBorderStyle = coverUrl ? 'solid' : 'dashed'
   const frameBackground = isDarkUi
     ? 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))'
     : 'linear-gradient(135deg, rgba(255,255,255,0.88), rgba(255,255,255,0.72))'
-
-  const coverUrl = (primaryImageUrl || imageResults[imagePrimaryIndex]?.url || '').trim() || null
   const normalizedCount = Math.max(4, Math.min(16, Math.floor(storyboardCount || 4)))
 
   const shotItems = React.useMemo(() => {
@@ -135,7 +136,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
           height: '100%',
           borderRadius: frameRadius,
           overflow: !isExpanded && hasVariants ? 'visible' : 'hidden',
-          border: `1px solid ${frameBorderColor}`,
+          border: `${frameBorderWidth}px ${frameBorderStyle} ${frameBorderColor}`,
           background: frameBackground,
           backdropFilter: 'blur(18px)',
           WebkitBackdropFilter: 'blur(18px)',
@@ -208,9 +209,9 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
             className="task-node-storyboard-image__placeholder"
             style={{
               position: 'absolute',
-              inset: 10,
-              borderRadius: frameRadius - 10,
-              border: `1.5px dashed ${frameBorderColor}`,
+              inset: 0,
+              borderRadius: frameRadius,
+              border: 'none',
               background: subtleOverlayBackground,
               display: 'flex',
               alignItems: 'center',
