@@ -38,7 +38,16 @@ app.use(
 	cors({
 		origin: (origin) => origin || "*",
 		allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-		allowHeaders: ["Content-Type", "Authorization", "Accept", "Range"],
+		// Keep in sync with frontend requests (e.g. /assets/upload sends X-File-Name/X-File-Size).
+		allowHeaders: [
+			"Content-Type",
+			"Authorization",
+			"Accept",
+			"Range",
+			"X-File-Name",
+			"X-File-Size",
+			"X-Tap-No-Retry",
+		],
 		credentials: true,
 	}),
 );
