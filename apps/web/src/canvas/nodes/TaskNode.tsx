@@ -1804,6 +1804,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     return Math.max(4, Math.min(16, Math.floor(raw)))
   }, [data, kind])
 
+  const storyboardImageAspectRatio =
+    kind === 'storyboardImage' && String((data as any)?.storyboardAspectRatio || '16:9') === '9:16'
+      ? '9:16'
+      : '16:9'
+  const storyboardImageStyle = kind === 'storyboardImage' ? String((data as any)?.storyboardStyle || 'realistic') : 'realistic'
+
   const imageProps = {
     nodeId: id,
     nodeKind: kind,
@@ -2032,6 +2038,137 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   )
 
   const [storyboardScriptLoading, setStoryboardScriptLoading] = React.useState(false)
+  const [storyboardImageScriptLoading, setStoryboardImageScriptLoading] = React.useState(false)
+
+  const handleGenerateStoryboardImageScript = React.useCallback(async () => {
+    if (viewOnly) return
+    if (kind !== 'storyboardImage') return
+    if (storyboardImageScriptLoading) return
+    if (status === 'running' || status === 'queued') return
+
+    const desiredCount = Math.max(4, Math.min(16, Math.floor(storyboardCount || 4)))
+    const aspectRatio = storyboardImageAspectRatio
+
+    const mentionList = connectedCharacterOptions
+      .map((opt) => String(opt.username || '').replace(/^@/, '').trim())
+      .filter(Boolean)
+      .map((u) => `@${u}`)
+      .join(' ')
+
+    const refText = typeof upstreamText === 'string' ? upstreamText.trim() : ''
+    const theme = prompt.trim() || refText || String((data as any)?.label || '').trim()
+    if (!theme) {
+      toast('请先输入主题或连接参考文本', 'warning')
+      return
+    }
+
+    const styleLabel = (() => {
+      switch (storyboardImageStyle) {
+        case 'comic':
+          return '美漫'
+        case 'sketch':
+          return '草图'
+        case 'strip':
+          return '条漫'
+        case 'realistic':
+        default:
+          return '写实'
+      }
+    })()
+
+    const systemPrompt = [
+      '你是一个分镜脚本生成助手。',
+      '你必须严格按用户指定格式输出；不要解释、不要 Markdown、不要代码块。',
+      `输出必须恰好 ${desiredCount} 行，每行都必须从 "镜头 i：" 开始（i 从 1 到 ${desiredCount}）。`,
+      '每行只写该镜头的画面提示词，尽量一行写完，不要换行。',
+      '全文保持中文。',
+      '@username 前后必须各留一个空格（例如："... @alice ..."）。',
+    ].join('\n')
+
+    const promptText = [
+      `目标镜头数：${desiredCount}`,
+      `画幅比例：${aspectRatio}`,
+      `风格倾向：${styleLabel}`,
+      refText ? `参考文本：${refText}` : null,
+      mentionList ? `可用角色：${mentionList}` : null,
+      '',
+      '主题/剧情：',
+      theme,
+      '',
+      '请生成分镜脚本，严格输出格式（示例，仅示意格式）：',
+      '镜头 1：……',
+      '镜头 2：……',
+      '（只输出脚本正文，不要添加任何解释或多余内容）',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const extractShotDescriptions = (text: string) => {
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      const descriptions: string[] = []
+      for (const line of lines) {
+        const match =
+          line.match(/^(?:[-*]\s*)?(?:镜头|分镜)\s*(\d+)?\s*[：:.\u3001-]?\s*(.+)$/) ??
+          line.match(/^\s*(\d+)[.)\u3001-]\s*(.+)$/)
+        const desc = (match?.[2] ?? line).trim()
+        if (desc) descriptions.push(desc)
+      }
+      return descriptions
+    }
+
+    try {
+      setStoryboardImageScriptLoading(true)
+      const persist = useUIStore.getState().assetPersistenceEnabled
+      const task = await runTaskByVendor('gemini', {
+        kind: 'prompt_refine',
+        prompt: promptText,
+        extras: {
+          systemPrompt,
+          modelKey: 'gemini-2.5-flash',
+          persistAssets: persist,
+        },
+      })
+      const raw = extractTextFromTaskResult(task).trim()
+      if (!raw) {
+        toast('模型未返回分镜脚本，请稍后重试', 'error')
+        return
+      }
+
+      const descriptions = extractShotDescriptions(raw)
+      const fallbackBase = descriptions[0] || theme
+      const scriptLines = Array.from({ length: desiredCount }, (_, idx) => {
+        const desc = (descriptions[idx] || fallbackBase).trim()
+        return `镜头 ${idx + 1}：${desc}`
+      })
+      const script = scriptLines.join('\n')
+
+      setPrompt(script)
+      updateNodeData(id, { prompt: script })
+      toast('已生成分镜脚本', 'success')
+    } catch (error: any) {
+      const message = typeof error?.message === 'string' ? error.message : '生成脚本失败'
+      toast(message, 'error')
+    } finally {
+      setStoryboardImageScriptLoading(false)
+    }
+  }, [
+    connectedCharacterOptions,
+    data,
+    id,
+    kind,
+    prompt,
+    status,
+    storyboardCount,
+    storyboardImageAspectRatio,
+    storyboardImageScriptLoading,
+    storyboardImageStyle,
+    upstreamText,
+    updateNodeData,
+    viewOnly,
+  ])
 
   const handleGenerateStoryboardScript = React.useCallback(async () => {
     if (viewOnly) return
@@ -3684,7 +3821,10 @@ const rewritePromptWithCharacters = React.useCallback(
                   handleSystemPromptChange={handleSystemPromptChange}
                   isDarkUi={isDarkUi}
                   nodeShellText={nodeShellText}
-                  onOpenPromptSamples={() => setPromptSamplesOpen(true)}
+                  onGenerateStoryboardScript={kind === 'storyboardImage' ? handleGenerateStoryboardImageScript : undefined}
+                  generateStoryboardScriptLoading={kind === 'storyboardImage' ? storyboardImageScriptLoading : undefined}
+                  generateStoryboardScriptDisabled={viewOnly || status === 'running' || status === 'queued'}
+                  onOpenPromptSamples={kind === 'storyboardImage' ? undefined : () => setPromptSamplesOpen(true)}
                 />
               )}
             </>

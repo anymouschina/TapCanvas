@@ -36,6 +36,9 @@ type PromptSectionProps = {
   isDarkUi: boolean
   nodeShellText: string
   onOpenPromptSamples?: () => void
+  onGenerateStoryboardScript?: () => void
+  generateStoryboardScriptLoading?: boolean
+  generateStoryboardScriptDisabled?: boolean
 }
 
 export function PromptSection({
@@ -68,10 +71,21 @@ export function PromptSection({
   isDarkUi,
   nodeShellText,
   onOpenPromptSamples,
+  onGenerateStoryboardScript,
+  generateStoryboardScriptLoading,
+  generateStoryboardScriptDisabled,
   placeholder,
   minRows,
   maxRows,
 }: PromptSectionProps) {
+  const hasStoryboardScriptGenerator = typeof onGenerateStoryboardScript === 'function'
+  const brainActive = hasStoryboardScriptGenerator ? true : suggestionsEnabled
+  const brainTitle = hasStoryboardScriptGenerator
+    ? 'AI 生成分镜脚本'
+    : suggestionsEnabled
+      ? '智能建议已启用 (Ctrl/Cmd+Space 切换)'
+      : '智能建议已禁用 (Ctrl/Cmd+Space 启用)'
+
   return (
     <div className="task-node-prompt__root" style={{ position: 'relative' }}>
       <div
@@ -104,17 +118,25 @@ export function PromptSection({
           className="task-node-prompt__toolbar-button"
           variant="subtle"
           size="xs"
-          onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
-          title={suggestionsEnabled ? '智能建议已启用 (Ctrl/Cmd+Space 切换)' : '智能建议已禁用 (Ctrl/Cmd+Space 启用)'}
+          onClick={() => {
+            if (hasStoryboardScriptGenerator) {
+              onGenerateStoryboardScript?.()
+              return
+            }
+            setSuggestionsEnabled(!suggestionsEnabled)
+          }}
+          title={brainTitle}
+          loading={hasStoryboardScriptGenerator ? !!generateStoryboardScriptLoading : false}
+          disabled={hasStoryboardScriptGenerator ? !!generateStoryboardScriptDisabled : false}
           style={{
-            background: suggestionsEnabled ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
+            background: brainActive ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
             border: 'none',
           }}
         >
           <IconBrain
             className="task-node-prompt__toolbar-icon"
             size={12}
-            style={{ color: suggestionsEnabled ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }}
+            style={{ color: brainActive ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }}
           />
         </ActionIcon>
       </div>
