@@ -202,8 +202,8 @@ body {
 
 .tc-task-node__gen-overlay {
   position: absolute;
-  inset: 10px;
-  border-radius: 18px;
+  inset: 0;
+  border-radius: 22px;
   z-index: 40;
   pointer-events: none;
   background: var(--tc-gen-overlay-bg);
