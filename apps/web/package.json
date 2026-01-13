@@ -6,7 +6,10 @@
     "dev": "vite",
     "build": "vite build --mode production",
     "preview": "vite preview",
-    "test": "echo 'No tests yet' && exit 0"
+    "test": "echo 'No tests yet' && exit 0",
+    "meta:update": "node ./scripts/meta-update.mjs",
+    "meta:describe": "node \"${CODEX_HOME:-$HOME/.codex}/Skills/ai-metadata-sync/scripts/describe-files.mjs\"",
+    "meta:sync": "node \"${CODEX_HOME:-$HOME/.codex}/Skills/ai-metadata-sync/scripts/sync-repo.mjs\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.45",

@@ -1,0 +1,951 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-01-13T02:24:38.440Z",
+  "files": {
+    "src/App.tsx": {
+      "path": "src/App.tsx",
+      "sha256": "7fc5b897299dc4379d26bae2d2c75328cadc5c4c88ffb7e4ddac3909c857355e",
+      "feature": "module",
+      "description": "Module `App` (module). Exports: default. Ext deps: @mantine/core, @mantine/notifications, @tabler/icons-react, @xyflow/react, react | Local deps: src/KeyboardShortcuts.tsx, src/api/server.ts, src/auth/GithubGate.tsx, src/auth/store.ts",
+      "needsReview": true
+    },
+    "src/KeyboardShortcuts.tsx": {
+      "path": "src/KeyboardShortcuts.tsx",
+      "sha256": "7084255d35f5f67d3ef9b9b470b0a90048866c574378e9065573c42461b47fd7",
+      "feature": "module",
+      "description": "Module `KeyboardShortcuts` (module). Exports: default. Ext deps: react | Local deps: src/canvas/store.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ai/canvasService.ts": {
+      "path": "src/ai/canvasService.ts",
+      "sha256": "39f66ac0276f1495b502a2ebebc28f0b4f446c718c2768df746bfcc9089f14a7",
+      "feature": "module",
+      "description": "Module `canvasService` (module). Exports: CanvasService, functionHandlers. Ext deps: @xyflow/react | Local deps: src/ai/types.ts, src/api/server.ts, src/canvas/store.ts, src/runner/mockRunner.ts",
+      "needsReview": true
+    },
+    "src/ai/langgraph-chat/LangGraphChatOverlay.tsx": {
+      "path": "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+      "sha256": "c0d2d103cfd62fc0b73182a9ca2e86e42726872c549d42ff12e2b2955559d52f",
+      "feature": "module",
+      "description": "Module `LangGraphChatOverlay` (module). Exports: default, LangGraphChatOverlay. Ext deps: @langchain/langgraph-sdk, @langchain/langgraph-sdk/react, @mantine/core, @tabler/icons-react, react, react-markdown | Local deps: src/ai/canvasService.ts, src/ai/langgraph-chat/buildNodeIntentPrompt.ts, src/ai/langgraph-chat/submitEvent.ts, src/api/server.ts",
+      "needsReview": true
+    },
+    "src/ai/langgraph-chat/buildNodeIntentPrompt.ts": {
+      "path": "src/ai/langgraph-chat/buildNodeIntentPrompt.ts",
+      "sha256": "0984bf072fed798b0540ea861eef798933dc338bb398154be7c37d3e90276184",
+      "feature": "module",
+      "description": "Module `buildNodeIntentPrompt` (module). Exports: NodeIntentMode, buildNodeIntentPrompt, buildNodeRefToken, buildNodeRefTokenFromNode. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/ai/langgraph-chat/submitEvent.ts": {
+      "path": "src/ai/langgraph-chat/submitEvent.ts",
+      "sha256": "ecd3ba274f77a9c49a0302dc847ef0bd9cba832b6047212a2d66854c17025cf7",
+      "feature": "module",
+      "description": "Module `submitEvent` (module). Exports: LANGGRAPH_SUBMIT_EVENT, LangGraphChatEventDetail, LangGraphSubmitEffort, prefillLangGraphChat, prefillLangGraphChatWithRefs, submitToLangGraphChat. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/ai/types.ts": {
+      "path": "src/ai/types.ts",
+      "sha256": "a00f78f6cf34dbfcdeda553b91fc8ce9cfae4cbd857e212f11306e1f0291639b",
+      "feature": "module",
+      "description": "Module `types` (module). Exports: FunctionResult. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/api/server.ts": {
+      "path": "src/api/server.ts",
+      "sha256": "30a32a12b4acdb764327abdf23b75fd5c097e0a6080b3f48dcccd9bea4d6b0f9",
+      "feature": "module",
+      "description": "Module `server` (module). Exports: API_BASE, AgentContinueInput, AgentContinueOutput, AvailableModelDto, ChatHistoryDto, ChatHistoryMessageDto. Ext deps: @xyflow/react | Local deps: src/auth/store.ts",
+      "needsReview": true
+    },
+    "src/api/taskProgress.ts": {
+      "path": "src/api/taskProgress.ts",
+      "sha256": "78a573fed685b1ba1d78f79a1a2ea133c559b886a86a417991d165766abe3562",
+      "feature": "module",
+      "description": "Module `taskProgress` (module). Exports: TaskProgressEventMessage, subscribeTaskProgress. Local deps: src/api/server.ts",
+      "needsReview": true
+    },
+    "src/api/toolEvents.ts": {
+      "path": "src/api/toolEvents.ts",
+      "sha256": "26b97b3d2959f89a9f82626589e2b9c144188ee5aa3fc2790102aae8ec72f441",
+      "feature": "module",
+      "description": "Module `toolEvents` (module). Exports: ToolEventMessage, extractPlanUpdate, extractQaGuardrails, extractThinkingEvent, isWebSearchEvent, mapToolEventToCanvasOperation. Local deps: src/api/server.ts, src/types/canvas-intelligence.ts",
+      "needsReview": true
+    },
+    "src/app/api/ai/chat/route.ts": {
+      "path": "src/app/api/ai/chat/route.ts",
+      "sha256": "d97d37fb6222e07a833002ffe018f0ae006e33eb458e65b589ce9d5534e36a02",
+      "feature": "module",
+      "description": "Module `route` (module). Exports: POST, runtime. Ext deps: @ai-sdk/anthropic, @ai-sdk/google, @ai-sdk/openai, ai, next/server",
+      "needsReview": true
+    },
+    "src/assets/registry.ts": {
+      "path": "src/assets/registry.ts",
+      "sha256": "f344d3cb9ebb4f5b2efae08ee1000446a1d21ec70c452a631506bd5cb453cbe6",
+      "feature": "module",
+      "description": "Module `registry` (module). Exports: AssetRecord, deleteAsset, getAsset, listAssets, renameAsset, saveAsset. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/auth/GithubGate.tsx": {
+      "path": "src/auth/GithubGate.tsx",
+      "sha256": "72993a2f94b3e2f11e10439323f0190ca6a9a5068dd3aed4b518944bdb16aace",
+      "feature": "module",
+      "description": "Module `GithubGate` (module). Exports: default. Ext deps: @mantine/core, react | Local deps: src/api/server.ts, src/auth/store.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/auth/fetch401Interceptor.ts": {
+      "path": "src/auth/fetch401Interceptor.ts",
+      "sha256": "e813ef5b1362f268cb294874e9c5205769f4336279fc5744b49b8c7987801a9b",
+      "feature": "module",
+      "description": "Module `fetch401Interceptor` (module). Exports: installAuth401Interceptor. Local deps: src/api/server.ts, src/auth/store.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/auth/store.ts": {
+      "path": "src/auth/store.ts",
+      "sha256": "fa7857b11551cacc8a1978e616de0b2c1f41c8e5200e7a958dbc643e7809ac84",
+      "feature": "module",
+      "description": "Module `store` (module). Exports: User, getAuthToken, getAuthTokenFromCookie, useAuth. Ext deps: zustand",
+      "needsReview": true
+    },
+    "src/canvas/Canvas.tsx": {
+      "path": "src/canvas/Canvas.tsx",
+      "sha256": "b0a73e0cf9c815ba88ced098e89cda3a2aebcc9c18c9d4efb3027c5607e3634d",
+      "feature": "module",
+      "description": "Module `Canvas` (module). Exports: default. Ext deps: @mantine/core, @xyflow/react, @xyflow/react/dist/style.css, react, zod/v4 | Local deps: src/api/server.ts, src/api/taskProgress.ts, src/auth/store.ts, src/canvas/edges/OrthTypedEdge.tsx",
+      "needsReview": true
+    },
+    "src/canvas/components/PromptSampleDrawer.tsx": {
+      "path": "src/canvas/components/PromptSampleDrawer.tsx",
+      "sha256": "d7575af590a4a043fc3d6778ea490327b3b301fa942483c1e2ef0997d8a93090",
+      "feature": "module",
+      "description": "Module `PromptSampleDrawer` (module). Exports: PromptSampleDrawer, PromptSampleDrawerProps. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/SystemPromptPanel.tsx": {
+      "path": "src/canvas/components/SystemPromptPanel.tsx",
+      "sha256": "1f72b2b88ddf0e53c3cf4734d01085be4ac7340b2177544ca0f13d0c1a467ab9",
+      "feature": "module",
+      "description": "Module `SystemPromptPanel` (module). Exports: SystemPromptPanel. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/systemPromptPresets.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/GitHubLanguageButton.tsx": {
+      "path": "src/canvas/components/shared/GitHubLanguageButton.tsx",
+      "sha256": "ec2e42690e7e706cf62161cc318f856d5a4a1294f96ae2a77c0a0a1cab01f79d",
+      "feature": "module",
+      "description": "Module `GitHubLanguageButton` (module). Exports: default, CompactGitHubLanguageButton, FixedGitHubLanguageButton, GitHubLanguageButton, SimpleGitHubLanguageButton. Ext deps: react | Local deps: src/canvas/i18n/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/LanguageSwitcher.tsx": {
+      "path": "src/canvas/components/shared/LanguageSwitcher.tsx",
+      "sha256": "259279b625d313aac8557ac27ce3c1cfaebc02b5957210fdfad35e67b50cd53b",
+      "feature": "module",
+      "description": "Module `LanguageSwitcher` (module). Exports: default, LanguageSwitcher, useLanguageExample. Ext deps: react | Local deps: src/canvas/i18n/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/Modal/BaseModal.tsx": {
+      "path": "src/canvas/components/shared/Modal/BaseModal.tsx",
+      "sha256": "6e841f2a197b8d0a0300d84e4471b05e605f0bfff9157e09d21c0f3de5377405",
+      "feature": "module",
+      "description": "Module `BaseModal` (module). Exports: default, BaseModal, BaseModalProps. Ext deps: react, react-dom",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/Modal/NodeConfigModal.tsx": {
+      "path": "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+      "sha256": "84b4c5c288bf3a45654681cb46d08ff5141aef6d3eab2da900c056401e8d9a3b",
+      "feature": "module",
+      "description": "Module `NodeConfigModal` (module). Exports: default, NodeConfigModal, NodeConfigModalProps. Ext deps: react | Local deps: src/canvas/components/shared/Modal/BaseModal.tsx, src/canvas/utils/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/NodeBase/NodeBase.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+      "sha256": "4634a5d57de63f4eeb99399b69434a8bfca1bbe2d1d7807243b56d105d167bdc",
+      "feature": "module",
+      "description": "Module `NodeBase` (module). Exports: default, NodeBase. Ext deps: @xyflow/react, react | Local deps: src/canvas/components/shared/NodeBase/NodeContent.tsx, src/canvas/components/shared/NodeBase/NodeHandles.tsx, src/canvas/components/shared/NodeBase/NodeHeader.tsx, src/canvas/utils/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/NodeBase/NodeBase.types.ts": {
+      "path": "src/canvas/components/shared/NodeBase/NodeBase.types.ts",
+      "sha256": "887b72eb360efff24e6ec7f289cb0e391fd059df1637c596345663ceac7e0579",
+      "feature": "module",
+      "description": "Module `NodeBase.types` (module). Exports: NodeBaseProps, NodeConfigModalProps, NodeContentProps, NodeData, NodeHandlesProps, NodeHeaderProps. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/NodeBase/NodeContent.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+      "sha256": "0b285cc7878da7de4b3a208e097d489fcfe5018f9f1a420ab2823d2f190edd69",
+      "feature": "module",
+      "description": "Module `NodeContent` (module). Exports: default, NodeContent. Ext deps: react | Local deps: src/canvas/components/shared/Modal/NodeConfigModal.tsx, src/canvas/utils/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/NodeBase/NodeHandles.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+      "sha256": "da5a02af77c40619c44a3776cfdd44604f9f61d53a1f449e72fb84c0d585e61f",
+      "feature": "module",
+      "description": "Module `NodeHandles` (module). Exports: default, NodeHandles. Ext deps: @xyflow/react, react | Local deps: src/canvas/utils/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/NodeBase/NodeHeader.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeHeader.tsx",
+      "sha256": "2865cb60446e2c8ee751dc61b5d886ca4974df1df0fbfbcaf8f301c2aefbf94e",
+      "feature": "module",
+      "description": "Module `NodeHeader` (module). Exports: default, NodeHeader. Ext deps: react | Local deps: src/canvas/utils/index.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/VideoRealismTips.tsx": {
+      "path": "src/canvas/components/shared/VideoRealismTips.tsx",
+      "sha256": "7b5cecb6bf84ede440475cfac2e42ff03f97d248f84668f7cc3666c734eed70c",
+      "feature": "module",
+      "description": "Module `VideoRealismTips` (module). Exports: VideoRealismTips, VideoRealismTipsProps. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/creative/videoRealism.ts",
+      "needsReview": true
+    },
+    "src/canvas/components/shared/index.ts": {
+      "path": "src/canvas/components/shared/index.ts",
+      "sha256": "42947664b5b7fbfecbf29beffce3dfa71d7e404f252c542c1a25d2bde196ed9d",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: BaseModal, NodeBase, NodeConfigModal, NodeContent, NodeHandles, NodeHeader. Local deps: src/canvas/components/shared/Modal/BaseModal.tsx, src/canvas/components/shared/Modal/NodeConfigModal.tsx, src/canvas/components/shared/NodeBase/NodeBase.tsx, src/canvas/components/shared/NodeBase/NodeContent.tsx",
+      "needsReview": true
+    },
+    "src/canvas/constants.ts": {
+      "path": "src/canvas/constants.ts",
+      "sha256": "99013b1ca438b4a4e17f1faaa09bd7ebbee66b7c4c6559b7133adad2c3705356",
+      "feature": "module",
+      "description": "Module `constants` (module). Exports: DEFAULT_REVERSE_PROMPT_INSTRUCTION. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/dnd/setTapImageDragData.ts": {
+      "path": "src/canvas/dnd/setTapImageDragData.ts",
+      "sha256": "41d68196b902c900fbfe069209639b67d722c321a52447c8a3a59cc6ae16481f",
+      "feature": "module",
+      "description": "Module `setTapImageDragData` (module). Exports: setTapImageDragData. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/edges/OrthTypedEdge.tsx": {
+      "path": "src/canvas/edges/OrthTypedEdge.tsx",
+      "sha256": "4631430b54966d9e77d38cebd960c574b5399094e86b5461f842000b42700534",
+      "feature": "module",
+      "description": "Module `OrthTypedEdge` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, @xyflow/react, react | Local deps: src/canvas/edges/useEdgeVisuals.ts, src/canvas/store.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/canvas/edges/TypedEdge.tsx": {
+      "path": "src/canvas/edges/TypedEdge.tsx",
+      "sha256": "93038ada3d4d0174297a89aef444523dd80ba59de66ad126f751ac7637b766f1",
+      "feature": "module",
+      "description": "Module `TypedEdge` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, @xyflow/react, react | Local deps: src/canvas/edges/useEdgeVisuals.ts, src/canvas/store.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/canvas/edges/index.ts": {
+      "path": "src/canvas/edges/index.ts",
+      "sha256": "38623d007516850d0400483b99046c50c34f401ad1e26d5e063b49790de62dc2",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: default. Local deps: src/canvas/edges/OrthTypedEdge.tsx, src/canvas/edges/TypedEdge.tsx, src/canvas/utils/edge.ts",
+      "needsReview": true
+    },
+    "src/canvas/edges/useEdgeVisuals.ts": {
+      "path": "src/canvas/edges/useEdgeVisuals.ts",
+      "sha256": "95946d12ae0bc3045503dd0148220734716939721734523e0a464e6a14e286f8",
+      "feature": "module",
+      "description": "Module `useEdgeVisuals` (module). Exports: useEdgeVisuals. Ext deps: @mantine/core, react",
+      "needsReview": true
+    },
+    "src/canvas/i18n/index.ts": {
+      "path": "src/canvas/i18n/index.ts",
+      "sha256": "667472a7ac13b79f605b980955c0c456cfaa8dbee0cd89e4db74335cad60b232",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: $, $t, getCurrentLanguage, initLanguage, setLanguage, useI18n. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/index.ts": {
+      "path": "src/canvas/index.ts",
+      "sha256": "6ccaf2f2560209034bf2ba55f604a7e1f88a1fd0565128dc105cd014ec60aa56",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: $, $t, BaseModal, CompactGitHubLanguageButton, FixedGitHubLanguageButton, GitHubLanguageButton. Local deps: src/canvas/Canvas.tsx, src/canvas/components/shared/GitHubLanguageButton.tsx, src/canvas/components/shared/LanguageSwitcher.tsx, src/canvas/components/shared/Modal/BaseModal.tsx",
+      "needsReview": true
+    },
+    "src/canvas/insertMenuStore.ts": {
+      "path": "src/canvas/insertMenuStore.ts",
+      "sha256": "ebe0e244172457ccc64933427c5c85a83cdfaaf23a5d71cbf4043f1701a84e38",
+      "feature": "module",
+      "description": "Module `insertMenuStore` (module). Exports: useInsertMenuStore. Ext deps: zustand",
+      "needsReview": true
+    },
+    "src/canvas/nodes/GroupNode.tsx": {
+      "path": "src/canvas/nodes/GroupNode.tsx",
+      "sha256": "2e8373e46fd59605751f87247885dcaa2a6a5eb8e236f3defc51b88dba0209d1",
+      "feature": "module",
+      "description": "Module `GroupNode` (module). Exports: default. Ext deps: @mantine/core, @xyflow/react, react | Local deps: src/canvas/store.ts, src/runner/dag.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/canvas/nodes/IONode.tsx": {
+      "path": "src/canvas/nodes/IONode.tsx",
+      "sha256": "699789445ca7c394de5d6a093c27dcf6ed5d177fff3e5bc5e794355861493369",
+      "feature": "module",
+      "description": "Module `IONode` (module). Exports: default. Ext deps: @xyflow/react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/TaskNode.tsx": {
+      "path": "src/canvas/nodes/TaskNode.tsx",
+      "sha256": "6d2c25ea9000fc3424b1e3c8c9ac675d7e7f87617a68b21e2531f410ec74c8e5",
+      "feature": "module",
+      "description": "Module `TaskNode` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, @xyflow/react, react | Local deps: src/ai/langgraph-chat/submitEvent.ts, src/api/server.ts, src/canvas/components/PromptSampleDrawer.tsx, src/canvas/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/index.ts": {
+      "path": "src/canvas/nodes/index.ts",
+      "sha256": "77a2ce7b89b8a1275325fbb10e524746cd53b0fd3910ff54e23184a0cd1004fb",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: TaskNodeRefactored, default. Local deps: src/canvas/nodes/GroupNode.tsx, src/canvas/nodes/IONode.tsx, src/canvas/nodes/TaskNode.tsx, src/canvas/utils/node.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/storyboardUtils.ts": {
+      "path": "src/canvas/nodes/storyboardUtils.ts",
+      "sha256": "39c82c897c097ee522cd29cbf2928c6161e12c3b9b403f5d8f1ec4a0dd6b00f9",
+      "feature": "module",
+      "description": "Module `storyboardUtils` (module). Exports: STORYBOARD_DEFAULT_DURATION, STORYBOARD_DURATION_STEP, STORYBOARD_FRAMING_OPTIONS, STORYBOARD_MAX_DURATION, STORYBOARD_MAX_TOTAL_DURATION, STORYBOARD_MIN_DURATION. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/ImageResultModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/ImageResultModal.tsx",
+      "sha256": "b701387e1725da08fb9294ed0b0bd0c46164ca4e14543a7944ace298fca3bd8e",
+      "feature": "module",
+      "description": "Module `ImageResultModal` (module). Exports: ImageResultModal. Ext deps: @mantine/core, react | Local deps: src/canvas/dnd/setTapImageDragData.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/PoseEditor.tsx": {
+      "path": "src/canvas/nodes/taskNode/PoseEditor.tsx",
+      "sha256": "0a8c83221f3a67f53e3ac2db3adc2b365db3e3984d0bda4b4934639228b43d25",
+      "feature": "module",
+      "description": "Module `PoseEditor` (module). Exports: POSE_CANVAS_SIZE, PosePoint, createDefaultPosePoints, usePoseEditor. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/canvas/nodes/taskNode/utils.ts, src/canvas/nodes/taskNodeHelpers.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/StoryboardEditor.tsx": {
+      "path": "src/canvas/nodes/taskNode/StoryboardEditor.tsx",
+      "sha256": "11fdddacc884512a28d87e9984d2f2bfcb0e85e194bef9182c03c661f5a39dcf",
+      "feature": "module",
+      "description": "Module `StoryboardEditor` (module). Exports: StoryboardEditor. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/nodes/storyboardUtils.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/VideoResultModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/VideoResultModal.tsx",
+      "sha256": "3853dd70f2b5e70e941b47f15fb87b648b33159d3b6488e261563923e150b18d",
+      "feature": "module",
+      "description": "Module `VideoResultModal` (module). Exports: VideoResultModal. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/CharacterContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/CharacterContent.tsx",
+      "sha256": "5047ed523a313b51ef49a2fdac45c16df1cd6b9103ea1c8510586aa8a65352a7",
+      "feature": "module",
+      "description": "Module `CharacterContent` (module). Exports: CharacterContent. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/ControlChips.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/ControlChips.tsx",
+      "sha256": "76fddde78457ab4b95e6dc0b1bb8e5e1402ad912c7accebaba493f39abe3533b",
+      "feature": "module",
+      "description": "Module `ControlChips` (module). Exports: ControlChips. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx",
+      "sha256": "a72c31299457d03b72b34ef176c6a4f18092df9ae07b6c746ce8c748e63a154b",
+      "feature": "module",
+      "description": "Module `GenerationOverlay` (module). Exports: default, GenerationOverlay. Ext deps: @mantine/core, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/ImageContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/ImageContent.tsx",
+      "sha256": "b562f65f06983a3e7fd884c750c42169fc97850a7f390934750e122cf8d4f515",
+      "feature": "module",
+      "description": "Module `ImageContent` (module). Exports: ImageContent. Ext deps: react | Local deps: src/canvas/dnd/setTapImageDragData.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/MosaicContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/MosaicContent.tsx",
+      "sha256": "5336a73e2f1a93cc9e7d3e17f78a0ed153c3cd38270e86b3e0b6837a91049671",
+      "feature": "module",
+      "description": "Module `MosaicContent` (module). Exports: MosaicContent. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/MosaicModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/MosaicModal.tsx",
+      "sha256": "a3811987f8e75d79060145d845698248388076f3b3d4188818d18d4d3e0b3bb0",
+      "feature": "module",
+      "description": "Module `MosaicModal` (module). Exports: MosaicModal. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/dnd/setTapImageDragData.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/PromptSection.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/PromptSection.tsx",
+      "sha256": "07f4f3b22c8be2e51df8364cc3b3ccc5ea7ae319d2f7ab4bb8904713a0d15fb9",
+      "feature": "module",
+      "description": "Module `PromptSection` (module). Exports: PromptSection. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/components/SystemPromptPanel.tsx",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/StatusBanner.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/StatusBanner.tsx",
+      "sha256": "024b10565191cb35500f8d53711a9cad9221e7593bc98f7f8e9bc32962299c5b",
+      "feature": "module",
+      "description": "Module `StatusBanner` (module). Exports: StatusBanner. Ext deps: @mantine/core, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+      "sha256": "3e958bb05360d7020097a9bb6f1ac34596f81a38b96a9b772e1306870e8f5016",
+      "feature": "module",
+      "description": "Module `StoryboardImageContent` (module). Exports: StoryboardImageContent. Ext deps: react | Local deps: src/canvas/dnd/setTapImageDragData.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx",
+      "sha256": "bb7b8066bb5de7d2fe52505c01e30c16590dac0293f4eb45305537de370e4b8f",
+      "feature": "module",
+      "description": "Module `TaskNodeHandles` (module). Exports: TaskNodeHandles. Ext deps: @xyflow/react, react | Local deps: src/canvas/nodes/taskNodeHelpers.ts, src/canvas/utils/handleLabels.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx",
+      "sha256": "89899829cf223b1787884b7e80992f849b123724d693ebfaf012485f738c1a9e",
+      "feature": "module",
+      "description": "Module `TaskNodeHeader` (module). Exports: TaskNodeHeader. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/TopToolbar.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TopToolbar.tsx",
+      "sha256": "792505af2dc9ed26f01198dd22b8e334087b1b2aae1c20dde9dd2fa3fada969c",
+      "feature": "module",
+      "description": "Module `TopToolbar` (module). Exports: TopToolbar. Ext deps: @mantine/core, @tabler/icons-react, @xyflow/react, react",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/VeoImageModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/VeoImageModal.tsx",
+      "sha256": "d25607a40cc23feeead5895c74b3d50bc531c79d30e514bececff0f05fef8cb0",
+      "feature": "module",
+      "description": "Module `VeoImageModal` (module). Exports: VeoImageModal. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/dnd/setTapImageDragData.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/components/VideoContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/VideoContent.tsx",
+      "sha256": "e2006caf454f6e9912fa265867b58539366a6fa053deb3200f48964a1ea33c3b",
+      "feature": "module",
+      "description": "Module `VideoContent` (module). Exports: VideoContent. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/dnd/setTapImageDragData.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/constants.ts": {
+      "path": "src/canvas/nodes/taskNode/constants.ts",
+      "sha256": "86a315fbc14875319fa4b9d224f96c132b61b0fa9b87955568696820ed9eca3c",
+      "feature": "module",
+      "description": "Module `constants` (module). Exports: BASE_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/featureRenderers.tsx": {
+      "path": "src/canvas/nodes/taskNode/featureRenderers.tsx",
+      "sha256": "3f92b49efe147e733d3b29d46675e81464b5b9127d9f86e0aff5886c1f8a34d5",
+      "feature": "module",
+      "description": "Module `featureRenderers` (module). Exports: FeatureRendererContext, renderFeatureBlocks. Ext deps: react | Local deps: src/canvas/nodes/taskNode/components/CharacterContent.tsx, src/canvas/nodes/taskNode/components/ImageContent.tsx, src/canvas/nodes/taskNode/components/MosaicContent.tsx, src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/features.ts": {
+      "path": "src/canvas/nodes/taskNode/features.ts",
+      "sha256": "1e87205a78a6214b8ff8f99bfbeb9d8a4a614bb0c1eba9d4e918f0db8dcd0084",
+      "feature": "module",
+      "description": "Module `features` (module). Exports: TaskNodeFeatureFlags, buildTaskNodeFeatureFlags. Local deps: src/canvas/nodes/taskNodeSchema.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/types.ts": {
+      "path": "src/canvas/nodes/taskNode/types.ts",
+      "sha256": "4df83ff73c586d6dfabd6b6e3750d1e844a940a5cc984b36fc2abb848a778432",
+      "feature": "module",
+      "description": "Module `types` (module). Exports: FrameSample. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNode/utils.ts": {
+      "path": "src/canvas/nodes/taskNode/utils.ts",
+      "sha256": "43529fc429c33d4673cd208a21ee06252eb872a3a89ea14fc15f4dbd70a16e9c",
+      "feature": "module",
+      "description": "Module `utils` (module). Exports: REMOTE_IMAGE_URL_REGEX, isRemoteUrl, normalizeClipRange. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNodeHelpers.ts": {
+      "path": "src/canvas/nodes/taskNodeHelpers.ts",
+      "sha256": "5da352c52c6a58d2ac8058c677fdcafb3fbfb9bb21a5b5878b6869f505b75cc6",
+      "feature": "module",
+      "description": "Module `taskNodeHelpers` (module). Exports: CHARACTER_CLIP_MAX, CHARACTER_CLIP_MIN, HANDLE_HORIZONTAL_OFFSET, HANDLE_VERTICAL_OFFSET, HandleLayout, MAX_FRAME_ANALYSIS_SAMPLES. Ext deps: @xyflow/react, react | Local deps: src/api/server.ts, src/canvas/nodes/taskNode/utils.ts, src/canvas/nodes/taskNodeSchema.ts",
+      "needsReview": true
+    },
+    "src/canvas/nodes/taskNodeSchema.ts": {
+      "path": "src/canvas/nodes/taskNodeSchema.ts",
+      "sha256": "62f64f5bef070ee356780fde655be0062607356a16ec70adf423393c46a2ff30",
+      "feature": "module",
+      "description": "Module `taskNodeSchema` (module). Exports: TaskNodeCategory, TaskNodeFeature, TaskNodeHandleConfig, TaskNodeHandlesConfig, TaskNodeSchema, getTaskNodeSchema. Ext deps: @tabler/icons-react, @xyflow/react",
+      "needsReview": true
+    },
+    "src/canvas/quickStartSample.ts": {
+      "path": "src/canvas/quickStartSample.ts",
+      "sha256": "c21b2ab2baee6702d191abc3b94357391437db749dfe8b13c5b8f6a7c590dd1c",
+      "feature": "module",
+      "description": "Module `quickStartSample` (module). Exports: getQuickStartSampleFlow. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/canvas/store.ts": {
+      "path": "src/canvas/store.ts",
+      "sha256": "21527004cdc79acccb2bee271d0ad663a66ac27f2af7100cab20e1902100cb85",
+      "feature": "module",
+      "description": "Module `store` (module). Exports: persistToLocalStorage, restoreFromLocalStorage, useRFStore. Ext deps: @xyflow/react, zustand | Local deps: src/canvas/nodes/taskNodeSchema.ts, src/canvas/utils/constants.ts, src/runner/dag.ts, src/runner/mockRunner.ts",
+      "needsReview": true
+    },
+    "src/canvas/systemPromptPresets.ts": {
+      "path": "src/canvas/systemPromptPresets.ts",
+      "sha256": "d92226f65e31778a4b14eed359d36d232452e34a535f6f3fe96e6367d6da2a9f",
+      "feature": "module",
+      "description": "Module `systemPromptPresets` (module). Exports: SystemPromptPreset, SystemPromptScope, useSystemPromptPresets. Ext deps: zustand",
+      "needsReview": true
+    },
+    "src/canvas/utils/buildCanvasContext.ts": {
+      "path": "src/canvas/utils/buildCanvasContext.ts",
+      "sha256": "db71f96bf00c9689507fb0c3fba51b6dee4f57ec864a3afcb0c6727f1866b6a9",
+      "feature": "module",
+      "description": "Module `buildCanvasContext` (module). Exports: buildCanvasContext. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/canvas/utils/canvas.ts": {
+      "path": "src/canvas/utils/canvas.ts",
+      "sha256": "6f2a6ba5257424e69dacb86f9c0c7d85f43d06d6e80fc2a76d97e4e65c1c70e3",
+      "feature": "module",
+      "description": "Module `canvas` (module). Exports: calculateDistance, calculateNodesBounds, canConnect, cloneGraph, findEntryNodes, findExitNodes. Ext deps: @xyflow/react | Local deps: src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/canvasTheme.ts": {
+      "path": "src/canvas/utils/canvasTheme.ts",
+      "sha256": "40fe9305722744b9446c27b6f2a3287ecf8c88f5da84592c981be28eb9dc759a",
+      "feature": "module",
+      "description": "Module `canvasTheme` (module). Exports: buildCanvasThemeColors. Ext deps: @mantine/core",
+      "needsReview": true
+    },
+    "src/canvas/utils/colors.ts": {
+      "path": "src/canvas/utils/colors.ts",
+      "sha256": "34299af1ae164f0630a5aed8298f30839e68ec8e5ab3c082b1ee57fa454fba08",
+      "feature": "module",
+      "description": "Module `colors` (module). Exports: ColorThemes, adjustAlpha, createGradient, createStatusIndicator, getColorForStatus, getColorForType. Local deps: src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/constants.ts": {
+      "path": "src/canvas/utils/constants.ts",
+      "sha256": "f0b908c196397b35fdbd55bb86f0d4f09574b92e3ad53349ae50b157b50a6c71",
+      "feature": "module",
+      "description": "Module `constants` (module). Exports: API_ENDPOINTS, CANVAS_CONFIG, COLORS, DEFAULTS, EDGE_TYPES, ERROR_MESSAGES. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/utils/edge.ts": {
+      "path": "src/canvas/utils/edge.ts",
+      "sha256": "110434c3ebfc793ee37fe7fb95d12d58aa2d177abff58d55e9affa806a4b40ff",
+      "feature": "module",
+      "description": "Module `edge` (module). Exports: EdgeData, EdgeFilter, EdgeStyles, areNodesConnected, calculateOrthogonalEdgePath, calculateSmoothEdgePath. Ext deps: @xyflow/react | Local deps: src/canvas/utils/canvas.ts, src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/edgeRules.ts": {
+      "path": "src/canvas/utils/edgeRules.ts",
+      "sha256": "ba3456fe5087ffe3843b8b0bbe410d5065cc93637442727fee28bbb24dfd87b1",
+      "feature": "module",
+      "description": "Module `edgeRules` (module). Exports: buildEdgeValidator, isImageKind. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/utils/geometry.ts": {
+      "path": "src/canvas/utils/geometry.ts",
+      "sha256": "3f6d93b4523415e9bc1425b46493d6129889b7c977a54fcb0dd86257add02fdf",
+      "feature": "module",
+      "description": "Module `geometry` (module). Exports: Circle, Point, Rectangle, angle, bezierLength, bezierPoint. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/utils/handleLabels.ts": {
+      "path": "src/canvas/utils/handleLabels.ts",
+      "sha256": "bc41d4c53ea1657ec38519e7ef82a3502ee53f63ffc936d66de800e580410215",
+      "feature": "module",
+      "description": "Module `handleLabels` (module). Exports: getHandleTypeLabel. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/canvas/utils/index.ts": {
+      "path": "src/canvas/utils/index.ts",
+      "sha256": "56e8b9b4cdca0387312bc2c80fb30e5751c23962f6baa400729021eb401d66e6",
+      "feature": "module",
+      "description": "Module `index` (module). Exports: (none detected). Local deps: src/canvas/utils/canvas.ts, src/canvas/utils/colors.ts, src/canvas/utils/constants.ts, src/canvas/utils/edge.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/layout.ts": {
+      "path": "src/canvas/utils/layout.ts",
+      "sha256": "ea8acf23c2b6b87e4c9ae45315d48cb58dbd5a5714a8dfbd9a62a7ce7e3c2c28",
+      "feature": "module",
+      "description": "Module `layout` (module). Exports: DEFAULT_LAYOUT_CONFIG, LayoutConfig, LayoutResult, alignNodesHorizontal, alignNodesToGrid, alignNodesVertical. Ext deps: @xyflow/react | Local deps: src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/node.ts": {
+      "path": "src/canvas/utils/node.ts",
+      "sha256": "e3b7c15e7446f9c48b6e151e1eb2e0c4fe58cffc2c3ab3186a87f8aa965e2a37",
+      "feature": "module",
+      "description": "Module `node` (module). Exports: NodeConfigTemplates, NodeData, cloneNode, createNode, createNodeHandle, getDefaultNodeHeight. Ext deps: @xyflow/react | Local deps: src/canvas/utils/canvas.ts, src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/serialization.ts": {
+      "path": "src/canvas/utils/serialization.ts",
+      "sha256": "61e84aac36c8afcf3205690283b9929da52ff8ba733e1ee91e793f880cf39fe5",
+      "feature": "module",
+      "description": "Module `serialization` (module). Exports: SerializationOptions, SerializedCanvas, clearCanvasFromLocalStorage, deepClone, deserializeCanvas, exportCanvasAsJSON. Ext deps: @xyflow/react | Local deps: src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/canvas/utils/validation.ts": {
+      "path": "src/canvas/utils/validation.ts",
+      "sha256": "6f219492bb5068fee9a177549c42b905b646c8e184758b017b574c29565fce86",
+      "feature": "module",
+      "description": "Module `validation` (module). Exports: ValidationResult, isValidConnectionType, validateConnection, validateEdgeData, validateEmail, validateFileType. Local deps: src/canvas/utils/constants.ts",
+      "needsReview": true
+    },
+    "src/config/modelSource.ts": {
+      "path": "src/config/modelSource.ts",
+      "sha256": "af63dabafa358b351dbb3c98437a0829ac11d03294f67a70ea50b4c3efa0c54b",
+      "feature": "module",
+      "description": "Module `modelSource` (module). Exports: isAnthropicModel, markAnthropicModels. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/config/models.ts": {
+      "path": "src/config/models.ts",
+      "sha256": "89c58936318022383e1136a723091b415959ba35b01da7f27e4579639419e3bf",
+      "feature": "module",
+      "description": "Module `models` (module). Exports: AIProvider, IMAGE_MODELS, MODEL_PROVIDER_MAP, ModelOption, NodeKind, TEXT_MODELS. Local deps: src/config/modelSource.ts",
+      "needsReview": true
+    },
+    "src/config/useModelOptions.ts": {
+      "path": "src/config/useModelOptions.ts",
+      "sha256": "ef4a569efaf45757506b3e37ba1e699e32927b79d05a9c26b3ceb4f0fe954e51",
+      "feature": "module",
+      "description": "Module `useModelOptions` (module). Exports: MODEL_REFRESH_EVENT, notifyModelOptionsRefresh, useModelOptions. Ext deps: react | Local deps: src/api/server.ts, src/config/models.ts",
+      "needsReview": true
+    },
+    "src/constants/grsai.ts": {
+      "path": "src/constants/grsai.ts",
+      "sha256": "5999bd09c39b7c83dd3318c3b7ebcff1b70854e0eda8f367ca822c4433fd8076",
+      "feature": "module",
+      "description": "Module `grsai` (module). Exports: GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR, GRSAI_STATUS_MODELS, GrsaiStatusModel. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/creative/videoRealism.ts": {
+      "path": "src/creative/videoRealism.ts",
+      "sha256": "a15ac8fb2bb76a7a836c3a0c19cae1c0f2790404b2879adcbdac057bb153bc2a",
+      "feature": "module",
+      "description": "Module `videoRealism` (module). Exports: VIDEO_REALISM_PROMPT_SNIPPET, VIDEO_REALISM_RULES, VideoRealismRule, buildVideoRealismPrompt. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/flows/LibraryEditor.tsx": {
+      "path": "src/flows/LibraryEditor.tsx",
+      "sha256": "8619da20f9a0f7e3d622bad98ea898e47d821d7dde4af367595693d0ba2f3c2d",
+      "feature": "module",
+      "description": "Module `LibraryEditor` (module). Exports: default. Ext deps: @mantine/core, @xyflow/react, @xyflow/react/dist/style.css, react | Local deps: src/api/server.ts, src/canvas/nodes/TaskNode.tsx, src/flows/registry.ts, src/utils/usePreventBrowserSwipeNavigation.ts",
+      "needsReview": true
+    },
+    "src/flows/registry.ts": {
+      "path": "src/flows/registry.ts",
+      "sha256": "19c997ec4d71662a83728f9415d78b0b9d8c391050f0694479547723af27cb03",
+      "feature": "module",
+      "description": "Module `registry` (module). Exports: FlowIO, FlowRecord, Port, deleteFlow, getFlow, listFlows. Ext deps: @xyflow/react",
+      "needsReview": true
+    },
+    "src/inspector/NodeInspector.tsx": {
+      "path": "src/inspector/NodeInspector.tsx",
+      "sha256": "45c6651253cb95ff0fd5c8ee0ecbd55779e880ef088290440fa5d9b8ca868d0f",
+      "feature": "module",
+      "description": "Module `NodeInspector` (module). Exports: default. Ext deps: @hookform/resolvers/zod, @mantine/core, react, react-hook-form | Local deps: src/api/server.ts, src/canvas/dnd/setTapImageDragData.ts, src/canvas/store.ts, src/flows/registry.ts",
+      "needsReview": true
+    },
+    "src/inspector/forms.ts": {
+      "path": "src/inspector/forms.ts",
+      "sha256": "1142b5767ed245d5fbc31f5a31ec4e65d1c88afeb62912757200a038f395fb38",
+      "feature": "module",
+      "description": "Module `forms` (module). Exports: ComposeVideo, SubtitleAlign, composeVideoSchema, defaultsFor, subtitleAlignSchema. Ext deps: zod",
+      "needsReview": true
+    },
+    "src/main.tsx": {
+      "path": "src/main.tsx",
+      "sha256": "c6b161a4a87a396187e8c2946ef47bea632a6dd3ee52289ac0317b5ed1cc0243",
+      "feature": "module",
+      "description": "Module `main` (module). Exports: (none detected). Ext deps: @mantine/core, @mantine/core/styles.css, @mantine/notifications, @mantine/notifications/styles.css, react, react-dom/client | Local deps: src/App.tsx, src/ai/langgraph-chat/LangGraphChatOverlay.tsx, src/auth/fetch401Interceptor.ts, src/dark.css",
+      "needsReview": true
+    },
+    "src/runner/dag.ts": {
+      "path": "src/runner/dag.ts",
+      "sha256": "7806f5127122231fff003abe8faa4f10feef8e95c39d8a0a4f9360ebe071d30f",
+      "feature": "module",
+      "description": "Module `dag` (module). Exports: runFlowDag. Ext deps: @xyflow/react | Local deps: src/runner/mockRunner.ts, src/runner/mosaicRunner.ts, src/runner/remoteRunner.ts",
+      "needsReview": true
+    },
+    "src/runner/mockRunner.ts": {
+      "path": "src/runner/mockRunner.ts",
+      "sha256": "e00cb23912e816e2bcda64ff92984f52c73c86d49aa3fb3ed58db8b7d59a2e1c",
+      "feature": "module",
+      "description": "Module `mockRunner` (module). Exports: runNodeMock. Ext deps: @xyflow/react, zustand",
+      "needsReview": true
+    },
+    "src/runner/mosaicRunner.ts": {
+      "path": "src/runner/mosaicRunner.ts",
+      "sha256": "c333b7ba51dc66730ae6e08088db39885ea8610cb1478301e2246ae3e70a834c",
+      "feature": "module",
+      "description": "Module `mosaicRunner` (module). Exports: buildMosaicCanvas, runNodeMosaic. Ext deps: @xyflow/react | Local deps: src/canvas/nodes/taskNode/utils.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/runner/remoteRunner.ts": {
+      "path": "src/runner/remoteRunner.ts",
+      "sha256": "79b2dc344ff68c00db607e73f6c82f9525db683ffb402711c741dd2ee775d692",
+      "feature": "module",
+      "description": "Module `remoteRunner` (module). Exports: runNodeRemote, syncSora2ApiVideoNodeOnce. Ext deps: @xyflow/react | Local deps: src/api/server.ts, src/auth/store.ts, src/canvas/nodes/storyboardUtils.ts, src/config/modelSource.ts",
+      "needsReview": true
+    },
+    "src/subflow/Editor.tsx": {
+      "path": "src/subflow/Editor.tsx",
+      "sha256": "68ff84bd41f2fcfe4d0e2f67bac36d0391b35fd318a814b87a56e1a61c8ee49c",
+      "feature": "module",
+      "description": "Module `Editor` (module). Exports: default. Ext deps: @mantine/core, @xyflow/react, @xyflow/react/dist/style.css, react | Local deps: src/canvas/nodes/TaskNode.tsx, src/canvas/store.ts, src/utils/usePreventBrowserSwipeNavigation.ts",
+      "needsReview": true
+    },
+    "src/templates.ts": {
+      "path": "src/templates.ts",
+      "sha256": "fc4abe08b9d32dd6b57663acf5c27a4c238b29b57e8fb2190e243844f6dca020",
+      "feature": "module",
+      "description": "Module `templates` (module). Exports: FlowData, applyTemplate, applyTemplateAt, captureCurrentSelection, deleteTemplate, listTemplateNames. Ext deps: @xyflow/react | Local deps: src/canvas/store.ts",
+      "needsReview": true
+    },
+    "src/types/canvas-intelligence.ts": {
+      "path": "src/types/canvas-intelligence.ts",
+      "sha256": "4dc7087813ee44fb297691a236c9dbead1346b46f7e956b0729936ca9d3ae484",
+      "feature": "module",
+      "description": "Module `canvas-intelligence` (module). Exports: CanvasActionDomain, CanvasLayoutEvent, CanvasOperation, CanvasOperationEvent, CanvasOptimizationEvent, CanvasThinkingEvent. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/ui/AccountPanel.tsx": {
+      "path": "src/ui/AccountPanel.tsx",
+      "sha256": "0190f91001a0bc51f714ca58428d9bac46b9feeb3e3e4e03ce9585f22d1a835e",
+      "feature": "module",
+      "description": "Module `AccountPanel` (module). Exports: default. Ext deps: @mantine/core, react | Local deps: src/auth/store.ts, src/ui/uiStore.ts, src/ui/utils/panelPosition.ts",
+      "needsReview": true
+    },
+    "src/ui/AddNodePanel.tsx": {
+      "path": "src/ui/AddNodePanel.tsx",
+      "sha256": "65ed4049fdcfd4bfe6c90fa9b8917025949360dae72d0f700500dc7bbca3d43c",
+      "feature": "module",
+      "description": "Module `AddNodePanel` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/i18n/index.ts, src/canvas/store.ts, src/ui/uiStore.ts, src/ui/utils/panelPosition.ts",
+      "needsReview": true
+    },
+    "src/ui/AssetPanel.tsx": {
+      "path": "src/ui/AssetPanel.tsx",
+      "sha256": "36ff8c625da9af22485799749364cad9f1c9a535c9c52db26939f239c0fba46d",
+      "feature": "module",
+      "description": "Module `AssetPanel` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/canvas/dnd/setTapImageDragData.ts, src/canvas/store.ts, src/ui/assetEvents.ts",
+      "needsReview": true
+    },
+    "src/ui/CharacterCreatorModal.tsx": {
+      "path": "src/ui/CharacterCreatorModal.tsx",
+      "sha256": "3854c8d88fcb9c6de4fb3fec2714cfb3eeac7d78674ddb414aeac65c9092a6e6",
+      "feature": "module",
+      "description": "Module `CharacterCreatorModal` (module). Exports: CharacterCreatorModal. Ext deps: @mantine/core, react | Local deps: src/api/server.ts, src/canvas/nodes/taskNodeHelpers.ts, src/ui/toast.tsx, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/ExecutionLogModal.tsx": {
+      "path": "src/ui/ExecutionLogModal.tsx",
+      "sha256": "9e8a187905e548f21b5f6fe64d3d21063f54122389c149865e688408c4b3bff4",
+      "feature": "module",
+      "description": "Module `ExecutionLogModal` (module). Exports: ExecutionLogModal. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/auth/store.ts",
+      "needsReview": true
+    },
+    "src/ui/ExecutionPanel.tsx": {
+      "path": "src/ui/ExecutionPanel.tsx",
+      "sha256": "52d08ef67757ba34df8761e5ca5ba29cf37398d43180b9f62defa53fd09811f9",
+      "feature": "module",
+      "description": "Module `ExecutionPanel` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/ui/uiStore.ts, src/ui/utils/panelPosition.ts",
+      "needsReview": true
+    },
+    "src/ui/FloatingNav.tsx": {
+      "path": "src/ui/FloatingNav.tsx",
+      "sha256": "02e7785ef3e2a9279a29e9dab7498168a88f395bc4fa5a9854e1b19ebbc4fba5",
+      "feature": "module",
+      "description": "Module `FloatingNav` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/auth/store.ts, src/canvas/i18n/index.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/HistoryPanel.tsx": {
+      "path": "src/ui/HistoryPanel.tsx",
+      "sha256": "bd03434b4adeff996672639f9ffbc4618fdf5a3037852eae9f0866538ba56760",
+      "feature": "module",
+      "description": "Module `HistoryPanel` (module). Exports: default. Ext deps: @mantine/core, react | Local deps: src/api/server.ts, src/canvas/store.ts, src/ui/uiStore.ts, src/ui/utils/panelPosition.ts",
+      "needsReview": true
+    },
+    "src/ui/ModelPanel.tsx": {
+      "path": "src/ui/ModelPanel.tsx",
+      "sha256": "5f0182c9b6b1188212a21d1c92b5ff4590ee2eb07e6c4e1444f131cba238b85c",
+      "feature": "module",
+      "description": "Module `ModelPanel` (module). Exports: default. Ext deps: @mantine/core, @mantine/notifications, @tabler/icons-react, react | Local deps: src/api/server.ts, src/config/models.ts, src/config/useModelOptions.ts, src/constants/grsai.ts",
+      "needsReview": true
+    },
+    "src/ui/ParamModal.tsx": {
+      "path": "src/ui/ParamModal.tsx",
+      "sha256": "b51ffc8bf6e4af09a9f452234e248dc4cd15d5bb00b54071a1b75e40f1e0a921",
+      "feature": "module",
+      "description": "Module `ParamModal` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/ai/langgraph-chat/submitEvent.ts, src/canvas/store.ts, src/inspector/forms.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/PreviewModal.tsx": {
+      "path": "src/ui/PreviewModal.tsx",
+      "sha256": "65dcf3cc6b80dac81732c2d822fb81b9c6c3a0283f2a37f7ebc2fbd8a2675e5d",
+      "feature": "module",
+      "description": "Module `PreviewModal` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/ui/uiStore.ts, src/utils/download.ts",
+      "needsReview": true
+    },
+    "src/ui/ProjectPanel.tsx": {
+      "path": "src/ui/ProjectPanel.tsx",
+      "sha256": "b3a5942400d46215ac998550877ed4b125c72c1bac998de28a541340b10eccdc",
+      "feature": "module",
+      "description": "Module `ProjectPanel` (module). Exports: default. Ext deps: @mantine/core, @mantine/notifications, @tabler/icons-react, framer-motion, react | Local deps: src/api/server.ts, src/canvas/i18n/index.ts, src/canvas/store.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/ShareFullPage.tsx": {
+      "path": "src/ui/ShareFullPage.tsx",
+      "sha256": "51d81ddc0d1b1cf1b56064c4ba38b82c40404549c35c6c117e2497eea82a17eb",
+      "feature": "module",
+      "description": "Module `ShareFullPage` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/canvas/Canvas.tsx, src/canvas/store.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/ui/StatsFullPage.tsx": {
+      "path": "src/ui/StatsFullPage.tsx",
+      "sha256": "3caa9b23186163594c8c88f4011e0ed11ee1bfe88c54e0c8670a1acaa4d39fa0",
+      "feature": "module",
+      "description": "Module `StatsFullPage` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/auth/store.ts, src/canvas/i18n/index.ts, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/ui/TapshowFullPage.tsx": {
+      "path": "src/ui/TapshowFullPage.tsx",
+      "sha256": "1aadca7679a5a0f1cd128e1da47c15134f526a3ef63c4aa90455f6f0a7fd8cc5",
+      "feature": "module",
+      "description": "Module `TapshowFullPage` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/auth/store.ts, src/canvas/dnd/setTapImageDragData.ts, src/ui/PreviewModal.tsx",
+      "needsReview": true
+    },
+    "src/ui/TapshowPanel.tsx": {
+      "path": "src/ui/TapshowPanel.tsx",
+      "sha256": "de428537423d310282341cab7d26dcb83b23ea9d02846a512603d174ebb79c3d",
+      "feature": "module",
+      "description": "Module `TapshowPanel` (module). Exports: default. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/api/server.ts, src/auth/store.ts, src/canvas/dnd/setTapImageDragData.ts, src/canvas/store.ts",
+      "needsReview": true
+    },
+    "src/ui/TemplatePanel.tsx": {
+      "path": "src/ui/TemplatePanel.tsx",
+      "sha256": "31b968427c6f2ba3b1a8425f357334cde3fd0c893cbde5eaf0ecb35fdcca3eb4",
+      "feature": "module",
+      "description": "Module `TemplatePanel` (module). Exports: default. Ext deps: @mantine/core, react | Local deps: src/api/server.ts, src/canvas/i18n/index.ts, src/canvas/store.ts, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/VideoTrimModal.tsx": {
+      "path": "src/ui/VideoTrimModal.tsx",
+      "sha256": "0dff84a7047cd00489a41945a4dcaab3806bd9c87cdef8f34c42927cf5a4bc4f",
+      "feature": "module",
+      "description": "Module `VideoTrimModal` (module). Exports: VideoTrimModal. Ext deps: @mantine/core, @tabler/icons-react, react | Local deps: src/canvas/dnd/setTapImageDragData.ts",
+      "needsReview": true
+    },
+    "src/ui/VideoTrimModalHost.tsx": {
+      "path": "src/ui/VideoTrimModalHost.tsx",
+      "sha256": "35676ee5e3ec4676bd12f8f6aca6165b60ca9bf5972cc8231739c8e7e2de76ec",
+      "feature": "module",
+      "description": "Module `VideoTrimModalHost` (module). Exports: VideoTrimModalHost. Ext deps: react | Local deps: src/ui/VideoTrimModal.tsx, src/ui/uiStore.ts",
+      "needsReview": true
+    },
+    "src/ui/WebCutVideoEditModal.tsx": {
+      "path": "src/ui/WebCutVideoEditModal.tsx",
+      "sha256": "1bcd05fb6a591070c48d9f2cb269042f96f933da3f4498377ab7e9bc40aec383",
+      "feature": "module",
+      "description": "Module `WebCutVideoEditModal` (module). Exports: WebCutVideoEditModal. Ext deps: @mantine/core, @tabler/icons-react, react",
+      "needsReview": true
+    },
+    "src/ui/WebCutVideoEditModalHost.tsx": {
+      "path": "src/ui/WebCutVideoEditModalHost.tsx",
+      "sha256": "f995900f0365387a0c95e403d9285560843d697c8fc4440f641acf9ab4803ca0",
+      "feature": "module",
+      "description": "Module `WebCutVideoEditModalHost` (module). Exports: WebCutVideoEditModalHost. Ext deps: nanoid, react | Local deps: src/api/server.ts, src/auth/store.ts, src/ui/WebCutVideoEditModal.tsx, src/ui/toast.tsx",
+      "needsReview": true
+    },
+    "src/ui/assetEvents.ts": {
+      "path": "src/ui/assetEvents.ts",
+      "sha256": "408fefbfdd8d50ea580163731a4da508bb35e8322f9d9cee4696c1fc7a306440",
+      "feature": "module",
+      "description": "Module `assetEvents` (module). Exports: ASSET_REFRESH_EVENT, notifyAssetRefresh. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/ui/toast.tsx": {
+      "path": "src/ui/toast.tsx",
+      "sha256": "0bb589e8db3fac33f85df8fac392223623952604212c9f678daf26bba1070e4b",
+      "feature": "module",
+      "description": "Module `toast` (module). Exports: ToastHost, toast, useToastStore. Ext deps: @mantine/notifications, react, zustand",
+      "needsReview": true
+    },
+    "src/ui/tour/FeatureTour.tsx": {
+      "path": "src/ui/tour/FeatureTour.tsx",
+      "sha256": "d3a50ed3753ffc75de8ac36c2c589387a23ed74c4b3ee73744aa054238747e01",
+      "feature": "module",
+      "description": "Module `FeatureTour` (module). Exports: FeatureTour, FeatureTourStep. Ext deps: @mantine/core, react | Local deps: src/canvas/i18n/index.ts",
+      "needsReview": true
+    },
+    "src/ui/uiStore.ts": {
+      "path": "src/ui/uiStore.ts",
+      "sha256": "abfa58db90be89323f23a5f7e29ba70f3050042c56c091e694743ee0e7b86153",
+      "feature": "module",
+      "description": "Module `uiStore` (module). Exports: CharacterCreatorPayload, VideoTrimPayload, WebCutVideoEditPayload, useUIStore. Ext deps: zustand",
+      "needsReview": true
+    },
+    "src/ui/utils/CanvasSegmentPreview.tsx": {
+      "path": "src/ui/utils/CanvasSegmentPreview.tsx",
+      "sha256": "df3d9d617e181fd2a8d2d26f2f60337f085756b1a6554267d79f44d3d683593d",
+      "feature": "module",
+      "description": "Module `CanvasSegmentPreview` (module). Exports: CanvasSegmentPreview, CanvasSegmentPreviewProps, WebCutSegmentRange. Ext deps: react",
+      "needsReview": true
+    },
+    "src/ui/utils/panelPosition.ts": {
+      "path": "src/ui/utils/panelPosition.ts",
+      "sha256": "ce948bad23edf2c9c29084a2f1931c4361e68e4a75e4433ce11b98d61ab851c2",
+      "feature": "module",
+      "description": "Module `panelPosition` (module). Exports: calculateSafeMaxHeight. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/ui/videoThumb.ts": {
+      "path": "src/ui/videoThumb.ts",
+      "sha256": "8294876820b577651975d8b0c8675095d3e7dab86e707453642bbb533d5187e4",
+      "feature": "module",
+      "description": "Module `videoThumb` (module). Exports: extractFirstFrame. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/utils/download.ts": {
+      "path": "src/utils/download.ts",
+      "sha256": "6dd9b5853f4921fec528b2d398be100bcc75b9ae96c836aba28cd2955cdce0fb",
+      "feature": "module",
+      "description": "Module `download` (module). Exports: downloadUrl. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/utils/orientation.ts": {
+      "path": "src/utils/orientation.ts",
+      "sha256": "25aa4ccbf3f71ef22123c93cc2dfe0da04025430343307ca975408991569fbb5",
+      "feature": "module",
+      "description": "Module `orientation` (module). Exports: Orientation, normalizeOrientation. Deps: (none detected).",
+      "needsReview": true
+    },
+    "src/utils/usePreventBrowserSwipeNavigation.ts": {
+      "path": "src/utils/usePreventBrowserSwipeNavigation.ts",
+      "sha256": "305637c0e8f809e4241fa9bec7c8975cc292a4147845ac395a3e4d8d33208710",
+      "feature": "module",
+      "description": "Module `usePreventBrowserSwipeNavigation` (module). Exports: usePreventBrowserSwipeNavigation. Ext deps: react",
+      "needsReview": true
+    },
+    "src/utils/videoFrameExtractor.ts": {
+      "path": "src/utils/videoFrameExtractor.ts",
+      "sha256": "3e0a8127a9c1a88247673f19ad5e18cb781a7d9acf4dd7ff2622e5a61cb83dc7",
+      "feature": "module",
+      "description": "Module `videoFrameExtractor` (module). Exports: CapturedFrame, FrameCaptureSource, captureFramesAtTimes. Deps: (none detected).",
+      "needsReview": true
+    },
+    "vite.config.ts": {
+      "path": "vite.config.ts",
+      "sha256": "d0a9d237c9dba7675552d631b0f8b541630c345c5f82e9876433779a3767c7a6",
+      "feature": "module",
+      "description": "Module `vite.config` (module). Exports: default. Ext deps: @vitejs/plugin-react, path, vite",
+      "needsReview": true
+    }
+  }
+}

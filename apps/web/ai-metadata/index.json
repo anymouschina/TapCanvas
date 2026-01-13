@@ -1,0 +1,5091 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-01-13T02:24:38.407Z",
+  "counts": {
+    "trackedFiles": 148,
+    "sourceFiles": 135
+  },
+  "files": {
+    "src/App.tsx": {
+      "path": "src/App.tsx",
+      "kind": "tsx",
+      "bytes": 46429,
+      "sha256": "7fc5b897299dc4379d26bae2d2c75328cadc5c4c88ffb7e4ddac3909c857355e",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@mantine/notifications",
+        "@tabler/icons-react",
+        "./canvas/Canvas",
+        "./auth/GithubGate",
+        "./canvas/store",
+        "./KeyboardShortcuts",
+        "./templates",
+        "./ui/toast",
+        "./ui/uiStore",
+        "./api/server",
+        "./auth/store",
+        "./canvas/i18n",
+        "./subflow/Editor",
+        "./flows/LibraryEditor",
+        "./flows/registry",
+        "./ui/FloatingNav",
+        "./ui/AddNodePanel",
+        "./ui/TemplatePanel",
+        "./ui/AccountPanel",
+        "./ui/ProjectPanel",
+        "./ui/AssetPanel",
+        "./ui/TapshowPanel",
+        "./ui/CharacterCreatorModal",
+        "./ui/VideoTrimModalHost",
+        "./ui/WebCutVideoEditModalHost",
+        "./ui/ModelPanel",
+        "./ui/HistoryPanel",
+        "./ui/ExecutionPanel",
+        "./ui/ParamModal",
+        "./ui/PreviewModal",
+        "./ui/TapshowFullPage",
+        "./ui/ShareFullPage",
+        "./ui/StatsFullPage",
+        "./runner/remoteRunner",
+        "./utils/download",
+        "@xyflow/react",
+        "./constants/grsai",
+        "./ui/tour/FeatureTour",
+        "./ui/ExecutionLogModal",
+        "./styles.css"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/KeyboardShortcuts.tsx": {
+      "path": "src/KeyboardShortcuts.tsx",
+      "kind": "tsx",
+      "bytes": 7652,
+      "sha256": "7084255d35f5f67d3ef9b9b470b0a90048866c574378e9065573c42461b47fd7",
+      "importSpecifiers": [
+        "react",
+        "./canvas/store",
+        "./ui/uiStore"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ai/canvasService.ts": {
+      "path": "src/ai/canvasService.ts",
+      "kind": "ts",
+      "bytes": 32402,
+      "sha256": "39f66ac0276f1495b502a2ebebc28f0b4f446c718c2768df746bfcc9089f14a7",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "../canvas/store",
+        "../runner/mockRunner",
+        "../runner/remoteRunner",
+        "./types",
+        "../utils/orientation",
+        "../api/server",
+        "../ui/uiStore"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CanvasService",
+          "functionHandlers"
+        ],
+        "default": false
+      }
+    },
+    "src/ai/langgraph-chat/LangGraphChatOverlay.tsx": {
+      "path": "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+      "kind": "tsx",
+      "bytes": 126639,
+      "sha256": "c0d2d103cfd62fc0b73182a9ca2e86e42726872c549d42ff12e2b2955559d52f",
+      "importSpecifiers": [
+        "@langchain/langgraph-sdk/react",
+        "@langchain/langgraph-sdk",
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "react-markdown",
+        "../../ui/uiStore",
+        "../canvasService",
+        "../../canvas/store",
+        "../../canvas/utils/buildCanvasContext",
+        "../../canvas/dnd/setTapImageDragData",
+        "../../auth/store",
+        "./submitEvent",
+        "./buildNodeIntentPrompt",
+        "../../api/server"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "LangGraphChatOverlay"
+        ],
+        "default": true
+      }
+    },
+    "src/ai/langgraph-chat/buildNodeIntentPrompt.ts": {
+      "path": "src/ai/langgraph-chat/buildNodeIntentPrompt.ts",
+      "kind": "ts",
+      "bytes": 3375,
+      "sha256": "0984bf072fed798b0540ea861eef798933dc338bb398154be7c37d3e90276184",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeIntentMode",
+          "buildNodeIntentPrompt",
+          "buildNodeRefToken",
+          "buildNodeRefTokenFromNode"
+        ],
+        "default": false
+      }
+    },
+    "src/ai/langgraph-chat/submitEvent.ts": {
+      "path": "src/ai/langgraph-chat/submitEvent.ts",
+      "kind": "ts",
+      "bytes": 1272,
+      "sha256": "ecd3ba274f77a9c49a0302dc847ef0bd9cba832b6047212a2d66854c17025cf7",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "LANGGRAPH_SUBMIT_EVENT",
+          "LangGraphChatEventDetail",
+          "LangGraphSubmitEffort",
+          "prefillLangGraphChat",
+          "prefillLangGraphChatWithRefs",
+          "submitToLangGraphChat"
+        ],
+        "default": false
+      }
+    },
+    "src/ai/types.ts": {
+      "path": "src/ai/types.ts",
+      "kind": "ts",
+      "bytes": 116,
+      "sha256": "a00f78f6cf34dbfcdeda553b91fc8ce9cfae4cbd857e212f11306e1f0291639b",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FunctionResult"
+        ],
+        "default": false
+      }
+    },
+    "src/api/server.ts": {
+      "path": "src/api/server.ts",
+      "kind": "ts",
+      "bytes": 62799,
+      "sha256": "30a32a12b4acdb764327abdf23b75fd5c097e0a6080b3f48dcccd9bea4d6b0f9",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "../auth/store"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "API_BASE",
+          "AgentContinueInput",
+          "AgentContinueOutput",
+          "AvailableModelDto",
+          "ChatHistoryDto",
+          "ChatHistoryMessageDto",
+          "ChatSessionSummaryDto",
+          "DauPointDto",
+          "DauSeriesDto",
+          "FlowDto",
+          "LangGraphProjectSnapshotDto",
+          "LangGraphProjectThreadDto",
+          "ModelEndpointDto",
+          "ModelProfileDto",
+          "ModelProviderDto",
+          "ModelTokenDto",
+          "ProfileKind",
+          "ProjectDto",
+          "PromptGeneratePayload",
+          "PromptGenerateResult",
+          "PromptSampleDto",
+          "PromptSampleInput",
+          "ProxyConfigDto",
+          "PublicAssetDto",
+          "ServerAssetDto",
+          "SoraDraftItemDto",
+          "SoraDraftListDto",
+          "SoraVideoDraftResponse",
+          "StatsDto",
+          "TaskAssetDto",
+          "TaskKind",
+          "TaskProgressSnapshotDto",
+          "TaskRequestDto",
+          "TaskResultDto",
+          "TaskStatus",
+          "VideoHistoryRecord",
+          "WorkflowExecutionDto",
+          "WorkflowExecutionEventDto",
+          "WorkflowNodeRunDto",
+          "agentContinue",
+          "checkSoraCharacterUsername",
+          "clearLangGraphProjectSnapshot",
+          "clearLangGraphProjectThread",
+          "cloneProject",
+          "createGuestSession",
+          "createPromptSample",
+          "createServerAsset",
+          "createSora2ApiCharacterFromPid",
+          "createSoraVideo",
+          "deleteChatSession",
+          "deleteModelProfile",
+          "deleteModelToken",
+          "deleteProject",
+          "deletePromptSample",
+          "deleteServerAsset",
+          "deleteServerFlow",
+          "deleteSoraCharacter",
+          "deleteSoraDraft",
+          "exchangeGithub",
+          "fetchPromptSamples",
+          "fetchSora2ApiCharacterResult",
+          "fetchSora2ApiTaskResult",
+          "fetchVeoTaskResult",
+          "finalizeSoraCharacter",
+          "generatePrompt",
+          "getChatHistory",
+          "getDailyActiveUsers",
+          "getLangGraphProjectSnapshot",
+          "getLangGraphProjectSnapshotPublic",
+          "getLangGraphProjectThread",
+          "getProxyConfig",
+          "getProxyCredits",
+          "getProxyModelStatus",
+          "getPublicLangGraphProjectThread",
+          "getPublicProjectFlows",
+          "getServerFlow",
+          "getSoraVideoDraftByTask",
+          "getStats",
+          "getWorkflowExecution",
+          "isSoraCameoInProgress",
+          "listAvailableModels",
+          "listChatSessions",
+          "listFlowVersions",
+          "listModelEndpoints",
+          "listModelProfiles",
+          "listModelProviders",
+          "listModelTokens",
+          "listPendingTasks",
+          "listProjectFlows",
+          "listProjects",
+          "listPublicAssets",
+          "listPublicProjects",
+          "listServerAssets",
+          "listServerFlows",
+          "listSoraCharacters",
+          "listSoraDrafts",
+          "listSoraMentions",
+          "listSoraPendingVideos",
+          "listSoraPublishedVideos",
+          "listSoraVideoHistory",
+          "listWorkflowExecutions",
+          "listWorkflowNodeRuns",
+          "markDraftPromptUsed",
+          "parsePromptSample",
+          "publishSoraDraft",
+          "publishSoraVideo",
+          "renameChatSession",
+          "renameServerAsset",
+          "rollbackFlow",
+          "runTask",
+          "runTaskByVendor",
+          "runWorkflowExecution",
+          "saveProjectFlow",
+          "saveServerFlow",
+          "setLangGraphProjectSnapshot",
+          "setLangGraphProjectThread",
+          "setSoraCameoPublic",
+          "suggestDraftPrompts",
+          "toggleProjectPublic",
+          "unwatermarkSoraVideo",
+          "updateSoraCharacter",
+          "uploadServerAssetFile",
+          "uploadSora2ApiCharacter",
+          "uploadSoraCharacterVideo",
+          "uploadSoraImage",
+          "uploadSoraProfileAsset",
+          "upsertModelEndpoint",
+          "upsertModelProfile",
+          "upsertModelProvider",
+          "upsertModelToken",
+          "upsertProject",
+          "upsertProxyConfig"
+        ],
+        "default": false
+      }
+    },
+    "src/api/taskProgress.ts": {
+      "path": "src/api/taskProgress.ts",
+      "kind": "ts",
+      "bytes": 2925,
+      "sha256": "78a573fed685b1ba1d78f79a1a2ea133c559b886a86a417991d165766abe3562",
+      "importSpecifiers": [
+        "./server"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskProgressEventMessage",
+          "subscribeTaskProgress"
+        ],
+        "default": false
+      }
+    },
+    "src/api/toolEvents.ts": {
+      "path": "src/api/toolEvents.ts",
+      "kind": "ts",
+      "bytes": 4882,
+      "sha256": "26b97b3d2959f89a9f82626589e2b9c144188ee5aa3fc2790102aae8ec72f441",
+      "importSpecifiers": [
+        "../types/canvas-intelligence",
+        "./server"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ToolEventMessage",
+          "extractPlanUpdate",
+          "extractQaGuardrails",
+          "extractThinkingEvent",
+          "isWebSearchEvent",
+          "mapToolEventToCanvasOperation",
+          "subscribeToolEvents"
+        ],
+        "default": false
+      }
+    },
+    "src/app/api/ai/chat/route.ts": {
+      "path": "src/app/api/ai/chat/route.ts",
+      "kind": "ts",
+      "bytes": 3367,
+      "sha256": "d97d37fb6222e07a833002ffe018f0ae006e33eb458e65b589ce9d5534e36a02",
+      "importSpecifiers": [
+        "ai",
+        "@ai-sdk/openai",
+        "@ai-sdk/anthropic",
+        "@ai-sdk/google",
+        "next/server",
+        "../../../config/modelSource",
+        "../../../config/models"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "POST",
+          "runtime"
+        ],
+        "default": false
+      }
+    },
+    "src/assets/registry.ts": {
+      "path": "src/assets/registry.ts",
+      "kind": "ts",
+      "bytes": 1354,
+      "sha256": "f344d3cb9ebb4f5b2efae08ee1000446a1d21ec70c452a631506bd5cb453cbe6",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "AssetRecord",
+          "deleteAsset",
+          "getAsset",
+          "listAssets",
+          "renameAsset",
+          "saveAsset"
+        ],
+        "default": false
+      }
+    },
+    "src/auth/GithubGate.tsx": {
+      "path": "src/auth/GithubGate.tsx",
+      "kind": "tsx",
+      "bytes": 7901,
+      "sha256": "72993a2f94b3e2f11e10439323f0190ca6a9a5068dd3aed4b518944bdb16aace",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "./store",
+        "../api/server",
+        "../ui/toast"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/auth/fetch401Interceptor.ts": {
+      "path": "src/auth/fetch401Interceptor.ts",
+      "kind": "ts",
+      "bytes": 2094,
+      "sha256": "e813ef5b1362f268cb294874e9c5205769f4336279fc5744b49b8c7987801a9b",
+      "importSpecifiers": [
+        "../api/server",
+        "../ui/toast",
+        "./store"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "installAuth401Interceptor"
+        ],
+        "default": false
+      }
+    },
+    "src/auth/store.ts": {
+      "path": "src/auth/store.ts",
+      "kind": "ts",
+      "bytes": 3988,
+      "sha256": "fa7857b11551cacc8a1978e616de0b2c1f41c8e5200e7a958dbc643e7809ac84",
+      "importSpecifiers": [
+        "zustand"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "User",
+          "getAuthToken",
+          "getAuthTokenFromCookie",
+          "useAuth"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/Canvas.tsx": {
+      "path": "src/canvas/Canvas.tsx",
+      "kind": "tsx",
+      "bytes": 95678,
+      "sha256": "b0a73e0cf9c815ba88ced098e89cda3a2aebcc9c18c9d4efb3027c5607e3634d",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "./nodes/TaskNode",
+        "./nodes/GroupNode",
+        "./nodes/IONode",
+        "./store",
+        "../ui/toast",
+        "../templates",
+        "@mantine/core",
+        "./i18n",
+        "./edges/TypedEdge",
+        "./edges/OrthTypedEdge",
+        "../ui/uiStore",
+        "../runner/dag",
+        "../runner/remoteRunner",
+        "./insertMenuStore",
+        "zod/v4",
+        "./quickStartSample",
+        "./utils/handleLabels",
+        "../config/models",
+        "../api/taskProgress",
+        "../auth/store",
+        "../api/server",
+        "./nodes/taskNodeHelpers",
+        "./utils/constants",
+        "./utils/edgeRules",
+        "./utils/canvasTheme",
+        "./nodes/taskNodeSchema",
+        "../utils/usePreventBrowserSwipeNavigation",
+        "@xyflow/react/dist/style.css"
+      ],
+      "dynamicImportSpecifiers": [
+        "../api/server",
+        "../ui/assetEvents"
+      ],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/components/PromptSampleDrawer.tsx": {
+      "path": "src/canvas/components/PromptSampleDrawer.tsx",
+      "kind": "tsx",
+      "bytes": 27397,
+      "sha256": "d7575af590a4a043fc3d6778ea490327b3b301fa942483c1e2ef0997d8a93090",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../api/server"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "PromptSampleDrawer",
+          "PromptSampleDrawerProps"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/components/SystemPromptPanel.tsx": {
+      "path": "src/canvas/components/SystemPromptPanel.tsx",
+      "kind": "tsx",
+      "bytes": 15134,
+      "sha256": "1f72b2b88ddf0e53c3cf4734d01085be4ac7340b2177544ca0f13d0c1a467ab9",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../systemPromptPresets"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "SystemPromptPanel"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/components/shared/GitHubLanguageButton.tsx": {
+      "path": "src/canvas/components/shared/GitHubLanguageButton.tsx",
+      "kind": "tsx",
+      "bytes": 9602,
+      "sha256": "ec2e42690e7e706cf62161cc318f856d5a4a1294f96ae2a77c0a0a1cab01f79d",
+      "importSpecifiers": [
+        "react",
+        "../../i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CompactGitHubLanguageButton",
+          "FixedGitHubLanguageButton",
+          "GitHubLanguageButton",
+          "SimpleGitHubLanguageButton"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/LanguageSwitcher.tsx": {
+      "path": "src/canvas/components/shared/LanguageSwitcher.tsx",
+      "kind": "tsx",
+      "bytes": 2583,
+      "sha256": "259279b625d313aac8557ac27ce3c1cfaebc02b5957210fdfad35e67b50cd53b",
+      "importSpecifiers": [
+        "react",
+        "../../i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "LanguageSwitcher",
+          "useLanguageExample"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/Modal/BaseModal.tsx": {
+      "path": "src/canvas/components/shared/Modal/BaseModal.tsx",
+      "kind": "tsx",
+      "bytes": 10037,
+      "sha256": "6e841f2a197b8d0a0300d84e4471b05e605f0bfff9157e09d21c0f3de5377405",
+      "importSpecifiers": [
+        "react",
+        "react-dom",
+        "../../i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "BaseModal",
+          "BaseModalProps"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/Modal/NodeConfigModal.tsx": {
+      "path": "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+      "kind": "tsx",
+      "bytes": 15773,
+      "sha256": "84b4c5c288bf3a45654681cb46d08ff5141aef6d3eab2da900c056401e8d9a3b",
+      "importSpecifiers": [
+        "react",
+        "./BaseModal",
+        "../../../utils",
+        "../NodeBase/NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeConfigModal",
+          "NodeConfigModalProps"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/NodeBase/NodeBase.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+      "kind": "tsx",
+      "bytes": 3011,
+      "sha256": "4634a5d57de63f4eeb99399b69434a8bfca1bbe2d1d7807243b56d105d167bdc",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "./NodeHeader",
+        "./NodeContent",
+        "./NodeHandles",
+        "../../../utils",
+        "./NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeBase"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/NodeBase/NodeBase.types.ts": {
+      "path": "src/canvas/components/shared/NodeBase/NodeBase.types.ts",
+      "kind": "ts",
+      "bytes": 3548,
+      "sha256": "887b72eb360efff24e6ec7f289cb0e391fd059df1637c596345663ceac7e0579",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeBaseProps",
+          "NodeConfigModalProps",
+          "NodeContentProps",
+          "NodeData",
+          "NodeHandlesProps",
+          "NodeHeaderProps",
+          "NodeStatusIndicatorProps"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/components/shared/NodeBase/NodeContent.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+      "kind": "tsx",
+      "bytes": 8148,
+      "sha256": "0b285cc7878da7de4b3a208e097d489fcfe5018f9f1a420ab2823d2f190edd69",
+      "importSpecifiers": [
+        "react",
+        "../Modal/NodeConfigModal",
+        "../../../utils",
+        "./NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeContent"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/NodeBase/NodeHandles.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+      "kind": "tsx",
+      "bytes": 6833,
+      "sha256": "da5a02af77c40619c44a3776cfdd44604f9f61d53a1f449e72fb84c0d585e61f",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "../../../utils",
+        "./NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeHandles"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/NodeBase/NodeHeader.tsx": {
+      "path": "src/canvas/components/shared/NodeBase/NodeHeader.tsx",
+      "kind": "tsx",
+      "bytes": 5961,
+      "sha256": "2865cb60446e2c8ee751dc61b5d886ca4974df1df0fbfbcaf8f301c2aefbf94e",
+      "importSpecifiers": [
+        "react",
+        "../../../utils",
+        "./NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeHeader"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/components/shared/VideoRealismTips.tsx": {
+      "path": "src/canvas/components/shared/VideoRealismTips.tsx",
+      "kind": "tsx",
+      "bytes": 3278,
+      "sha256": "7b5cecb6bf84ede440475cfac2e42ff03f97d248f84668f7cc3666c734eed70c",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../creative/videoRealism"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VideoRealismTips",
+          "VideoRealismTipsProps"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/components/shared/index.ts": {
+      "path": "src/canvas/components/shared/index.ts",
+      "kind": "ts",
+      "bytes": 576,
+      "sha256": "42947664b5b7fbfecbf29beffce3dfa71d7e404f252c542c1a25d2bde196ed9d",
+      "importSpecifiers": [
+        "./NodeBase/NodeBase",
+        "./NodeBase/NodeHeader",
+        "./NodeBase/NodeContent",
+        "./NodeBase/NodeHandles",
+        "./NodeBase/NodeBase.types",
+        "./Modal/BaseModal",
+        "./Modal/NodeConfigModal"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "BaseModal",
+          "NodeBase",
+          "NodeConfigModal",
+          "NodeContent",
+          "NodeHandles",
+          "NodeHeader"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/constants.ts": {
+      "path": "src/canvas/constants.ts",
+      "kind": "ts",
+      "bytes": 259,
+      "sha256": "99013b1ca438b4a4e17f1faaa09bd7ebbee66b7c4c6559b7133adad2c3705356",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "DEFAULT_REVERSE_PROMPT_INSTRUCTION"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/dnd/setTapImageDragData.ts": {
+      "path": "src/canvas/dnd/setTapImageDragData.ts",
+      "kind": "ts",
+      "bytes": 553,
+      "sha256": "41d68196b902c900fbfe069209639b67d722c321a52447c8a3a59cc6ae16481f",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "setTapImageDragData"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/edges/OrthTypedEdge.tsx": {
+      "path": "src/canvas/edges/OrthTypedEdge.tsx",
+      "kind": "tsx",
+      "bytes": 5446,
+      "sha256": "4631430b54966d9e77d38cebd960c574b5399094e86b5461f842000b42700534",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "@xyflow/react",
+        "../store",
+        "../../ui/uiStore",
+        "./useEdgeVisuals"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/edges/TypedEdge.tsx": {
+      "path": "src/canvas/edges/TypedEdge.tsx",
+      "kind": "tsx",
+      "bytes": 2740,
+      "sha256": "93038ada3d4d0174297a89aef444523dd80ba59de66ad126f751ac7637b766f1",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "@xyflow/react",
+        "../store",
+        "../../ui/uiStore",
+        "./useEdgeVisuals"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/edges/index.ts": {
+      "path": "src/canvas/edges/index.ts",
+      "kind": "ts",
+      "bytes": 282,
+      "sha256": "38623d007516850d0400483b99046c50c34f401ad1e26d5e063b49790de62dc2",
+      "importSpecifiers": [
+        "./TypedEdge",
+        "./OrthTypedEdge",
+        "../utils/edge"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "default"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/edges/useEdgeVisuals.ts": {
+      "path": "src/canvas/edges/useEdgeVisuals.ts",
+      "kind": "ts",
+      "bytes": 2993,
+      "sha256": "95946d12ae0bc3045503dd0148220734716939721734523e0a464e6a14e286f8",
+      "importSpecifiers": [
+        "@mantine/core",
+        "react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "useEdgeVisuals"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/i18n/index.ts": {
+      "path": "src/canvas/i18n/index.ts",
+      "kind": "ts",
+      "bytes": 17353,
+      "sha256": "667472a7ac13b79f605b980955c0c456cfaa8dbee0cd89e4db74335cad60b232",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "$",
+          "$t",
+          "getCurrentLanguage",
+          "initLanguage",
+          "setLanguage",
+          "useI18n"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/index.ts": {
+      "path": "src/canvas/index.ts",
+      "kind": "ts",
+      "bytes": 1832,
+      "sha256": "6ccaf2f2560209034bf2ba55f604a7e1f88a1fd0565128dc105cd014ec60aa56",
+      "importSpecifiers": [
+        "./i18n",
+        "./components/shared/LanguageSwitcher",
+        "./components/shared/GitHubLanguageButton",
+        "./utils",
+        "./components/shared/NodeBase/NodeBase",
+        "./components/shared/NodeBase/NodeHeader",
+        "./components/shared/NodeBase/NodeContent",
+        "./components/shared/NodeBase/NodeHandles",
+        "./components/shared/NodeBase/NodeBase.types",
+        "./components/shared/Modal/BaseModal",
+        "./components/shared/Modal/NodeConfigModal",
+        "./nodes/TaskNode",
+        "./nodes/GroupNode",
+        "./nodes/IONode",
+        "./edges/TypedEdge",
+        "./edges/OrthTypedEdge",
+        "./store",
+        "./insertMenuStore",
+        "./Canvas",
+        "./examples/I18nDemo",
+        "./examples/QuickI18nExample"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "$",
+          "$t",
+          "BaseModal",
+          "CompactGitHubLanguageButton",
+          "FixedGitHubLanguageButton",
+          "GitHubLanguageButton",
+          "I18nDemo",
+          "I18nExamples",
+          "LanguageSwitcher",
+          "NodeBase",
+          "NodeConfigModal",
+          "NodeContent",
+          "NodeHandles",
+          "NodeHeader",
+          "QuickI18nExample",
+          "SimpleGitHubLanguageButton",
+          "TaskNodeRefactored",
+          "default",
+          "getCurrentLanguage",
+          "initLanguage",
+          "setLanguage",
+          "useI18n",
+          "useInsertMenuStore",
+          "useRFStore"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/insertMenuStore.ts": {
+      "path": "src/canvas/insertMenuStore.ts",
+      "kind": "ts",
+      "bytes": 846,
+      "sha256": "ebe0e244172457ccc64933427c5c85a83cdfaaf23a5d71cbf4043f1701a84e38",
+      "importSpecifiers": [
+        "zustand"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "useInsertMenuStore"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/GroupNode.tsx": {
+      "path": "src/canvas/nodes/GroupNode.tsx",
+      "kind": "tsx",
+      "bytes": 5482,
+      "sha256": "2e8373e46fd59605751f87247885dcaa2a6a5eb8e236f3defc51b88dba0209d1",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "@mantine/core",
+        "../store",
+        "../../ui/toast",
+        "../../runner/dag"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/nodes/IONode.tsx": {
+      "path": "src/canvas/nodes/IONode.tsx",
+      "kind": "tsx",
+      "bytes": 1833,
+      "sha256": "699789445ca7c394de5d6a093c27dcf6ed5d177fff3e5bc5e794355861493369",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/nodes/TaskNode.tsx": {
+      "path": "src/canvas/nodes/TaskNode.tsx",
+      "kind": "tsx",
+      "bytes": 152454,
+      "sha256": "6d2c25ea9000fc3424b1e3c8c9ac675d7e7f87617a68b21e2531f410ec74c8e5",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "../store",
+        "../../ui/uiStore",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../api/server",
+        "../../config/models",
+        "../../config/useModelOptions",
+        "./storyboardUtils",
+        "./taskNodeSchema",
+        "./taskNode/features",
+        "../../ai/langgraph-chat/submitEvent",
+        "./taskNodeHelpers",
+        "../components/PromptSampleDrawer",
+        "../../ui/toast",
+        "../constants",
+        "../utils/constants",
+        "../../utils/videoFrameExtractor",
+        "../../utils/download",
+        "../../utils/orientation",
+        "./taskNode/PoseEditor",
+        "./taskNode/components/TaskNodeHandles",
+        "./taskNode/components/TopToolbar",
+        "./taskNode/components/TaskNodeHeader",
+        "./taskNode/components/ControlChips",
+        "./taskNode/components/StatusBanner",
+        "./taskNode/components/GenerationOverlay",
+        "./taskNode/components/PromptSection",
+        "./taskNode/components/VideoContent",
+        "./taskNode/components/MosaicModal",
+        "./taskNode/components/VeoImageModal",
+        "./taskNode/VideoResultModal",
+        "./taskNode/StoryboardEditor",
+        "./taskNode/featureRenderers",
+        "./taskNode/utils",
+        "../../runner/remoteRunner",
+        "./taskNode/constants",
+        "./taskNode/types"
+      ],
+      "dynamicImportSpecifiers": [
+        "../../runner/mosaicRunner"
+      ],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/canvas/nodes/index.ts": {
+      "path": "src/canvas/nodes/index.ts",
+      "kind": "ts",
+      "bytes": 410,
+      "sha256": "77a2ce7b89b8a1275325fbb10e524746cd53b0fd3910ff54e23184a0cd1004fb",
+      "importSpecifiers": [
+        "./TaskNode",
+        "./GroupNode",
+        "./IONode",
+        "../utils/node",
+        "../components/shared/NodeBase/NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskNodeRefactored",
+          "default"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/storyboardUtils.ts": {
+      "path": "src/canvas/nodes/storyboardUtils.ts",
+      "kind": "ts",
+      "bytes": 5314,
+      "sha256": "39c82c897c097ee522cd29cbf2928c6161e12c3b9b403f5d8f1ec4a0dd6b00f9",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "STORYBOARD_DEFAULT_DURATION",
+          "STORYBOARD_DURATION_STEP",
+          "STORYBOARD_FRAMING_OPTIONS",
+          "STORYBOARD_MAX_DURATION",
+          "STORYBOARD_MAX_TOTAL_DURATION",
+          "STORYBOARD_MIN_DURATION",
+          "STORYBOARD_MOVEMENT_OPTIONS",
+          "StoryboardScene",
+          "createScene",
+          "enforceStoryboardTotalLimit",
+          "normalizeStoryboardScenes",
+          "scenesAreEqual",
+          "serializeStoryboardScenes",
+          "totalStoryboardDuration"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/ImageResultModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/ImageResultModal.tsx",
+      "kind": "tsx",
+      "bytes": 4327,
+      "sha256": "b701387e1725da08fb9294ed0b0bd0c46164ca4e14543a7944ace298fca3bd8e",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "../../dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ImageResultModal"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/PoseEditor.tsx": {
+      "path": "src/canvas/nodes/taskNode/PoseEditor.tsx",
+      "kind": "tsx",
+      "bytes": 25731,
+      "sha256": "0a8c83221f3a67f53e3ac2db3adc2b365db3e3984d0bda4b4934639228b43d25",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../api/server",
+        "../../../ui/toast",
+        "../../../ui/uiStore",
+        "../taskNodeHelpers",
+        "./utils"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "POSE_CANVAS_SIZE",
+          "PosePoint",
+          "createDefaultPosePoints",
+          "usePoseEditor"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/StoryboardEditor.tsx": {
+      "path": "src/canvas/nodes/taskNode/StoryboardEditor.tsx",
+      "kind": "tsx",
+      "bytes": 7772,
+      "sha256": "11fdddacc884512a28d87e9984d2f2bfcb0e85e194bef9182c03c661f5a39dcf",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../storyboardUtils"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "StoryboardEditor"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/VideoResultModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/VideoResultModal.tsx",
+      "kind": "tsx",
+      "bytes": 7033,
+      "sha256": "3853dd70f2b5e70e941b47f15fb87b648b33159d3b6488e261563923e150b18d",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VideoResultModal"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/CharacterContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/CharacterContent.tsx",
+      "kind": "tsx",
+      "bytes": 3591,
+      "sha256": "5047ed523a313b51ef49a2fdac45c16df1cd6b9103ea1c8510586aa8a65352a7",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CharacterContent"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/ControlChips.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/ControlChips.tsx",
+      "kind": "tsx",
+      "bytes": 9263,
+      "sha256": "76fddde78457ab4b95e6dc0b1bb8e5e1402ad912c7accebaba493f39abe3533b",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ControlChips"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx",
+      "kind": "tsx",
+      "bytes": 1716,
+      "sha256": "a72c31299457d03b72b34ef176c6a4f18092df9ae07b6c746ce8c748e63a154b",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "GenerationOverlay"
+        ],
+        "default": true
+      }
+    },
+    "src/canvas/nodes/taskNode/components/ImageContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/ImageContent.tsx",
+      "kind": "tsx",
+      "bytes": 14993,
+      "sha256": "b562f65f06983a3e7fd884c750c42169fc97850a7f390934750e122cf8d4f515",
+      "importSpecifiers": [
+        "react",
+        "../../../dnd/setTapImageDragData",
+        "../../../../ui/uiStore"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ImageContent"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/MosaicContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/MosaicContent.tsx",
+      "kind": "tsx",
+      "bytes": 3034,
+      "sha256": "5336a73e2f1a93cc9e7d3e17f78a0ed153c3cd38270e86b3e0b6837a91049671",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "MosaicContent"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/MosaicModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/MosaicModal.tsx",
+      "kind": "tsx",
+      "bytes": 9405,
+      "sha256": "a3811987f8e75d79060145d845698248388076f3b3d4188818d18d4d3e0b3bb0",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "MosaicModal"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/PromptSection.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/PromptSection.tsx",
+      "kind": "tsx",
+      "bytes": 11123,
+      "sha256": "07f4f3b22c8be2e51df8364cc3b3ccc5ea7ae319d2f7ab4bb8904713a0d15fb9",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../components/SystemPromptPanel"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "PromptSection"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/StatusBanner.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/StatusBanner.tsx",
+      "kind": "tsx",
+      "bytes": 1138,
+      "sha256": "024b10565191cb35500f8d53711a9cad9221e7593bc98f7f8e9bc32962299c5b",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "StatusBanner"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+      "kind": "tsx",
+      "bytes": 12549,
+      "sha256": "3e958bb05360d7020097a9bb6f1ac34596f81a38b96a9b772e1306870e8f5016",
+      "importSpecifiers": [
+        "react",
+        "../../../dnd/setTapImageDragData",
+        "../../../../ui/uiStore"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "StoryboardImageContent"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx",
+      "kind": "tsx",
+      "bytes": 2977,
+      "sha256": "bb7b8066bb5de7d2fe52505c01e30c16590dac0293f4eb45305537de370e4b8f",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "../../../utils/handleLabels",
+        "../../taskNodeHelpers"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskNodeHandles"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx",
+      "kind": "tsx",
+      "bytes": 5395,
+      "sha256": "89899829cf223b1787884b7e80992f849b123724d693ebfaf012485f738c1a9e",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskNodeHeader"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/TopToolbar.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/TopToolbar.tsx",
+      "kind": "tsx",
+      "bytes": 3308,
+      "sha256": "792505af2dc9ed26f01198dd22b8e334087b1b2aae1c20dde9dd2fa3fada969c",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@xyflow/react",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TopToolbar"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/VeoImageModal.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/VeoImageModal.tsx",
+      "kind": "tsx",
+      "bytes": 9420,
+      "sha256": "d25607a40cc23feeead5895c74b3d50bc531c79d30e514bececff0f05fef8cb0",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VeoImageModal"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/components/VideoContent.tsx": {
+      "path": "src/canvas/nodes/taskNode/components/VideoContent.tsx",
+      "kind": "tsx",
+      "bytes": 7775,
+      "sha256": "e2006caf454f6e9912fa265867b58539366a6fa053deb3200f48964a1ea33c3b",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../../../dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VideoContent"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/constants.ts": {
+      "path": "src/canvas/nodes/taskNode/constants.ts",
+      "kind": "ts",
+      "bytes": 254,
+      "sha256": "86a315fbc14875319fa4b9d224f96c132b61b0fa9b87955568696820ed9eca3c",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "BASE_DURATION_OPTIONS",
+          "SAMPLE_OPTIONS",
+          "STORYBOARD_DURATION_OPTION"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/featureRenderers.tsx": {
+      "path": "src/canvas/nodes/taskNode/featureRenderers.tsx",
+      "kind": "tsx",
+      "bytes": 2203,
+      "sha256": "3f92b49efe147e733d3b29d46675e81464b5b9127d9f86e0aff5886c1f8a34d5",
+      "importSpecifiers": [
+        "react",
+        "../taskNodeSchema",
+        "./features",
+        "./components/CharacterContent",
+        "./components/MosaicContent",
+        "./components/ImageContent",
+        "./components/StoryboardImageContent"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FeatureRendererContext",
+          "renderFeatureBlocks"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/features.ts": {
+      "path": "src/canvas/nodes/taskNode/features.ts",
+      "kind": "ts",
+      "bytes": 2836,
+      "sha256": "1e87205a78a6214b8ff8f99bfbeb9d8a4a614bb0c1eba9d4e918f0db8dcd0084",
+      "importSpecifiers": [
+        "../taskNodeSchema"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskNodeFeatureFlags",
+          "buildTaskNodeFeatureFlags"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/types.ts": {
+      "path": "src/canvas/nodes/taskNode/types.ts",
+      "kind": "ts",
+      "bytes": 160,
+      "sha256": "4df83ff73c586d6dfabd6b6e3750d1e844a940a5cc984b36fc2abb848a778432",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FrameSample"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNode/utils.ts": {
+      "path": "src/canvas/nodes/taskNode/utils.ts",
+      "kind": "ts",
+      "bytes": 561,
+      "sha256": "43529fc429c33d4673cd208a21ee06252eb872a3a89ea14fc15f4dbd70a16e9c",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "REMOTE_IMAGE_URL_REGEX",
+          "isRemoteUrl",
+          "normalizeClipRange"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNodeHelpers.ts": {
+      "path": "src/canvas/nodes/taskNodeHelpers.ts",
+      "kind": "ts",
+      "bytes": 9981,
+      "sha256": "5da352c52c6a58d2ac8058c677fdcafb3fbfb9bb21a5b5878b6869f505b75cc6",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "./taskNodeSchema",
+        "../../api/server",
+        "./taskNode/utils"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CHARACTER_CLIP_MAX",
+          "CHARACTER_CLIP_MIN",
+          "HANDLE_HORIZONTAL_OFFSET",
+          "HANDLE_VERTICAL_OFFSET",
+          "HandleLayout",
+          "MAX_FRAME_ANALYSIS_SAMPLES",
+          "MAX_VEO_REFERENCE_IMAGES",
+          "applyMentionFallback",
+          "blobToDataUrl",
+          "buildHandleStyle",
+          "computeHandleLayout",
+          "extractTextFromResponsePayload",
+          "extractTextFromTaskResult",
+          "genTaskNodeId",
+          "getHandlePositionName",
+          "isDynamicHandlesConfig",
+          "isStaticHandlesConfig",
+          "normalizeVeoReferenceUrls",
+          "resolveImageForReversePrompt",
+          "tryParseJsonLike"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/nodes/taskNodeSchema.ts": {
+      "path": "src/canvas/nodes/taskNodeSchema.ts",
+      "kind": "ts",
+      "bytes": 6796,
+      "sha256": "62f64f5bef070ee356780fde655be0062607356a16ec70adf423393c46a2ff30",
+      "importSpecifiers": [
+        "@tabler/icons-react",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "TaskNodeCategory",
+          "TaskNodeFeature",
+          "TaskNodeHandleConfig",
+          "TaskNodeHandlesConfig",
+          "TaskNodeSchema",
+          "getTaskNodeSchema",
+          "listTaskNodeSchemas"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/quickStartSample.ts": {
+      "path": "src/canvas/quickStartSample.ts",
+      "kind": "ts",
+      "bytes": 14533,
+      "sha256": "c21b2ab2baee6702d191abc3b94357391437db749dfe8b13c5b8f6a7c590dd1c",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "getQuickStartSampleFlow"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/store.ts": {
+      "path": "src/canvas/store.ts",
+      "kind": "ts",
+      "bytes": 47030,
+      "sha256": "21527004cdc79acccb2bee271d0ad663a66ac27f2af7100cab20e1902100cb85",
+      "importSpecifiers": [
+        "zustand",
+        "@xyflow/react",
+        "../runner/mockRunner",
+        "../runner/remoteRunner",
+        "../runner/dag",
+        "./nodes/taskNodeSchema",
+        "./utils/constants"
+      ],
+      "dynamicImportSpecifiers": [
+        "../runner/mosaicRunner"
+      ],
+      "exports": {
+        "named": [
+          "persistToLocalStorage",
+          "restoreFromLocalStorage",
+          "useRFStore"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/systemPromptPresets.ts": {
+      "path": "src/canvas/systemPromptPresets.ts",
+      "kind": "ts",
+      "bytes": 8866,
+      "sha256": "d92226f65e31778a4b14eed359d36d232452e34a535f6f3fe96e6367d6da2a9f",
+      "importSpecifiers": [
+        "zustand"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "SystemPromptPreset",
+          "SystemPromptScope",
+          "useSystemPromptPresets"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/buildCanvasContext.ts": {
+      "path": "src/canvas/utils/buildCanvasContext.ts",
+      "kind": "ts",
+      "bytes": 10530,
+      "sha256": "db71f96bf00c9689507fb0c3fba51b6dee4f57ec864a3afcb0c6727f1866b6a9",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "buildCanvasContext"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/canvas.ts": {
+      "path": "src/canvas/utils/canvas.ts",
+      "kind": "ts",
+      "bytes": 9851,
+      "sha256": "6f2a6ba5257424e69dacb86f9c0c7d85f43d06d6e80fc2a76d97e4e65c1c70e3",
+      "importSpecifiers": [
+        "./constants",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "calculateDistance",
+          "calculateNodesBounds",
+          "canConnect",
+          "cloneGraph",
+          "findEntryNodes",
+          "findExitNodes",
+          "generateId",
+          "getEdgeById",
+          "getMidpoint",
+          "getNodeById",
+          "getNodeConnections",
+          "getNodeInputEdges",
+          "getNodeOutputEdges",
+          "getSelectedEdges",
+          "getSelectedNodes",
+          "isNodeInSelectionArea",
+          "isPointInRect",
+          "isValidConnectionType",
+          "snapToGrid",
+          "toAbsoluteCoordinates",
+          "toRelativeCoordinates",
+          "validateAcyclic"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/canvasTheme.ts": {
+      "path": "src/canvas/utils/canvasTheme.ts",
+      "kind": "ts",
+      "bytes": 1373,
+      "sha256": "40fe9305722744b9446c27b6f2a3287ecf8c88f5da84592c981be28eb9dc759a",
+      "importSpecifiers": [
+        "@mantine/core"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "buildCanvasThemeColors"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/colors.ts": {
+      "path": "src/canvas/utils/colors.ts",
+      "kind": "ts",
+      "bytes": 5419,
+      "sha256": "34299af1ae164f0630a5aed8298f30839e68ec8e5ab3c082b1ee57fa454fba08",
+      "importSpecifiers": [
+        "./constants"
+      ],
+      "dynamicImportSpecifiers": [
+        "./constants"
+      ],
+      "exports": {
+        "named": [
+          "ColorThemes",
+          "adjustAlpha",
+          "createGradient",
+          "createStatusIndicator",
+          "getColorForStatus",
+          "getColorForType",
+          "getContrastColor",
+          "getEdgeColorForType",
+          "getNodeBorderColor",
+          "getThemeColors",
+          "inferType"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/constants.ts": {
+      "path": "src/canvas/utils/constants.ts",
+      "kind": "ts",
+      "bytes": 4547,
+      "sha256": "f0b908c196397b35fdbd55bb86f0d4f09574b92e3ad53349ae50b157b50a6c71",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "API_ENDPOINTS",
+          "CANVAS_CONFIG",
+          "COLORS",
+          "DEFAULTS",
+          "EDGE_TYPES",
+          "ERROR_MESSAGES",
+          "FILE_TYPES",
+          "HANDLE_PREFIXES",
+          "HANDLE_TYPES",
+          "NODE_KINDS",
+          "NODE_TYPES",
+          "PAGINATION",
+          "SHORTCUTS",
+          "STORAGE_KEYS",
+          "SUCCESS_MESSAGES",
+          "VALIDATION"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/edge.ts": {
+      "path": "src/canvas/utils/edge.ts",
+      "kind": "ts",
+      "bytes": 10269,
+      "sha256": "110434c3ebfc793ee37fe7fb95d12d58aa2d177abff58d55e9affa806a4b40ff",
+      "importSpecifiers": [
+        "./constants",
+        "./canvas",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "EdgeData",
+          "EdgeFilter",
+          "EdgeStyles",
+          "areNodesConnected",
+          "calculateOrthogonalEdgePath",
+          "calculateSmoothEdgePath",
+          "createEdge",
+          "getEdgeCenter",
+          "getEdgeStyle",
+          "getEdgeType",
+          "getEdgesBetweenNodes",
+          "inferDataTypeFromEdge",
+          "inferDataTypeFromHandle",
+          "isEdgeAnimated",
+          "isEdgeInBounds",
+          "setEdgeAnimated",
+          "setEdgeType",
+          "updateEdgeData",
+          "validateEdge"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/edgeRules.ts": {
+      "path": "src/canvas/utils/edgeRules.ts",
+      "kind": "ts",
+      "bytes": 1422,
+      "sha256": "ba3456fe5087ffe3843b8b0bbe410d5065cc93637442727fee28bbb24dfd87b1",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "buildEdgeValidator",
+          "isImageKind"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/geometry.ts": {
+      "path": "src/canvas/utils/geometry.ts",
+      "kind": "ts",
+      "bytes": 8418,
+      "sha256": "3f6d93b4523415e9bc1425b46493d6129889b7c977a54fcb0dd86257add02fdf",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "Circle",
+          "Point",
+          "Rectangle",
+          "angle",
+          "bezierLength",
+          "bezierPoint",
+          "boundingRectangle",
+          "constrainPointToRectangle",
+          "degreesToRadians",
+          "distance",
+          "lerp",
+          "manhattanDistance",
+          "pointInCircle",
+          "pointInPolygon",
+          "pointInRectangle",
+          "pointToLineDistance",
+          "polygonArea",
+          "radiansToDegrees",
+          "rectangleIntersection",
+          "rectanglesIntersect",
+          "rotatePoint",
+          "scalePoint"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/handleLabels.ts": {
+      "path": "src/canvas/utils/handleLabels.ts",
+      "kind": "ts",
+      "bytes": 401,
+      "sha256": "bc41d4c53ea1657ec38519e7ef82a3502ee53f63ffc936d66de800e580410215",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "getHandleTypeLabel"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/index.ts": {
+      "path": "src/canvas/utils/index.ts",
+      "kind": "ts",
+      "bytes": 492,
+      "sha256": "56e8b9b4cdca0387312bc2c80fb30e5751c23962f6baa400729021eb401d66e6",
+      "importSpecifiers": [
+        "./constants",
+        "./colors",
+        "./canvas",
+        "./node",
+        "./edge",
+        "./layout",
+        "./geometry",
+        "./validation",
+        "./serialization"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": false
+      }
+    },
+    "src/canvas/utils/layout.ts": {
+      "path": "src/canvas/utils/layout.ts",
+      "kind": "ts",
+      "bytes": 15063,
+      "sha256": "ea8acf23c2b6b87e4c9ae45315d48cb58dbd5a5714a8dfbd9a62a7ce7e3c2c28",
+      "importSpecifiers": [
+        "./constants",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "DEFAULT_LAYOUT_CONFIG",
+          "LayoutConfig",
+          "LayoutResult",
+          "alignNodesHorizontal",
+          "alignNodesToGrid",
+          "alignNodesVertical",
+          "layoutForceDirected",
+          "layoutGrid",
+          "layoutHierarchical",
+          "layoutRadial"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/node.ts": {
+      "path": "src/canvas/utils/node.ts",
+      "kind": "ts",
+      "bytes": 9365,
+      "sha256": "e3b7c15e7446f9c48b6e151e1eb2e0c4fe58cffc2c3ab3186a87f8aa965e2a37",
+      "importSpecifiers": [
+        "./constants",
+        "./canvas",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "NodeConfigTemplates",
+          "NodeData",
+          "cloneNode",
+          "createNode",
+          "createNodeHandle",
+          "getDefaultNodeHeight",
+          "getDefaultNodeWidth",
+          "getNodeDefaultConfig",
+          "getNodeDisplayText",
+          "getNodeExecutionOrder",
+          "getNodeInputTypes",
+          "getNodeOutputTypes",
+          "isNodeCompleted",
+          "isNodeError",
+          "isNodeRunning",
+          "updateNodeData",
+          "updateNodePosition",
+          "validateNode"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/serialization.ts": {
+      "path": "src/canvas/utils/serialization.ts",
+      "kind": "ts",
+      "bytes": 10155,
+      "sha256": "61e84aac36c8afcf3205690283b9929da52ff8ba733e1ee91e793f880cf39fe5",
+      "importSpecifiers": [
+        "./constants",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "SerializationOptions",
+          "SerializedCanvas",
+          "clearCanvasFromLocalStorage",
+          "deepClone",
+          "deserializeCanvas",
+          "exportCanvasAsJSON",
+          "getCanvasStats",
+          "importCanvasFromFile",
+          "loadCanvasFromLocalStorage",
+          "sanitizeEdges",
+          "sanitizeNodes",
+          "saveCanvasToLocalStorage",
+          "serializeCanvas"
+        ],
+        "default": false
+      }
+    },
+    "src/canvas/utils/validation.ts": {
+      "path": "src/canvas/utils/validation.ts",
+      "kind": "ts",
+      "bytes": 12954,
+      "sha256": "6f219492bb5068fee9a177549c42b905b646c8e184758b017b574c29565fce86",
+      "importSpecifiers": [
+        "./constants",
+        "../components/shared/NodeBase/NodeBase.types"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ValidationResult",
+          "isValidConnectionType",
+          "validateConnection",
+          "validateEdgeData",
+          "validateEmail",
+          "validateFileType",
+          "validateGraph",
+          "validateJSON",
+          "validateNodeData",
+          "validateNumberRange",
+          "validateStringLength",
+          "validateURL"
+        ],
+        "default": false
+      }
+    },
+    "src/config/modelSource.ts": {
+      "path": "src/config/modelSource.ts",
+      "kind": "ts",
+      "bytes": 419,
+      "sha256": "af63dabafa358b351dbb3c98437a0829ac11d03294f67a70ea50b4c3efa0c54b",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "isAnthropicModel",
+          "markAnthropicModels"
+        ],
+        "default": false
+      }
+    },
+    "src/config/models.ts": {
+      "path": "src/config/models.ts",
+      "kind": "ts",
+      "bytes": 5568,
+      "sha256": "89c58936318022383e1136a723091b415959ba35b01da7f27e4579639419e3bf",
+      "importSpecifiers": [
+        "./modelSource"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "AIProvider",
+          "IMAGE_MODELS",
+          "MODEL_PROVIDER_MAP",
+          "ModelOption",
+          "NodeKind",
+          "TEXT_MODELS",
+          "VIDEO_MODELS",
+          "getAllowedModelsByKind",
+          "getDefaultModel",
+          "getModelLabel",
+          "getModelProvider",
+          "isImageEditModel"
+        ],
+        "default": false
+      }
+    },
+    "src/config/useModelOptions.ts": {
+      "path": "src/config/useModelOptions.ts",
+      "kind": "ts",
+      "bytes": 6498,
+      "sha256": "ef4a569efaf45757506b3e37ba1e699e32927b79d05a9c26b3ceb4f0fe954e51",
+      "importSpecifiers": [
+        "react",
+        "../api/server",
+        "./models"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "MODEL_REFRESH_EVENT",
+          "notifyModelOptionsRefresh",
+          "useModelOptions"
+        ],
+        "default": false
+      }
+    },
+    "src/constants/grsai.ts": {
+      "path": "src/constants/grsai.ts",
+      "kind": "ts",
+      "bytes": 842,
+      "sha256": "5999bd09c39b7c83dd3318c3b7ebcff1b70854e0eda8f367ca822c4433fd8076",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "GRSAI_PROXY_UPDATED_EVENT",
+          "GRSAI_PROXY_VENDOR",
+          "GRSAI_STATUS_MODELS",
+          "GrsaiStatusModel"
+        ],
+        "default": false
+      }
+    },
+    "src/creative/videoRealism.ts": {
+      "path": "src/creative/videoRealism.ts",
+      "kind": "ts",
+      "bytes": 3444,
+      "sha256": "a15ac8fb2bb76a7a836c3a0c19cae1c0f2790404b2879adcbdac057bb153bc2a",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VIDEO_REALISM_PROMPT_SNIPPET",
+          "VIDEO_REALISM_RULES",
+          "VideoRealismRule",
+          "buildVideoRealismPrompt"
+        ],
+        "default": false
+      }
+    },
+    "src/flows/LibraryEditor.tsx": {
+      "path": "src/flows/LibraryEditor.tsx",
+      "kind": "tsx",
+      "bytes": 11327,
+      "sha256": "8619da20f9a0f7e3d622bad98ea898e47d821d7dde4af367595693d0ba2f3c2d",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "../canvas/nodes/TaskNode",
+        "./registry",
+        "../api/server",
+        "@mantine/core",
+        "../utils/usePreventBrowserSwipeNavigation",
+        "@xyflow/react/dist/style.css"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/flows/registry.ts": {
+      "path": "src/flows/registry.ts",
+      "kind": "ts",
+      "bytes": 3616,
+      "sha256": "19c997ec4d71662a83728f9415d78b0b9d8c391050f0694479547723af27cb03",
+      "importSpecifiers": [
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FlowIO",
+          "FlowRecord",
+          "Port",
+          "deleteFlow",
+          "getFlow",
+          "listFlows",
+          "refsOf",
+          "renameFlow",
+          "saveFlow",
+          "scanCycles",
+          "setFlowIO",
+          "validateNoCycle",
+          "wouldCreateCycle"
+        ],
+        "default": false
+      }
+    },
+    "src/inspector/NodeInspector.tsx": {
+      "path": "src/inspector/NodeInspector.tsx",
+      "kind": "tsx",
+      "bytes": 18014,
+      "sha256": "45c6651253cb95ff0fd5c8ee0ecbd55779e880ef088290440fa5d9b8ca868d0f",
+      "importSpecifiers": [
+        "react",
+        "../canvas/store",
+        "react-hook-form",
+        "@hookform/resolvers/zod",
+        "./forms",
+        "@mantine/core",
+        "../api/server",
+        "../ui/uiStore",
+        "../canvas/dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [
+        "../flows/registry"
+      ],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/inspector/forms.ts": {
+      "path": "src/inspector/forms.ts",
+      "kind": "ts",
+      "bytes": 861,
+      "sha256": "1142b5767ed245d5fbc31f5a31ec4e65d1c88afeb62912757200a038f395fb38",
+      "importSpecifiers": [
+        "zod"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ComposeVideo",
+          "SubtitleAlign",
+          "composeVideoSchema",
+          "defaultsFor",
+          "subtitleAlignSchema"
+        ],
+        "default": false
+      }
+    },
+    "src/main.tsx": {
+      "path": "src/main.tsx",
+      "kind": "tsx",
+      "bytes": 2520,
+      "sha256": "c6b161a4a87a396187e8c2946ef47bea632a6dd3ee52289ac0317b5ed1cc0243",
+      "importSpecifiers": [
+        "react",
+        "react-dom/client",
+        "./App",
+        "@mantine/core",
+        "@mantine/notifications",
+        "./auth/fetch401Interceptor",
+        "./ai/langgraph-chat/LangGraphChatOverlay",
+        "@mantine/core/styles.css",
+        "@mantine/notifications/styles.css",
+        "./dark.css",
+        "./light.css"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": false
+      }
+    },
+    "src/runner/dag.ts": {
+      "path": "src/runner/dag.ts",
+      "kind": "ts",
+      "bytes": 5753,
+      "sha256": "7806f5127122231fff003abe8faa4f10feef8e95c39d8a0a4f9360ebe071d30f",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "./mockRunner",
+        "./remoteRunner"
+      ],
+      "dynamicImportSpecifiers": [
+        "./mosaicRunner"
+      ],
+      "exports": {
+        "named": [
+          "runFlowDag"
+        ],
+        "default": false
+      }
+    },
+    "src/runner/mockRunner.ts": {
+      "path": "src/runner/mockRunner.ts",
+      "kind": "ts",
+      "bytes": 4201,
+      "sha256": "e00cb23912e816e2bcda64ff92984f52c73c86d49aa3fb3ed58db8b7d59a2e1c",
+      "importSpecifiers": [
+        "zustand",
+        "@xyflow/react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "runNodeMock"
+        ],
+        "default": false
+      }
+    },
+    "src/runner/mosaicRunner.ts": {
+      "path": "src/runner/mosaicRunner.ts",
+      "kind": "ts",
+      "bytes": 6730,
+      "sha256": "c333b7ba51dc66730ae6e08088db39885ea8610cb1478301e2246ae3e70a834c",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "../ui/toast",
+        "../canvas/nodes/taskNode/utils"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "buildMosaicCanvas",
+          "runNodeMosaic"
+        ],
+        "default": false
+      }
+    },
+    "src/runner/remoteRunner.ts": {
+      "path": "src/runner/remoteRunner.ts",
+      "kind": "ts",
+      "bytes": 102792,
+      "sha256": "79b2dc344ff68c00db607e73f6c82f9525db683ffb402711c741dd2ee775d692",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "../api/server",
+        "../ui/uiStore",
+        "../ui/toast",
+        "../ui/assetEvents",
+        "../config/modelSource",
+        "../config/models",
+        "../utils/orientation",
+        "../auth/store",
+        "../canvas/nodes/storyboardUtils"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "runNodeRemote",
+          "syncSora2ApiVideoNodeOnce"
+        ],
+        "default": false
+      }
+    },
+    "src/subflow/Editor.tsx": {
+      "path": "src/subflow/Editor.tsx",
+      "kind": "tsx",
+      "bytes": 3686,
+      "sha256": "68ff84bd41f2fcfe4d0e2f67bac36d0391b35fd318a814b87a56e1a61c8ee49c",
+      "importSpecifiers": [
+        "react",
+        "@xyflow/react",
+        "../canvas/nodes/TaskNode",
+        "../canvas/store",
+        "@mantine/core",
+        "../utils/usePreventBrowserSwipeNavigation",
+        "@xyflow/react/dist/style.css"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/templates.ts": {
+      "path": "src/templates.ts",
+      "kind": "ts",
+      "bytes": 3444,
+      "sha256": "fc4abe08b9d32dd6b57663acf5c27a4c238b29b57e8fb2190e243844f6dca020",
+      "importSpecifiers": [
+        "@xyflow/react",
+        "./canvas/store"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FlowData",
+          "applyTemplate",
+          "applyTemplateAt",
+          "captureCurrentSelection",
+          "deleteTemplate",
+          "listTemplateNames",
+          "renameTemplate",
+          "saveTemplate"
+        ],
+        "default": false
+      }
+    },
+    "src/types/canvas-intelligence.ts": {
+      "path": "src/types/canvas-intelligence.ts",
+      "kind": "ts",
+      "bytes": 4774,
+      "sha256": "4dc7087813ee44fb297691a236c9dbead1346b46f7e956b0729936ca9d3ae484",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CanvasActionDomain",
+          "CanvasLayoutEvent",
+          "CanvasOperation",
+          "CanvasOperationEvent",
+          "CanvasOptimizationEvent",
+          "CanvasThinkingEvent",
+          "CanvasWebSocketEvent",
+          "ExecutionPlan",
+          "ExecutionStep",
+          "IntelligentChatMessage",
+          "IntelligentChatResponse",
+          "ParsedCanvasIntent",
+          "PlanUpdatePayload",
+          "QaGuardrailPayload",
+          "ThinkingEvent",
+          "UseIntelligentChatOptions",
+          "UseIntelligentChatReturn"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/AccountPanel.tsx": {
+      "path": "src/ui/AccountPanel.tsx",
+      "kind": "tsx",
+      "bytes": 4665,
+      "sha256": "0190f91001a0bc51f714ca58428d9bac46b9feeb3e3e4e03ce9585f22d1a835e",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "./uiStore",
+        "../auth/store",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/AddNodePanel.tsx": {
+      "path": "src/ui/AddNodePanel.tsx",
+      "kind": "tsx",
+      "bytes": 4380,
+      "sha256": "65ed4049fdcfd4bfe6c90fa9b8917025949360dae72d0f700500dc7bbca3d43c",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "./uiStore",
+        "../canvas/store",
+        "../canvas/i18n",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/AssetPanel.tsx": {
+      "path": "src/ui/AssetPanel.tsx",
+      "kind": "tsx",
+      "bytes": 29428,
+      "sha256": "36ff8c625da9af22485799749364cad9f1c9a535c9c52db26939f239c0fba46d",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../canvas/store",
+        "./uiStore",
+        "./assetEvents",
+        "./utils/panelPosition",
+        "./toast",
+        "../api/server",
+        "./videoThumb",
+        "../canvas/dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/CharacterCreatorModal.tsx": {
+      "path": "src/ui/CharacterCreatorModal.tsx",
+      "kind": "tsx",
+      "bytes": 6571,
+      "sha256": "3854c8d88fcb9c6de4fb3fec2714cfb3eeac7d78674ddb414aeac65c9092a6e6",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "./uiStore",
+        "../api/server",
+        "./toast",
+        "../canvas/nodes/taskNodeHelpers"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CharacterCreatorModal"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/ExecutionLogModal.tsx": {
+      "path": "src/ui/ExecutionLogModal.tsx",
+      "kind": "tsx",
+      "bytes": 18454,
+      "sha256": "9e8a187905e548f21b5f6fe64d3d21063f54122389c149865e688408c4b3bff4",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../api/server",
+        "../auth/store"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ExecutionLogModal"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/ExecutionPanel.tsx": {
+      "path": "src/ui/ExecutionPanel.tsx",
+      "kind": "tsx",
+      "bytes": 15867,
+      "sha256": "52d08ef67757ba34df8761e5ca5ba29cf37398d43180b9f62defa53fd09811f9",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "./uiStore",
+        "../api/server",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/FloatingNav.tsx": {
+      "path": "src/ui/FloatingNav.tsx",
+      "kind": "tsx",
+      "bytes": 9905,
+      "sha256": "02e7785ef3e2a9279a29e9dab7498168a88f395bc4fa5a9854e1b19ebbc4fba5",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../auth/store",
+        "./uiStore",
+        "../canvas/i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/HistoryPanel.tsx": {
+      "path": "src/ui/HistoryPanel.tsx",
+      "kind": "tsx",
+      "bytes": 4419,
+      "sha256": "bd03434b4adeff996672639f9ffbc4618fdf5a3037852eae9f0866538ba56760",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "./uiStore",
+        "../api/server",
+        "../canvas/store",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/ModelPanel.tsx": {
+      "path": "src/ui/ModelPanel.tsx",
+      "kind": "tsx",
+      "bytes": 144025,
+      "sha256": "5f0182c9b6b1188212a21d1c92b5ff4590ee2eb07e6c4e1444f131cba238b85c",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "@mantine/notifications",
+        "./uiStore",
+        "./utils/panelPosition",
+        "../api/server",
+        "../config/useModelOptions",
+        "../config/models",
+        "../constants/grsai"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/ParamModal.tsx": {
+      "path": "src/ui/ParamModal.tsx",
+      "kind": "tsx",
+      "bytes": 6417,
+      "sha256": "b51ffc8bf6e4af09a9f452234e248dc4cd15d5bb00b54071a1b75e40f1e0a921",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "./uiStore",
+        "../canvas/store",
+        "../inspector/forms",
+        "../ai/langgraph-chat/submitEvent"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/PreviewModal.tsx": {
+      "path": "src/ui/PreviewModal.tsx",
+      "kind": "tsx",
+      "bytes": 3711,
+      "sha256": "65dcf3cc6b80dac81732c2d822fb81b9c6c3a0283f2a37f7ebc2fbd8a2675e5d",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "./uiStore",
+        "../utils/download"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/ProjectPanel.tsx": {
+      "path": "src/ui/ProjectPanel.tsx",
+      "kind": "tsx",
+      "bytes": 42624,
+      "sha256": "b3a5942400d46215ac998550877ed4b125c72c1bac998de28a541340b10eccdc",
+      "importSpecifiers": [
+        "react",
+        "framer-motion",
+        "@mantine/core",
+        "./uiStore",
+        "../api/server",
+        "../canvas/store",
+        "@tabler/icons-react",
+        "../canvas/i18n",
+        "@mantine/notifications",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/ShareFullPage.tsx": {
+      "path": "src/ui/ShareFullPage.tsx",
+      "kind": "tsx",
+      "bytes": 17665,
+      "sha256": "51d81ddc0d1b1cf1b56064c4ba38b82c40404549c35c6c117e2497eea82a17eb",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../canvas/Canvas",
+        "../api/server",
+        "../canvas/store",
+        "./uiStore",
+        "./toast"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/StatsFullPage.tsx": {
+      "path": "src/ui/StatsFullPage.tsx",
+      "kind": "tsx",
+      "bytes": 10617,
+      "sha256": "3caa9b23186163594c8c88f4011e0ed11ee1bfe88c54e0c8670a1acaa4d39fa0",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../auth/store",
+        "../api/server",
+        "./toast",
+        "../canvas/i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/TapshowFullPage.tsx": {
+      "path": "src/ui/TapshowFullPage.tsx",
+      "kind": "tsx",
+      "bytes": 31753,
+      "sha256": "1aadca7679a5a0f1cd128e1da47c15134f526a3ef63c4aa90455f6f0a7fd8cc5",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../api/server",
+        "./PreviewModal",
+        "./uiStore",
+        "./toast",
+        "../auth/store",
+        "../canvas/dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/TapshowPanel.tsx": {
+      "path": "src/ui/TapshowPanel.tsx",
+      "kind": "tsx",
+      "bytes": 21560,
+      "sha256": "de428537423d310282341cab7d26dcb83b23ea9d02846a512603d174ebb79c3d",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "./uiStore",
+        "./utils/panelPosition",
+        "../api/server",
+        "./toast",
+        "../canvas/dnd/setTapImageDragData",
+        "../canvas/store",
+        "../auth/store"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/TemplatePanel.tsx": {
+      "path": "src/ui/TemplatePanel.tsx",
+      "kind": "tsx",
+      "bytes": 6762,
+      "sha256": "31b968427c6f2ba3b1a8425f357334cde3fd0c893cbde5eaf0ecb35fdcca3eb4",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "./uiStore",
+        "../api/server",
+        "../canvas/store",
+        "../canvas/i18n",
+        "./utils/panelPosition"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    },
+    "src/ui/VideoTrimModal.tsx": {
+      "path": "src/ui/VideoTrimModal.tsx",
+      "kind": "tsx",
+      "bytes": 20632,
+      "sha256": "0dff84a7047cd00489a41945a4dcaab3806bd9c87cdef8f34c42927cf5a4bc4f",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react",
+        "../canvas/dnd/setTapImageDragData"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VideoTrimModal"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/VideoTrimModalHost.tsx": {
+      "path": "src/ui/VideoTrimModalHost.tsx",
+      "kind": "tsx",
+      "bytes": 1006,
+      "sha256": "35676ee5e3ec4676bd12f8f6aca6165b60ca9bf5972cc8231739c8e7e2de76ec",
+      "importSpecifiers": [
+        "react",
+        "./VideoTrimModal",
+        "./uiStore"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "VideoTrimModalHost"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/WebCutVideoEditModal.tsx": {
+      "path": "src/ui/WebCutVideoEditModal.tsx",
+      "kind": "tsx",
+      "bytes": 2623,
+      "sha256": "1bcd05fb6a591070c48d9f2cb269042f96f933da3f4498377ab7e9bc40aec383",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "@tabler/icons-react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "WebCutVideoEditModal"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/WebCutVideoEditModalHost.tsx": {
+      "path": "src/ui/WebCutVideoEditModalHost.tsx",
+      "kind": "tsx",
+      "bytes": 5551,
+      "sha256": "f995900f0365387a0c95e403d9285560843d697c8fc4440f641acf9ab4803ca0",
+      "importSpecifiers": [
+        "react",
+        "nanoid",
+        "../api/server",
+        "../auth/store",
+        "./toast",
+        "./uiStore",
+        "./WebCutVideoEditModal"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "WebCutVideoEditModalHost"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/assetEvents.ts": {
+      "path": "src/ui/assetEvents.ts",
+      "kind": "ts",
+      "bytes": 210,
+      "sha256": "408fefbfdd8d50ea580163731a4da508bb35e8322f9d9cee4696c1fc7a306440",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ASSET_REFRESH_EVENT",
+          "notifyAssetRefresh"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/toast.tsx": {
+      "path": "src/ui/toast.tsx",
+      "kind": "tsx",
+      "bytes": 1872,
+      "sha256": "0bb589e8db3fac33f85df8fac392223623952604212c9f678daf26bba1070e4b",
+      "importSpecifiers": [
+        "react",
+        "zustand",
+        "@mantine/notifications"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "ToastHost",
+          "toast",
+          "useToastStore"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/tour/FeatureTour.tsx": {
+      "path": "src/ui/tour/FeatureTour.tsx",
+      "kind": "tsx",
+      "bytes": 8462,
+      "sha256": "d3a50ed3753ffc75de8ac36c2c589387a23ed74c4b3ee73744aa054238747e01",
+      "importSpecifiers": [
+        "react",
+        "@mantine/core",
+        "../../canvas/i18n"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "FeatureTour",
+          "FeatureTourStep"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/uiStore.ts": {
+      "path": "src/ui/uiStore.ts",
+      "kind": "ts",
+      "bytes": 8642,
+      "sha256": "abfa58db90be89323f23a5f7e29ba70f3050042c56c091e694743ee0e7b86153",
+      "importSpecifiers": [
+        "zustand"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CharacterCreatorPayload",
+          "VideoTrimPayload",
+          "WebCutVideoEditPayload",
+          "useUIStore"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/utils/CanvasSegmentPreview.tsx": {
+      "path": "src/ui/utils/CanvasSegmentPreview.tsx",
+      "kind": "tsx",
+      "bytes": 7674,
+      "sha256": "df3d9d617e181fd2a8d2d26f2f60337f085756b1a6554267d79f44d3d683593d",
+      "importSpecifiers": [
+        "react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CanvasSegmentPreview",
+          "CanvasSegmentPreviewProps",
+          "WebCutSegmentRange"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/utils/panelPosition.ts": {
+      "path": "src/ui/utils/panelPosition.ts",
+      "kind": "ts",
+      "bytes": 671,
+      "sha256": "ce948bad23edf2c9c29084a2f1931c4361e68e4a75e4433ce11b98d61ab851c2",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "calculateSafeMaxHeight"
+        ],
+        "default": false
+      }
+    },
+    "src/ui/videoThumb.ts": {
+      "path": "src/ui/videoThumb.ts",
+      "kind": "ts",
+      "bytes": 1636,
+      "sha256": "8294876820b577651975d8b0c8675095d3e7dab86e707453642bbb533d5187e4",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "extractFirstFrame"
+        ],
+        "default": false
+      }
+    },
+    "src/utils/download.ts": {
+      "path": "src/utils/download.ts",
+      "kind": "ts",
+      "bytes": 1995,
+      "sha256": "6dd9b5853f4921fec528b2d398be100bcc75b9ae96c836aba28cd2955cdce0fb",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "downloadUrl"
+        ],
+        "default": false
+      }
+    },
+    "src/utils/orientation.ts": {
+      "path": "src/utils/orientation.ts",
+      "kind": "ts",
+      "bytes": 871,
+      "sha256": "25aa4ccbf3f71ef22123c93cc2dfe0da04025430343307ca975408991569fbb5",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "Orientation",
+          "normalizeOrientation"
+        ],
+        "default": false
+      }
+    },
+    "src/utils/usePreventBrowserSwipeNavigation.ts": {
+      "path": "src/utils/usePreventBrowserSwipeNavigation.ts",
+      "kind": "ts",
+      "bytes": 1705,
+      "sha256": "305637c0e8f809e4241fa9bec7c8975cc292a4147845ac395a3e4d8d33208710",
+      "importSpecifiers": [
+        "react"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "usePreventBrowserSwipeNavigation"
+        ],
+        "default": false
+      }
+    },
+    "src/utils/videoFrameExtractor.ts": {
+      "path": "src/utils/videoFrameExtractor.ts",
+      "kind": "ts",
+      "bytes": 3756,
+      "sha256": "3e0a8127a9c1a88247673f19ad5e18cb781a7d9acf4dd7ff2622e5a61cb83dc7",
+      "importSpecifiers": [],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [
+          "CapturedFrame",
+          "FrameCaptureSource",
+          "captureFramesAtTimes"
+        ],
+        "default": false
+      }
+    },
+    "vite.config.ts": {
+      "path": "vite.config.ts",
+      "kind": "ts",
+      "bytes": 2882,
+      "sha256": "d0a9d237c9dba7675552d631b0f8b541630c345c5f82e9876433779a3767c7a6",
+      "importSpecifiers": [
+        "vite",
+        "@vitejs/plugin-react",
+        "path"
+      ],
+      "dynamicImportSpecifiers": [],
+      "exports": {
+        "named": [],
+        "default": true
+      }
+    }
+  },
+  "graph": {
+    "deps": {
+      "src/App.tsx": {
+        "local": [
+          "src/KeyboardShortcuts.tsx",
+          "src/api/server.ts",
+          "src/auth/GithubGate.tsx",
+          "src/auth/store.ts",
+          "src/canvas/Canvas.tsx",
+          "src/canvas/i18n/index.ts",
+          "src/canvas/store.ts",
+          "src/constants/grsai.ts",
+          "src/flows/LibraryEditor.tsx",
+          "src/flows/registry.ts",
+          "src/runner/remoteRunner.ts",
+          "src/styles.css",
+          "src/subflow/Editor.tsx",
+          "src/templates.ts",
+          "src/ui/AccountPanel.tsx",
+          "src/ui/AddNodePanel.tsx",
+          "src/ui/AssetPanel.tsx",
+          "src/ui/CharacterCreatorModal.tsx",
+          "src/ui/ExecutionLogModal.tsx",
+          "src/ui/ExecutionPanel.tsx",
+          "src/ui/FloatingNav.tsx",
+          "src/ui/HistoryPanel.tsx",
+          "src/ui/ModelPanel.tsx",
+          "src/ui/ParamModal.tsx",
+          "src/ui/PreviewModal.tsx",
+          "src/ui/ProjectPanel.tsx",
+          "src/ui/ShareFullPage.tsx",
+          "src/ui/StatsFullPage.tsx",
+          "src/ui/TapshowFullPage.tsx",
+          "src/ui/TapshowPanel.tsx",
+          "src/ui/TemplatePanel.tsx",
+          "src/ui/VideoTrimModalHost.tsx",
+          "src/ui/WebCutVideoEditModalHost.tsx",
+          "src/ui/toast.tsx",
+          "src/ui/tour/FeatureTour.tsx",
+          "src/ui/uiStore.ts",
+          "src/utils/download.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@mantine/notifications",
+          "@tabler/icons-react",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/KeyboardShortcuts.tsx": {
+        "local": [
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/ai/canvasService.ts": {
+        "local": [
+          "src/ai/types.ts",
+          "src/api/server.ts",
+          "src/canvas/store.ts",
+          "src/runner/mockRunner.ts",
+          "src/runner/remoteRunner.ts",
+          "src/ui/uiStore.ts",
+          "src/utils/orientation.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/ai/langgraph-chat/LangGraphChatOverlay.tsx": {
+        "local": [
+          "src/ai/canvasService.ts",
+          "src/ai/langgraph-chat/buildNodeIntentPrompt.ts",
+          "src/ai/langgraph-chat/submitEvent.ts",
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/canvas/store.ts",
+          "src/canvas/utils/buildCanvasContext.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@langchain/langgraph-sdk",
+          "@langchain/langgraph-sdk/react",
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react",
+          "react-markdown"
+        ]
+      },
+      "src/ai/langgraph-chat/buildNodeIntentPrompt.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/ai/langgraph-chat/submitEvent.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/ai/types.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/api/server.ts": {
+        "local": [
+          "src/auth/store.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/api/taskProgress.ts": {
+        "local": [
+          "src/api/server.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/api/toolEvents.ts": {
+        "local": [
+          "src/api/server.ts",
+          "src/types/canvas-intelligence.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/app/api/ai/chat/route.ts": {
+        "local": [],
+        "localUnresolved": [
+          "../../../config/modelSource",
+          "../../../config/models"
+        ],
+        "external": [
+          "@ai-sdk/anthropic",
+          "@ai-sdk/google",
+          "@ai-sdk/openai",
+          "ai",
+          "next/server"
+        ]
+      },
+      "src/assets/registry.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/auth/GithubGate.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/ui/toast.tsx"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/auth/fetch401Interceptor.ts": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/ui/toast.tsx"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/auth/store.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "zustand"
+        ]
+      },
+      "src/canvas/Canvas.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/api/taskProgress.ts",
+          "src/auth/store.ts",
+          "src/canvas/edges/OrthTypedEdge.tsx",
+          "src/canvas/edges/TypedEdge.tsx",
+          "src/canvas/i18n/index.ts",
+          "src/canvas/insertMenuStore.ts",
+          "src/canvas/nodes/GroupNode.tsx",
+          "src/canvas/nodes/IONode.tsx",
+          "src/canvas/nodes/TaskNode.tsx",
+          "src/canvas/nodes/taskNodeHelpers.ts",
+          "src/canvas/nodes/taskNodeSchema.ts",
+          "src/canvas/quickStartSample.ts",
+          "src/canvas/store.ts",
+          "src/canvas/utils/canvasTheme.ts",
+          "src/canvas/utils/constants.ts",
+          "src/canvas/utils/edgeRules.ts",
+          "src/canvas/utils/handleLabels.ts",
+          "src/config/models.ts",
+          "src/runner/dag.ts",
+          "src/runner/remoteRunner.ts",
+          "src/templates.ts",
+          "src/ui/assetEvents.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts",
+          "src/utils/usePreventBrowserSwipeNavigation.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@xyflow/react",
+          "@xyflow/react/dist/style.css",
+          "react",
+          "zod/v4"
+        ]
+      },
+      "src/canvas/components/PromptSampleDrawer.tsx": {
+        "local": [
+          "src/api/server.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/components/SystemPromptPanel.tsx": {
+        "local": [
+          "src/canvas/systemPromptPresets.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/GitHubLanguageButton.tsx": {
+        "local": [
+          "src/canvas/i18n/index.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/LanguageSwitcher.tsx": {
+        "local": [
+          "src/canvas/i18n/index.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/Modal/BaseModal.tsx": {
+        "local": [],
+        "localUnresolved": [
+          "../../i18n"
+        ],
+        "external": [
+          "react",
+          "react-dom"
+        ]
+      },
+      "src/canvas/components/shared/Modal/NodeConfigModal.tsx": {
+        "local": [
+          "src/canvas/components/shared/Modal/BaseModal.tsx",
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "../NodeBase/NodeBase.types"
+        ],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/NodeBase/NodeBase.tsx": {
+        "local": [
+          "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHeader.tsx",
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "./NodeBase.types"
+        ],
+        "external": [
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/NodeBase/NodeBase.types.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/components/shared/NodeBase/NodeContent.tsx": {
+        "local": [
+          "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "./NodeBase.types"
+        ],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/NodeBase/NodeHandles.tsx": {
+        "local": [
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "./NodeBase.types"
+        ],
+        "external": [
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/NodeBase/NodeHeader.tsx": {
+        "local": [
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "./NodeBase.types"
+        ],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/VideoRealismTips.tsx": {
+        "local": [
+          "src/creative/videoRealism.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/components/shared/index.ts": {
+        "local": [
+          "src/canvas/components/shared/Modal/BaseModal.tsx",
+          "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+          "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+          "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHeader.tsx"
+        ],
+        "localUnresolved": [
+          "./NodeBase/NodeBase.types"
+        ],
+        "external": []
+      },
+      "src/canvas/constants.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/dnd/setTapImageDragData.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/edges/OrthTypedEdge.tsx": {
+        "local": [
+          "src/canvas/edges/useEdgeVisuals.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/edges/TypedEdge.tsx": {
+        "local": [
+          "src/canvas/edges/useEdgeVisuals.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/edges/index.ts": {
+        "local": [
+          "src/canvas/edges/OrthTypedEdge.tsx",
+          "src/canvas/edges/TypedEdge.tsx",
+          "src/canvas/utils/edge.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/edges/useEdgeVisuals.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/canvas/i18n/index.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/index.ts": {
+        "local": [
+          "src/canvas/Canvas.tsx",
+          "src/canvas/components/shared/GitHubLanguageButton.tsx",
+          "src/canvas/components/shared/LanguageSwitcher.tsx",
+          "src/canvas/components/shared/Modal/BaseModal.tsx",
+          "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+          "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+          "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+          "src/canvas/components/shared/NodeBase/NodeHeader.tsx",
+          "src/canvas/edges/OrthTypedEdge.tsx",
+          "src/canvas/edges/TypedEdge.tsx",
+          "src/canvas/i18n/index.ts",
+          "src/canvas/insertMenuStore.ts",
+          "src/canvas/nodes/GroupNode.tsx",
+          "src/canvas/nodes/IONode.tsx",
+          "src/canvas/nodes/TaskNode.tsx",
+          "src/canvas/store.ts",
+          "src/canvas/utils/index.ts"
+        ],
+        "localUnresolved": [
+          "./components/shared/NodeBase/NodeBase.types",
+          "./examples/I18nDemo",
+          "./examples/QuickI18nExample"
+        ],
+        "external": []
+      },
+      "src/canvas/insertMenuStore.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "zustand"
+        ]
+      },
+      "src/canvas/nodes/GroupNode.tsx": {
+        "local": [
+          "src/canvas/store.ts",
+          "src/runner/dag.ts",
+          "src/ui/toast.tsx"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/IONode.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/TaskNode.tsx": {
+        "local": [
+          "src/ai/langgraph-chat/submitEvent.ts",
+          "src/api/server.ts",
+          "src/canvas/components/PromptSampleDrawer.tsx",
+          "src/canvas/constants.ts",
+          "src/canvas/nodes/storyboardUtils.ts",
+          "src/canvas/nodes/taskNode/PoseEditor.tsx",
+          "src/canvas/nodes/taskNode/StoryboardEditor.tsx",
+          "src/canvas/nodes/taskNode/VideoResultModal.tsx",
+          "src/canvas/nodes/taskNode/components/ControlChips.tsx",
+          "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx",
+          "src/canvas/nodes/taskNode/components/MosaicModal.tsx",
+          "src/canvas/nodes/taskNode/components/PromptSection.tsx",
+          "src/canvas/nodes/taskNode/components/StatusBanner.tsx",
+          "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx",
+          "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx",
+          "src/canvas/nodes/taskNode/components/TopToolbar.tsx",
+          "src/canvas/nodes/taskNode/components/VeoImageModal.tsx",
+          "src/canvas/nodes/taskNode/components/VideoContent.tsx",
+          "src/canvas/nodes/taskNode/constants.ts",
+          "src/canvas/nodes/taskNode/featureRenderers.tsx",
+          "src/canvas/nodes/taskNode/features.ts",
+          "src/canvas/nodes/taskNode/types.ts",
+          "src/canvas/nodes/taskNode/utils.ts",
+          "src/canvas/nodes/taskNodeHelpers.ts",
+          "src/canvas/nodes/taskNodeSchema.ts",
+          "src/canvas/store.ts",
+          "src/canvas/utils/constants.ts",
+          "src/config/models.ts",
+          "src/config/useModelOptions.ts",
+          "src/runner/mosaicRunner.ts",
+          "src/runner/remoteRunner.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts",
+          "src/utils/download.ts",
+          "src/utils/orientation.ts",
+          "src/utils/videoFrameExtractor.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/index.ts": {
+        "local": [
+          "src/canvas/nodes/GroupNode.tsx",
+          "src/canvas/nodes/IONode.tsx",
+          "src/canvas/nodes/TaskNode.tsx",
+          "src/canvas/utils/node.ts"
+        ],
+        "localUnresolved": [
+          "../components/shared/NodeBase/NodeBase.types"
+        ],
+        "external": []
+      },
+      "src/canvas/nodes/storyboardUtils.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/nodes/taskNode/ImageResultModal.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/PoseEditor.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/nodes/taskNode/utils.ts",
+          "src/canvas/nodes/taskNodeHelpers.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/StoryboardEditor.tsx": {
+        "local": [
+          "src/canvas/nodes/storyboardUtils.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/VideoResultModal.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/CharacterContent.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/ControlChips.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/ImageContent.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/MosaicContent.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/MosaicModal.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/PromptSection.tsx": {
+        "local": [
+          "src/canvas/components/SystemPromptPanel.tsx"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/StatusBanner.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx": {
+        "local": [
+          "src/canvas/nodes/taskNodeHelpers.ts",
+          "src/canvas/utils/handleLabels.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/TopToolbar.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/VeoImageModal.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/components/VideoContent.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/constants.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/nodes/taskNode/featureRenderers.tsx": {
+        "local": [
+          "src/canvas/nodes/taskNode/components/CharacterContent.tsx",
+          "src/canvas/nodes/taskNode/components/ImageContent.tsx",
+          "src/canvas/nodes/taskNode/components/MosaicContent.tsx",
+          "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+          "src/canvas/nodes/taskNode/features.ts",
+          "src/canvas/nodes/taskNodeSchema.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNode/features.ts": {
+        "local": [
+          "src/canvas/nodes/taskNodeSchema.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/nodes/taskNode/types.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/nodes/taskNode/utils.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/nodes/taskNodeHelpers.ts": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/nodes/taskNode/utils.ts",
+          "src/canvas/nodes/taskNodeSchema.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react",
+          "react"
+        ]
+      },
+      "src/canvas/nodes/taskNodeSchema.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@tabler/icons-react",
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/quickStartSample.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/store.ts": {
+        "local": [
+          "src/canvas/nodes/taskNodeSchema.ts",
+          "src/canvas/utils/constants.ts",
+          "src/runner/dag.ts",
+          "src/runner/mockRunner.ts",
+          "src/runner/mosaicRunner.ts",
+          "src/runner/remoteRunner.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react",
+          "zustand"
+        ]
+      },
+      "src/canvas/systemPromptPresets.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "zustand"
+        ]
+      },
+      "src/canvas/utils/buildCanvasContext.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/canvas.ts": {
+        "local": [
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/canvasTheme.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core"
+        ]
+      },
+      "src/canvas/utils/colors.ts": {
+        "local": [
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/constants.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/edge.ts": {
+        "local": [
+          "src/canvas/utils/canvas.ts",
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/edgeRules.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/geometry.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/handleLabels.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/index.ts": {
+        "local": [
+          "src/canvas/utils/canvas.ts",
+          "src/canvas/utils/colors.ts",
+          "src/canvas/utils/constants.ts",
+          "src/canvas/utils/edge.ts",
+          "src/canvas/utils/geometry.ts",
+          "src/canvas/utils/layout.ts",
+          "src/canvas/utils/node.ts",
+          "src/canvas/utils/serialization.ts",
+          "src/canvas/utils/validation.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/canvas/utils/layout.ts": {
+        "local": [
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/node.ts": {
+        "local": [
+          "src/canvas/utils/canvas.ts",
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/serialization.ts": {
+        "local": [
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/canvas/utils/validation.ts": {
+        "local": [
+          "src/canvas/utils/constants.ts"
+        ],
+        "localUnresolved": [
+          "../components/shared/NodeBase/NodeBase.types"
+        ],
+        "external": []
+      },
+      "src/config/modelSource.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/config/models.ts": {
+        "local": [
+          "src/config/modelSource.ts"
+        ],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/config/useModelOptions.ts": {
+        "local": [
+          "src/api/server.ts",
+          "src/config/models.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/constants/grsai.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/creative/videoRealism.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/flows/LibraryEditor.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/nodes/TaskNode.tsx",
+          "src/flows/registry.ts",
+          "src/utils/usePreventBrowserSwipeNavigation.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@xyflow/react",
+          "@xyflow/react/dist/style.css",
+          "react"
+        ]
+      },
+      "src/flows/registry.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/inspector/NodeInspector.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/canvas/store.ts",
+          "src/flows/registry.ts",
+          "src/inspector/forms.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@hookform/resolvers/zod",
+          "@mantine/core",
+          "react",
+          "react-hook-form"
+        ]
+      },
+      "src/inspector/forms.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "zod"
+        ]
+      },
+      "src/main.tsx": {
+        "local": [
+          "src/App.tsx",
+          "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+          "src/auth/fetch401Interceptor.ts",
+          "src/dark.css",
+          "src/light.css"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@mantine/core/styles.css",
+          "@mantine/notifications",
+          "@mantine/notifications/styles.css",
+          "react",
+          "react-dom/client"
+        ]
+      },
+      "src/runner/dag.ts": {
+        "local": [
+          "src/runner/mockRunner.ts",
+          "src/runner/mosaicRunner.ts",
+          "src/runner/remoteRunner.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/runner/mockRunner.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react",
+          "zustand"
+        ]
+      },
+      "src/runner/mosaicRunner.ts": {
+        "local": [
+          "src/canvas/nodes/taskNode/utils.ts",
+          "src/ui/toast.tsx"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/runner/remoteRunner.ts": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/canvas/nodes/storyboardUtils.ts",
+          "src/config/modelSource.ts",
+          "src/config/models.ts",
+          "src/ui/assetEvents.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts",
+          "src/utils/orientation.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/subflow/Editor.tsx": {
+        "local": [
+          "src/canvas/nodes/TaskNode.tsx",
+          "src/canvas/store.ts",
+          "src/utils/usePreventBrowserSwipeNavigation.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@xyflow/react",
+          "@xyflow/react/dist/style.css",
+          "react"
+        ]
+      },
+      "src/templates.ts": {
+        "local": [
+          "src/canvas/store.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@xyflow/react"
+        ]
+      },
+      "src/types/canvas-intelligence.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/ui/AccountPanel.tsx": {
+        "local": [
+          "src/auth/store.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/ui/AddNodePanel.tsx": {
+        "local": [
+          "src/canvas/i18n/index.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/AssetPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/canvas/store.ts",
+          "src/ui/assetEvents.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts",
+          "src/ui/videoThumb.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/CharacterCreatorModal.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/nodes/taskNodeHelpers.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/ui/ExecutionLogModal.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/ExecutionPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/FloatingNav.tsx": {
+        "local": [
+          "src/auth/store.ts",
+          "src/canvas/i18n/index.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/HistoryPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/ui/ModelPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/config/models.ts",
+          "src/config/useModelOptions.ts",
+          "src/constants/grsai.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@mantine/notifications",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/ParamModal.tsx": {
+        "local": [
+          "src/ai/langgraph-chat/submitEvent.ts",
+          "src/canvas/store.ts",
+          "src/inspector/forms.ts",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/PreviewModal.tsx": {
+        "local": [
+          "src/ui/uiStore.ts",
+          "src/utils/download.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/ProjectPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/i18n/index.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@mantine/notifications",
+          "@tabler/icons-react",
+          "framer-motion",
+          "react"
+        ]
+      },
+      "src/ui/ShareFullPage.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/Canvas.tsx",
+          "src/canvas/store.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/StatsFullPage.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/canvas/i18n/index.ts",
+          "src/ui/toast.tsx"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/TapshowFullPage.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/ui/PreviewModal.tsx",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/TapshowPanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/canvas/dnd/setTapImageDragData.ts",
+          "src/canvas/store.ts",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/TemplatePanel.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/canvas/i18n/index.ts",
+          "src/canvas/store.ts",
+          "src/ui/uiStore.ts",
+          "src/ui/utils/panelPosition.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/ui/VideoTrimModal.tsx": {
+        "local": [
+          "src/canvas/dnd/setTapImageDragData.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/VideoTrimModalHost.tsx": {
+        "local": [
+          "src/ui/VideoTrimModal.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/ui/WebCutVideoEditModal.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "@tabler/icons-react",
+          "react"
+        ]
+      },
+      "src/ui/WebCutVideoEditModalHost.tsx": {
+        "local": [
+          "src/api/server.ts",
+          "src/auth/store.ts",
+          "src/ui/WebCutVideoEditModal.tsx",
+          "src/ui/toast.tsx",
+          "src/ui/uiStore.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "nanoid",
+          "react"
+        ]
+      },
+      "src/ui/assetEvents.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/ui/toast.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/notifications",
+          "react",
+          "zustand"
+        ]
+      },
+      "src/ui/tour/FeatureTour.tsx": {
+        "local": [
+          "src/canvas/i18n/index.ts"
+        ],
+        "localUnresolved": [],
+        "external": [
+          "@mantine/core",
+          "react"
+        ]
+      },
+      "src/ui/uiStore.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "zustand"
+        ]
+      },
+      "src/ui/utils/CanvasSegmentPreview.tsx": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/ui/utils/panelPosition.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/ui/videoThumb.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/utils/download.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/utils/orientation.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "src/utils/usePreventBrowserSwipeNavigation.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "react"
+        ]
+      },
+      "src/utils/videoFrameExtractor.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": []
+      },
+      "vite.config.ts": {
+        "local": [],
+        "localUnresolved": [],
+        "external": [
+          "@vitejs/plugin-react",
+          "path",
+          "vite"
+        ]
+      }
+    },
+    "reverseDeps": {
+      "src/canvas/Canvas.tsx": [
+        "src/App.tsx",
+        "src/canvas/index.ts",
+        "src/ui/ShareFullPage.tsx"
+      ],
+      "src/auth/GithubGate.tsx": [
+        "src/App.tsx"
+      ],
+      "src/canvas/store.ts": [
+        "src/App.tsx",
+        "src/KeyboardShortcuts.tsx",
+        "src/ai/canvasService.ts",
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/edges/OrthTypedEdge.tsx",
+        "src/canvas/edges/TypedEdge.tsx",
+        "src/canvas/index.ts",
+        "src/canvas/nodes/GroupNode.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/inspector/NodeInspector.tsx",
+        "src/subflow/Editor.tsx",
+        "src/templates.ts",
+        "src/ui/AddNodePanel.tsx",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/HistoryPanel.tsx",
+        "src/ui/ParamModal.tsx",
+        "src/ui/ProjectPanel.tsx",
+        "src/ui/ShareFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/TemplatePanel.tsx"
+      ],
+      "src/KeyboardShortcuts.tsx": [
+        "src/App.tsx"
+      ],
+      "src/templates.ts": [
+        "src/App.tsx",
+        "src/canvas/Canvas.tsx"
+      ],
+      "src/ui/toast.tsx": [
+        "src/App.tsx",
+        "src/auth/GithubGate.tsx",
+        "src/auth/fetch401Interceptor.ts",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/GroupNode.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/PoseEditor.tsx",
+        "src/runner/mosaicRunner.ts",
+        "src/runner/remoteRunner.ts",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/CharacterCreatorModal.tsx",
+        "src/ui/ShareFullPage.tsx",
+        "src/ui/StatsFullPage.tsx",
+        "src/ui/TapshowFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/WebCutVideoEditModalHost.tsx"
+      ],
+      "src/ui/uiStore.ts": [
+        "src/App.tsx",
+        "src/KeyboardShortcuts.tsx",
+        "src/ai/canvasService.ts",
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/edges/OrthTypedEdge.tsx",
+        "src/canvas/edges/TypedEdge.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/PoseEditor.tsx",
+        "src/canvas/nodes/taskNode/components/ImageContent.tsx",
+        "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+        "src/inspector/NodeInspector.tsx",
+        "src/runner/remoteRunner.ts",
+        "src/ui/AccountPanel.tsx",
+        "src/ui/AddNodePanel.tsx",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/CharacterCreatorModal.tsx",
+        "src/ui/ExecutionPanel.tsx",
+        "src/ui/FloatingNav.tsx",
+        "src/ui/HistoryPanel.tsx",
+        "src/ui/ModelPanel.tsx",
+        "src/ui/ParamModal.tsx",
+        "src/ui/PreviewModal.tsx",
+        "src/ui/ProjectPanel.tsx",
+        "src/ui/ShareFullPage.tsx",
+        "src/ui/TapshowFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/TemplatePanel.tsx",
+        "src/ui/VideoTrimModalHost.tsx",
+        "src/ui/WebCutVideoEditModalHost.tsx"
+      ],
+      "src/api/server.ts": [
+        "src/App.tsx",
+        "src/ai/canvasService.ts",
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/api/taskProgress.ts",
+        "src/api/toolEvents.ts",
+        "src/auth/GithubGate.tsx",
+        "src/auth/fetch401Interceptor.ts",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/components/PromptSampleDrawer.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/PoseEditor.tsx",
+        "src/canvas/nodes/taskNodeHelpers.ts",
+        "src/config/useModelOptions.ts",
+        "src/flows/LibraryEditor.tsx",
+        "src/inspector/NodeInspector.tsx",
+        "src/runner/remoteRunner.ts",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/CharacterCreatorModal.tsx",
+        "src/ui/ExecutionLogModal.tsx",
+        "src/ui/ExecutionPanel.tsx",
+        "src/ui/HistoryPanel.tsx",
+        "src/ui/ModelPanel.tsx",
+        "src/ui/ProjectPanel.tsx",
+        "src/ui/ShareFullPage.tsx",
+        "src/ui/StatsFullPage.tsx",
+        "src/ui/TapshowFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/TemplatePanel.tsx",
+        "src/ui/WebCutVideoEditModalHost.tsx"
+      ],
+      "src/auth/store.ts": [
+        "src/App.tsx",
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/api/server.ts",
+        "src/auth/GithubGate.tsx",
+        "src/auth/fetch401Interceptor.ts",
+        "src/canvas/Canvas.tsx",
+        "src/runner/remoteRunner.ts",
+        "src/ui/AccountPanel.tsx",
+        "src/ui/ExecutionLogModal.tsx",
+        "src/ui/FloatingNav.tsx",
+        "src/ui/StatsFullPage.tsx",
+        "src/ui/TapshowFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/WebCutVideoEditModalHost.tsx"
+      ],
+      "src/canvas/i18n/index.ts": [
+        "src/App.tsx",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/components/shared/GitHubLanguageButton.tsx",
+        "src/canvas/components/shared/LanguageSwitcher.tsx",
+        "src/canvas/index.ts",
+        "src/ui/AddNodePanel.tsx",
+        "src/ui/FloatingNav.tsx",
+        "src/ui/ProjectPanel.tsx",
+        "src/ui/StatsFullPage.tsx",
+        "src/ui/TemplatePanel.tsx",
+        "src/ui/tour/FeatureTour.tsx"
+      ],
+      "src/subflow/Editor.tsx": [
+        "src/App.tsx"
+      ],
+      "src/flows/LibraryEditor.tsx": [
+        "src/App.tsx"
+      ],
+      "src/flows/registry.ts": [
+        "src/App.tsx",
+        "src/flows/LibraryEditor.tsx",
+        "src/inspector/NodeInspector.tsx"
+      ],
+      "src/ui/FloatingNav.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/AddNodePanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/TemplatePanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/AccountPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ProjectPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/AssetPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/TapshowPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/CharacterCreatorModal.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/VideoTrimModalHost.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/WebCutVideoEditModalHost.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ModelPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/HistoryPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ExecutionPanel.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ParamModal.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/PreviewModal.tsx": [
+        "src/App.tsx",
+        "src/ui/TapshowFullPage.tsx"
+      ],
+      "src/ui/TapshowFullPage.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ShareFullPage.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/StatsFullPage.tsx": [
+        "src/App.tsx"
+      ],
+      "src/runner/remoteRunner.ts": [
+        "src/App.tsx",
+        "src/ai/canvasService.ts",
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/store.ts",
+        "src/runner/dag.ts"
+      ],
+      "src/utils/download.ts": [
+        "src/App.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/ui/PreviewModal.tsx"
+      ],
+      "src/constants/grsai.ts": [
+        "src/App.tsx",
+        "src/ui/ModelPanel.tsx"
+      ],
+      "src/ui/tour/FeatureTour.tsx": [
+        "src/App.tsx"
+      ],
+      "src/ui/ExecutionLogModal.tsx": [
+        "src/App.tsx"
+      ],
+      "src/styles.css": [
+        "src/App.tsx"
+      ],
+      "src/runner/mockRunner.ts": [
+        "src/ai/canvasService.ts",
+        "src/canvas/store.ts",
+        "src/runner/dag.ts"
+      ],
+      "src/ai/types.ts": [
+        "src/ai/canvasService.ts"
+      ],
+      "src/utils/orientation.ts": [
+        "src/ai/canvasService.ts",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/runner/remoteRunner.ts"
+      ],
+      "src/ai/canvasService.ts": [
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx"
+      ],
+      "src/canvas/utils/buildCanvasContext.ts": [
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx"
+      ],
+      "src/canvas/dnd/setTapImageDragData.ts": [
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/canvas/nodes/taskNode/ImageResultModal.tsx",
+        "src/canvas/nodes/taskNode/components/ImageContent.tsx",
+        "src/canvas/nodes/taskNode/components/MosaicModal.tsx",
+        "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx",
+        "src/canvas/nodes/taskNode/components/VeoImageModal.tsx",
+        "src/canvas/nodes/taskNode/components/VideoContent.tsx",
+        "src/inspector/NodeInspector.tsx",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/TapshowFullPage.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/VideoTrimModal.tsx"
+      ],
+      "src/ai/langgraph-chat/submitEvent.ts": [
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/ui/ParamModal.tsx"
+      ],
+      "src/ai/langgraph-chat/buildNodeIntentPrompt.ts": [
+        "src/ai/langgraph-chat/LangGraphChatOverlay.tsx"
+      ],
+      "src/types/canvas-intelligence.ts": [
+        "src/api/toolEvents.ts"
+      ],
+      "src/canvas/nodes/TaskNode.tsx": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/index.ts",
+        "src/canvas/nodes/index.ts",
+        "src/flows/LibraryEditor.tsx",
+        "src/subflow/Editor.tsx"
+      ],
+      "src/canvas/nodes/GroupNode.tsx": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/index.ts",
+        "src/canvas/nodes/index.ts"
+      ],
+      "src/canvas/nodes/IONode.tsx": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/index.ts",
+        "src/canvas/nodes/index.ts"
+      ],
+      "src/canvas/edges/TypedEdge.tsx": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/edges/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/edges/OrthTypedEdge.tsx": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/edges/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/runner/dag.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/GroupNode.tsx",
+        "src/canvas/store.ts"
+      ],
+      "src/canvas/insertMenuStore.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/quickStartSample.ts": [
+        "src/canvas/Canvas.tsx"
+      ],
+      "src/canvas/utils/handleLabels.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx"
+      ],
+      "src/config/models.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/config/useModelOptions.ts",
+        "src/runner/remoteRunner.ts",
+        "src/ui/ModelPanel.tsx"
+      ],
+      "src/api/taskProgress.ts": [
+        "src/canvas/Canvas.tsx"
+      ],
+      "src/canvas/nodes/taskNodeHelpers.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/PoseEditor.tsx",
+        "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx",
+        "src/ui/CharacterCreatorModal.tsx"
+      ],
+      "src/canvas/utils/constants.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/store.ts",
+        "src/canvas/utils/canvas.ts",
+        "src/canvas/utils/colors.ts",
+        "src/canvas/utils/edge.ts",
+        "src/canvas/utils/index.ts",
+        "src/canvas/utils/layout.ts",
+        "src/canvas/utils/node.ts",
+        "src/canvas/utils/serialization.ts",
+        "src/canvas/utils/validation.ts"
+      ],
+      "src/canvas/utils/edgeRules.ts": [
+        "src/canvas/Canvas.tsx"
+      ],
+      "src/canvas/utils/canvasTheme.ts": [
+        "src/canvas/Canvas.tsx"
+      ],
+      "src/canvas/nodes/taskNodeSchema.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/featureRenderers.tsx",
+        "src/canvas/nodes/taskNode/features.ts",
+        "src/canvas/nodes/taskNodeHelpers.ts",
+        "src/canvas/store.ts"
+      ],
+      "src/utils/usePreventBrowserSwipeNavigation.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/flows/LibraryEditor.tsx",
+        "src/subflow/Editor.tsx"
+      ],
+      "src/ui/assetEvents.ts": [
+        "src/canvas/Canvas.tsx",
+        "src/runner/remoteRunner.ts",
+        "src/ui/AssetPanel.tsx"
+      ],
+      "src/canvas/systemPromptPresets.ts": [
+        "src/canvas/components/SystemPromptPanel.tsx"
+      ],
+      "src/canvas/components/shared/Modal/BaseModal.tsx": [
+        "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/utils/index.ts": [
+        "src/canvas/components/shared/Modal/NodeConfigModal.tsx",
+        "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+        "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+        "src/canvas/components/shared/NodeBase/NodeHandles.tsx",
+        "src/canvas/components/shared/NodeBase/NodeHeader.tsx",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/components/shared/NodeBase/NodeHeader.tsx": [
+        "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/components/shared/NodeBase/NodeContent.tsx": [
+        "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/components/shared/NodeBase/NodeHandles.tsx": [
+        "src/canvas/components/shared/NodeBase/NodeBase.tsx",
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/components/shared/Modal/NodeConfigModal.tsx": [
+        "src/canvas/components/shared/NodeBase/NodeContent.tsx",
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/creative/videoRealism.ts": [
+        "src/canvas/components/shared/VideoRealismTips.tsx"
+      ],
+      "src/canvas/components/shared/NodeBase/NodeBase.tsx": [
+        "src/canvas/components/shared/index.ts",
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/edges/useEdgeVisuals.ts": [
+        "src/canvas/edges/OrthTypedEdge.tsx",
+        "src/canvas/edges/TypedEdge.tsx"
+      ],
+      "src/canvas/utils/edge.ts": [
+        "src/canvas/edges/index.ts",
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/components/shared/LanguageSwitcher.tsx": [
+        "src/canvas/index.ts"
+      ],
+      "src/canvas/components/shared/GitHubLanguageButton.tsx": [
+        "src/canvas/index.ts"
+      ],
+      "src/config/useModelOptions.ts": [
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/ui/ModelPanel.tsx"
+      ],
+      "src/canvas/nodes/storyboardUtils.ts": [
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/StoryboardEditor.tsx",
+        "src/runner/remoteRunner.ts"
+      ],
+      "src/canvas/nodes/taskNode/features.ts": [
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/featureRenderers.tsx"
+      ],
+      "src/canvas/components/PromptSampleDrawer.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/constants.ts": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/utils/videoFrameExtractor.ts": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/PoseEditor.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/TaskNodeHandles.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/TopToolbar.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/TaskNodeHeader.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/ControlChips.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/StatusBanner.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/GenerationOverlay.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/PromptSection.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/VideoContent.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/MosaicModal.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/VeoImageModal.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/VideoResultModal.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/StoryboardEditor.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/featureRenderers.tsx": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/utils.ts": [
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/nodes/taskNode/PoseEditor.tsx",
+        "src/canvas/nodes/taskNodeHelpers.ts",
+        "src/runner/mosaicRunner.ts"
+      ],
+      "src/canvas/nodes/taskNode/constants.ts": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/canvas/nodes/taskNode/types.ts": [
+        "src/canvas/nodes/TaskNode.tsx"
+      ],
+      "src/runner/mosaicRunner.ts": [
+        "src/canvas/nodes/TaskNode.tsx",
+        "src/canvas/store.ts",
+        "src/runner/dag.ts"
+      ],
+      "src/canvas/utils/node.ts": [
+        "src/canvas/nodes/index.ts",
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/components/SystemPromptPanel.tsx": [
+        "src/canvas/nodes/taskNode/components/PromptSection.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/CharacterContent.tsx": [
+        "src/canvas/nodes/taskNode/featureRenderers.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/MosaicContent.tsx": [
+        "src/canvas/nodes/taskNode/featureRenderers.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/ImageContent.tsx": [
+        "src/canvas/nodes/taskNode/featureRenderers.tsx"
+      ],
+      "src/canvas/nodes/taskNode/components/StoryboardImageContent.tsx": [
+        "src/canvas/nodes/taskNode/featureRenderers.tsx"
+      ],
+      "src/canvas/utils/canvas.ts": [
+        "src/canvas/utils/edge.ts",
+        "src/canvas/utils/index.ts",
+        "src/canvas/utils/node.ts"
+      ],
+      "src/canvas/utils/colors.ts": [
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/utils/layout.ts": [
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/utils/geometry.ts": [
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/utils/validation.ts": [
+        "src/canvas/utils/index.ts"
+      ],
+      "src/canvas/utils/serialization.ts": [
+        "src/canvas/utils/index.ts"
+      ],
+      "src/config/modelSource.ts": [
+        "src/config/models.ts",
+        "src/runner/remoteRunner.ts"
+      ],
+      "src/inspector/forms.ts": [
+        "src/inspector/NodeInspector.tsx",
+        "src/ui/ParamModal.tsx"
+      ],
+      "src/App.tsx": [
+        "src/main.tsx"
+      ],
+      "src/auth/fetch401Interceptor.ts": [
+        "src/main.tsx"
+      ],
+      "src/ai/langgraph-chat/LangGraphChatOverlay.tsx": [
+        "src/main.tsx"
+      ],
+      "src/dark.css": [
+        "src/main.tsx"
+      ],
+      "src/light.css": [
+        "src/main.tsx"
+      ],
+      "src/ui/utils/panelPosition.ts": [
+        "src/ui/AccountPanel.tsx",
+        "src/ui/AddNodePanel.tsx",
+        "src/ui/AssetPanel.tsx",
+        "src/ui/ExecutionPanel.tsx",
+        "src/ui/HistoryPanel.tsx",
+        "src/ui/ModelPanel.tsx",
+        "src/ui/ProjectPanel.tsx",
+        "src/ui/TapshowPanel.tsx",
+        "src/ui/TemplatePanel.tsx"
+      ],
+      "src/ui/videoThumb.ts": [
+        "src/ui/AssetPanel.tsx"
+      ],
+      "src/ui/VideoTrimModal.tsx": [
+        "src/ui/VideoTrimModalHost.tsx"
+      ],
+      "src/ui/WebCutVideoEditModal.tsx": [
+        "src/ui/WebCutVideoEditModalHost.tsx"
+      ]
+    }
+  }
+}
