@@ -99,6 +99,7 @@ taskRouter.get("/stream", (c) => {
 
 	return streamSSE(c, async (stream) => {
 		const HEARTBEAT_MS = 15_000;
+		const POLL_MS = 250;
 		const queue: TaskProgressSnapshotDto[] = [];
 		let closed = false;
 
@@ -111,20 +112,10 @@ taskRouter.get("/stream", (c) => {
 			}
 		};
 
-		let notify: (() => void) | null = null;
-		const waitForEvent = () =>
-			new Promise<void>((resolve) => {
-				notify = resolve;
-			});
-
 		const subscriber: TaskProgressSubscriber = {
 			push(event) {
 				if (closed) return;
 				queue.push(event);
-				if (notify) {
-					notify();
-					notify = null;
-				}
 			},
 		};
 
@@ -133,33 +124,33 @@ taskRouter.get("/stream", (c) => {
 		const abortSignal = c.req.raw.signal as AbortSignal;
 		abortSignal.addEventListener("abort", () => {
 			closed = true;
-			if (notify) {
-				notify();
-				notify = null;
-			}
 		});
 
 		try {
+			let lastHeartbeatAt = Date.now();
 			await stream.writeSSE({
 				data: JSON.stringify({ type: "init" }),
 			});
 
 			while (!closed) {
-				if (!queue.length) {
-					await Promise.race([
-						waitForEvent(),
-						new Promise<void>((resolve) =>
-							setTimeout(resolve, HEARTBEAT_MS),
-						),
-					]);
-					if (!queue.length && !closed) {
-						await stream.writeSSE({
-							event: "ping",
-							data: JSON.stringify({ type: "ping" }),
-						});
-						continue;
-					}
+				if (queue.length) {
+					await drainQueue();
+					continue;
 				}
+
+				const now = Date.now();
+				if (now - lastHeartbeatAt >= HEARTBEAT_MS) {
+					await stream.writeSSE({
+						event: "ping",
+						data: JSON.stringify({ type: "ping" }),
+					});
+					lastHeartbeatAt = now;
+					continue;
+				}
+
+				await new Promise<void>((resolve) =>
+					setTimeout(resolve, POLL_MS),
+				);
 				await drainQueue();
 			}
 		} finally {
