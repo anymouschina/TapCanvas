@@ -1,6 +1,7 @@
 import React from 'react'
 import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 import { useUIStore } from '../../../../ui/uiStore'
+import { computeGridLayoutFromCount, sliceImageGridToObjectUrls } from '../../../../utils/imageGridSlicer'
 
 type ImageResult = { url: string; title?: string }
 
@@ -84,11 +85,90 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
   }, [coverUrl, imagePrimaryIndex, imageResults, normalizedCount])
 
   const shotCount = shotItems.length
-  const hasVariants = !!coverUrl && shotCount > 0
-  const isExpanded = hasVariants && !!variantsOpen
+  const canExpandFrames = !!coverUrl && normalizedCount > 0
+  const hasVariants = canExpandFrames && shotCount > 0
+  const isExpanded = canExpandFrames && !!variantsOpen
   const baseWidth = variantsBaseWidth ?? nodeWidth
   const baseHeight = variantsBaseHeight ?? nodeHeight
   const tileStyle = { width: baseWidth, height: baseHeight }
+
+  const [cutFrames, setCutFrames] = React.useState<{ index: number; url: string }[]>([])
+  const [cutStatus, setCutStatus] = React.useState<'idle' | 'running' | 'success' | 'error'>('idle')
+  const [cutError, setCutError] = React.useState<string | null>(null)
+  const [cutAttempt, setCutAttempt] = React.useState(0)
+  const cutRevokeRef = React.useRef<null | (() => void)>(null)
+  const cutKeyRef = React.useRef<string>('')
+  const cutUnmountedRef = React.useRef(false)
+
+  const resetCutFrames = React.useCallback(() => {
+    if (cutRevokeRef.current) {
+      cutRevokeRef.current()
+      cutRevokeRef.current = null
+    }
+    setCutFrames([])
+    setCutStatus('idle')
+    setCutError(null)
+  }, [])
+
+  React.useEffect(() => {
+    const key = `${coverUrl || ''}|${normalizedCount}`
+    if (cutKeyRef.current && cutKeyRef.current !== key) {
+      resetCutFrames()
+    }
+    cutKeyRef.current = key
+  }, [coverUrl, normalizedCount, resetCutFrames])
+
+  React.useEffect(() => {
+    return () => {
+      cutUnmountedRef.current = true
+      if (cutRevokeRef.current) {
+        cutRevokeRef.current()
+        cutRevokeRef.current = null
+      }
+    }
+  }, [])
+
+  React.useEffect(() => {
+    const requestKey = `${coverUrl || ''}|${normalizedCount}`
+    if (!isExpanded) return
+    if (!coverUrl) return
+    if (showStateOverlay) return
+    if (shotCount > 0) return
+    if (cutStatus === 'running') return
+    if (cutFrames.length > 0 && cutStatus === 'success' && cutKeyRef.current === requestKey) return
+
+    setCutStatus('running')
+    setCutError(null)
+
+    const layout = computeGridLayoutFromCount(normalizedCount, { minCols: 2, maxCols: 4 })
+    void sliceImageGridToObjectUrls(coverUrl, layout, normalizedCount, { mimeType: 'image/png' })
+      .then(({ frames, revoke }) => {
+        if (cutUnmountedRef.current) {
+          revoke()
+          return
+        }
+        if (cutKeyRef.current !== requestKey) {
+          revoke()
+          return
+        }
+        if (cutRevokeRef.current) {
+          cutRevokeRef.current()
+        }
+        cutRevokeRef.current = revoke
+        setCutFrames(frames.map((frame) => ({ index: frame.index, url: frame.objectUrl })))
+        setCutStatus('success')
+        cutKeyRef.current = requestKey
+      })
+      .catch((error) => {
+        if (cutUnmountedRef.current) return
+        if (cutKeyRef.current !== requestKey) return
+        console.error('Failed to slice storyboard grid:', error)
+        setCutStatus('error')
+        setCutFrames([])
+        const message = error instanceof Error ? error.message : '切割失败'
+        setCutError(message)
+      })
+  }, [coverUrl, cutAttempt, cutFrames.length, cutStatus, isExpanded, normalizedCount, shotCount, showStateOverlay])
 
   const mediaStack = React.useMemo(() => {
     if (!coverUrl) return []
@@ -97,7 +177,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
   }, [coverUrl, shotItems])
 
   const toggleVariants = React.useCallback(() => {
-    if (!hasVariants) return
+    if (!canExpandFrames) return
     if (variantsOpen) {
       onUpdateNodeData({ variantsOpen: false })
       return
@@ -107,9 +187,15 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
       variantsBaseWidth: Math.max(72, Math.round(nodeWidth)),
       variantsBaseHeight: Math.max(54, Math.round(nodeHeight)),
     })
-  }, [hasVariants, nodeHeight, nodeWidth, onUpdateNodeData, variantsOpen])
+  }, [canExpandFrames, nodeHeight, nodeWidth, onUpdateNodeData, variantsOpen])
 
-  const gridCols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(shotCount + 1))))
+  const expandedItems = shotCount > 0
+    ? shotItems.map((it, idx) => ({ url: it.url, label: it.title || `镜头 ${idx + 1}` }))
+    : cutFrames.map((frame) => ({ url: frame.url, label: `镜头 ${frame.index + 1}` }))
+  const expandedGridCols = React.useMemo(() => {
+    const total = Math.max(0, expandedItems.length) || normalizedCount
+    return computeGridLayoutFromCount(total + 1, { minCols: 2, maxCols: 4 }).cols
+  }, [expandedItems.length, normalizedCount])
 
   return (
     <div
@@ -118,7 +204,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
         position: 'relative',
         width: nodeWidth,
         height: nodeHeight,
-        overflow: hasVariants ? 'visible' : 'hidden',
+        overflow: canExpandFrames ? 'visible' : 'hidden',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}
@@ -252,7 +338,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
           </div>
         </div>
 
-        {hasVariants && (
+        {canExpandFrames && (
           <button
             className="task-node-storyboard-image__variants-toggle nodrag"
             type="button"
@@ -279,7 +365,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
               boxShadow: variantsOpen ? '0 0 0 2px rgba(59,130,246,0.35)' : undefined,
             }}
           >
-            {shotCount}
+            {shotCount || normalizedCount}
           </button>
         )}
 
@@ -315,7 +401,7 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
         )}
       </div>
 
-      {isExpanded && hasVariants && (
+      {isExpanded && canExpandFrames && (
         <div
           className="task-node-storyboard-image__variants-grid"
           style={{
@@ -326,11 +412,11 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
             display: 'grid',
             gap: 12,
             pointerEvents: 'none',
-            gridTemplateColumns: `repeat(${gridCols}, ${baseWidth}px)`,
+            gridTemplateColumns: `repeat(${expandedGridCols}, ${baseWidth}px)`,
           }}
         >
           <div className="task-node-storyboard-image__variants-spacer" aria-hidden style={tileStyle} />
-          {shotItems.map((it) => (
+          {expandedItems.map((it) => (
             <button
               key={it.url}
               className="task-node-storyboard-image__variant nodrag"
@@ -342,6 +428,10 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => {
+                e.stopPropagation()
+                useUIStore.getState().openPreview({ url: it.url, kind: 'image', name: it.label })
+              }}
               title="拖拽生成新节点"
               style={{
                 ...tileStyle,
@@ -357,12 +447,85 @@ export function StoryboardImageContent(props: StoryboardImageContentProps) {
               <img
                 className="task-node-storyboard-image__variant-image"
                 src={it.url}
-                alt={it.title || '镜头'}
+                alt={it.label}
                 draggable={false}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               />
             </button>
           ))}
+
+          {shotCount === 0 && cutStatus === 'running' && (
+            <div
+              className="task-node-storyboard-image__cutting"
+              aria-hidden
+              style={{
+                ...tileStyle,
+                borderRadius: frameRadius,
+                border: `1px dashed ${frameBorderColor}`,
+                background: isDarkUi ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.55)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: mediaOverlayText,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: 0.2,
+                pointerEvents: 'none',
+              }}
+            >
+              切割中…
+            </div>
+          )}
+
+          {shotCount === 0 && cutStatus === 'error' && (
+            <button
+              className="task-node-storyboard-image__cut-error nodrag"
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                setCutAttempt((v) => v + 1)
+                resetCutFrames()
+              }}
+              title="点击重试切割"
+              style={{
+                ...tileStyle,
+                borderRadius: frameRadius,
+                overflow: 'hidden',
+                border: `1px solid ${frameBorderColor}`,
+                background: isDarkUi ? 'rgba(0,0,0,0.22)' : 'rgba(255,255,255,0.72)',
+                boxShadow: darkCardShadow,
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+                padding: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                alignItems: 'flex-start',
+                justifyContent: 'center',
+                textAlign: 'left',
+              }}
+            >
+              <div
+                className="task-node-storyboard-image__cut-error-title"
+                style={{ fontSize: 12, fontWeight: 800, color: mediaOverlayText, opacity: 0.92 }}
+              >
+                切割失败
+              </div>
+              <div
+                className="task-node-storyboard-image__cut-error-desc"
+                style={{ fontSize: 10, fontWeight: 600, color: mediaOverlayText, opacity: 0.72, lineHeight: 1.35 }}
+              >
+                {cutError || '可能是跨域限制，无法读取像素'}
+              </div>
+              <div
+                className="task-node-storyboard-image__cut-error-retry"
+                style={{ fontSize: 10, fontWeight: 800, color: isDarkUi ? '#60a5fa' : '#2563eb', opacity: 0.95 }}
+              >
+                点击重试
+              </div>
+            </button>
+          )}
         </div>
       )}
     </div>
