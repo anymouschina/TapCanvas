@@ -83,23 +83,49 @@ function inferMediaKind(options: {
 	return null;
 }
 
-function limitReadableStream(
+async function readStreamToBytes(
 	stream: ReadableStream<Uint8Array>,
 	maxBytes: number,
-): ReadableStream<Uint8Array> {
-	if (!Number.isFinite(maxBytes) || maxBytes <= 0) return stream;
-	let seen = 0;
-	const limiter = new TransformStream<Uint8Array, Uint8Array>({
-		transform(chunk, controller) {
-			seen += chunk.byteLength || 0;
-			if (seen > maxBytes) {
-				controller.error(new Error("file is too large"));
-				return;
+): Promise<Uint8Array> {
+	if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+		return new Uint8Array(await new Response(stream).arrayBuffer());
+	}
+
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value || value.byteLength === 0) continue;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				try {
+					await reader.cancel();
+				} catch {
+					// ignore
+				}
+				throw new Error("file is too large");
 			}
-			controller.enqueue(chunk);
-		},
-	});
-	return stream.pipeThrough(limiter);
+			chunks.push(value);
+		}
+	} finally {
+		try {
+			reader.releaseLock();
+		} catch {
+			// ignore
+		}
+	}
+
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
 }
 
 function getPublicBase(env: AppEnv["Bindings"]): string {
@@ -289,7 +315,8 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 	let contentType = contentTypeHeader;
 	let originalName: string | null = null;
 	let size: number | null = null;
-	let bodyStream: ReadableStream<Uint8Array> | null = null;
+	let uploadValue: ReadableStream<Uint8Array> | ArrayBuffer | Uint8Array | Blob | null = null;
+	let uploadPump: Promise<void> | null = null;
 	let name = "";
 
 	if (isMultipart) {
@@ -320,19 +347,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 				: originalName || "";
 		name = sanitizeUploadName(rawName) || (kind === "video" ? "Video" : "Image");
 
-		bodyStream =
-			typeof (file as any).stream === "function"
-				? (file as any).stream()
-				: null;
-		if (!bodyStream) {
-			const buf = await file.arrayBuffer();
-			bodyStream = new ReadableStream<Uint8Array>({
-				start(controller) {
-					controller.enqueue(new Uint8Array(buf));
-					controller.close();
-				},
-			});
-		}
+		uploadValue = file;
 	} else {
 		originalName = sanitizeUploadName(c.req.header("x-file-name") || "");
 		contentType = contentTypeHeader;
@@ -346,23 +361,46 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 			typeof contentLengthHeader === "string" && contentLengthHeader
 				? Number(contentLengthHeader)
 				: NaN;
-		if (Number.isFinite(parsedLen) && parsedLen > MAX_BYTES) {
+		const hasContentLength = Number.isFinite(parsedLen);
+		const declaredSizeHeader = c.req.header("x-file-size");
+		const declaredSize =
+			typeof declaredSizeHeader === "string" && declaredSizeHeader
+				? Number(declaredSizeHeader)
+				: NaN;
+
+		size = hasContentLength
+			? parsedLen
+			: Number.isFinite(declaredSize)
+				? declaredSize
+				: null;
+		if (size != null && size > MAX_BYTES) {
 			return c.json({ error: "file is too large (max 30MB)" }, 413);
-		}
-		size = Number.isFinite(parsedLen) ? parsedLen : null;
-		if (size == null) {
-			const declaredSizeHeader = c.req.header("x-file-size");
-			const declaredSize =
-				typeof declaredSizeHeader === "string" && declaredSizeHeader
-					? Number(declaredSizeHeader)
-					: NaN;
-			size = Number.isFinite(declaredSize) ? declaredSize : null;
 		}
 
 		name = sanitizeUploadName(c.req.query("name") || "") || (kind === "video" ? "Video" : "Image");
-		bodyStream = c.req.raw.body as ReadableStream<Uint8Array> | null;
+		const bodyStream = c.req.raw.body as ReadableStream<Uint8Array> | null;
 		if (!bodyStream) {
 			return c.json({ error: "request body is required" }, 400);
+		}
+
+		if (hasContentLength) {
+			uploadValue = bodyStream;
+		} else if (size != null) {
+			const fixed = new FixedLengthStream(size);
+			uploadPump = bodyStream.pipeTo(fixed.writable);
+			uploadValue = fixed.readable;
+		} else {
+			try {
+				const bytes = await readStreamToBytes(bodyStream, MAX_BYTES);
+				size = bytes.byteLength;
+				uploadValue = bytes;
+			} catch (err: any) {
+				const msg = String(err?.message || "");
+				if (/too large/i.test(msg)) {
+					return c.json({ error: "file is too large (max 30MB)" }, 413);
+				}
+				throw err;
+			}
 		}
 	}
 
@@ -371,14 +409,22 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		fileName: originalName || undefined,
 	});
 	const key = buildUserUploadKey(userId, ext);
-	const limited = limitReadableStream(bodyStream, MAX_BYTES);
+
+	if (!uploadValue) {
+		return c.json({ error: "request body is required" }, 400);
+	}
 	try {
-		await bucket.put(key, limited, {
+		const putPromise = bucket.put(key, uploadValue, {
 			httpMetadata: {
 				contentType,
 				cacheControl: "public, max-age=31536000, immutable",
 			},
 		});
+		if (uploadPump) {
+			await Promise.all([putPromise, uploadPump]);
+		} else {
+			await putPromise;
+		}
 	} catch (err: any) {
 		const msg = String(err?.message || "");
 		if (/too large/i.test(msg)) {
