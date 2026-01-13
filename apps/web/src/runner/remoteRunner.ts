@@ -338,12 +338,62 @@ function extractSoraDraftProgress(draft: any): number | null {
   return Math.max(0, Math.min(100, normalized))
 }
 
-function collectReferenceImages(state: any, targetId: string): string[] {
+function collectReferenceImages(
+  state: any,
+  targetId: string,
+  options?: { preferStoryboardTailShot?: boolean },
+): string[] {
   if (!state) return []
   const edges = Array.isArray(state.edges) ? state.edges : []
   const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
   const inbound = edges.filter((e: any) => e.target === targetId)
   if (!inbound.length) return []
+
+  const pickPrimaryImage = (data: any): string => {
+    const results = Array.isArray(data?.imageResults) ? data.imageResults : []
+    const primaryIndex =
+      typeof data?.imagePrimaryIndex === 'number' &&
+      data.imagePrimaryIndex >= 0 &&
+      data.imagePrimaryIndex < results.length
+        ? data.imagePrimaryIndex
+        : 0
+    const primaryFromResults =
+      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
+        ? results[primaryIndex].url.trim()
+        : ''
+    const primaryFallback = typeof data?.imageUrl === 'string' ? data.imageUrl.trim() : ''
+    return primaryFromResults || primaryFallback || ''
+  }
+
+  const pickStoryboardTailShot = (data: any): string => {
+    const results = Array.isArray(data?.imageResults) ? data.imageResults : []
+    if (!results.length) return ''
+    const primaryIndex =
+      typeof data?.imagePrimaryIndex === 'number' &&
+      data.imagePrimaryIndex >= 0 &&
+      data.imagePrimaryIndex < results.length
+        ? data.imagePrimaryIndex
+        : 0
+    const slice = results.slice(Math.max(0, primaryIndex + 1))
+    const shots = slice.filter(
+      (it: any) =>
+        it &&
+        typeof it.url === 'string' &&
+        it.url.trim() &&
+        typeof it.title === 'string' &&
+        it.title.trim().startsWith('镜头'),
+    )
+    const lastShot = shots.length ? shots[shots.length - 1] : null
+    const lastShotUrl = lastShot && typeof lastShot.url === 'string' ? lastShot.url.trim() : ''
+    if (lastShotUrl) return lastShotUrl
+
+    for (let i = slice.length - 1; i >= 0; i--) {
+      const url = slice[i] && typeof slice[i].url === 'string' ? slice[i].url.trim() : ''
+      if (url) return url
+    }
+
+    return pickPrimaryImage(data)
+  }
 
   const pickVideoTailFrame = (data: any): string => {
     if (!data) return ''
@@ -392,26 +442,19 @@ function collectReferenceImages(state: any, targetId: string): string[] {
     if (upstreamImageNodes.length >= 3) break
   }
 
-  const pushPrimary = (data: any) => {
-    const results = Array.isArray(data.imageResults) ? data.imageResults : []
-    const primaryIndex =
-      typeof data.imagePrimaryIndex === 'number' &&
-      data.imagePrimaryIndex >= 0 &&
-      data.imagePrimaryIndex < results.length
-        ? data.imagePrimaryIndex
-        : 0
-    const primaryFromResults =
-      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
-        ? results[primaryIndex].url.trim()
-        : ''
-    const primaryFallback = typeof data.imageUrl === 'string' ? data.imageUrl.trim() : ''
-    const primary = primaryFromResults || primaryFallback
-    if (primary) collected.push(primary)
-  }
-
   // 1) primary images from up to 3 upstream image nodes
   for (const src of upstreamImageNodes) {
-    pushPrimary((src as any)?.data || {})
+    const srcKind: string | undefined = (src?.data as any)?.kind
+    const sd: any = (src as any)?.data || {}
+    if (options?.preferStoryboardTailShot && srcKind === 'storyboardImage') {
+      const tail = pickStoryboardTailShot(sd)
+      if (tail) {
+        collected.push(tail)
+        continue
+      }
+    }
+    const primary = pickPrimaryImage(sd)
+    if (primary) collected.push(primary)
   }
 
   // 2) pose references only from the most recent upstream image node (avoid crowding out primaries)
@@ -2095,9 +2138,36 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         : undefined
     const promptForModel = systemPromptOpt ? `${systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
 
-    const referenceImagesRaw = collectReferenceImages(state, id)
-    const referenceImages = Array.from(new Set(referenceImagesRaw.filter((u) => typeof u === 'string' && u.trim()))).slice(0, 3)
+    const edges = Array.isArray((state as any)?.edges) ? ((state as any).edges as any[]) : []
+    const nodes = Array.isArray((state as any)?.nodes) ? ((state as any).nodes as Node[]) : []
+    const inbound = edges.filter((e) => e && e.target === id)
+    const lastEdge = inbound.length ? inbound[inbound.length - 1] : null
+    const lastSourceNode = lastEdge ? nodes.find((n) => n.id === lastEdge.source) : null
+    const lastSourceKind = lastSourceNode ? ((lastSourceNode.data as any)?.kind as string | undefined) : undefined
+    const lastSourceLabel =
+      lastSourceNode && lastSourceNode.data
+        ? (typeof (lastSourceNode.data as any).label === 'string' && (lastSourceNode.data as any).label.trim()
+          ? String((lastSourceNode.data as any).label).trim()
+          : lastSourceNode.id)
+        : null
+    const hasStoryboardUpstream = lastSourceKind === 'storyboardImage'
+
+    const referenceImagesRaw = collectReferenceImages(state, id, { preferStoryboardTailShot: true })
+    const referenceImages = Array.from(
+      new Set(
+        referenceImagesRaw
+          .map((u) => (typeof u === 'string' ? u.trim() : ''))
+          .filter(Boolean)
+          .map((u) => toAbsoluteHttpUrl(u) || u),
+      ),
+    ).slice(0, 3)
     const wantsImageEdit = referenceImages.length > 0
+    if (!wantsImageEdit && inbound.length) {
+      appendLog(
+        id,
+        `[${nowLabel()}] 检测到上游连接，但未找到可用的上游图片输出作为参考图：请先运行上游节点并确认其“主图”已生成。`,
+      )
+    }
     if (wantsImageEdit && !isImageEditModel(selectedModel)) {
       const msg = '当前模型不支持图片编辑参考图，请切换到支持图片编辑的模型（如 Nano Banana 系列）或断开参考图连接'
       setNodeStatus(id, 'error', { progress: 0, lastError: msg })
@@ -2115,12 +2185,31 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       progress: 5,
       lastError: undefined,
     })
+    if (wantsImageEdit) {
+      const refHint = lastSourceLabel
+        ? hasStoryboardUpstream
+          ? `（优先取最近连接的「${lastSourceLabel}」的最后一镜）`
+          : `（优先取最近连接的「${lastSourceLabel}」）`
+        : hasStoryboardUpstream
+          ? '（优先使用上一张分镜的最后一镜作为参考）'
+          : ''
+      appendLog(
+        id,
+        `[${nowLabel()}] 检测到上游参考图 x${referenceImages.length}${refHint}`,
+      )
+    }
     appendLog(id, `[${nowLabel()}] 生成分镜网格图（${gridLayout.rows}x${gridLayout.cols}，${storyboardCount} 镜头）…`)
 
     const persist = useUIStore.getState().assetPersistenceEnabled
+    const continuityHint = wantsImageEdit
+      ? hasStoryboardUpstream
+        ? '如果提供了参考图（上一张分镜的最后一镜）：请让本次网格的镜头1在构图/主体位置/光线/时间上自然承接参考画面，再继续推进新内容；其余镜头保持角色与场景连续。'
+        : '如果提供了参考图：请在角色外观（脸/发型/服装/配饰）、场景、光线与画风上保持一致，并在此基础上生成新的分镜网格。'
+      : ''
+    const finalPromptForModel = continuityHint ? `${promptForModel}\n\n${continuityHint}` : promptForModel
     const res = await runTaskByVendor(vendor, {
       kind: wantsImageEdit ? 'image_edit' : 'text_to_image',
-      prompt: promptForModel,
+      prompt: finalPromptForModel,
       extras: {
         nodeKind: kind,
         nodeId: id,
