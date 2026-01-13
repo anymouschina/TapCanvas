@@ -20,21 +20,24 @@ export function GenerationOverlay({ visible, status, progress }: GenerationOverl
     status === 'queued' ? '排队中' :
     status === 'running' ? '生成中' :
     '处理中'
+  const showProgressBar = pct !== null && status !== 'queued'
 
   return (
     <div className="tc-task-node__gen-overlay" aria-label="generation-overlay">
       <div className="tc-task-node__gen-overlay-sheen" aria-hidden="true" />
       <div className="tc-task-node__gen-overlay-body">
-        <Group className="tc-task-node__gen-overlay-title" gap={8}>
-          <Loader className="tc-task-node__gen-overlay-loader" size="xs" variant="dots" />
-          <Text className="tc-task-node__gen-overlay-text" size="xs" fw={600}>
-            {label}{pct !== null ? ` ${Math.round(pct)}%` : ''}
-          </Text>
-        </Group>
-        {pct !== null && (
+        {!showProgressBar && (
+          <Group className="tc-task-node__gen-overlay-title" gap={8}>
+            <Loader className="tc-task-node__gen-overlay-loader" size="xs" variant="dots" />
+            <Text className="tc-task-node__gen-overlay-text" size="xs" fw={600}>
+              {label}
+            </Text>
+          </Group>
+        )}
+        {showProgressBar && (
           <Progress
             className="tc-task-node__gen-overlay-progress"
-            value={pct}
+            value={pct ?? 0}
             size="sm"
             radius="xl"
             styles={{
@@ -49,4 +52,3 @@ export function GenerationOverlay({ visible, status, progress }: GenerationOverl
 }
 
 export default React.memo(GenerationOverlay)
-

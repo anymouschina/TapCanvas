@@ -3119,11 +3119,6 @@ const rewritePromptWithCharacters = React.useCallback(
       )}
             {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
-      {status === 'running' && (
-        <div className="tc-task-node__progress" style={{ marginTop: 6, height: 6, background: 'rgba(127,127,127,.25)', borderRadius: 4 }}>
-          <div className="tc-task-node__progress-bar" style={{ width: `${Math.min(100, Math.max(0, data?.progress ?? 0))}%`, height: '100%', background: color, borderRadius: 4 }} />
-        </div>
-      )}
       {/* Bottom detail panel near node */}
       <NodeToolbar className="tc-task-node__toolbar" isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
         <div className="tc-task-node__toolbar-frame"
