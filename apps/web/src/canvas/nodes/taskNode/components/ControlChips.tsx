@@ -238,7 +238,6 @@ export function ControlChips({
             className="control-chips-run"
             size="md"
             title="执行节点"
-            loading={isRunning}
             disabled={isRunning}
             onClick={onRun}
             radius="md"

@@ -1760,8 +1760,9 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     kind === 'mosaic'
   const hideImageMeta = isImageNode && !selected
   const isImageExpired = Boolean((data as any)?.expired || (data as any)?.imageExpired)
-  const showImageStateOverlay = Boolean(isImageNode && (status === 'running' || status === 'queued' || isImageExpired))
-  const imageStateLabel = isImageExpired ? '已过期' : (status === 'running' || status === 'queued' ? '加载中' : null)
+  // GenerationOverlay 已覆盖 running/queued 状态；这里仅在资源过期时提示。
+  const showImageStateOverlay = Boolean(isImageNode && isImageExpired)
+  const imageStateLabel = isImageExpired ? '已过期' : null
 
   const isCanvasMediaNode =
     kind === 'image' ||
