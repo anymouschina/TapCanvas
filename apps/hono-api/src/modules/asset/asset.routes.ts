@@ -41,6 +41,14 @@ function sanitizeUploadName(raw: unknown): string {
 		.replace(/[\\/]/g, "_");
 }
 
+function normalizeOptionalText(raw: unknown, maxLen: number): string | null {
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim();
+	if (!trimmed) return null;
+	if (!Number.isFinite(maxLen) || maxLen <= 0) return trimmed;
+	return trimmed.length > maxLen ? trimmed.slice(0, maxLen) : trimmed;
+}
+
 function detectUploadExtensionFromMeta(options: {
 	contentType: string;
 	fileName?: string;
@@ -318,6 +326,10 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 	let uploadValue: ReadableStream<Uint8Array> | ArrayBuffer | Uint8Array | Blob | null = null;
 	let uploadPump: Promise<void> | null = null;
 	let name = "";
+	let prompt: string | null = null;
+	let vendor: string | null = null;
+	let modelKey: string | null = null;
+	let taskKind: string | null = null;
 
 	if (isMultipart) {
 		const form = await c.req.formData();
@@ -346,6 +358,11 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 				? nameValue.trim()
 				: originalName || "";
 		name = sanitizeUploadName(rawName) || (kind === "video" ? "Video" : "Image");
+
+		prompt = normalizeOptionalText(form.get("prompt"), 8000);
+		vendor = normalizeOptionalText(form.get("vendor"), 64);
+		modelKey = normalizeOptionalText(form.get("modelKey"), 128);
+		taskKind = normalizeOptionalText(form.get("taskKind"), 64);
 
 		uploadValue = file;
 	} else {
@@ -378,6 +395,38 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		}
 
 		name = sanitizeUploadName(c.req.query("name") || "") || (kind === "video" ? "Video" : "Image");
+		prompt =
+			normalizeOptionalText(
+				c.req.header("x-asset-prompt") ||
+					c.req.header("x-tap-asset-prompt") ||
+					c.req.query("prompt") ||
+					"",
+				8000,
+			) ?? null;
+		vendor =
+			normalizeOptionalText(
+				c.req.header("x-asset-vendor") ||
+					c.req.header("x-tap-asset-vendor") ||
+					c.req.query("vendor") ||
+					"",
+				64,
+			) ?? null;
+		modelKey =
+			normalizeOptionalText(
+				c.req.header("x-asset-model-key") ||
+					c.req.header("x-tap-asset-model-key") ||
+					c.req.query("modelKey") ||
+					"",
+				128,
+			) ?? null;
+		taskKind =
+			normalizeOptionalText(
+				c.req.header("x-asset-task-kind") ||
+					c.req.header("x-tap-asset-task-kind") ||
+					c.req.query("taskKind") ||
+					"",
+				64,
+			) ?? null;
 		const bodyStream = c.req.raw.body as ReadableStream<Uint8Array> | null;
 		if (!bodyStream) {
 			return c.json({ error: "request body is required" }, 400);
@@ -450,6 +499,10 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 				size,
 				originalName: originalName || null,
 				key,
+				prompt,
+				vendor,
+				modelKey,
+				taskKind,
 			},
 			projectId: null,
 		},
