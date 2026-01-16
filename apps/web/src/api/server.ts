@@ -1696,7 +1696,40 @@ export async function deleteServerAsset(id: string): Promise<void> {
   if (!r.ok) throw new Error(`delete asset failed: ${r.status}`)
 }
 
-export async function uploadServerAssetFile(file: File, name?: string): Promise<ServerAssetDto> {
+export type UploadServerAssetMeta = {
+  prompt?: string | null
+  vendor?: string | null
+  modelKey?: string | null
+  taskKind?: TaskKind | string | null
+}
+
+export async function uploadServerAssetFile(file: File, name?: string, meta?: UploadServerAssetMeta): Promise<ServerAssetDto> {
+  const trimmedPrompt = typeof meta?.prompt === 'string' && meta.prompt.trim() ? meta.prompt.trim() : ''
+  const trimmedVendor = typeof meta?.vendor === 'string' && meta.vendor.trim() ? meta.vendor.trim() : ''
+  const trimmedModelKey = typeof meta?.modelKey === 'string' && meta.modelKey.trim() ? meta.modelKey.trim() : ''
+  const trimmedTaskKind = typeof meta?.taskKind === 'string' && String(meta.taskKind).trim() ? String(meta.taskKind).trim() : ''
+
+  const hasMeta = Boolean(trimmedPrompt || trimmedVendor || trimmedModelKey || trimmedTaskKind)
+  if (hasMeta) {
+    const form = new FormData()
+    form.set('file', file)
+    if (typeof name === 'string' && name.trim()) {
+      form.set('name', name.trim())
+    }
+    if (trimmedPrompt) form.set('prompt', trimmedPrompt)
+    if (trimmedVendor) form.set('vendor', trimmedVendor)
+    if (trimmedModelKey) form.set('modelKey', trimmedModelKey)
+    if (trimmedTaskKind) form.set('taskKind', trimmedTaskKind)
+
+    const r = await apiFetch(`${API_BASE}/assets/upload`, withAuth({
+      method: 'POST',
+      headers: { 'x-tap-no-retry': '1' },
+      body: form,
+    }))
+    if (!r.ok) throw new Error(`upload asset failed: ${r.status}`)
+    return r.json()
+  }
+
   const qs = new URLSearchParams()
   if (typeof name === 'string' && name.trim()) {
     qs.set('name', name.trim())

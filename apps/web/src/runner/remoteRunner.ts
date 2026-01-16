@@ -2273,7 +2273,12 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       const blob = shotBlobs[i]!
       const file = new File([blob], `storyboard-${id}-${now}-shot-${i + 1}.png`, { type: 'image/png' })
       // eslint-disable-next-line no-await-in-loop
-      const asset = await uploadServerAssetFile(file, `分镜图-镜头${i + 1}`)
+      const asset = await uploadServerAssetFile(file, `分镜图-镜头${i + 1}`, {
+        prompt: finalPromptForModel,
+        vendor,
+        modelKey: selectedModel,
+        taskKind: wantsImageEdit ? 'image_edit' : 'text_to_image',
+      })
       const uploadedUrl = typeof (asset?.data as any)?.url === 'string' ? String((asset.data as any).url).trim() : ''
       if (!uploadedUrl) {
         throw new Error('镜头图上传失败：未返回 url')
@@ -2493,7 +2498,12 @@ async function runImageFissionTask(ctx: RunnerContext) {
         const blob = quadrants[i]!
         const file = new File([blob], `fission-${id}-${now}-${gridIdx + 1}-${i + 1}.png`, { type: 'image/png' })
         // eslint-disable-next-line no-await-in-loop
-        const asset = await uploadServerAssetFile(file, `裂变-${gridIdx + 1}-${i + 1}`)
+        const asset = await uploadServerAssetFile(file, `裂变-${gridIdx + 1}-${i + 1}`, {
+          prompt: promptForModel,
+          vendor,
+          modelKey: selectedModel,
+          taskKind: 'image_edit',
+        })
         const uploadedUrl = typeof (asset?.data as any)?.url === 'string' ? String((asset.data as any).url).trim() : ''
         if (!uploadedUrl) {
           throw new Error('裂变上传失败：未返回 url')
