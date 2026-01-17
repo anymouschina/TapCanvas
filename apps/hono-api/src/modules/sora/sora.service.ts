@@ -3,6 +3,7 @@ import { AppError } from "../../middleware/error";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { SoraVideoDraftResponseSchema } from "./sora.schemas";
 import { resolveVendorContext } from "../task/task.service";
+import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -1388,10 +1389,7 @@ export async function uploadSoraImage(
 		},
 	});
 
-	const publicBase = (c.env.R2_PUBLIC_BASE_URL || "").trim().replace(
-		/\/+$/,
-		"",
-	);
+	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
 
 	// 兼容前端期望的字段：file_id + (asset_pointer|azure_asset_pointer|url)

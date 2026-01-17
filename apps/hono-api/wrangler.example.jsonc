@@ -30,7 +30,7 @@
 		"GITHUB_CLIENT_SECRET": "YOUR_GITHUB_CLIENT_SECRET",
 		"LOGIN_URL": "https://tapcanvas.beqlee.icu",
 
-		// 公开访问 OSS / R2 的基础 URL（用于生成资源外链）
+		// 公开访问 OSS / R2 的基础 URL（用于生成资源外链；不填则回退到本 Worker 的 /assets/r2）
 		"R2_PUBLIC_BASE_URL": "https://oss.example.com",
 
 		// 本地 / 开发环境可通过 ASSET_HOSTING_DISABLED=1 关闭上传
