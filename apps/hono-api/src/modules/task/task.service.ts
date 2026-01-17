@@ -3306,7 +3306,7 @@ export async function runGenericTaskForVendor(
 				: true;
 
 		if (persistAssets && result.assets && result.assets.length > 0) {
-			// 将生成结果写入 assets（仅记录元数据，URL 仍使用源地址）
+			// 将生成结果写入 assets（默认托管到 OSS/R2 并替换 URL；ASSET_HOSTING_DISABLED=1 时保持源 URL）
 			const hostedAssets = await hostTaskAssetsInWorker({
 				c,
 				userId,
