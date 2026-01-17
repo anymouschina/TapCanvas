@@ -1267,6 +1267,83 @@ export async function uploadSoraImage(
 	userId: string,
 	input: { tokenId?: string | null; file: File },
 ) {
+	const uploadDisabledFlag = String(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		((c.env as any).SORA_UPLOAD_DISABLED ?? ""),
+	)
+		.trim()
+		.toLowerCase();
+	const uploadDisabled =
+		uploadDisabledFlag === "1" ||
+		uploadDisabledFlag === "true" ||
+		uploadDisabledFlag === "yes";
+
+	const uploadToR2Fallback = async () => {
+		const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+		if (!bucket) {
+			// 环境未绑定 R2，保留原始报错语义，避免静默失败。
+			throw new AppError(
+				"未找到可用的 Sora/Sora2API Token，且 OSS 存储未配置",
+				{
+					status: 400,
+					code: "sora_token_missing",
+				},
+			);
+		}
+
+		// 生成与 asset.hosting 类似的 key：uploads/sora/<userId>/<yyyymmdd>/<uuid>.<ext>
+		const file = input.file;
+		const contentType =
+			(file.type && String(file.type).split(";")[0].trim()) ||
+			"application/octet-stream";
+
+		let ext = "bin";
+		const name = (file as any).name as string | undefined;
+		if (name && typeof name === "string") {
+			const match = name.match(/\.([a-zA-Z0-9]+)$/);
+			if (match && match[1]) {
+				ext = match[1].toLowerCase();
+			}
+		}
+		if (ext === "bin") {
+			if (contentType.startsWith("image/")) {
+				ext = contentType.slice("image/".length) || "png";
+			} else if (contentType === "video/mp4") {
+				ext = "mp4";
+			}
+		}
+
+		const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+		const now = new Date();
+		const datePrefix = `${now.getUTCFullYear()}${String(
+			now.getUTCMonth() + 1,
+		).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}`;
+		const random = crypto.randomUUID();
+		const key = `uploads/sora/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
+
+		await bucket.put(key, file, {
+			httpMetadata: {
+				contentType,
+				cacheControl: "public, max-age=31536000, immutable",
+			},
+		});
+
+		const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
+		const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+
+		// 兼容前端期望的字段：file_id + (asset_pointer|azure_asset_pointer|url)
+		return {
+			file_id: `r2_${key}`,
+			url,
+			asset_pointer: url,
+			azure_asset_pointer: url,
+		};
+	};
+
+	if (uploadDisabled) {
+		return uploadToR2Fallback();
+	}
+
 	let sora2Token: SoraToken | null = null;
 	let soraToken: SoraToken | null = null;
 
@@ -1322,8 +1399,15 @@ export async function uploadSoraImage(
 				code === "sora_upload_failed" &&
 				(status === 401 ||
 					status === 403 ||
-					status === 404)
+					status === 404 ||
+					status === 410 ||
+					status === 429 ||
+					(typeof status === "number" && status >= 500))
 			) {
+				return null;
+			}
+			// 网络异常等非 AppError：允许回退到 OSS（R2），避免阻塞前端上传流程
+			if (!isAppError) {
 				return null;
 			}
 			throw err;
@@ -1339,66 +1423,8 @@ export async function uploadSoraImage(
 		return uploadResult;
 	}
 
-	// 3) 两种 Token 都没有：上传到 OSS（R2）兜底。
-	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
-	if (!bucket) {
-		// 环境未绑定 R2，保留原始报错语义，避免静默失败。
-		throw new AppError(
-			"未找到可用的 Sora/Sora2API Token，且 OSS 存储未配置",
-			{
-				status: 400,
-				code: "sora_token_missing",
-			},
-		);
-	}
-
-	// 生成与 asset.hosting 类似的 key：uploads/sora/<userId>/<yyyymmdd>/<uuid>.<ext>
-	const file = input.file;
-	const contentType =
-		(file.type && String(file.type).split(";")[0].trim()) ||
-		"application/octet-stream";
-
-	let ext = "bin";
-	const name = (file as any).name as string | undefined;
-	if (name && typeof name === "string") {
-		const match = name.match(/\.([a-zA-Z0-9]+)$/);
-		if (match && match[1]) {
-			ext = match[1].toLowerCase();
-		}
-	}
-	if (ext === "bin") {
-		if (contentType.startsWith("image/")) {
-			ext = contentType.slice("image/".length) || "png";
-		} else if (contentType === "video/mp4") {
-			ext = "mp4";
-		}
-	}
-
-	const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
-	const now = new Date();
-	const datePrefix = `${now.getUTCFullYear()}${String(
-		now.getUTCMonth() + 1,
-	).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}`;
-	const random = crypto.randomUUID();
-	const key = `uploads/sora/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
-
-	await bucket.put(key, await file.arrayBuffer(), {
-		httpMetadata: {
-			contentType,
-			cacheControl: "public, max-age=31536000, immutable",
-		},
-	});
-
-	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
-	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
-
-	// 兼容前端期望的字段：file_id + (asset_pointer|azure_asset_pointer|url)
-	return {
-		file_id: `r2_${key}`,
-		url,
-		asset_pointer: url,
-		azure_asset_pointer: url,
-	};
+	// 3) 上游不可用或未配置：上传到 OSS（R2）兜底。
+	return uploadToR2Fallback();
 	}
 
 export async function uploadCharacterVideo(

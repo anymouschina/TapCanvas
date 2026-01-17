@@ -13,6 +13,8 @@ export type WorkerEnv = Env & {
 	GITHUB_CLIENT_SECRET?: string;
 	LOGIN_URL?: string;
 	SORA_UNWATERMARK_ENDPOINT?: string;
+	// Optional: disable upstream Sora upload; /sora/upload/image falls back to OSS (R2)
+	SORA_UPLOAD_DISABLED?: string;
 	// Optional: Python LangGraph assistant base URL (e.g. http://127.0.0.1:9011)
 	LANGGRAPH_ASSISTANT_URL?: string;
 	// Sora2API 号池服务的基础地址（例如 http://localhost:8000 或内部网关域名）
