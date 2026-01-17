@@ -5,7 +5,12 @@ import {
 	type TaskAssetDto,
 	type TaskKind,
 } from "../task/task.schemas";
-import { createAssetRow, findGeneratedAssetBySourceUrl } from "./asset.repo";
+import {
+	createAssetRow,
+	findGeneratedAssetBySourceUrl,
+	updateAssetDataRow,
+} from "./asset.repo";
+import { resolvePublicAssetBaseUrl } from "./asset.publicBase";
 
 type HostedAssetMeta = {
 	type: "image" | "video";
@@ -135,10 +140,7 @@ async function uploadToR2FromUrl(options: {
 		return null;
 	}
 
-	const publicBase = (c.env.R2_PUBLIC_BASE_URL || "").trim().replace(
-		/\/+$/,
-		"",
-	);
+	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
 
 	return { key, url };
@@ -220,6 +222,13 @@ export async function hostTaskAssetsInWorker(options: {
 	if (!userId || !assets?.length) return assets || [];
 
 	const hosted: TaskAssetDto[] = [];
+	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
+	const isHostedUrl = (url: string): boolean => {
+		const trimmed = (url || "").trim();
+		if (!trimmed) return false;
+		if (publicBase) return trimmed.startsWith(`${publicBase}/`);
+		return /^\/?gen\//.test(trimmed);
+	};
 
 	for (const asset of assets) {
 		const parsed = TaskAssetSchema.safeParse(asset);
@@ -232,6 +241,9 @@ export async function hostTaskAssetsInWorker(options: {
 		}
 
 		let reusedExisting = false;
+		let didUpload = false;
+		let existingRowId: string | null = null;
+		let existingRowData: any = null;
 
 		try {
 			const existing = await findGeneratedAssetBySourceUrl(
@@ -240,12 +252,14 @@ export async function hostTaskAssetsInWorker(options: {
 				originalUrl,
 			);
 			if (existing && existing.data) {
+				existingRowId = existing.id;
 				let parsedData: any = null;
 				try {
 					parsedData = JSON.parse(existing.data);
 				} catch {
 					parsedData = null;
 				}
+				existingRowData = parsedData;
 				const existingUrl =
 					parsedData && typeof parsedData.url === "string"
 						? parsedData.url.trim()
@@ -256,7 +270,7 @@ export async function hostTaskAssetsInWorker(options: {
 						? parsedData.thumbnailUrl
 						: value.thumbnailUrl ?? null;
 
-				if (existingUrl) {
+				if (existingUrl && isHostedUrl(existingUrl)) {
 					value = TaskAssetSchema.parse({
 						...value,
 						url: existingUrl,
@@ -288,6 +302,7 @@ export async function hostTaskAssetsInWorker(options: {
 						...value,
 						url: uploaded.url,
 					});
+					didUpload = true;
 				}
 			} catch (err: any) {
 				console.warn(
@@ -300,23 +315,54 @@ export async function hostTaskAssetsInWorker(options: {
 		hosted.push(value);
 
 		if (!reusedExisting) {
-			try {
-				await persistGeneratedAsset(c, userId, {
-					type: value.type,
-					url: value.url,
-					thumbnailUrl: value.thumbnailUrl ?? null,
-					vendor: meta?.vendor,
-					taskKind: meta?.taskKind,
-					prompt: meta?.prompt,
-					modelKey: meta?.modelKey ?? null,
-					taskId: meta?.taskId ?? null,
-					sourceUrl: originalUrl,
-				});
-			} catch (err: any) {
-				console.warn(
-					"[asset-hosting] persistGeneratedAsset failed",
-					err?.message || err,
-				);
+			if (existingRowId && !didUpload) {
+				// 已存在旧记录（可能是未托管 URL）；本次未成功上传时不重复写入
+			} else {
+				try {
+					if (existingRowId && didUpload) {
+						const nowIso = new Date().toISOString();
+						const baseData =
+							existingRowData && typeof existingRowData === "object"
+								? existingRowData
+								: {};
+						await updateAssetDataRow(
+							c.env.DB,
+							userId,
+							existingRowId,
+							{
+								...baseData,
+								kind: "generation",
+								type: value.type,
+								url: value.url,
+								thumbnailUrl: value.thumbnailUrl ?? null,
+								vendor: meta?.vendor || null,
+								taskKind: meta?.taskKind || null,
+								prompt: meta?.prompt || null,
+								modelKey: meta?.modelKey ?? null,
+								taskId: meta?.taskId ?? null,
+								sourceUrl: originalUrl,
+							},
+							nowIso,
+						);
+					} else {
+						await persistGeneratedAsset(c, userId, {
+							type: value.type,
+							url: value.url,
+							thumbnailUrl: value.thumbnailUrl ?? null,
+							vendor: meta?.vendor,
+							taskKind: meta?.taskKind,
+							prompt: meta?.prompt,
+							modelKey: meta?.modelKey ?? null,
+							taskId: meta?.taskId ?? null,
+							sourceUrl: originalUrl,
+						});
+					}
+				} catch (err: any) {
+					console.warn(
+						"[asset-hosting] persistGeneratedAsset failed",
+						err?.message || err,
+					);
+				}
 			}
 		}
 	}

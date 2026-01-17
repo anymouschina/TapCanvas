@@ -107,6 +107,20 @@ export async function createAssetRow(
 	return row;
 }
 
+export async function updateAssetDataRow(
+	db: D1Database,
+	userId: string,
+	id: string,
+	data: unknown,
+	nowIso: string,
+): Promise<void> {
+	await execute(
+		db,
+		`UPDATE assets SET data = ?, updated_at = ? WHERE id = ? AND owner_id = ?`,
+		[JSON.stringify(data ?? null), nowIso, id, userId],
+	);
+}
+
 export async function renameAssetRow(
 	db: D1Database,
 	userId: string,

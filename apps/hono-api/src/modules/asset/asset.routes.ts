@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../../types";
+import type { AppContext, AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import {
@@ -15,6 +15,7 @@ import {
 	listPublicAssets,
 	renameAssetRow,
 } from "./asset.repo";
+import { resolvePublicAssetBaseUrl } from "./asset.publicBase";
 
 export const assetRouter = new Hono<AppEnv>();
 
@@ -136,12 +137,8 @@ async function readStreamToBytes(
 	return out;
 }
 
-function getPublicBase(env: AppEnv["Bindings"]): string {
-	const rawBase =
-		typeof (env as any).R2_PUBLIC_BASE_URL === "string"
-			? ((env as any).R2_PUBLIC_BASE_URL as string)
-			: "";
-	return rawBase.trim().replace(/\/+$/, "");
+function getPublicBase(c: Pick<AppContext, "env" | "req">): string {
+	return resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 }
 
 function detectUploadExtension(file: File): string {
@@ -303,6 +300,42 @@ assetRouter.delete("/:id", authMiddleware, async (c) => {
 	const id = c.req.param("id");
 	await deleteAssetRow(c.env.DB, userId, id);
 	return c.body(null, 204);
+});
+
+// Public R2 asset proxy: serves objects stored in R2_ASSETS without requiring a custom domain.
+assetRouter.get("/r2/*", async (c) => {
+	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+	if (!bucket) {
+		return c.json({ error: "OSS storage is not configured" }, 500);
+	}
+
+	const pathname = new URL(c.req.url).pathname;
+	const prefix = "/assets/r2/";
+	const key = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+	if (!key) {
+		return c.json({ error: "key is required" }, 400);
+	}
+
+	const obj = await bucket.get(key);
+	if (!obj) {
+		return c.json({ error: "not found" }, 404);
+	}
+
+	const headers = new Headers();
+	headers.set(
+		"Content-Type",
+		(obj.httpMetadata?.contentType as string | undefined) ||
+			"application/octet-stream",
+	);
+	headers.set(
+		"Cache-Control",
+		(obj.httpMetadata?.cacheControl as string | undefined) ||
+			"public, max-age=31536000, immutable",
+	);
+	headers.set("Access-Control-Allow-Origin", "*");
+	if ((obj as any).etag) headers.set("ETag", String((obj as any).etag));
+
+	return new Response(obj.body, { status: 200, headers });
 });
 
 // Upload a user asset file to OSS (R2) and persist it as an asset row.
@@ -482,7 +515,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		throw err;
 	}
 
-	const publicBase = getPublicBase(c.env);
+	const publicBase = getPublicBase(c);
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
 
 	const nowIso = new Date().toISOString();
@@ -532,7 +565,7 @@ assetRouter.get("/public", async (c) => {
 	const requestedType =
 		typeParam === "image" || typeParam === "video" ? typeParam : null;
 
-	const publicBase = getPublicBase(c.env);
+	const publicBase = getPublicBase(c);
 	const isHosted = (url: string): boolean => isHostedUrl(url, publicBase);
 
 	const rows = await listPublicAssets(c.env.DB, { limit });
@@ -614,7 +647,7 @@ assetRouter.get("/public", async (c) => {
 
 // CDN-friendly thumbnail proxy with Cloudflare Image Resizing
 assetRouter.get("/public-thumb", async (c) => {
-	const publicBase = getPublicBase(c.env);
+	const publicBase = getPublicBase(c);
 	const raw = (c.req.query("url") || "").trim();
 	if (!raw) {
 		return c.json({ message: "url is required" }, 400);
@@ -758,7 +791,7 @@ assetRouter.get("/proxy-video", authMiddleware, async (c) => {
 	const host = parsed.hostname.toLowerCase();
 	let r2PublicHost: string | null = null;
 	try {
-		const r2PublicBase = (c.env.R2_PUBLIC_BASE_URL || "").trim();
+		const r2PublicBase = getPublicBase(c);
 		if (r2PublicBase) {
 			r2PublicHost = new URL(r2PublicBase).hostname.toLowerCase();
 		}
