@@ -1,5 +1,6 @@
 import type { AppContext } from "../../types";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
+import { AppError } from "../../middleware/error";
 import {
 	TaskAssetSchema,
 	type TaskAssetDto,
@@ -23,6 +24,21 @@ type HostedAssetMeta = {
 	taskId?: string | null;
 	sourceUrl?: string | null;
 };
+
+function isAssetHostingDisabled(c: AppContext): boolean {
+	const hostingDisabledFlag = String(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		((c.env as any).ASSET_HOSTING_DISABLED ?? ""),
+	)
+		.trim()
+		.toLowerCase();
+	return (
+		hostingDisabledFlag === "1" ||
+		hostingDisabledFlag === "true" ||
+		hostingDisabledFlag === "yes" ||
+		hostingDisabledFlag === "on"
+	);
+}
 
 function detectExtension(url: string, contentType: string): string {
 	const known: Record<string, string> = {
@@ -64,34 +80,24 @@ async function uploadToR2FromUrl(options: {
 	userId: string;
 	sourceUrl: string;
 	prefix?: string;
-}): Promise<{ key: string; url: string } | null> {
-	const { c, userId } = options;
+	bucket: R2Bucket;
+	publicBase: string;
+}): Promise<{ key: string; url: string }> {
+	const { c, userId, bucket } = options;
+	const publicBase = options.publicBase.trim().replace(/\/+$/, "");
 	const sourceUrl = (options.sourceUrl || "").trim();
-	if (!sourceUrl || !/^https?:\/\//i.test(sourceUrl)) {
-		return null;
+	if (!sourceUrl) {
+		throw new AppError("Asset hosting failed: sourceUrl is empty", {
+			status: 502,
+			code: "asset_hosting_source_url_missing",
+		});
 	}
-
-	// 本地 / 开发环境可通过 ASSET_HOSTING_DISABLED=1 关闭 OSS 上传，
-	// 直接使用上游返回的资源 URL，避免依赖 R2。
-	const hostingDisabledFlag = String(
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		((c.env as any).ASSET_HOSTING_DISABLED ?? ""),
-	).toLowerCase();
-	const hostingDisabled =
-		hostingDisabledFlag === "1" ||
-		hostingDisabledFlag === "true" ||
-		hostingDisabledFlag === "yes";
-	if (hostingDisabled) {
-		return null;
-	}
-
-	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
-	if (!bucket) {
-		console.warn(
-			"[asset-hosting] R2_ASSETS binding missing, skip upload",
-		);
-		// 未绑定 R2，直接使用源地址
-		return null;
+	if (!/^https?:\/\//i.test(sourceUrl)) {
+		throw new AppError("Asset hosting failed: sourceUrl must be http(s)", {
+			status: 502,
+			code: "asset_hosting_source_url_invalid",
+			details: { sourceUrl },
+		});
 	}
 
 	let res: Response;
@@ -100,13 +106,19 @@ async function uploadToR2FromUrl(options: {
 			tag: "asset:fetchSource",
 		});
 	} catch (err: any) {
-		console.warn("[asset-hosting] fetch source failed", err?.message || err);
-		return null;
+		throw new AppError("OSS 上传失败：拉取源文件失败", {
+			status: 502,
+			code: "asset_hosting_fetch_failed",
+			details: { message: err?.message || String(err), sourceUrl },
+		});
 	}
 
 	if (!res.ok) {
-		console.warn("[asset-hosting] fetch source non-200", res.status);
-		return null;
+		throw new AppError("OSS 上传失败：拉取源文件返回非 200", {
+			status: 502,
+			code: "asset_hosting_fetch_non_200",
+			details: { upstreamStatus: res.status, sourceUrl },
+		});
 	}
 
 	const rawContentType =
@@ -136,11 +148,13 @@ async function uploadToR2FromUrl(options: {
 			console.log("[asset-hosting] R2 put ok", obj);
 		}
 	} catch (err: any) {
-		console.warn("[asset-hosting] R2 put failed", err?.message || err);
-		return null;
+		throw new AppError("OSS 上传失败：写入对象存储失败", {
+			status: 500,
+			code: "asset_hosting_put_failed",
+			details: { message: err?.message || String(err), sourceUrl },
+		});
 	}
 
-	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
 
 	return { key, url };
@@ -223,6 +237,21 @@ export async function hostTaskAssetsInWorker(options: {
 
 	const hosted: TaskAssetDto[] = [];
 	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
+	const hostingDisabled = isAssetHostingDisabled(c);
+	let cachedBucket: R2Bucket | null = null;
+	const getBucketOrThrow = (): R2Bucket => {
+		if (cachedBucket) return cachedBucket;
+		const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+		if (!bucket) {
+			throw new AppError("OSS storage is not configured", {
+				status: 500,
+				code: "oss_not_configured",
+				details: { binding: "R2_ASSETS" },
+			});
+		}
+		cachedBucket = bucket;
+		return bucket;
+	};
 	const isHostedUrl = (url: string): boolean => {
 		const trimmed = (url || "").trim();
 		if (!trimmed) return false;
@@ -287,7 +316,7 @@ export async function hostTaskAssetsInWorker(options: {
 		}
 
 		if (!reusedExisting) {
-			try {
+			if (!hostingDisabled && !isHostedUrl(originalUrl)) {
 				const uploaded = await uploadToR2FromUrl({
 					c,
 					userId,
@@ -296,19 +325,39 @@ export async function hostTaskAssetsInWorker(options: {
 						value.type === "video"
 							? "gen/videos"
 							: "gen/images",
+					bucket: getBucketOrThrow(),
+					publicBase,
 				});
-				if (uploaded?.url) {
-					value = TaskAssetSchema.parse({
-						...value,
-						url: uploaded.url,
-					});
-					didUpload = true;
-				}
-			} catch (err: any) {
-				console.warn(
-					"[asset-hosting] uploadToR2FromUrl failed",
-					err?.message || err,
-				);
+				value = TaskAssetSchema.parse({
+					...value,
+					url: uploaded.url,
+				});
+				didUpload = true;
+			}
+		}
+
+		if (!hostingDisabled) {
+			const thumbRaw =
+				typeof value.thumbnailUrl === "string"
+					? value.thumbnailUrl.trim()
+					: "";
+			if (
+				thumbRaw &&
+				thumbRaw !== value.url &&
+				!isHostedUrl(thumbRaw)
+			) {
+				const uploadedThumb = await uploadToR2FromUrl({
+					c,
+					userId,
+					sourceUrl: thumbRaw,
+					prefix: "gen/thumbnails",
+					bucket: getBucketOrThrow(),
+					publicBase,
+				});
+				value = TaskAssetSchema.parse({
+					...value,
+					thumbnailUrl: uploadedThumb.url,
+				});
 			}
 		}
 
