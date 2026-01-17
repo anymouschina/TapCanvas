@@ -41,6 +41,9 @@
 		// Sora2API 网关级 API Key（可选，作为 vendor 级共享凭证；若配置，则在未设置 model_providers/model_tokens 时也能使用号池）
 		"SORA2API_API_KEY": "YOUR_SORA2API_API_KEY",
 
+		// 若你的 Sora 上传服务已废弃，可设置为 1，强制 /sora/upload/image 直接走 OSS（R2）
+		"SORA_UPLOAD_DISABLED": "0",
+
 		// 可选：Sora 去水印服务（默认 https://sorai.me/get-sora-link）
 		"SORA_UNWATERMARK_ENDPOINT": "",
 
