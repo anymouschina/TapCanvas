@@ -75,6 +75,134 @@ function buildR2Key(userId: string, ext: string, prefix?: string): string {
 	return `${dir}/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
 }
 
+function parseContentLength(headers: Headers): number | null {
+	const raw = headers.get("content-length");
+	if (!raw) return null;
+	const num = Number(raw);
+	if (!Number.isFinite(num) || num < 0) return null;
+	return Math.floor(num);
+}
+
+function concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
+	if (chunks.length === 1) return chunks[0]!;
+	const out = new Uint8Array(Math.max(0, totalBytes));
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
+}
+
+function stripUrlSearchAndHash(input: string): string {
+	try {
+		const url = new URL(input);
+		url.search = "";
+		url.hash = "";
+		return url.toString();
+	} catch {
+		return input;
+	}
+}
+
+async function putToR2FromStream(options: {
+	bucket: R2Bucket;
+	key: string;
+	stream: ReadableStream<Uint8Array>;
+	contentLength: number | null;
+	putOptions: R2PutOptions;
+}): Promise<R2Object | null> {
+	const { bucket, key, stream, contentLength, putOptions } = options;
+
+	if (typeof contentLength === "number" && Number.isFinite(contentLength)) {
+		const fixed = new FixedLengthStream(contentLength);
+		const pump = stream.pipeTo(fixed.writable);
+		const putPromise = bucket.put(key, fixed.readable, putOptions);
+		const [obj] = await Promise.all([putPromise, pump]);
+		return obj;
+	}
+
+	// Fallback: content-length missing (chunked). Use multipart upload so we don't need a known length.
+	const MIN_PART_BYTES = 5 * 1024 * 1024;
+	const PART_BYTES = 8 * 1024 * 1024;
+	const MAX_PARTS = 10_000;
+
+	const multipart = await bucket.createMultipartUpload(key, {
+		httpMetadata: putOptions.httpMetadata,
+		customMetadata: putOptions.customMetadata,
+		storageClass: putOptions.storageClass,
+		ssecKey: putOptions.ssecKey,
+	});
+
+	const reader = stream.getReader();
+	const uploadedParts: R2UploadedPart[] = [];
+	let partNumber = 1;
+	let chunks: Uint8Array[] = [];
+	let totalBytes = 0;
+
+	const flushPart = async () => {
+		if (!chunks.length) return;
+		const data = concatChunks(chunks, totalBytes);
+		chunks = [];
+		totalBytes = 0;
+		const part = await multipart.uploadPart(partNumber, data);
+		uploadedParts.push(part);
+		partNumber += 1;
+		if (partNumber > MAX_PARTS) {
+			throw new Error("R2 multipart exceeded max parts");
+		}
+	};
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value || value.byteLength === 0) continue;
+			chunks.push(value);
+			totalBytes += value.byteLength;
+			if (totalBytes >= PART_BYTES) {
+				await flushPart();
+			}
+		}
+
+		if (uploadedParts.length === 0 && totalBytes === 0) {
+			// Empty body: multipart isn't necessary; put a zero-byte object.
+			return await bucket.put(key, new Uint8Array(0), putOptions);
+		}
+
+		// Last part may be < 5MB.
+		if (chunks.length) {
+			await flushPart();
+		}
+
+		// Ensure non-last parts respect the minimum size.
+		// If the last part is the only part, it's allowed to be < 5MB; otherwise earlier parts must be >= 5MB.
+		if (uploadedParts.length >= 2) {
+			// We can't inspect sizes here without tracking them; enforce via upload policy by choosing PART_BYTES >= 5MB.
+			// This guard is kept to catch accidental config changes.
+			if (PART_BYTES < MIN_PART_BYTES) {
+				throw new Error("R2 multipart part size is below minimum");
+			}
+		}
+
+		const obj = await multipart.complete(uploadedParts);
+		return obj;
+	} catch (err) {
+		try {
+			await multipart.abort();
+		} catch {
+			// ignore
+		}
+		throw err;
+	} finally {
+		try {
+			reader.releaseLock();
+		} catch {
+			// ignore
+		}
+	}
+}
+
 async function uploadToR2FromUrl(options: {
 	c: AppContext;
 	userId: string;
@@ -124,34 +252,63 @@ async function uploadToR2FromUrl(options: {
 	const rawContentType =
 		res.headers.get("content-type") || "application/octet-stream";
 	const contentType = rawContentType.split(";")[0].trim();
+	const contentLength = parseContentLength(res.headers);
 	const ext = detectExtension(sourceUrl, contentType);
 	const key = buildR2Key(userId, ext, options.prefix);
 
 	try {
 		const stream = res.body;
+		const putOptions: R2PutOptions = {
+			httpMetadata: {
+				contentType,
+				cacheControl: "public, max-age=31536000, immutable",
+			},
+		};
+
 		if (stream) {
-			const obj = await bucket.put(key, stream, {
-				httpMetadata: {
-					contentType,
-					cacheControl: "public, max-age=31536000, immutable",
-				},
+			const obj = await putToR2FromStream({
+				bucket,
+				key,
+				stream,
+				contentLength,
+				putOptions,
 			});
-			console.log("[asset-hosting] R2 put ok", obj);
+			if (obj) {
+				console.log("[asset-hosting] R2 put ok", {
+					key: obj.key,
+					size: obj.size,
+					etag: obj.etag,
+				});
+			}
 		} else {
 			const buf = await res.arrayBuffer();
-			const obj = await bucket.put(key, buf, {
-				httpMetadata: {
-					contentType,
-					cacheControl: "public, max-age=31536000, immutable",
-				},
+			const obj = await bucket.put(key, buf, putOptions);
+			console.log("[asset-hosting] R2 put ok", {
+				key: obj.key,
+				size: obj.size,
+				etag: obj.etag,
 			});
-			console.log("[asset-hosting] R2 put ok", obj);
 		}
 	} catch (err: any) {
+		console.warn("[asset-hosting] R2 put failed", {
+			name: typeof err?.name === "string" ? err.name : undefined,
+			message: err?.message || String(err),
+			sourceUrl: stripUrlSearchAndHash(sourceUrl),
+			key,
+			contentType,
+			contentLength,
+		});
 		throw new AppError("OSS 上传失败：写入对象存储失败", {
 			status: 500,
 			code: "asset_hosting_put_failed",
-			details: { message: err?.message || String(err), sourceUrl },
+			details: {
+				message: err?.message || String(err),
+				name: typeof err?.name === "string" ? err.name : undefined,
+				sourceUrl: stripUrlSearchAndHash(sourceUrl),
+				key,
+				contentType,
+				contentLength,
+			},
 		});
 	}
 
