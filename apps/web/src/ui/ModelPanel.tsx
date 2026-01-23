@@ -30,7 +30,7 @@ import {
 import { notifyModelOptionsRefresh, MODEL_REFRESH_EVENT } from '../config/useModelOptions'
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
 import { GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR } from '../constants/grsai'
-import { COMFLY_PROXY_UPDATED_EVENT, COMFLY_PROXY_VENDOR } from '../constants/comfly'
+import { COMFLY_PROXY_DEFAULT_HOST, COMFLY_PROXY_UPDATED_EVENT, COMFLY_PROXY_VENDOR } from '../constants/comfly'
 const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
   chat: '文本',
   prompt_refine: '指令优化',
@@ -1148,7 +1148,8 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
   }, [])
 
   const syncComflyProxyForm = React.useCallback((cfg: ProxyConfigDto | null) => {
-    setComflyProxyHost(cfg?.baseUrl || '')
+    const resolvedHost = (cfg?.baseUrl || '').trim() || COMFLY_PROXY_DEFAULT_HOST
+    setComflyProxyHost(resolvedHost)
     setComflyProxyEnabled(!!cfg?.enabled)
     setComflyProxyEnabledVendors(cfg?.enabledVendors || [])
     setComflyProxyApiKey('')
@@ -2877,7 +2878,7 @@ const handleCloseComflyProxyModal = () => {
                 <TextInput
                   className="tc-model-panel__input"
                   label="代理 Host"
-                  placeholder="例如：https://api.example.com"
+                  placeholder={`例如：${COMFLY_PROXY_DEFAULT_HOST}`}
                   value={comflyProxyHost}
                   onChange={(e) => setComflyProxyHost(e.currentTarget.value)}
                   required
