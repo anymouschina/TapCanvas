@@ -367,6 +367,11 @@ cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 - **Veo/Sora 专属扩展**：Veo 配置面板支持一键套用海外/国内 Host，Veo/Sora 任务结果会自动同步回画布，确保通过 grsai 返回的资源也能追踪到节点历史。
 - **安全共享**：grsai 密钥可选择是否对其他成员共享，便于在团队间复用统一的代理管道。
 
+### Comfly 统一格式接口（新增）
+
+- 在「模型配置」→「代理服务 (comfly)」填 Host + API Key，并勾选 `Veo 视频` 后，Veo 视频任务会改走 comfly 的统一接口：`POST /v2/videos/generations` 创建任务，`GET /v2/videos/generations/:task_id` 轮询结果。
+- 当节点提供首帧/尾帧或参考图时，会自动映射到 comfly 的 `images` 参数（图生视频）；不提供参考图时则为纯文生视频。
+
 ### 前置条件
 
 - 注册 Cloudflare 账号：https://dash.cloudflare.com/
