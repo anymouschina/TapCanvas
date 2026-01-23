@@ -36,6 +36,7 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 - **Sora 2 + Veo 3.1 双引擎**：视频节点即插即用 Sora 2 与 Veo3.1 Fast/Pro，支持 Remix、参考第一帧/最后一帧、复用 Storyboard 片段，让多镜头视频在画布内一气呵成。
 - **图生图链路**：图像节点支持上传参考图、抽帧、资产拖拽，任何生成的图片都可以作为下一次调用的输入，实现文本→图像→图像（图生图）→视频的完整闭环。
 - **GRSAI 中转站适配**：内置 grsai 代理配置面板，可以一次性填入 Host 与 API Key，同步展示积分与可用模型状态，将 Nano Banana、Sora 2、Veo 3 等请求稳定转发到海外节点或国内直连。
+- **Comfly 统一格式接口**：新增 comfly 代理配置（/v2/videos/generations + 轮询查询），可按需将 Veo 视频任务切换到统一格式接口。
 
 ## Gemini/Imagen/Veo 兜底入口（sora2api / OpenAI 兼容）
 

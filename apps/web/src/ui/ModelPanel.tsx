@@ -30,6 +30,7 @@ import {
 import { notifyModelOptionsRefresh, MODEL_REFRESH_EVENT } from '../config/useModelOptions'
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
 import { GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR } from '../constants/grsai'
+import { COMFLY_PROXY_UPDATED_EVENT, COMFLY_PROXY_VENDOR } from '../constants/comfly'
 const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
   chat: '文本',
   prompt_refine: '指令优化',
@@ -53,11 +54,15 @@ const PROXY_TARGET_OPTIONS = [
   { value: 'sora', label: 'Sora 视频' },
   { value: 'openai', label: 'OpenAI / GPT' },
   { value: 'gemini', label: 'Google Gemini' },
-  { value: 'veo', label: 'Veo (GRSAI)' },
+  { value: 'veo', label: 'Veo 视频' },
 ]
 const PROXY_HOST_PRESETS = [
   { label: '海外节点', value: 'https://api.grsai.com' },
   { label: '国内直连', value: 'https://grsai.dakka.com.cn' },
+]
+
+const COMFLY_PROXY_TARGET_OPTIONS = [
+  { value: 'veo', label: 'Veo 视频' },
 ]
 
 type PredefinedModel = { value: string; label: string; kind: ProfileKind }
@@ -483,6 +488,15 @@ export default function ModelPanel(): JSX.Element | null {
   const [proxyApiKey, setProxyApiKey] = React.useState('')
   const [proxyApiKeyTouched, setProxyApiKeyTouched] = React.useState(false)
   const [proxySaving, setProxySaving] = React.useState(false)
+  const [comflyProxyConfig, setComflyProxyConfig] = React.useState<ProxyConfigDto | null>(null)
+  const [comflyProxyLoading, setComflyProxyLoading] = React.useState(false)
+  const [comflyProxyModalOpen, setComflyProxyModalOpen] = React.useState(false)
+  const [comflyProxyHost, setComflyProxyHost] = React.useState('')
+  const [comflyProxyEnabled, setComflyProxyEnabled] = React.useState(false)
+  const [comflyProxyEnabledVendors, setComflyProxyEnabledVendors] = React.useState<string[]>([])
+  const [comflyProxyApiKey, setComflyProxyApiKey] = React.useState('')
+  const [comflyProxyApiKeyTouched, setComflyProxyApiKeyTouched] = React.useState(false)
+  const [comflyProxySaving, setComflyProxySaving] = React.useState(false)
   const [sessionModalOpen, setSessionModalOpen] = React.useState(false)
   const [sessionJson, setSessionJson] = React.useState('')
   const [sessionError, setSessionError] = React.useState('')
@@ -1133,6 +1147,14 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     setProxyApiKeyTouched(false)
   }, [])
 
+  const syncComflyProxyForm = React.useCallback((cfg: ProxyConfigDto | null) => {
+    setComflyProxyHost(cfg?.baseUrl || '')
+    setComflyProxyEnabled(!!cfg?.enabled)
+    setComflyProxyEnabledVendors(cfg?.enabledVendors || [])
+    setComflyProxyApiKey('')
+    setComflyProxyApiKeyTouched(false)
+  }, [])
+
   const refreshProxyConfig = React.useCallback(async () => {
     setProxyLoading(true)
     try {
@@ -1146,10 +1168,28 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     }
   }, [syncProxyForm])
 
+  const refreshComflyProxyConfig = React.useCallback(async () => {
+    setComflyProxyLoading(true)
+    try {
+      const cfg = await getProxyConfig(COMFLY_PROXY_VENDOR)
+      setComflyProxyConfig(cfg)
+      syncComflyProxyForm(cfg)
+    } catch (error: any) {
+      console.error('Failed to load comfly proxy config', error)
+    } finally {
+      setComflyProxyLoading(false)
+    }
+  }, [syncComflyProxyForm])
+
   React.useEffect(() => {
     if (!mounted) return
     refreshProxyConfig().catch(() => {})
   }, [mounted, refreshProxyConfig])
+
+  React.useEffect(() => {
+    if (!mounted) return
+    refreshComflyProxyConfig().catch(() => {})
+  }, [mounted, refreshComflyProxyConfig])
 
   React.useEffect(() => {
     if (!mounted || typeof window === 'undefined') return
@@ -1179,6 +1219,11 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     return found ? found.label : v
   })
 
+  const comflyProxyVendorLabels = (comflyProxyConfig?.enabledVendors || []).map((v) => {
+    const found = COMFLY_PROXY_TARGET_OPTIONS.find((opt) => opt.value === v)
+    return found ? found.label : v
+  })
+
 const handleOpenProxyModal = () => {
   if (!proxyConfig && !proxyLoading) {
     refreshProxyConfig().catch(() => {})
@@ -1188,9 +1233,23 @@ const handleOpenProxyModal = () => {
   setProxyModalOpen(true)
 }
 
+const handleOpenComflyProxyModal = () => {
+  if (!comflyProxyConfig && !comflyProxyLoading) {
+    refreshComflyProxyConfig().catch(() => {})
+  } else {
+    syncComflyProxyForm(comflyProxyConfig)
+  }
+  setComflyProxyModalOpen(true)
+}
+
 const handleCloseProxyModal = () => {
     setProxyModalOpen(false)
     syncProxyForm(proxyConfig)
+  }
+
+const handleCloseComflyProxyModal = () => {
+    setComflyProxyModalOpen(false)
+    syncComflyProxyForm(comflyProxyConfig)
   }
 
   const handleSaveProxyConfig = async () => {
@@ -1226,6 +1285,40 @@ const handleCloseProxyModal = () => {
       setProxySaving(false)
   }
 }
+
+  const handleSaveComflyProxyConfig = async () => {
+    const trimmedHost = comflyProxyHost.trim()
+    if (comflyProxyEnabled && !trimmedHost) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请填写代理 Host 地址' })
+      return
+    }
+    if (comflyProxyEnabled && comflyProxyEnabledVendors.length === 0) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请选择至少一个需要走代理的厂商' })
+      return
+    }
+    setComflyProxySaving(true)
+    try {
+      const payload: any = {
+        baseUrl: trimmedHost,
+        enabled: comflyProxyEnabled,
+        enabledVendors: comflyProxyEnabled ? comflyProxyEnabledVendors : [],
+        name: COMFLY_PROXY_VENDOR,
+      }
+      if (comflyProxyApiKeyTouched) {
+        payload.apiKey = comflyProxyApiKey.trim()
+      }
+      const saved = await upsertProxyConfig(COMFLY_PROXY_VENDOR, payload)
+      setComflyProxyConfig(saved)
+      window.dispatchEvent(new CustomEvent(COMFLY_PROXY_UPDATED_EVENT, { detail: saved }))
+      syncComflyProxyForm(saved)
+      setComflyProxyModalOpen(false)
+      notifications.show({ color: 'teal', title: '已保存', message: '代理服务配置已更新' })
+    } catch (error: any) {
+      notifications.show({ color: 'red', title: '保存失败', message: error?.message || '未知错误' })
+    } finally {
+      setComflyProxySaving(false)
+    }
+  }
 
 
   if (!mounted) return null
@@ -1354,7 +1447,7 @@ const handleCloseProxyModal = () => {
                     <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start">
                       <div className="tc-model-panel__section-text">
                         <Group className="tc-model-panel__section-title-row" gap={6} mb={4} align="center">
-                          <Title className="tc-model-panel__section-title" order={6}>代理服务</Title>
+                          <Title className="tc-model-panel__section-title" order={6}>代理服务 (grsai)</Title>
                           {proxyLoading && <Badge className="tc-model-panel__badge" size="xs" color="gray">加载中</Badge>}
                           {proxyConfig?.enabled && !proxyLoading && (
                             <Badge className="tc-model-panel__badge" size="xs" color="grape">已启用</Badge>
@@ -1381,6 +1474,41 @@ const handleCloseProxyModal = () => {
                         )}
                       </div>
                       <Button className="tc-model-panel__section-action" size="xs" variant="light" onClick={handleOpenProxyModal}>
+                        配置
+                      </Button>
+                    </Group>
+                  </Paper>
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm">
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start">
+                      <div className="tc-model-panel__section-text">
+                        <Group className="tc-model-panel__section-title-row" gap={6} mb={4} align="center">
+                          <Title className="tc-model-panel__section-title" order={6}>代理服务 (comfly)</Title>
+                          {comflyProxyLoading && <Badge className="tc-model-panel__badge" size="xs" color="gray">加载中</Badge>}
+                          {comflyProxyConfig?.enabled && !comflyProxyLoading && (
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape">已启用</Badge>
+                          )}
+                        </Group>
+                        <Text className="tc-model-panel__section-desc" size="xs" c="dimmed">
+                          使用 comfly API Key 统一接入视频统一格式接口（/v2/videos/generations）。
+                        </Text>
+                        {comflyProxyConfig?.enabled && comflyProxyVendorLabels.length > 0 ? (
+                          <Group className="tc-model-panel__section-meta" gap={6} mt={6} wrap="wrap">
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape" variant="light">
+                              厂商：{comflyProxyVendorLabels.join('、')}
+                            </Badge>
+                            {comflyProxyConfig.baseUrl && (
+                              <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
+                                Host: {comflyProxyConfig.baseUrl}
+                              </Text>
+                            )}
+                          </Group>
+                        ) : (
+                          <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed" mt={6}>
+                            当前未启用代理服务
+                          </Text>
+                        )}
+                      </div>
+                      <Button className="tc-model-panel__section-action" size="xs" variant="light" onClick={handleOpenComflyProxyModal}>
                         配置
                       </Button>
                     </Group>
@@ -2729,6 +2857,67 @@ const handleCloseProxyModal = () => {
                     取消
                   </Button>
                   <Button className="tc-model-panel__modal-action" onClick={handleSaveProxyConfig} loading={proxySaving}>
+                    保存
+                  </Button>
+                </Group>
+              </Stack>
+            </Modal>
+            <Modal
+              className="tc-model-panel__modal"
+              opened={comflyProxyModalOpen}
+              onClose={handleCloseComflyProxyModal}
+              title="代理服务（comfly）"
+              centered
+              size="lg"
+            >
+              <Stack className="tc-model-panel__modal-stack" gap="sm">
+                <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
+                  配置 comfly API Key 和 Host，用统一格式接口接入视频生成能力。
+                </Text>
+                <TextInput
+                  className="tc-model-panel__input"
+                  label="代理 Host"
+                  placeholder="例如：https://api.example.com"
+                  value={comflyProxyHost}
+                  onChange={(e) => setComflyProxyHost(e.currentTarget.value)}
+                  required
+                />
+                <TextInput
+                  className="tc-model-panel__input"
+                  label="comfly API Key"
+                  placeholder={comflyProxyConfig?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 comfly 提供的 API Key'}
+                  type="password"
+                  value={comflyProxyApiKey}
+                  onChange={(e) => {
+                    setComflyProxyApiKey(e.currentTarget.value)
+                    setComflyProxyApiKeyTouched(true)
+                  }}
+                />
+                <Switch
+                  className="tc-model-panel__toggle"
+                  label="启用代理服务"
+                  checked={comflyProxyEnabled}
+                  onChange={(event) => setComflyProxyEnabled(event.currentTarget.checked)}
+                />
+                <Checkbox.Group
+                  className="tc-model-panel__checkbox-group"
+                  label="选择需要走代理的厂商"
+                  description="至少勾选一个厂商，未勾选的厂商仍走官方接口"
+                  value={comflyProxyEnabledVendors}
+                  onChange={setComflyProxyEnabledVendors}
+                  disabled={!comflyProxyEnabled}
+                >
+                  <Stack className="tc-model-panel__checkbox-list" gap={4} pt={4}>
+                    {COMFLY_PROXY_TARGET_OPTIONS.map((opt) => (
+                      <Checkbox className="tc-model-panel__checkbox" key={opt.value} value={opt.value} label={opt.label} disabled={!comflyProxyEnabled} />
+                    ))}
+                  </Stack>
+                </Checkbox.Group>
+                <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                  <Button className="tc-model-panel__modal-action" variant="default" onClick={handleCloseComflyProxyModal}>
+                    取消
+                  </Button>
+                  <Button className="tc-model-panel__modal-action" onClick={handleSaveComflyProxyConfig} loading={comflyProxySaving}>
                     保存
                   </Button>
                 </Group>
