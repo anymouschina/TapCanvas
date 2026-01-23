@@ -39,6 +39,7 @@ const IMAGE_MODEL_WHITELIST = new Set([
 
 const VIDEO_MODEL_WHITELIST = new Set([
   'sora-2',
+  'hailuo',
   'veo3.1-fast',
   'veo3.1-pro',
 ])

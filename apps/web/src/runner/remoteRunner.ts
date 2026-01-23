@@ -11,6 +11,7 @@ import {
   uploadServerAssetFile,
   fetchVeoTaskResult,
   fetchSora2ApiTaskResult,
+  fetchMiniMaxTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -848,7 +849,7 @@ async function runSora2ApiVideoTask(
     const existingStatus = (data as any)?.status as NodeStatusValue | undefined
     const canResumeExisting =
       typeof existingTaskId === 'string' &&
-      existingTaskId.trim().startsWith('task_') &&
+      existingTaskId.trim().length > 0 &&
       (existingStatus === 'running' || existingStatus === 'queued')
 
     let taskId = existingTaskId || ''
@@ -1113,6 +1114,208 @@ async function runSora2ApiVideoTask(
   }
 }
 
+async function runMiniMaxVideoTask(
+  ctx: RunnerContext,
+  options: {
+    prompt: string
+    durationSeconds: number
+    orientation: 'portrait' | 'landscape'
+  },
+) {
+  const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
+  const { prompt, durationSeconds, orientation } = options
+
+  try {
+    const videoModelValue = (data as any)?.videoModel as string | undefined
+    const modelKey = (videoModelValue || '').trim() || 'hailuo'
+    const existingTaskId = (data as any)?.videoTaskId as string | undefined
+    const existingStatus = (data as any)?.status as NodeStatusValue | undefined
+    const canResumeExisting =
+      typeof existingTaskId === 'string' &&
+      existingTaskId.trim().length > 0 &&
+      (existingStatus === 'running' || existingStatus === 'queued')
+
+    let taskId = (existingTaskId || '').trim()
+
+    if (canResumeExisting) {
+      const initialProgress =
+        typeof (data as any)?.progress === 'number' && Number.isFinite((data as any).progress)
+          ? Math.max(5, Math.min(95, Math.round((data as any).progress)))
+          : 10
+      setNodeStatus(id, 'running', {
+        progress: initialProgress,
+        videoTaskId: existingTaskId,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'minimax',
+      })
+      appendLog(
+        id,
+        `[${nowLabel()}] 发现已有 MiniMax 视频任务（ID: ${existingTaskId}），继续查询进度…`,
+      )
+    } else {
+      setNodeStatus(id, 'running', { progress: 5 })
+      appendLog(id, `[${nowLabel()}] 调用 MiniMax/Hailuo 视频模型 ${modelKey}…`)
+
+      const res = await runTaskByVendor('minimax', {
+        kind: 'text_to_video',
+        prompt,
+        extras: {
+          nodeKind: kind,
+          nodeId: id,
+          modelKey,
+          durationSeconds,
+          orientation,
+        },
+      })
+
+      taskId = res.id
+      if (!taskId) {
+        const msg = 'MiniMax 视频任务创建失败：未返回任务 ID'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      setNodeStatus(id, 'running', {
+        progress: 10,
+        lastResult: {
+          id: taskId,
+          at: Date.now(),
+          kind,
+          preview: {
+            type: 'text',
+            value: `已创建 MiniMax 视频任务（ID: ${taskId}）`,
+          },
+        },
+        videoTaskId: taskId,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'minimax',
+      })
+
+      if (typeof window !== 'undefined' && typeof (window as any).silentSaveProject === 'function') {
+        try {
+          ;(window as any).silentSaveProject()
+        } catch {
+          // ignore save errors here
+        }
+      }
+    }
+
+    if (!taskId) {
+      const msg = 'MiniMax 视频任务创建失败：未获取到有效任务 ID'
+      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      return
+    }
+
+    const pollIntervalMs = 3000
+    const pollTimeoutMs = 600_000
+    const startedAt = Date.now()
+    let lastProgress = 10
+
+    while (Date.now() - startedAt < pollTimeoutMs) {
+      if (isCanceled(id)) {
+        setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+        appendLog(id, `[${nowLabel()}] 已取消 MiniMax 视频任务`)
+        return
+      }
+
+      let snapshot: TaskResultDto
+      try {
+        snapshot = await fetchMiniMaxTaskResult(taskId)
+      } catch (err: any) {
+        const msg = err?.message || '查询 MiniMax 任务进度失败'
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        await sleep(pollIntervalMs)
+        continue
+      }
+
+      if (snapshot.status === 'running') {
+        const rawProgress =
+          (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+          (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
+          null
+        if (typeof rawProgress === 'number') {
+          const normalized = Math.min(95, Math.max(lastProgress, Math.max(5, Math.round(rawProgress))))
+          lastProgress = normalized
+          setNodeStatus(id, 'running', { progress: normalized })
+        }
+        await sleep(pollIntervalMs)
+        continue
+      }
+
+      if (snapshot.status === 'failed') {
+        const msg =
+          (snapshot.raw && (snapshot.raw.message || snapshot.raw.response?.error || snapshot.raw.response?.message)) ||
+          'MiniMax 视频任务失败'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      // succeeded
+      const asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+      if (!asset || !asset.url) {
+        const msg = 'MiniMax 视频任务执行失败：未返回有效视频地址'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        return
+      }
+
+      const videoUrl = asset.url
+      const thumbnailUrl = asset.thumbnailUrl || null
+      const preview = { type: 'video' as const, src: videoUrl }
+
+      const existingResults = ((data as any)?.videoResults as any[] | undefined) || []
+      const newResult = {
+        id: snapshot.id || taskId,
+        url: videoUrl,
+        thumbnailUrl,
+        title: (data as any)?.videoTitle || null,
+        duration: durationSeconds,
+        model: modelKey,
+        remixTargetId: null,
+      }
+      const updatedVideoResults = [...existingResults, newResult]
+      const nextPrimaryIndex = updatedVideoResults.length - 1
+
+      setNodeStatus(id, 'success', {
+        progress: 100,
+        lastResult: {
+          id: snapshot.id || taskId,
+          at: Date.now(),
+          kind,
+          preview,
+        },
+        prompt,
+        videoUrl,
+        videoThumbnailUrl: thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
+        videoResults: updatedVideoResults,
+        videoPrimaryIndex: nextPrimaryIndex,
+        videoDurationSeconds: durationSeconds,
+        videoModel: modelKey,
+        videoModelVendor: (data as any)?.videoModelVendor || 'minimax',
+        videoTaskId: taskId,
+      })
+      appendLog(id, `[${nowLabel()}] MiniMax 视频生成完成。`)
+      if (snapshot.assets && snapshot.assets.length) {
+        notifyAssetRefresh()
+      }
+      return
+    }
+
+    const timeoutMsg = 'MiniMax 视频任务查询超时，请稍后在控制台确认结果'
+    setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
+    appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
+  } catch (err: any) {
+    const msg = err?.message || 'MiniMax 视频任务执行失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+  } finally {
+    endRunToken(id)
+  }
+}
+
 export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
   const ctx = buildRunnerContext(id, get)
   if (!ctx) return
@@ -1128,7 +1331,7 @@ export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
   if (vendor !== 'sora2api') return
 
   const taskId = (data as any)?.videoTaskId as string | undefined
-  if (!taskId || !taskId.trim().startsWith('task_')) return
+  if (!taskId || !taskId.trim()) return
 
   let snapshot: TaskResultDto
   try {
@@ -1464,6 +1667,15 @@ async function runVideoTask(ctx: RunnerContext) {
         orientation,
         remixTargetId,
         referenceImageUrl: autoReferenceImages[0] || null,
+      })
+      return
+    }
+
+    if (videoVendor === 'minimax') {
+      await runMiniMaxVideoTask(ctx, {
+        prompt: finalPrompt,
+        durationSeconds: videoDurationSeconds,
+        orientation,
       })
       return
     }

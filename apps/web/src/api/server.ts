@@ -1933,6 +1933,25 @@ export async function fetchSora2ApiTaskResult(
   return r.json()
 }
 
+export async function fetchMiniMaxTaskResult(taskId: string): Promise<TaskResultDto> {
+  const r = await apiFetch(`${API_BASE}/tasks/minimax/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId }),
+  }))
+  if (!r.ok) {
+    let msg = `fetch minimax result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
 export async function unwatermarkSoraVideo(url: string): Promise<{ downloadUrl: string; raw: any }> {
   const r = await apiFetch(`${API_BASE}/sora/video/unwatermark`, withAuth({
     method: 'POST',

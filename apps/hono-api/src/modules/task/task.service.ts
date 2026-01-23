@@ -15,6 +15,7 @@ import {
 } from "./task.schemas";
 import { emitTaskProgress } from "./task.progress";
 import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
+import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
 
 type VendorContext = {
 	baseUrl: string;
@@ -84,10 +85,73 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	return val.replace(/\/+$/, "");
 }
 
+function decodeBase64ToBytes(base64: string): Uint8Array {
+	const cleaned = (base64 || "").trim();
+	if (!cleaned) return new Uint8Array(0);
+	const binary = atob(cleaned);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i += 1) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
+}
+
+function detectImageExtensionFromMimeType(contentType: string): string {
+	const ct = (contentType || "").toLowerCase();
+	if (ct === "image/png") return "png";
+	if (ct === "image/jpeg") return "jpg";
+	if (ct === "image/webp") return "webp";
+	if (ct === "image/gif") return "gif";
+	return "bin";
+}
+
+function buildInlineAssetR2Key(userId: string, ext: string, prefix: string): string {
+	const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+	const date = new Date();
+	const datePrefix = `${date.getUTCFullYear()}${String(
+		date.getUTCMonth() + 1,
+	).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+	const random = crypto.randomUUID();
+	const dir = prefix ? prefix.replace(/^\/+|\/+$/g, "") : "gen";
+	return `${dir}/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
+}
+
+async function uploadInlineImageToR2(options: {
+	c: AppContext;
+	userId: string;
+	mimeType: string;
+	base64: string;
+	prefix?: string;
+}): Promise<string> {
+	const { c, userId, mimeType, base64 } = options;
+	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
+	if (!bucket) {
+		throw new AppError("OSS storage is not configured", {
+			status: 500,
+			code: "oss_not_configured",
+			details: { binding: "R2_ASSETS" },
+		});
+	}
+
+	const ext = detectImageExtensionFromMimeType(mimeType);
+	const key = buildInlineAssetR2Key(userId, ext, options.prefix || "gen/images");
+	const bytes = decodeBase64ToBytes(base64);
+	await bucket.put(key, bytes, {
+		httpMetadata: {
+			contentType: mimeType || "application/octet-stream",
+		},
+	});
+
+	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
+	return publicBase ? `${publicBase}/${key}` : `/${key}`;
+}
+
 function normalizeVendorKey(vendor: string): string {
 	const v = (vendor || "").trim().toLowerCase();
 	// Backward/alias compatibility: treat "google" as Gemini.
 	if (v === "google") return "gemini";
+	// Alias: Hailuo is MiniMax video.
+	if (v === "hailuo") return "minimax";
 	return v;
 }
 
@@ -104,6 +168,10 @@ function expandProxyVendorKeys(vendor: string): string[] {
 	// 兼容历史配置：面板里使用 "sora" 作为代理目标，但任务里使用 "sora2api"
 	if (v === "sora2api") {
 		keys.push("sora");
+	}
+	// 兼容别名：hailuo -> minimax
+	if (v === "minimax") {
+		keys.push("hailuo");
 	}
 	return Array.from(new Set(keys));
 }
@@ -436,7 +504,8 @@ function requiresApiKeyForVendor(vendor: string): boolean {
 		v === "openai" ||
 		v === "veo" ||
 		v === "sora2api" ||
-		v === "grsai"
+		v === "grsai" ||
+		v === "minimax"
 	);
 }
 
@@ -514,11 +583,11 @@ function parseComflyProgress(value: unknown): number | undefined {
 	return clampProgress(Number.isFinite(num) ? num : undefined);
 }
 
-function extractComflyOutputUrls(payload: any): string[] {
-	const urls: string[] = [];
-	const add = (v: any) => {
-		if (typeof v === "string" && v.trim()) urls.push(v.trim());
-	};
+	function extractComflyOutputUrls(payload: any): string[] {
+		const urls: string[] = [];
+		const add = (v: any) => {
+			if (typeof v === "string" && v.trim()) urls.push(v.trim());
+		};
 	if (payload?.data) {
 		const data = payload.data;
 		if (Array.isArray(data?.outputs)) {
@@ -530,13 +599,62 @@ function extractComflyOutputUrls(payload: any): string[] {
 		payload.outputs.forEach(add);
 	}
 	add(payload?.output);
-	return Array.from(new Set(urls));
-}
+		return Array.from(new Set(urls));
+	}
 
-async function createComflyVideoTask(
-	c: AppContext,
-	userId: string,
-	req: TaskRequestDto,
+	function normalizeSora2OfficialStatus(value: unknown): TaskStatus | null {
+		if (typeof value !== "string") return null;
+		const normalized = value.trim().toLowerCase();
+		if (!normalized) return null;
+		if (normalized === "completed" || normalized === "succeeded" || normalized === "success") {
+			return "succeeded";
+		}
+		if (normalized === "failed" || normalized === "failure" || normalized === "error") {
+			return "failed";
+		}
+		if (normalized === "queued" || normalized === "in_progress" || normalized === "running" || normalized === "processing") {
+			return "running";
+		}
+		return null;
+	}
+
+	function extractSora2OfficialVideoUrl(payload: any): string | null {
+		const pick = (v: any): string | null =>
+			typeof v === "string" && v.trim() ? v.trim() : null;
+		const fromObjectUrl = (v: any): string | null => {
+			if (!v || typeof v !== "object") return null;
+			return pick((v as any).url) || null;
+		};
+		return (
+			pick(payload?.video_url) ||
+			fromObjectUrl(payload?.video_url) ||
+			pick(payload?.videoUrl) ||
+			fromObjectUrl(payload?.videoUrl) ||
+			pick(payload?.url) ||
+			pick(payload?.data?.video_url) ||
+			pick(payload?.data?.url) ||
+			(Array.isArray(payload?.results) && payload.results.length
+				? pick(payload.results[0]?.url) ||
+					pick(payload.results[0]?.video_url) ||
+					pick(payload.results[0]?.videoUrl)
+				: null) ||
+			null
+		);
+	}
+
+	function normalizeComflyGeminiModelId(modelKey?: string | null): string {
+		const trimmed = (modelKey || "").trim();
+		if (!trimmed) return "gemini-3-pro-image-preview";
+		const bare = trimmed.startsWith("models/") ? trimmed.slice(7) : trimmed;
+		if (/^nano-banana-pro/i.test(bare)) return "gemini-3-pro-image-preview";
+		if (/^nano-banana/i.test(bare)) return "gemini-3-pro-image-preview";
+		return bare;
+	}
+
+	async function createComflyVideoTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
 	ctx: VendorContext,
 	model: string,
 	input: {
@@ -655,14 +773,280 @@ async function createComflyVideoTask(
 			model,
 			taskId,
 			response: data ?? null,
-		},
-	});
-}
+			},
+		});
+	}
 
-async function fetchComflyVideoTaskResult(
-	c: AppContext,
-	userId: string,
-	taskId: string,
+	async function createComflySora2VideoTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
+		ctx: VendorContext,
+		input: {
+			model: string;
+			size?: string | null;
+			seconds?: number | null;
+			watermark?: boolean | null;
+			inputReferenceUrl?: string | null;
+		},
+		progressCtx: ProgressContext | null,
+	): Promise<TaskResult> {
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+		const apiKey = ctx.apiKey.trim();
+		if (!baseUrl || !apiKey) {
+			throw new AppError("comfly 代理未配置 Host 或 API Key", {
+				status: 400,
+				code: "comfly_proxy_misconfigured",
+			});
+		}
+
+		const model = (input.model || "").trim() || "sora-2";
+		const form = new FormData();
+		form.append("model", model);
+		form.append("prompt", req.prompt);
+		if (typeof input.size === "string" && input.size.trim()) {
+			form.append("size", input.size.trim());
+		}
+		if (typeof input.seconds === "number" && Number.isFinite(input.seconds)) {
+			form.append("seconds", String(Math.max(1, Math.floor(input.seconds))));
+		}
+		if (typeof input.watermark === "boolean") {
+			form.append("watermark", input.watermark ? "true" : "false");
+		}
+		if (typeof input.inputReferenceUrl === "string" && input.inputReferenceUrl.trim()) {
+			// comfly 文档示例用 URL 字符串；保持兼容（不强制上传 binary）
+			form.append("input_reference", input.inputReferenceUrl.trim());
+		}
+
+		let res: Response;
+		let data: any = null;
+		try {
+			emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+			res = await fetchWithHttpDebugLog(
+				c,
+				`${baseUrl}/v1/videos`,
+				{
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: form,
+				},
+				{ tag: "comfly:sora2:create" },
+			);
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (error: any) {
+			throw new AppError("comfly Sora2 视频任务创建失败", {
+				status: 502,
+				code: "comfly_request_failed",
+				details: { message: error?.message ?? String(error) },
+			});
+		}
+
+		if (!res.ok) {
+			const msg =
+				(data && (data.message || data.error || data.msg)) ||
+				`comfly Sora2 视频任务创建失败：${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "comfly_request_failed",
+				details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			});
+		}
+
+		const taskId =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			(typeof data?.task_id === "string" && data.task_id.trim()) ||
+			(typeof data?.taskId === "string" && data.taskId.trim()) ||
+			null;
+		if (!taskId) {
+			throw new AppError("comfly API 未返回视频任务 id", {
+				status: 502,
+				code: "comfly_task_id_missing",
+				details: { upstreamData: data ?? null },
+			});
+		}
+
+		emitProgress(userId, progressCtx, {
+			status: "running",
+			progress: 10,
+			taskId,
+			raw: data ?? null,
+		});
+
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: req.kind,
+			status: "running",
+			assets: [],
+			raw: {
+				provider: "comfly",
+				vendor: "sora2api",
+				model,
+				taskId,
+				response: data ?? null,
+			},
+		});
+	}
+
+	async function fetchComflySora2VideoTaskResult(
+		c: AppContext,
+		userId: string,
+		taskId: string,
+		ctx: VendorContext,
+		kind: TaskRequestDto["kind"],
+	) {
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+		const apiKey = ctx.apiKey.trim();
+		if (!baseUrl || !apiKey) {
+			throw new AppError("comfly 代理未配置 Host 或 API Key", {
+				status: 400,
+				code: "comfly_proxy_misconfigured",
+			});
+		}
+
+		let res: Response;
+		let data: any = null;
+		try {
+			res = await fetchWithHttpDebugLog(
+				c,
+				`${baseUrl}/v1/videos/${encodeURIComponent(taskId.trim())}`,
+				{
+					method: "GET",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+					},
+				},
+				{ tag: "comfly:sora2:result" },
+			);
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (error: any) {
+			throw new AppError("comfly Sora2 结果查询失败", {
+				status: 502,
+				code: "comfly_result_failed",
+				details: { message: error?.message ?? String(error) },
+			});
+		}
+
+		if (!res.ok) {
+			const msg =
+				(data && (data.message || data.error || data.msg)) ||
+				`comfly Sora2 结果查询失败: ${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "comfly_result_failed",
+				details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			});
+		}
+
+		const status = normalizeSora2OfficialStatus(data?.status) || "running";
+		const progress = parseComflyProgress(data?.progress);
+		const errorMessage =
+			(typeof data?.error?.message === "string" && data.error.message.trim()) ||
+			(typeof data?.message === "string" && data.message.trim()) ||
+			(typeof data?.error === "string" && data.error.trim()) ||
+			null;
+
+		if (status === "failed") {
+			return TaskResultSchema.parse({
+				id: taskId,
+				kind,
+				status: "failed",
+				assets: [],
+				raw: {
+					provider: "comfly",
+					vendor: "sora2api",
+					response: data ?? null,
+					progress,
+					error: errorMessage,
+				},
+			});
+		}
+
+		if (status !== "succeeded") {
+			return TaskResultSchema.parse({
+				id: taskId,
+				kind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "comfly",
+					vendor: "sora2api",
+					response: data ?? null,
+					progress,
+				},
+			});
+		}
+
+		const videoUrl = extractSora2OfficialVideoUrl(data);
+		if (!videoUrl) {
+			return TaskResultSchema.parse({
+				id: taskId,
+				kind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "comfly",
+					vendor: "sora2api",
+					response: data ?? null,
+					progress,
+				},
+			});
+		}
+
+		const asset = TaskAssetSchema.parse({
+			type: "video",
+			url: videoUrl,
+			thumbnailUrl:
+				(typeof data?.thumbnail_url === "string" && data.thumbnail_url.trim()) ||
+				(typeof data?.thumbnailUrl === "string" && data.thumbnailUrl.trim()) ||
+				null,
+		});
+
+		const hostedAssets = await hostTaskAssetsInWorker({
+			c,
+			userId,
+			assets: [asset],
+			meta: {
+				taskKind: kind,
+				prompt:
+					typeof data?.prompt === "string" && data.prompt.trim()
+						? data.prompt.trim()
+						: null,
+				vendor: "sora2api",
+				modelKey:
+					typeof data?.model === "string" && data.model.trim()
+						? data.model.trim()
+						: undefined,
+				taskId,
+			},
+		});
+
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind,
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "comfly",
+				vendor: "sora2api",
+				response: data ?? null,
+			},
+		});
+	}
+
+	async function fetchComflyVideoTaskResult(
+		c: AppContext,
+		userId: string,
+		taskId: string,
 	ctx: VendorContext,
 	kind: TaskRequestDto["kind"],
 ) {
@@ -1185,6 +1569,7 @@ export async function runSora2ApiVideoTask(
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
+	const isComflyProxy = ctx.viaProxyVendor === "comfly";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 sora2api API Key", {
@@ -1210,15 +1595,15 @@ export async function runSora2ApiVideoTask(
 				? extras.durationSeconds
 				: 10;
 
-	const model = isGrsaiBase
-		? (typeof extras.modelKey === "string" && extras.modelKey.trim()
-				? extras.modelKey.trim()
-				: "sora-2")
-		: normalizeSora2ApiModelKey(
-				typeof extras.modelKey === "string" ? extras.modelKey : undefined,
-				orientation,
-				durationSeconds,
-			);
+	const modelKeyRaw =
+		typeof extras.modelKey === "string" && extras.modelKey.trim()
+			? extras.modelKey.trim()
+			: "";
+	const model = isComflyProxy
+		? modelKeyRaw || "sora-2"
+		: isGrsaiBase
+			? modelKeyRaw || "sora-2"
+			: normalizeSora2ApiModelKey(modelKeyRaw || undefined, orientation, durationSeconds);
 	const aspectRatio = orientation === "portrait" ? "9:16" : "16:9";
 	const webHook =
 		typeof extras.webHook === "string" && extras.webHook.trim()
@@ -1245,6 +1630,30 @@ export async function runSora2ApiVideoTask(
 			? String(extras.urls[0]).trim()
 			: null) ||
 		null;
+
+	if (isComflyProxy) {
+		const sizeFromExtras =
+			typeof extras.size === "string" && /^\d+\s*x\s*\d+$/i.test(extras.size.trim())
+				? extras.size.trim().replace(/\s+/g, "")
+				: null;
+		const size = sizeFromExtras || (orientation === "portrait" ? "720x1280" : "1280x720");
+		const watermark =
+			typeof extras.watermark === "boolean" ? extras.watermark : null;
+		return createComflySora2VideoTask(
+			c,
+			userId,
+			req,
+			ctx,
+			{
+				model,
+				size,
+				seconds: durationSeconds,
+				watermark,
+				inputReferenceUrl: referenceUrl,
+			},
+			progressCtx,
+		);
+	}
 
 	const body: Record<string, any> = isGrsaiBase
 		? {
@@ -1474,6 +1883,15 @@ export async function fetchSora2ApiTaskResult(
 		});
 	}
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	if (ctx.viaProxyVendor === "comfly") {
+		return fetchComflySora2VideoTaskResult(
+			c,
+			userId,
+			taskId,
+			ctx,
+			"text_to_video",
+		);
+	}
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
 	const isGrsaiBase =
@@ -1758,6 +2176,317 @@ export async function fetchSora2ApiTaskResult(
 			upstreamStatus: lastError?.status ?? null,
 			upstreamData: lastError?.data ?? null,
 			endpointTried: lastError?.endpoint ?? null,
+		},
+	});
+}
+
+// ---------- MiniMax / Hailuo ----------
+
+export async function runMiniMaxVideoTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const progressCtx = extractProgressContext(req, "minimax");
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+	const ctx = await resolveVendorContext(c, userId, "minimax");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = ctx.apiKey.trim();
+	if (!baseUrl || !apiKey) {
+		throw new AppError("未配置 MiniMax API Key", {
+			status: 400,
+			code: "minimax_api_key_missing",
+		});
+	}
+
+	const extras = (req.extras || {}) as Record<string, any>;
+	const model =
+		(typeof extras.modelKey === "string" && extras.modelKey.trim()) ||
+		"hailuo";
+	const durationSeconds =
+		typeof (req as any).durationSeconds === "number" &&
+		Number.isFinite((req as any).durationSeconds)
+			? Math.floor((req as any).durationSeconds)
+			: typeof extras.durationSeconds === "number" &&
+					Number.isFinite(extras.durationSeconds)
+				? Math.floor(extras.durationSeconds)
+				: null;
+	const resolution =
+		typeof extras.resolution === "string" && extras.resolution.trim()
+			? extras.resolution.trim()
+			: null;
+
+	const body: Record<string, any> = {
+		model,
+		prompt: req.prompt,
+		...(typeof durationSeconds === "number" && durationSeconds > 0
+			? { duration: durationSeconds }
+			: {}),
+		...(resolution ? { resolution } : {}),
+	};
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl}/minimax/v1/video_generation`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ tag: "minimax:create" },
+		);
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("MiniMax 视频任务创建失败", {
+			status: 502,
+			code: "minimax_request_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error || data.msg)) ||
+			`MiniMax 视频任务创建失败：${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "minimax_request_failed",
+			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+		});
+	}
+
+	const taskId =
+		(typeof data?.task_id === "string" && data.task_id.trim()) ||
+		(typeof data?.taskId === "string" && data.taskId.trim()) ||
+		(typeof data?.id === "string" && data.id.trim()) ||
+		(typeof data?.data?.task_id === "string" && data.data.task_id.trim()) ||
+		null;
+	if (!taskId) {
+		throw new AppError("MiniMax API 未返回 task_id", {
+			status: 502,
+			code: "minimax_task_id_missing",
+			details: { upstreamData: data ?? null },
+		});
+	}
+
+	emitProgress(userId, progressCtx, {
+		status: "running",
+		progress: 10,
+		taskId,
+		raw: data ?? null,
+	});
+
+	return TaskResultSchema.parse({
+		id: taskId,
+		kind: req.kind,
+		status: "running",
+		assets: [],
+		raw: {
+			provider: "minimax",
+			model,
+			taskId,
+			response: data ?? null,
+		},
+	});
+}
+
+function normalizeMiniMaxStatus(value: unknown): TaskStatus {
+	if (typeof value !== "string") return "running";
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) return "running";
+	if (normalized === "success" || normalized === "succeeded" || normalized === "completed") {
+		return "succeeded";
+	}
+	if (normalized === "fail" || normalized === "failed" || normalized === "failure" || normalized === "error") {
+		return "failed";
+	}
+	return "running";
+}
+
+function extractMiniMaxVideoUrl(payload: any): string | null {
+	const pick = (v: any): string | null =>
+		typeof v === "string" && v.trim() ? v.trim() : null;
+	return (
+		pick(payload?.video_url) ||
+		pick(payload?.videoUrl) ||
+		pick(payload?.url) ||
+		pick(payload?.file_url) ||
+		pick(payload?.fileUrl) ||
+		pick(payload?.download_url) ||
+		pick(payload?.downloadUrl) ||
+		(Array.isArray(payload?.results) && payload.results.length
+			? pick(payload.results[0]?.url) ||
+				pick(payload.results[0]?.video_url) ||
+				pick(payload.results[0]?.videoUrl)
+			: null) ||
+		null
+	);
+}
+
+export async function fetchMiniMaxTaskResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+) {
+	if (!taskId || !taskId.trim()) {
+		throw new AppError("taskId is required", {
+			status: 400,
+			code: "task_id_required",
+		});
+	}
+
+	const ctx = await resolveVendorContext(c, userId, "minimax");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = ctx.apiKey.trim();
+	if (!baseUrl || !apiKey) {
+		throw new AppError("未配置 MiniMax API Key", {
+			status: 400,
+			code: "minimax_api_key_missing",
+		});
+	}
+
+	const qs = new URLSearchParams();
+	qs.append("task_id[]", taskId.trim());
+	const url = `${baseUrl}/minimax/v1/query/video_generation?${qs.toString()}`;
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetchWithHttpDebugLog(
+			c,
+			url,
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+				},
+			},
+			{ tag: "minimax:result" },
+		);
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("MiniMax 结果查询失败", {
+			status: 502,
+			code: "minimax_result_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error || data.msg)) ||
+			`MiniMax 结果查询失败: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "minimax_result_failed",
+			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+		});
+	}
+
+	const payload = data?.data ?? data ?? {};
+	const status = normalizeMiniMaxStatus(payload?.status || data?.status);
+	const progress = parseComflyProgress(payload?.progress || data?.progress);
+
+	if (status === "failed") {
+		const msg =
+			(typeof payload?.base_resp?.status_msg === "string" &&
+				payload.base_resp.status_msg.trim()) ||
+			(typeof payload?.message === "string" && payload.message.trim()) ||
+			(typeof payload?.error === "string" && payload.error.trim()) ||
+			"MiniMax 视频任务失败";
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "failed",
+			assets: [],
+			raw: {
+				provider: "minimax",
+				response: payload,
+				progress,
+				message: msg,
+			},
+		});
+	}
+
+	if (status !== "succeeded") {
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "running",
+			assets: [],
+			raw: {
+				provider: "minimax",
+				response: payload,
+				progress,
+			},
+		});
+	}
+
+	const videoUrl = extractMiniMaxVideoUrl(payload);
+	if (!videoUrl) {
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "failed",
+			assets: [],
+			raw: {
+				provider: "minimax",
+				response: payload,
+				progress,
+				message:
+					"MiniMax 任务已完成但未返回视频链接（缺少 url/video_url）",
+			},
+		});
+	}
+
+	const asset = TaskAssetSchema.parse({
+		type: "video",
+		url: videoUrl,
+		thumbnailUrl: null,
+	});
+	const hostedAssets = await hostTaskAssetsInWorker({
+		c,
+		userId,
+		assets: [asset],
+		meta: {
+			taskKind: "text_to_video",
+			prompt:
+				typeof payload?.prompt === "string" && payload.prompt.trim()
+					? payload.prompt.trim()
+					: null,
+			vendor: "minimax",
+			modelKey:
+				typeof payload?.model === "string" && payload.model.trim()
+					? payload.model.trim()
+					: undefined,
+			taskId,
+		},
+	});
+
+	return TaskResultSchema.parse({
+		id: taskId,
+		kind: "text_to_video",
+		status: "succeeded",
+		assets: hostedAssets,
+		raw: {
+			provider: "minimax",
+			response: payload,
 		},
 	});
 }
@@ -2493,9 +3222,11 @@ async function runGeminiTextTask(
 		parts: [{ text: req.prompt }],
 	});
 
-	const url = `${base.replace(/\/+$/, "")}/v1beta/${model}:generateContent?key=${encodeURIComponent(
-		apiKey,
-	)}`;
+	const endpointBase = `${base.replace(/\/+$/, "")}/v1beta/${model}:generateContent`;
+	const url =
+		ctx.viaProxyVendor === "comfly"
+			? endpointBase
+			: `${endpointBase}?key=${encodeURIComponent(apiKey)}`;
 
 	const data = await callJsonApi(
 		c,
@@ -2504,6 +3235,9 @@ async function runGeminiTextTask(
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				...(ctx.viaProxyVendor === "comfly"
+					? { Authorization: `Bearer ${apiKey}` }
+					: {}),
 			},
 			body: JSON.stringify({ contents }),
 		},
@@ -2755,6 +3489,115 @@ async function runGeminiBananaImageTask(
 		typeof extras.imageSize === "string" && extras.imageSize.trim()
 			? extras.imageSize.trim()
 			: undefined;
+
+	if (ctx.viaProxyVendor === "comfly") {
+		const modelId = normalizeComflyGeminiModelId(normalizedModel);
+		const resolvedAspect =
+			typeof aspectRatio === "string" &&
+			aspectRatio.trim() &&
+			aspectRatio.trim().toLowerCase() !== "auto"
+				? aspectRatio.trim()
+				: null;
+
+		const parts: any[] = [];
+		for (const url of referenceImages.slice(0, 4)) {
+			const dataUrl = await resolveSora2ApiImageUrl(c, url);
+			const match = typeof dataUrl === "string"
+				? dataUrl.match(/^data:([^;]+);base64,(.+)$/i)
+				: null;
+			if (!match) continue;
+			const mimeType = match[1] || "";
+			const data = match[2] || "";
+			if (!mimeType || !data) continue;
+			parts.push({ inlineData: { mimeType, data } });
+		}
+		parts.push({ text: req.prompt });
+
+		const generationConfig: any = {
+			responseModalities: ["IMAGE"],
+		};
+		if (resolvedAspect || imageSize) {
+			generationConfig.imageConfig = {
+				...(resolvedAspect ? { aspectRatio: resolvedAspect } : {}),
+				...(imageSize ? { imageSize } : {}),
+			};
+		}
+
+		const url = `${baseUrl}/v1beta/models/${encodeURIComponent(
+			modelId,
+		)}:generateContent`;
+		const data = await callJsonApi(
+			c,
+			url,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({
+					contents: [{ role: "user", parts }],
+					generationConfig,
+				}),
+			},
+			{ provider: "comfly" },
+		);
+
+		const images: Array<{ mimeType: string; data: string }> = [];
+		const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+		for (const cand of candidates) {
+			const candParts = Array.isArray(cand?.content?.parts)
+				? cand.content.parts
+				: [];
+			for (const part of candParts) {
+				const inline =
+					part?.inlineData ||
+					part?.inline_data ||
+					part?.inline ||
+					null;
+				const mimeType =
+					(typeof inline?.mimeType === "string" && inline.mimeType.trim()) ||
+					(typeof inline?.mime_type === "string" && inline.mime_type.trim()) ||
+					"";
+				const b64 =
+					(typeof inline?.data === "string" && inline.data.trim()) ||
+					(typeof inline?.b64 === "string" && inline.b64.trim()) ||
+					"";
+				if (mimeType && b64) {
+					images.push({ mimeType, data: b64 });
+				}
+			}
+		}
+
+		const uploadedUrls: string[] = [];
+		for (const img of images.slice(0, 4)) {
+			const url = await uploadInlineImageToR2({
+				c,
+				userId,
+				mimeType: img.mimeType,
+				base64: img.data,
+				prefix: "gen/images",
+			});
+			uploadedUrls.push(url);
+		}
+
+		const assets = uploadedUrls.map((url) =>
+			TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+		);
+
+		return TaskResultSchema.parse({
+			id: `banana-${Date.now().toString(36)}`,
+			kind: req.kind,
+			status: assets.length ? "succeeded" : "failed",
+			assets,
+			raw: {
+				provider: "gemini",
+				vendor: "comfly",
+				model: modelId,
+				response: data ?? null,
+			},
+		});
+	}
 
 	const shouldStreamProgress =
 		extras.shutProgress === true ? false : true;

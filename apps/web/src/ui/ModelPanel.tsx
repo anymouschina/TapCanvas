@@ -63,6 +63,9 @@ const PROXY_HOST_PRESETS = [
 
 const COMFLY_PROXY_TARGET_OPTIONS = [
   { value: 'veo', label: 'Veo 视频' },
+  { value: 'sora', label: 'Sora2 视频' },
+  { value: 'gemini', label: 'Nano Banana 图片' },
+  { value: 'minimax', label: 'Hailuo 视频' },
 ]
 
 type PredefinedModel = { value: string; label: string; kind: ProfileKind }
@@ -1490,7 +1493,7 @@ const handleCloseComflyProxyModal = () => {
                           )}
                         </Group>
                         <Text className="tc-model-panel__section-desc" size="xs" c="dimmed">
-                          使用 comfly API Key 统一接入视频统一格式接口（/v2/videos/generations）。
+                          使用 comfly API Key 统一接入 Sora2/Veo/Nano Banana/Hailuo（按勾选能力走对应官方/统一接口）。
                         </Text>
                         {comflyProxyConfig?.enabled && comflyProxyVendorLabels.length > 0 ? (
                           <Group className="tc-model-panel__section-meta" gap={6} mt={6} wrap="wrap">

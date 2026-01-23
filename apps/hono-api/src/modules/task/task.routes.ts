@@ -10,7 +10,9 @@ import {
 } from "./task.schemas";
 import {
 	fetchSora2ApiTaskResult,
+	fetchMiniMaxTaskResult,
 	fetchVeoTaskResult,
+	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
 	runGenericTaskForVendor,
@@ -70,6 +72,17 @@ taskRouter.post("/", async (c) => {
 			);
 		}
 		result = await runVeoVideoTask(c, userId, req);
+	} else if (vendor === "minimax") {
+		if (req.kind !== "text_to_video") {
+			return c.json(
+				{
+					error: "minimax only supports text_to_video tasks",
+					code: "invalid_task_kind",
+				},
+				400,
+			);
+		}
+		result = await runMiniMaxVideoTask(c, userId, req);
 	} else if (vendor === "sora2api") {
 		if (req.kind === "text_to_video") {
 			result = await runSora2ApiVideoTask(c, userId, req);
@@ -202,6 +215,25 @@ taskRouter.post("/sora2api/result", async (c) => {
 		userId,
 		parsed.data.taskId,
 		parsed.data.prompt ?? null,
+	);
+	return c.json(TaskResultSchema.parse(result));
+});
+
+taskRouter.post("/minimax/result", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = FetchTaskResultRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+	const result = await fetchMiniMaxTaskResult(
+		c,
+		userId,
+		parsed.data.taskId,
 	);
 	return c.json(TaskResultSchema.parse(result));
 });
