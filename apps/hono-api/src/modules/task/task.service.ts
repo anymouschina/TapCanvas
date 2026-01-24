@@ -2180,13 +2180,65 @@ export async function fetchSora2ApiTaskResult(
 	});
 }
 
-// ---------- MiniMax / Hailuo ----------
+	// ---------- MiniMax / Hailuo ----------
 
-export async function runMiniMaxVideoTask(
-	c: AppContext,
-	userId: string,
-	req: TaskRequestDto,
-): Promise<TaskResult> {
+	function normalizeMiniMaxModelKey(modelKey?: string | null): string {
+		const trimmed = (modelKey || "").trim();
+		if (!trimmed) return "MiniMax-Hailuo-02";
+		const lower = trimmed.toLowerCase();
+		if (
+			lower === "hailuo" ||
+			lower === "hailuo-02" ||
+			lower === "minimax-hailuo-02" ||
+			lower === "minimax_hailuo_02"
+		) {
+			return "MiniMax-Hailuo-02";
+		}
+		if (
+			lower === "i2v-01-director" ||
+			lower === "i2v_01_director" ||
+			lower === "i2v-01_director"
+		) {
+			return "I2V-01-Director";
+		}
+		if (lower === "i2v-01-live" || lower === "i2v_01_live") {
+			return "I2V-01-live";
+		}
+		if (lower === "i2v-01" || lower === "i2v_01") {
+			return "I2V-01";
+		}
+		return trimmed;
+	}
+
+	function extractMiniMaxErrorMessage(data: any): string | null {
+		if (!data) return null;
+		const candidates = [
+			data?.error?.message,
+			data?.error?.msg,
+			data?.error?.error_message,
+			data?.base_resp?.status_msg,
+			data?.message,
+			data?.msg,
+			data?.error,
+		];
+		for (const value of candidates) {
+			if (typeof value === "string" && value.trim()) return value.trim();
+		}
+		if (data?.error && typeof data.error === "object") {
+			try {
+				return JSON.stringify(data.error);
+			} catch {
+				// ignore
+			}
+		}
+		return null;
+	}
+
+	export async function runMiniMaxVideoTask(
+		c: AppContext,
+		userId: string,
+		req: TaskRequestDto,
+	): Promise<TaskResult> {
 	const progressCtx = extractProgressContext(req, "minimax");
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
@@ -2199,37 +2251,112 @@ export async function runMiniMaxVideoTask(
 			status: 400,
 			code: "minimax_api_key_missing",
 		});
-	}
+		}
 
-	const extras = (req.extras || {}) as Record<string, any>;
-	const model =
-		(typeof extras.modelKey === "string" && extras.modelKey.trim()) ||
-		"hailuo";
-	const durationSeconds =
-		typeof (req as any).durationSeconds === "number" &&
-		Number.isFinite((req as any).durationSeconds)
-			? Math.floor((req as any).durationSeconds)
+		const extras = (req.extras || {}) as Record<string, any>;
+		const modelRaw =
+			(typeof extras.modelKey === "string" && extras.modelKey.trim()) ||
+			"";
+		const model = normalizeMiniMaxModelKey(modelRaw);
+		const durationSeconds =
+			typeof (req as any).durationSeconds === "number" &&
+			Number.isFinite((req as any).durationSeconds)
+				? Math.floor((req as any).durationSeconds)
 			: typeof extras.durationSeconds === "number" &&
 					Number.isFinite(extras.durationSeconds)
 				? Math.floor(extras.durationSeconds)
 				: null;
-	const resolution =
-		typeof extras.resolution === "string" && extras.resolution.trim()
-			? extras.resolution.trim()
-			: null;
+		const resolution =
+			typeof extras.resolution === "string" && extras.resolution.trim()
+				? extras.resolution.trim()
+				: null;
+		const firstFrameImageRaw =
+			(typeof (extras as any).first_frame_image === "string" &&
+				String((extras as any).first_frame_image).trim()) ||
+			(typeof extras.firstFrameImage === "string" &&
+				extras.firstFrameImage.trim()) ||
+			(typeof extras.firstFrameUrl === "string" &&
+				extras.firstFrameUrl.trim()) ||
+			(typeof extras.url === "string" && extras.url.trim()) ||
+			null;
 
-	const body: Record<string, any> = {
-		model,
-		prompt: req.prompt,
-		...(typeof durationSeconds === "number" && durationSeconds > 0
-			? { duration: durationSeconds }
-			: {}),
-		...(resolution ? { resolution } : {}),
-	};
+		if (!firstFrameImageRaw) {
+			throw new AppError(
+				"MiniMax 图生视频需要提供首帧图片（first_frame_image）",
+				{
+					status: 400,
+					code: "minimax_first_frame_missing",
+				},
+			);
+		}
 
-	let res: Response;
-	let data: any = null;
-	try {
+			const firstFrameImage = await (async () => {
+				const trimmed = String(firstFrameImageRaw).trim();
+				if (!trimmed) return trimmed;
+				if (/^data:image\//i.test(trimmed)) return trimmed;
+
+				if (/^blob:/i.test(trimmed)) {
+					throw new AppError(
+						"MiniMax 首帧图片不支持 blob: URL，请先上传为可访问的图片地址",
+						{
+							status: 400,
+							code: "minimax_first_frame_invalid",
+						},
+					);
+				}
+
+				const isHttp = /^https?:\/\//i.test(trimmed);
+				const isRelative = trimmed.startsWith("/");
+				if (!isHttp && !isRelative) {
+					throw new AppError(
+						"MiniMax 首帧图片必须是 http(s) URL 或 data:image/*;base64,...",
+						{
+							status: 400,
+							code: "minimax_first_frame_invalid",
+							details: { firstFrameImage: trimmed.slice(0, 64) },
+						},
+					);
+				}
+
+				const absolute = isRelative
+					? new URL(trimmed, new URL(c.req.url).origin).toString()
+					: trimmed;
+
+				try {
+					// Prefer inlining as base64 to avoid upstreams failing to fetch private/local URLs.
+					return await resolveSora2ApiImageUrl(c, absolute);
+				} catch (err: any) {
+					if (isHttp) {
+						// Fallback: still send URL (may work in some deployments)
+						return trimmed;
+				}
+				throw err;
+			}
+		})();
+
+		const promptOptimizer =
+			typeof (extras as any).promptOptimizer === "boolean"
+				? (extras as any).promptOptimizer
+				: typeof (extras as any).prompt_optimizer === "boolean"
+					? (extras as any).prompt_optimizer
+					: undefined;
+
+		const body: Record<string, any> = {
+			model,
+			prompt: req.prompt,
+			first_frame_image: firstFrameImage,
+			...(typeof durationSeconds === "number" && durationSeconds > 0
+				? { duration: durationSeconds }
+				: {}),
+			...(resolution ? { resolution } : {}),
+			...(typeof promptOptimizer === "boolean"
+				? { prompt_optimizer: promptOptimizer }
+				: {}),
+		};
+
+		let res: Response;
+		let data: any = null;
+		try {
 		res = await fetchWithHttpDebugLog(
 			c,
 			`${baseUrl}/minimax/v1/video_generation`,
@@ -2253,19 +2380,23 @@ export async function runMiniMaxVideoTask(
 			status: 502,
 			code: "minimax_request_failed",
 			details: { message: error?.message ?? String(error) },
-		});
-	}
+			});
+		}
 
-	if (!res.ok) {
-		const msg =
-			(data && (data.message || data.error || data.msg)) ||
-			`MiniMax 视频任务创建失败：${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
-			code: "minimax_request_failed",
-			details: { upstreamStatus: res.status, upstreamData: data ?? null },
-		});
-	}
+		if (!res.ok || (typeof data?.base_resp?.status_code === "number" && data.base_resp.status_code !== 0)) {
+			const msg =
+				extractMiniMaxErrorMessage(data) ||
+				`MiniMax 视频任务创建失败：${res.status}`;
+			throw new AppError(msg, {
+				status:
+					typeof data?.base_resp?.status_code === "number" &&
+					data.base_resp.status_code !== 0
+						? 502
+						: res.status,
+				code: "minimax_request_failed",
+				details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			});
+		}
 
 	const taskId =
 		(typeof data?.task_id === "string" && data.task_id.trim()) ||
@@ -2357,47 +2488,69 @@ export async function fetchMiniMaxTaskResult(
 		});
 	}
 
-	const qs = new URLSearchParams();
-	qs.append("task_id[]", taskId.trim());
-	const url = `${baseUrl}/minimax/v1/query/video_generation?${qs.toString()}`;
+		const makeUrl = (key: string) => {
+			const qs = new URLSearchParams();
+			qs.append(key, taskId.trim());
+			return `${baseUrl}/minimax/v1/query/video_generation?${qs.toString()}`;
+		};
 
-	let res: Response;
-	let data: any = null;
-	try {
-		res = await fetchWithHttpDebugLog(
-			c,
-			url,
-			{
-				method: "GET",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
+		const tryFetch = async (url: string, tag: string) => {
+			const res = await fetchWithHttpDebugLog(
+				c,
+				url,
+				{
+					method: "GET",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+					},
 				},
-			},
-			{ tag: "minimax:result" },
-		);
-		try {
-			data = await res.json();
-		} catch {
-			data = null;
-		}
-	} catch (error: any) {
-		throw new AppError("MiniMax 结果查询失败", {
-			status: 502,
-			code: "minimax_result_failed",
-			details: { message: error?.message ?? String(error) },
-		});
-	}
+				{ tag },
+			);
+			let data: any = null;
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+			return { res, data };
+		};
 
-	if (!res.ok) {
-		const msg =
-			(data && (data.message || data.error || data.msg)) ||
-			`MiniMax 结果查询失败: ${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
-			code: "minimax_result_failed",
-			details: { upstreamStatus: res.status, upstreamData: data ?? null },
-		});
-	}
+		let res: Response;
+		let data: any = null;
+		try {
+			({ res, data } = await tryFetch(makeUrl("task_id"), "minimax:result"));
+		} catch (error: any) {
+			throw new AppError("MiniMax 结果查询失败", {
+				status: 502,
+				code: "minimax_result_failed",
+				details: { message: error?.message ?? String(error) },
+			});
+		}
+
+		// Some MiniMax gateways expect array-form query params (task_id[]=...).
+		if (!res.ok && res.status === 400) {
+			try {
+				const retry = await tryFetch(makeUrl("task_id[]"), "minimax:result:array");
+				if (retry.res.ok) {
+					res = retry.res;
+					data = retry.data;
+				} else {
+					// keep original error response for reporting
+				}
+			} catch {
+				// ignore retry errors
+			}
+		}
+
+		if (!res.ok) {
+			const msg =
+				extractMiniMaxErrorMessage(data) || `MiniMax 结果查询失败: ${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "minimax_result_failed",
+				details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			});
+		}
 
 	const payload = data?.data ?? data ?? {};
 	const status = normalizeMiniMaxStatus(payload?.status || data?.status);
@@ -2815,12 +2968,32 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 		const trimmed = (url || "").trim();
 		if (!trimmed) return trimmed;
 		if (/^data:image\//i.test(trimmed)) return trimmed;
-		if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+		if (/^blob:/i.test(trimmed)) {
+			throw new AppError(
+				"blob: URL 无法在 Worker 侧下载，请先上传为可访问的图片地址",
+				{
+					status: 400,
+					code: "invalid_image_url",
+					details: { url: trimmed.slice(0, 64) },
+				},
+			);
+		}
+
+		let resolved = trimmed;
+		if (resolved.startsWith("/")) {
+			try {
+				resolved = new URL(resolved, new URL(c.req.url).origin).toString();
+			} catch {
+				return trimmed;
+			}
+		}
+
+		if (!/^https?:\/\//i.test(resolved)) return trimmed;
 
 		const MAX_BYTES = 8 * 1024 * 1024;
 		const res = await fetchWithHttpDebugLog(
 			c,
-			trimmed,
+			resolved,
 			{ method: "GET" },
 			{ tag: "sora2api:imageFetch" },
 		);
@@ -2828,7 +3001,7 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 			throw new AppError(`参考图下载失败: ${res.status}`, {
 				status: 502,
 				code: "image_fetch_failed",
-				details: { upstreamStatus: res.status, url: trimmed },
+				details: { upstreamStatus: res.status, url: resolved },
 			});
 		}
 
@@ -2837,7 +3010,7 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 			throw new AppError("参考图不是 image/* 内容", {
 				status: 400,
 				code: "invalid_image_content_type",
-				details: { contentType: ct, url: trimmed },
+				details: { contentType: ct, url: resolved },
 			});
 		}
 
@@ -2850,7 +3023,7 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 			throw new AppError("参考图过大，无法转换为 base64", {
 				status: 400,
 				code: "image_too_large",
-				details: { contentLength: len, maxBytes: MAX_BYTES, url: trimmed },
+				details: { contentLength: len, maxBytes: MAX_BYTES, url: resolved },
 			});
 		}
 
@@ -2862,7 +3035,7 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 				details: {
 					contentLength: buf.byteLength,
 					maxBytes: MAX_BYTES,
-					url: trimmed,
+					url: resolved,
 				},
 			});
 		}
