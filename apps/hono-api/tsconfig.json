@@ -20,9 +20,8 @@
 		"noEmit": true,
 		"lib": ["es2024"],
 		"types": [
-			"./worker-configuration.d.ts",
-			"@types/node",
-			"@types/service-worker-mock"
+			"node",
+			"service-worker-mock"
 		]
 	},
 	"exclude": ["node_modules", "dist", "tests"],
