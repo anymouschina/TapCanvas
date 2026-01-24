@@ -659,9 +659,12 @@ function parseComflyProgress(value: unknown): number | undefined {
 	model: string,
 	input: {
 		aspectRatio?: string | null;
-		duration?: number | null;
+		duration?: number | string | null;
 		images?: string[];
 		videos?: string[];
+		hd?: boolean | null;
+		notifyHook?: string | null;
+		private?: boolean | null;
 		watermark?: boolean | null;
 		resolution?: string | null;
 		size?: string | null;
@@ -683,9 +686,20 @@ function parseComflyProgress(value: unknown): number | undefined {
 	};
 	if (typeof input.duration === "number" && Number.isFinite(input.duration)) {
 		body.duration = input.duration;
+	} else if (typeof input.duration === "string" && input.duration.trim()) {
+		body.duration = input.duration.trim();
 	}
 	if (typeof input.aspectRatio === "string" && input.aspectRatio.trim()) {
 		body.aspect_ratio = input.aspectRatio.trim();
+	}
+	if (typeof input.hd === "boolean") {
+		body.hd = input.hd;
+	}
+	if (typeof input.notifyHook === "string" && input.notifyHook.trim()) {
+		body.notify_hook = input.notifyHook.trim();
+	}
+	if (typeof input.private === "boolean") {
+		body.private = input.private;
 	}
 	if (typeof input.size === "string" && input.size.trim()) {
 		body.size = input.size.trim();
@@ -791,106 +805,82 @@ function parseComflyProgress(value: unknown): number | undefined {
 		},
 		progressCtx: ProgressContext | null,
 	): Promise<TaskResult> {
-		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
-		const apiKey = ctx.apiKey.trim();
-		if (!baseUrl || !apiKey) {
-			throw new AppError("comfly 代理未配置 Host 或 API Key", {
-				status: 400,
-				code: "comfly_proxy_misconfigured",
-			});
-		}
-
 		const model = (input.model || "").trim() || "sora-2";
-		const form = new FormData();
-		form.append("model", model);
-		form.append("prompt", req.prompt);
-		if (typeof input.size === "string" && input.size.trim()) {
-			form.append("size", input.size.trim());
-		}
-		if (typeof input.seconds === "number" && Number.isFinite(input.seconds)) {
-			form.append("seconds", String(Math.max(1, Math.floor(input.seconds))));
-		}
-		if (typeof input.watermark === "boolean") {
-			form.append("watermark", input.watermark ? "true" : "false");
-		}
-		if (typeof input.inputReferenceUrl === "string" && input.inputReferenceUrl.trim()) {
-			// comfly 文档示例用 URL 字符串；保持兼容（不强制上传 binary）
-			form.append("input_reference", input.inputReferenceUrl.trim());
-		}
+		const extras = (req.extras || {}) as Record<string, any>;
 
-		let res: Response;
-		let data: any = null;
-		try {
-			emitProgress(userId, progressCtx, { status: "running", progress: 5 });
-			res = await fetchWithHttpDebugLog(
-				c,
-				`${baseUrl}/v1/videos`,
-				{
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-					},
-					body: form,
-				},
-				{ tag: "comfly:sora2:create" },
-			);
-			try {
-				data = await res.json();
-			} catch {
-				data = null;
+		const aspectRatio = (() => {
+			const fromExtras =
+				(typeof extras.aspect_ratio === "string" &&
+					extras.aspect_ratio.trim()) ||
+				(typeof extras.aspectRatio === "string" &&
+					extras.aspectRatio.trim()) ||
+				"";
+			if (fromExtras === "16:9" || fromExtras === "9:16") {
+				return fromExtras;
 			}
-		} catch (error: any) {
-			throw new AppError("comfly Sora2 视频任务创建失败", {
-				status: 502,
-				code: "comfly_request_failed",
-				details: { message: error?.message ?? String(error) },
-			});
-		}
+			const raw = typeof input.size === "string" ? input.size.trim() : "";
+			if (!raw) return null;
+			const match = raw.match(/^(\d+)\s*x\s*(\d+)$/i);
+			if (!match) return null;
+			const width = Number(match[1]);
+			const height = Number(match[2]);
+			if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+			return width >= height ? "16:9" : "9:16";
+		})();
 
-		if (!res.ok) {
-			const msg =
-				(data && (data.message || data.error || data.msg)) ||
-				`comfly Sora2 视频任务创建失败：${res.status}`;
-			throw new AppError(msg, {
-				status: res.status,
-				code: "comfly_request_failed",
-				details: { upstreamStatus: res.status, upstreamData: data ?? null },
-			});
-		}
+		const duration = (() => {
+			const seconds =
+				typeof input.seconds === "number" && Number.isFinite(input.seconds)
+					? Math.max(1, Math.floor(input.seconds))
+					: 10;
+			if (seconds <= 10) return "10";
+			if (seconds <= 15) return "15";
+			return "25";
+		})();
 
-		const taskId =
-			(typeof data?.id === "string" && data.id.trim()) ||
-			(typeof data?.task_id === "string" && data.task_id.trim()) ||
-			(typeof data?.taskId === "string" && data.taskId.trim()) ||
+		const images = (() => {
+			const urls: string[] = [];
+			const add = (v: any) => {
+				if (typeof v === "string" && v.trim()) urls.push(v.trim());
+			};
+			if (Array.isArray(extras.images)) extras.images.forEach(add);
+			if (Array.isArray(extras.urls)) extras.urls.forEach(add);
+			add(extras.url);
+			add(extras.firstFrameUrl);
+			add(input.inputReferenceUrl);
+			const deduped = Array.from(new Set(urls));
+			return deduped.length ? deduped.slice(0, 8) : undefined;
+		})();
+		const hd = typeof extras.hd === "boolean" ? extras.hd : null;
+		const notifyHook =
+			(typeof extras.notify_hook === "string" &&
+				extras.notify_hook.trim()) ||
+			(typeof extras.notifyHook === "string" && extras.notifyHook.trim()) ||
 			null;
-		if (!taskId) {
-			throw new AppError("comfly API 未返回视频任务 id", {
-				status: 502,
-				code: "comfly_task_id_missing",
-				details: { upstreamData: data ?? null },
-			});
-		}
+		const isPrivate =
+			typeof extras.private === "boolean"
+				? extras.private
+				: typeof extras.isPrivate === "boolean"
+					? extras.isPrivate
+					: null;
 
-		emitProgress(userId, progressCtx, {
-			status: "running",
-			progress: 10,
-			taskId,
-			raw: data ?? null,
-		});
-
-		return TaskResultSchema.parse({
-			id: taskId,
-			kind: req.kind,
-			status: "running",
-			assets: [],
-			raw: {
-				provider: "comfly",
-				vendor: "sora2api",
-				model,
-				taskId,
-				response: data ?? null,
+		return createComflyVideoTask(
+			c,
+			userId,
+			req,
+			ctx,
+			model,
+			{
+				aspectRatio,
+				duration,
+				images,
+				hd,
+				notifyHook,
+				private: isPrivate,
+				watermark: input.watermark ?? null,
 			},
-		});
+			progressCtx,
+		);
 	}
 
 	async function fetchComflySora2VideoTaskResult(
@@ -900,146 +890,9 @@ function parseComflyProgress(value: unknown): number | undefined {
 		ctx: VendorContext,
 		kind: TaskRequestDto["kind"],
 	) {
-		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
-		const apiKey = ctx.apiKey.trim();
-		if (!baseUrl || !apiKey) {
-			throw new AppError("comfly 代理未配置 Host 或 API Key", {
-				status: 400,
-				code: "comfly_proxy_misconfigured",
-			});
-		}
-
-		let res: Response;
-		let data: any = null;
-		try {
-			res = await fetchWithHttpDebugLog(
-				c,
-				`${baseUrl}/v1/videos/${encodeURIComponent(taskId.trim())}`,
-				{
-					method: "GET",
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-					},
-				},
-				{ tag: "comfly:sora2:result" },
-			);
-			try {
-				data = await res.json();
-			} catch {
-				data = null;
-			}
-		} catch (error: any) {
-			throw new AppError("comfly Sora2 结果查询失败", {
-				status: 502,
-				code: "comfly_result_failed",
-				details: { message: error?.message ?? String(error) },
-			});
-		}
-
-		if (!res.ok) {
-			const msg =
-				(data && (data.message || data.error || data.msg)) ||
-				`comfly Sora2 结果查询失败: ${res.status}`;
-			throw new AppError(msg, {
-				status: res.status,
-				code: "comfly_result_failed",
-				details: { upstreamStatus: res.status, upstreamData: data ?? null },
-			});
-		}
-
-		const status = normalizeSora2OfficialStatus(data?.status) || "running";
-		const progress = parseComflyProgress(data?.progress);
-		const errorMessage =
-			(typeof data?.error?.message === "string" && data.error.message.trim()) ||
-			(typeof data?.message === "string" && data.message.trim()) ||
-			(typeof data?.error === "string" && data.error.trim()) ||
-			null;
-
-		if (status === "failed") {
-			return TaskResultSchema.parse({
-				id: taskId,
-				kind,
-				status: "failed",
-				assets: [],
-				raw: {
-					provider: "comfly",
-					vendor: "sora2api",
-					response: data ?? null,
-					progress,
-					error: errorMessage,
-				},
-			});
-		}
-
-		if (status !== "succeeded") {
-			return TaskResultSchema.parse({
-				id: taskId,
-				kind,
-				status: "running",
-				assets: [],
-				raw: {
-					provider: "comfly",
-					vendor: "sora2api",
-					response: data ?? null,
-					progress,
-				},
-			});
-		}
-
-		const videoUrl = extractSora2OfficialVideoUrl(data);
-		if (!videoUrl) {
-			return TaskResultSchema.parse({
-				id: taskId,
-				kind,
-				status: "running",
-				assets: [],
-				raw: {
-					provider: "comfly",
-					vendor: "sora2api",
-					response: data ?? null,
-					progress,
-				},
-			});
-		}
-
-		const asset = TaskAssetSchema.parse({
-			type: "video",
-			url: videoUrl,
-			thumbnailUrl:
-				(typeof data?.thumbnail_url === "string" && data.thumbnail_url.trim()) ||
-				(typeof data?.thumbnailUrl === "string" && data.thumbnailUrl.trim()) ||
-				null,
-		});
-
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets: [asset],
-			meta: {
-				taskKind: kind,
-				prompt:
-					typeof data?.prompt === "string" && data.prompt.trim()
-						? data.prompt.trim()
-						: null,
-				vendor: "sora2api",
-				modelKey:
-					typeof data?.model === "string" && data.model.trim()
-						? data.model.trim()
-						: undefined,
-				taskId,
-			},
-		});
-
-		return TaskResultSchema.parse({
-			id: taskId,
-			kind,
-			status: "succeeded",
-			assets: hostedAssets,
-			raw: {
-				provider: "comfly",
-				vendor: "sora2api",
-				response: data ?? null,
-			},
+		return fetchComflyVideoTaskResult(c, userId, taskId, ctx, kind, {
+			metaVendor: "sora2api",
+			throwOnFailed: false,
 		});
 	}
 
@@ -1049,6 +902,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 		taskId: string,
 	ctx: VendorContext,
 	kind: TaskRequestDto["kind"],
+	options?: { metaVendor?: string; throwOnFailed?: boolean },
 ) {
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
 	const apiKey = ctx.apiKey.trim();
@@ -1097,35 +951,57 @@ function parseComflyProgress(value: unknown): number | undefined {
 		});
 	}
 
-	const status = normalizeComflyStatus(data?.status);
-	const mappedStatus = mapComflyStatusToTaskStatus(status);
-	const progress = parseComflyProgress(data?.progress);
+		const status = normalizeComflyStatus(data?.status);
+		const mappedStatus = mapComflyStatusToTaskStatus(status);
+		const progress = parseComflyProgress(data?.progress);
+		const metaVendor =
+			typeof options?.metaVendor === "string" && options.metaVendor.trim()
+				? options.metaVendor.trim()
+				: "veo";
+		const throwOnFailed = options?.throwOnFailed !== false;
 
-	if (mappedStatus === "failed") {
-		const reason =
-			(typeof data?.fail_reason === "string" && data.fail_reason.trim()) ||
-			(typeof data?.message === "string" && data.message.trim()) ||
-			"comfly 视频任务失败";
-		throw new AppError(reason, {
-			status: 502,
-			code: "comfly_result_failed",
-			details: { upstreamData: data ?? null },
-		});
-	}
+		if (mappedStatus === "failed") {
+			const reason =
+				(typeof data?.fail_reason === "string" && data.fail_reason.trim()) ||
+				(typeof data?.message === "string" && data.message.trim()) ||
+				"comfly 视频任务失败";
+			if (!throwOnFailed) {
+				return TaskResultSchema.parse({
+					id: taskId,
+					kind,
+					status: "failed",
+					assets: [],
+					raw: {
+						provider: "comfly",
+						vendor: metaVendor,
+						response: data ?? null,
+						progress,
+						error: reason,
+						message: reason,
+					},
+				});
+			}
+			throw new AppError(reason, {
+				status: 502,
+				code: "comfly_result_failed",
+				details: { upstreamData: data ?? null },
+			});
+		}
 
-	if (mappedStatus !== "succeeded") {
-		return TaskResultSchema.parse({
-			id: taskId,
-			kind,
-			status: mappedStatus === "queued" ? "running" : mappedStatus,
-			assets: [],
-			raw: {
-				provider: "comfly",
-				response: data ?? null,
-				progress,
-			},
-		});
-	}
+		if (mappedStatus !== "succeeded") {
+			return TaskResultSchema.parse({
+				id: taskId,
+				kind,
+				status: mappedStatus === "queued" ? "running" : mappedStatus,
+				assets: [],
+				raw: {
+					provider: "comfly",
+					vendor: metaVendor,
+					response: data ?? null,
+					progress,
+				},
+			});
+		}
 
 	const urls = extractComflyOutputUrls(data);
 	if (!urls.length) {
@@ -1146,42 +1022,43 @@ function parseComflyProgress(value: unknown): number | undefined {
 		TaskAssetSchema.parse({ type: "video", url, thumbnailUrl: null }),
 	);
 
-	const hostedAssets = await hostTaskAssetsInWorker({
-		c,
-		userId,
-		assets,
-		meta: {
-			taskKind: kind,
-			prompt:
-				typeof (data as any)?.prompt === "string"
-					? (data as any).prompt
-					: null,
-			vendor: "veo",
-			modelKey:
-				typeof (data as any)?.model === "string"
-					? (data as any).model
-					: undefined,
-			taskId:
+		const hostedAssets = await hostTaskAssetsInWorker({
+			c,
+			userId,
+			assets,
+			meta: {
+				taskKind: kind,
+				prompt:
+					typeof (data as any)?.prompt === "string"
+						? (data as any).prompt
+						: null,
+				vendor: metaVendor,
+				modelKey:
+					typeof (data as any)?.model === "string"
+						? (data as any).model
+						: undefined,
+				taskId:
 				(typeof (data as any)?.task_id === "string" &&
 					(data as any).task_id) ||
 				taskId,
 		},
 	});
 
-	return TaskResultSchema.parse({
-		id:
-			(typeof (data as any)?.task_id === "string" &&
-				(data as any).task_id) ||
-			taskId,
-		kind,
-		status: "succeeded",
-		assets: hostedAssets,
-		raw: {
-			provider: "comfly",
-			response: data ?? null,
-		},
-	});
-}
+		return TaskResultSchema.parse({
+			id:
+				(typeof (data as any)?.task_id === "string" &&
+					(data as any).task_id) ||
+				taskId,
+			kind,
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "comfly",
+				vendor: metaVendor,
+				response: data ?? null,
+			},
+		});
+	}
 
 	export async function runVeoVideoTask(
 		c: AppContext,
