@@ -1852,15 +1852,20 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
   }))
   if (!r.ok) {
     let errorMessage = `run task failed: ${r.status}`
+    let errorData: any = null
     try {
-      const errorData = await r.json()
-      errorMessage = errorData.message || errorData.error || errorMessage
+      errorData = await r.json()
+      errorMessage = errorData?.message || errorData?.error || errorMessage
     } catch {
       // 如果解析 JSON 失败，使用默认错误消息
     }
 
     const error = new Error(errorMessage) as any
     error.status = r.status
+    if (errorData && typeof errorData === 'object') {
+      error.code = errorData.code
+      error.details = errorData.details
+    }
     throw error
   }
   return r.json()
