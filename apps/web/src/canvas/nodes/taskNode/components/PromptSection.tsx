@@ -354,6 +354,9 @@ export function PromptSection({
             background: isDarkUi ? 'rgba(0,0,0,0.72)' : '#fff',
             boxShadow: '0 16px 32px rgba(0,0,0,0.25)',
             zIndex: 32,
+            maxHeight: 220,
+            overflowY: 'auto',
+            overflowX: 'hidden',
           }}
         >
           <Text className="task-node-prompt__mentions-title" size="xs" c="dimmed" mb={4}>
