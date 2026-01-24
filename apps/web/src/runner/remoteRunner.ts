@@ -1502,6 +1502,111 @@ export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
   }
 }
 
+export async function syncMiniMaxVideoNodeOnce(id: string, get: Getter) {
+  const ctx = buildRunnerContext(id, get)
+  if (!ctx) return
+  if (!ctx.isVideoTask) return
+  if (ctx.isCanceled(id)) return
+
+  const { data, kind, prompt, setNodeStatus, appendLog } = ctx
+  const status = (data as any)?.status as NodeStatusValue | undefined
+  if (status !== 'running' && status !== 'queued') return
+
+  const vendorRaw = ((data as any)?.videoModelVendor as string | undefined) || ''
+  const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
+  if (vendor !== 'minimax') return
+
+  const taskId = (data as any)?.videoTaskId as string | undefined
+  if (!taskId || !taskId.trim()) return
+
+  let snapshot: TaskResultDto
+  try {
+    snapshot = await fetchMiniMaxTaskResult(taskId.trim())
+  } catch (err: any) {
+    const msg = err?.message || '查询 MiniMax 任务进度失败'
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  if (snapshot.status === 'running' || snapshot.status === 'queued') {
+    const rawProgress =
+      (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
+      (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
+      null
+    if (typeof rawProgress === 'number') {
+      const current = typeof (data as any)?.progress === 'number' ? (data as any).progress : 10
+      const normalized = Math.min(95, Math.max(current, Math.max(5, Math.round(rawProgress))))
+      setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', { progress: normalized })
+    }
+    return
+  }
+
+  if (snapshot.status === 'failed') {
+    const msg =
+      (snapshot.raw && (snapshot.raw.message || snapshot.raw.response?.error || snapshot.raw.response?.message)) ||
+      'MiniMax 视频任务失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  // succeeded
+  const asset = (snapshot.assets || []).find((a) => a.type === 'video') || (snapshot.assets || [])[0]
+  if (!asset || !asset.url) {
+    const msg = 'MiniMax 视频任务执行失败：未返回有效视频地址'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  const videoUrl = asset.url
+  const thumbnailUrl = asset.thumbnailUrl || null
+  const preview = { type: 'video' as const, src: videoUrl }
+
+  const modelKey = (typeof (data as any)?.videoModel === 'string' && (data as any).videoModel.trim())
+    ? (data as any).videoModel.trim()
+    : 'MiniMax-Hailuo-02'
+  const durationSeconds = Number((data as any)?.videoDurationSeconds)
+  const normalizedDurationSeconds = Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.floor(durationSeconds) : 10
+
+  const existingResults = ((data as any)?.videoResults as any[] | undefined) || []
+  const newResult = {
+    id: snapshot.id || taskId.trim(),
+    url: videoUrl,
+    thumbnailUrl,
+    title: (data as any)?.videoTitle || null,
+    duration: normalizedDurationSeconds,
+    model: modelKey,
+    remixTargetId: null,
+  }
+  const updatedVideoResults = [...existingResults, newResult]
+  const nextPrimaryIndex = updatedVideoResults.length - 1
+
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    lastResult: {
+      id: snapshot.id || taskId.trim(),
+      at: Date.now(),
+      kind,
+      preview,
+    },
+    prompt,
+    videoUrl,
+    videoThumbnailUrl: thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
+    videoResults: updatedVideoResults,
+    videoPrimaryIndex: nextPrimaryIndex,
+    videoDurationSeconds: normalizedDurationSeconds,
+    videoModel: modelKey,
+    videoModelVendor: (data as any)?.videoModelVendor || 'minimax',
+    videoTaskId: taskId.trim(),
+  })
+
+  appendLog(id, `[${nowLabel()}] 已同步 MiniMax 视频结果。`)
+  if (snapshot.assets && snapshot.assets.length) {
+    notifyAssetRefresh()
+  }
+}
+
 async function runVideoTask(ctx: RunnerContext) {
   const { id, data, state, prompt, kind, setNodeStatus, appendLog, isCanceled } = ctx
   try {

@@ -26,7 +26,7 @@ import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
-import { syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
+import { syncMiniMaxVideoNodeOnce, syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
 import { getQuickStartSampleFlow } from './quickStartSample'
@@ -116,6 +116,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
   const viewOnlyFormattedOnceRef = useRef(false)
   const soraSyncingRef = useRef<Set<string>>(new Set())
+  const minimaxSyncingRef = useRef<Set<string>>(new Set())
   const rootRef = useRef<HTMLDivElement | null>(null)
   const initialFitAppliedRef = useRef(false)
   const restoreAppliedRef = useRef(false)
@@ -488,17 +489,28 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         if (status !== 'running' && status !== 'queued') continue
         const vendorRaw = String(data.videoModelVendor || data.videoVendor || '')
         const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
-        if (vendor !== 'sora2api') continue
         const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
-        if (!taskId.startsWith('task_')) continue
+        if (!taskId) continue
 
         const nodeId = String(n.id || '')
         if (!nodeId) continue
-        if (soraSyncingRef.current.has(nodeId)) continue
-        soraSyncingRef.current.add(nodeId)
-        void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
-          soraSyncingRef.current.delete(nodeId)
-        })
+        if (vendor === 'sora2api') {
+          if (!taskId.startsWith('task_')) continue
+          if (soraSyncingRef.current.has(nodeId)) continue
+          soraSyncingRef.current.add(nodeId)
+          void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+            soraSyncingRef.current.delete(nodeId)
+          })
+          continue
+        }
+
+        if (vendor === 'minimax') {
+          if (minimaxSyncingRef.current.has(nodeId)) continue
+          minimaxSyncingRef.current.add(nodeId)
+          void syncMiniMaxVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+            minimaxSyncingRef.current.delete(nodeId)
+          })
+        }
       }
     }
 
