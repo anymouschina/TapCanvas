@@ -642,14 +642,16 @@ function parseComflyProgress(value: unknown): number | undefined {
 		);
 	}
 
-	function normalizeComflyGeminiModelId(modelKey?: string | null): string {
-		const trimmed = (modelKey || "").trim();
-		if (!trimmed) return "gemini-3-pro-image-preview";
-		const bare = trimmed.startsWith("models/") ? trimmed.slice(7) : trimmed;
-		if (/^nano-banana-pro/i.test(bare)) return "gemini-3-pro-image-preview";
-		if (/^nano-banana/i.test(bare)) return "gemini-3-pro-image-preview";
-		return bare;
-	}
+		function normalizeComflyNanoBananaModelKey(modelKey?: string | null): string {
+			const trimmed = (modelKey || "").trim();
+			if (!trimmed) return "nano-banana";
+			const bare = trimmed.startsWith("models/") ? trimmed.slice(7) : trimmed;
+			const lower = bare.toLowerCase();
+			// Comfly 文档：nano-banana 为推荐对接；nano-banana-hd 为 4K 高清版。
+			if (lower === "nano-banana-pro") return "nano-banana-hd";
+			if (lower === "nano-banana-fast") return "nano-banana";
+			return bare;
+		}
 
 	async function createComflyVideoTask(
 		c: AppContext,
@@ -3549,11 +3551,11 @@ function normalizeBananaResponse(data: any): {
 	return { payload: data, events: [], raw: data };
 }
 
-function extractBananaImageUrls(payload: any): string[] {
-	if (!payload || typeof payload !== "object") return [];
-	const urls = new Set<string>();
-	const enqueue = (value: any) => {
-		if (!value) return;
+	function extractBananaImageUrls(payload: any): string[] {
+		if (!payload || typeof payload !== "object") return [];
+		const urls = new Set<string>();
+		const enqueue = (value: any) => {
+			if (!value) return;
 		const arr = Array.isArray(value) ? value : [value];
 		for (const item of arr) {
 			const candidate = (() => {
@@ -3596,19 +3598,22 @@ function extractBananaImageUrls(payload: any): string[] {
 		}
 	};
 
-	const candidates = [
-		payload?.results,
-		payload?.images,
-		payload?.imageUrls,
-		payload?.image_urls,
-		payload?.image_paths,
-		payload?.outputs,
-		payload?.output?.results,
-		payload?.output?.images,
-		payload?.output?.imageUrls,
-		payload?.output?.image_urls,
-	];
-	candidates.forEach(enqueue);
+		const candidates = [
+			// OpenAI/DALL·E-compatible shapes: { data: [{ url | b64_json }] }
+			payload?.data,
+			payload?.results,
+			payload?.images,
+			payload?.imageUrls,
+			payload?.image_urls,
+			payload?.image_paths,
+			payload?.outputs,
+			payload?.output?.data,
+			payload?.output?.results,
+			payload?.output?.images,
+			payload?.output?.imageUrls,
+			payload?.output?.image_urls,
+		];
+		candidates.forEach(enqueue);
 
 	enqueue(payload);
 	enqueue(payload?.output);
@@ -3676,119 +3681,139 @@ async function runGeminiBananaImageTask(
 			? extras.aspectRatio.trim()
 			: "auto";
 
-	const imageSize =
-		typeof extras.imageSize === "string" && extras.imageSize.trim()
-			? extras.imageSize.trim()
-			: undefined;
+		const imageSize =
+			typeof extras.imageSize === "string" && extras.imageSize.trim()
+				? extras.imageSize.trim()
+				: undefined;
 
-	if (ctx.viaProxyVendor === "comfly") {
-		const modelId = normalizeComflyGeminiModelId(normalizedModel);
-		const resolvedAspect =
-			typeof aspectRatio === "string" &&
-			aspectRatio.trim() &&
-			aspectRatio.trim().toLowerCase() !== "auto"
-				? aspectRatio.trim()
-				: null;
+		if (ctx.viaProxyVendor === "comfly") {
+			const model = normalizeComflyNanoBananaModelKey(normalizedModel);
+			const resolvedAspect = (() => {
+				const raw =
+					typeof aspectRatio === "string" && aspectRatio.trim()
+						? aspectRatio.trim()
+						: "";
+				if (!raw || raw.toLowerCase() === "auto") return null;
+				const allowed = new Set([
+					"4:3",
+					"3:4",
+					"16:9",
+					"9:16",
+					"2:3",
+					"3:2",
+					"1:1",
+					"4:5",
+					"5:4",
+					"21:9",
+				]);
+				return allowed.has(raw) ? raw : null;
+			})();
 
-		const parts: any[] = [];
-		for (const url of referenceImages.slice(0, 4)) {
-			const dataUrl = await resolveSora2ApiImageUrl(c, url);
-			const match = typeof dataUrl === "string"
-				? dataUrl.match(/^data:([^;]+);base64,(.+)$/i)
-				: null;
-			if (!match) continue;
-			const mimeType = match[1] || "";
-			const data = match[2] || "";
-			if (!mimeType || !data) continue;
-			parts.push({ inlineData: { mimeType, data } });
-		}
-		parts.push({ text: req.prompt });
+			const inputImages = (() => {
+				const items: string[] = [];
+				for (const ref of referenceImages.slice(0, 4)) {
+					if (typeof ref !== "string") continue;
+					const trimmed = ref.trim();
+					if (!trimmed) continue;
+					// Comfly 文档：image 支持 url 或 b64_json（不带 data: 前缀）
+					const dataMatch = trimmed.match(/^data:[^;]+;base64,(.+)$/i);
+					if (dataMatch) {
+						const b64 = (dataMatch[1] || "").trim();
+						if (b64) items.push(b64);
+						continue;
+					}
+					items.push(trimmed);
+				}
+				return items;
+			})();
 
-		const generationConfig: any = {
-			responseModalities: ["IMAGE"],
-		};
-		if (resolvedAspect || imageSize) {
-			generationConfig.imageConfig = {
-				...(resolvedAspect ? { aspectRatio: resolvedAspect } : {}),
-				...(imageSize ? { imageSize } : {}),
+			const body: any = {
+				model,
+				prompt: req.prompt,
+				response_format: "url",
+				...(resolvedAspect ? { aspect_ratio: resolvedAspect } : {}),
+				...(inputImages.length ? { image: inputImages } : {}),
 			};
-		}
 
-		const url = `${baseUrl}/v1beta/models/${encodeURIComponent(
-			modelId,
-		)}:generateContent`;
-		const data = await callJsonApi(
-			c,
-			url,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${apiKey}`,
-				},
-				body: JSON.stringify({
-					contents: [{ role: "user", parts }],
-					generationConfig,
-				}),
-			},
-			{ provider: "comfly" },
-		);
-
-		const images: Array<{ mimeType: string; data: string }> = [];
-		const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
-		for (const cand of candidates) {
-			const candParts = Array.isArray(cand?.content?.parts)
-				? cand.content.parts
-				: [];
-			for (const part of candParts) {
-				const inline =
-					part?.inlineData ||
-					part?.inline_data ||
-					part?.inline ||
-					null;
-				const mimeType =
-					(typeof inline?.mimeType === "string" && inline.mimeType.trim()) ||
-					(typeof inline?.mime_type === "string" && inline.mime_type.trim()) ||
-					"";
-				const b64 =
-					(typeof inline?.data === "string" && inline.data.trim()) ||
-					(typeof inline?.b64 === "string" && inline.b64.trim()) ||
-					"";
-				if (mimeType && b64) {
-					images.push({ mimeType, data: b64 });
+			// Doc: image_size 仅 nano-banana-2 支持；避免在其它模型上触发严格校验失败。
+			if (/^nano-banana-2$/i.test(model)) {
+				if (typeof imageSize === "string" && imageSize.trim()) {
+					const val = imageSize.trim();
+					if (val === "1K" || val === "2K" || val === "4K") {
+						body.image_size = val;
+					}
 				}
 			}
-		}
 
-		const uploadedUrls: string[] = [];
-		for (const img of images.slice(0, 4)) {
-			const url = await uploadInlineImageToR2({
+			const url = `${baseUrl.replace(/\/+$/, "")}/v1/images/generations`;
+			const data = await callJsonApi(
 				c,
-				userId,
-				mimeType: img.mimeType,
-				base64: img.data,
-				prefix: "gen/images",
+				url,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: JSON.stringify(body),
+				},
+				{ provider: "comfly" },
+			);
+
+			// Comfly OpenAI/DALL·E 风格返回：优先拿 url，若返回 b64_json 则上传到 R2。
+			const resolvedUrls: string[] = [];
+			const extracted = extractBananaImageUrls(data);
+			for (const item of extracted.slice(0, 4)) {
+				const raw = typeof item === "string" ? item.trim() : "";
+				if (!raw) continue;
+
+				const dataMatch = raw.match(/^data:([^;]+);base64,(.+)$/i);
+				if (dataMatch) {
+					const mimeType = (dataMatch[1] || "").trim() || "image/png";
+					const b64 = (dataMatch[2] || "").trim();
+					if (!b64) continue;
+					// eslint-disable-next-line no-await-in-loop
+					const hosted = await uploadInlineImageToR2({
+						c,
+						userId,
+						mimeType,
+						base64: b64,
+						prefix: "gen/images",
+					});
+					resolvedUrls.push(hosted);
+					continue;
+				}
+
+				// Handle possibly-relative urls.
+				if (raw.startsWith("/")) {
+					resolvedUrls.push(`${baseUrl.replace(/\/+$/, "")}${raw}`);
+					continue;
+				}
+				if (raw.startsWith("//")) {
+					resolvedUrls.push(`https:${raw}`);
+					continue;
+				}
+				resolvedUrls.push(raw);
+			}
+
+			const assets = resolvedUrls.map((url) =>
+				TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+			);
+
+			return TaskResultSchema.parse({
+				id: `comfly-img-${Date.now().toString(36)}`,
+				kind: req.kind,
+				status: assets.length ? "succeeded" : "failed",
+				assets,
+				raw: {
+					provider: "comfly",
+					vendor: "comfly",
+					model,
+					request: body,
+					response: data ?? null,
+				},
 			});
-			uploadedUrls.push(url);
 		}
-
-		const assets = uploadedUrls.map((url) =>
-			TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
-		);
-
-		return TaskResultSchema.parse({
-			id: `banana-${Date.now().toString(36)}`,
-			kind: req.kind,
-			status: assets.length ? "succeeded" : "failed",
-			assets,
-			raw: {
-				provider: "gemini",
-				vendor: "comfly",
-				model: modelId,
-				response: data ?? null,
-			},
-		});
-	}
 
 	const shouldStreamProgress =
 		extras.shutProgress === true ? false : true;
