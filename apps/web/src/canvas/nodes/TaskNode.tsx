@@ -625,12 +625,12 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     }
   }, [cleanupFrameSamples])
 
-  const handleCaptureVideoFrames = React.useCallback(async () => {
-    const src = videoResults[videoPrimaryIndex]?.url || videoUrl
-    if (!src) {
-      toast('当前没有可用的视频链接', 'error')
-      return
-    }
+	  const handleCaptureVideoFrames = React.useCallback(async () => {
+	    const src = videoResults[videoPrimaryIndex]?.url || videoUrl
+	    if (!src) {
+	      toast('当前没有可用的视频链接', 'error')
+	      return
+	    }
     const duration = videoResults[videoPrimaryIndex]?.duration
     const sampleTimes = (() => {
       if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
@@ -677,17 +677,47 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         (err?.message as string | undefined) ||
         '抽帧失败，可能是跨域或视频格式不支持'
       toast(message, 'error')
-    } finally {
-      setFrameCaptureLoading(false)
-    }
-  }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
+	    } finally {
+	      setFrameCaptureLoading(false)
+	    }
+	  }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
 
-  const handleCreateCharacterFromVideo = React.useCallback(() => {
-    const rawUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
-    if (!rawUrl) {
-      toast('当前没有可用的视频链接', 'error')
-      return
-    }
+	  const canCreateCharacterFromVideo = (() => {
+	    if (!isVideoNode) return false
+	    const primaryVideo = videoResults[videoPrimaryIndex] as any
+	    const taskIdCandidateRaw = primaryVideo?.id ?? (data as any)?.videoTaskId ?? ''
+	    const taskIdCandidate =
+	      typeof taskIdCandidateRaw === 'string'
+	        ? taskIdCandidateRaw.trim()
+	        : String(taskIdCandidateRaw || '').trim()
+	    if (taskIdCandidate && taskIdCandidate.startsWith('video_')) return true
+	    const modelRaw = typeof primaryVideo?.model === 'string' ? primaryVideo.model : ''
+	    const normalizedModel = modelRaw.startsWith('models/') ? modelRaw.slice(7) : modelRaw
+	    return Boolean(normalizedModel && normalizedModel.trim().toLowerCase().startsWith('sora'))
+	  })()
+
+	  const handleCreateCharacterFromVideo = React.useCallback(() => {
+	    const primaryVideo = videoResults[videoPrimaryIndex] as any
+	    const taskIdCandidateRaw = primaryVideo?.id ?? (data as any)?.videoTaskId ?? ''
+	    const taskIdCandidate =
+	      typeof taskIdCandidateRaw === 'string'
+	        ? taskIdCandidateRaw.trim()
+	        : String(taskIdCandidateRaw || '').trim()
+	    const modelRaw = typeof primaryVideo?.model === 'string' ? primaryVideo.model : ''
+	    const normalizedModel = modelRaw.startsWith('models/') ? modelRaw.slice(7) : modelRaw
+	    const isSoraGeneratedVideo =
+	      (taskIdCandidate && taskIdCandidate.startsWith('video_')) ||
+	      (normalizedModel && normalizedModel.trim().toLowerCase().startsWith('sora'))
+	    if (!isSoraGeneratedVideo) {
+	      toast('仅支持使用 Sora 生成的视频创建角色', 'error')
+	      return
+	    }
+
+	    const rawUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
+	    if (!rawUrl) {
+	      toast('当前没有可用的视频链接', 'error')
+	      return
+	    }
     if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) {
       toast('当前视频是本地地址，无法供上游拉取；请先上传/剪辑生成可访问 URL', 'error')
       return
@@ -715,16 +745,15 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       ((data as any)?.videoDuration as number | undefined) ??
       ((data as any)?.durationSeconds as number | undefined) ??
       ((data as any)?.duration as number | undefined)
-    const durationHint =
-      typeof durationHintRaw === 'number' && Number.isFinite(durationHintRaw) && durationHintRaw > 0
-        ? durationHintRaw
-        : 10
+	    const durationHint =
+	      typeof durationHintRaw === 'number' && Number.isFinite(durationHintRaw) && durationHintRaw > 0
+	        ? durationHintRaw
+	        : 10
 
-    const defaultRange = videoClipRange ? videoClipRange : { start: 0, end: Math.min(durationHint, 3) }
+	    const defaultRange = videoClipRange ? videoClipRange : { start: 0, end: Math.min(durationHint, 3) }
 
-    const taskIdCandidate = (videoResults[videoPrimaryIndex] as any)?.id || (data as any)?.videoTaskId || ''
-    const fromTask =
-      typeof taskIdCandidate === 'string' && taskIdCandidate.startsWith('video_') ? taskIdCandidate : null
+	    const fromTask =
+	      taskIdCandidate && taskIdCandidate.startsWith('video_') ? taskIdCandidate : null
 
     const thumbUrls: string[] = []
     let disposed = false
@@ -1610,10 +1639,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     runSelected()
   }
 
-  const videoContent = !isVideoNode
-    ? null
-    : (
-      <VideoContent
+	  const videoContent = !isVideoNode
+	    ? null
+	    : (
+	      <VideoContent
         videoResults={videoResults}
         videoPrimaryIndex={videoPrimaryIndex}
         videoUrl={videoUrl}
@@ -1629,14 +1658,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         mediaFallbackText={mediaFallbackText}
         inlineDividerColor={inlineDividerColor}
         accentPrimary={accentPrimary}
-        rgba={rgba}
-        videoSurface={videoSurface}
-        onOpenVideoModal={() => setVideoExpanded(true)}
-        onCreateCharacter={viewOnly ? undefined : handleCreateCharacterFromVideo}
-        onOpenWebCut={
-          viewOnly
-            ? undefined
-            : () => {
+	        rgba={rgba}
+	        videoSurface={videoSurface}
+	        onOpenVideoModal={() => setVideoExpanded(true)}
+	        onCreateCharacter={viewOnly || !canCreateCharacterFromVideo ? undefined : handleCreateCharacterFromVideo}
+	        onOpenWebCut={
+	          viewOnly
+	            ? undefined
+	            : () => {
               const src = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
               if (!src) {
                 toast('暂无可剪辑的视频', 'error')
@@ -2109,11 +2138,16 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     imageProps,
     storyboardImageProps,
   })
-  const [mentionOpen, setMentionOpen] = React.useState(false)
-  const [mentionFilter, setMentionFilter] = React.useState('')
-  const [mentionItems, setMentionItems] = React.useState<any[]>([])
-  const [mentionLoading, setMentionLoading] = React.useState(false)
-  const mentionMetaRef = React.useRef<{ at: number; caret: number } | null>(null)
+	  const [mentionOpen, setMentionOpen] = React.useState(false)
+	  const [mentionFilter, setMentionFilter] = React.useState('')
+	  const [mentionItems, setMentionItems] = React.useState<any[]>([])
+	  const [mentionLoading, setMentionLoading] = React.useState(false)
+	  const mentionMetaRef = React.useRef<{
+	    at: number
+	    caret: number
+	    target?: 'prompt' | 'storyboard_scene' | 'storyboard_notes'
+	    sceneId?: string
+	  } | null>(null)
   const rewriteRequestIdRef = React.useRef(0)
 
   const autoCharacterOptions = React.useMemo(() => {
@@ -3969,18 +4003,27 @@ const rewritePromptWithCharacters = React.useCallback(
                 </Paper>
               )}
 
-              {isStoryboardNode ? (
-                <StoryboardEditor
-                  scenes={storyboardScenes}
-                  title={storyboardTitle}
-                  notes={storyboardNotes}
-                  totalDuration={storyboardTotalDuration}
-                  lightContentBackground={lightContentBackground}
-                  onGenerateScript={viewOnly ? undefined : handleGenerateStoryboardScript}
-                  generateScriptLoading={storyboardScriptLoading}
-                  generateScriptDisabled={viewOnly}
-                  onTitleChange={(value) => setStoryboardTitle(value)}
-                  onAddScene={handleAddScene}
+	              {isStoryboardNode ? (
+	                <StoryboardEditor
+	                  scenes={storyboardScenes}
+	                  title={storyboardTitle}
+	                  notes={storyboardNotes}
+	                  totalDuration={storyboardTotalDuration}
+	                  lightContentBackground={lightContentBackground}
+	                  mentionOpen={mentionOpen}
+	                  mentionItems={mentionItems}
+	                  mentionLoading={mentionLoading}
+	                  mentionFilter={mentionFilter}
+	                  setMentionFilter={setMentionFilter}
+	                  setMentionOpen={setMentionOpen}
+	                  mentionMetaRef={mentionMetaRef}
+	                  isDarkUi={isDarkUi}
+	                  nodeShellText={nodeShellText}
+	                  onGenerateScript={viewOnly ? undefined : handleGenerateStoryboardScript}
+	                  generateScriptLoading={storyboardScriptLoading}
+	                  generateScriptDisabled={viewOnly}
+	                  onTitleChange={(value) => setStoryboardTitle(value)}
+	                  onAddScene={handleAddScene}
                   onRemoveScene={handleRemoveScene}
                   onDurationDelta={handleSceneDurationDelta}
                   onUpdateScene={updateStoryboardScene}
