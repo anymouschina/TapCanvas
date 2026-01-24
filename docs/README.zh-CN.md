@@ -372,6 +372,7 @@ cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
   - 在「模型配置」→「代理服务 (comfly)」填 Host + API Key，并勾选对应能力后：
   - **Veo 视频**：走 comfly 统一接口：`POST /v2/videos/generations` 创建任务，`GET /v2/videos/generations/:task_id` 轮询结果。
   - **Sora2 视频**（官方格式）：`POST /v2/videos/generations` 创建任务，`GET /v2/videos/generations/:task_id` 轮询结果（`model: sora-2 | sora-2-pro`，`images` 支持 url/base64）。
+  - **Sora2 角色（客串角色）**：支持从已有视频片段创建角色：`POST /sora/v1/characters`（`url` / `from_task` 二选一 + `timestamps`，1～3 秒区间）。
   - **Nano Banana 图片**（Gemini 官方格式）：`POST /v1beta/models/gemini-3-pro-image-preview:generateContent`。
   - **Hailuo 视频**（MiniMax）：`POST /minimax/v1/video_generation` 创建任务，`GET /minimax/v1/query/video_generation?task_id[]=...` 查询结果。
 - 当节点提供首帧/尾帧或参考图时，会按各接口要求映射为图生；不提供参考图时则为纯文生。

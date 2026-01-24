@@ -14,7 +14,7 @@ import {
   IconTrash,
   IconLayoutGrid,
 } from '@tabler/icons-react'
-import { listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadServerAssetFile, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
+import { createComflySoraCharacter, listSoraMentions, markDraftPromptUsed, suggestDraftPrompts, uploadServerAssetFile, uploadSoraImage, listModelProviders, listModelTokens, listSoraCharacters, runTaskByVendor, type ModelTokenDto, type PromptSampleDto } from '../../api/server'
 import {
   getDefaultModel,
   getModelLabel,
@@ -273,6 +273,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const requestCharacterCreator = useUIStore(s => s.requestCharacterCreator)
   const openVideoTrimModal = useUIStore(s => s.openVideoTrimModal)
+  const updateVideoTrimModal = useUIStore(s => s.updateVideoTrimModal)
   const openWebCutVideoEditModal = useUIStore(s => s.openWebCutVideoEditModal)
   const edgeRoute = useUIStore(s => s.edgeRoute)
   const openCharacterCreatorModal = useUIStore(s => s.openCharacterCreatorModal)
@@ -680,6 +681,151 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       setFrameCaptureLoading(false)
     }
   }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleCreateCharacterFromVideo = React.useCallback(() => {
+    const rawUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
+    if (!rawUrl) {
+      toast('当前没有可用的视频链接', 'error')
+      return
+    }
+    if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) {
+      toast('当前视频是本地地址，无法供上游拉取；请先上传/剪辑生成可访问 URL', 'error')
+      return
+    }
+
+    const resolvedUrl = (() => {
+      if (/^https?:\/\//i.test(rawUrl)) return rawUrl
+      if (rawUrl.startsWith('/')) {
+        try {
+          return `${window.location.origin}${rawUrl}`
+        } catch {
+          return rawUrl
+        }
+      }
+      return ''
+    })()
+    if (!resolvedUrl) {
+      toast('当前视频 URL 非 http(s) 链接，无法创建角色', 'error')
+      return
+    }
+
+    const durationHintRaw =
+      (videoResults[videoPrimaryIndex]?.duration as number | undefined) ??
+      ((data as any)?.videoDurationSeconds as number | undefined) ??
+      ((data as any)?.videoDuration as number | undefined) ??
+      ((data as any)?.durationSeconds as number | undefined) ??
+      ((data as any)?.duration as number | undefined)
+    const durationHint =
+      typeof durationHintRaw === 'number' && Number.isFinite(durationHintRaw) && durationHintRaw > 0
+        ? durationHintRaw
+        : 10
+
+    const defaultRange = videoClipRange ? videoClipRange : { start: 0, end: Math.min(durationHint, 3) }
+
+    const taskIdCandidate = (videoResults[videoPrimaryIndex] as any)?.id || (data as any)?.videoTaskId || ''
+    const fromTask =
+      typeof taskIdCandidate === 'string' && taskIdCandidate.startsWith('video_') ? taskIdCandidate : null
+
+    const thumbUrls: string[] = []
+    let disposed = false
+    const cleanupThumbs = () => {
+      thumbUrls.forEach((u) => {
+        try {
+          URL.revokeObjectURL(u)
+        } catch {
+          // ignore
+        }
+      })
+      thumbUrls.length = 0
+    }
+
+    openVideoTrimModal({
+      videoUrl: rawUrl,
+      originalDuration: durationHint,
+      thumbnails: [],
+      defaultRange,
+      onClose: () => {
+        disposed = true
+        cleanupThumbs()
+      },
+      onConfirm: async (range) => {
+        updateVideoTrimModal({ loading: true, progressPct: null })
+        try {
+          const start = Math.max(0, Number(range.start) || 0)
+          const end = Math.max(start, Number(range.end) || start)
+          const timestamps = `${start.toFixed(2)},${end.toFixed(2)}`
+
+          const created = await createComflySoraCharacter(
+            fromTask ? { from_task: fromTask, timestamps } : { url: resolvedUrl, timestamps },
+          )
+
+          const mention =
+            created?.username && String(created.username).trim()
+              ? `@${String(created.username).trim()}`
+              : ''
+          let copied = false
+          if (mention && typeof navigator !== 'undefined') {
+            try {
+              await navigator.clipboard?.writeText(mention)
+              copied = true
+            } catch {
+              copied = false
+            }
+          }
+
+          toast(
+            mention ? `角色创建成功：${mention}${copied ? '（已复制）' : ''}` : '角色创建成功',
+            'success',
+          )
+        } catch (err: any) {
+          toast(err?.message || '创建角色失败', 'error')
+        } finally {
+          updateVideoTrimModal({ loading: false, progressPct: null })
+        }
+      },
+    })
+
+    void (async () => {
+      try {
+        const clampedDuration = Math.max(1, durationHint)
+        const sampleCount = Math.max(8, Math.min(18, Math.round(clampedDuration) + 1))
+        const times =
+          sampleCount <= 1
+            ? [0]
+            : Array.from({ length: sampleCount }, (_, idx) => {
+                const ratio = sampleCount === 1 ? 0 : idx / (sampleCount - 1)
+                return Number((ratio * clampedDuration).toFixed(2))
+              })
+        const { frames, duration } = await captureFramesAtTimes(
+          { type: 'url', url: rawUrl },
+          times,
+          { mimeType: 'image/jpeg', quality: 0.75 },
+        )
+        frames.forEach((f) => {
+          if (f.objectUrl) thumbUrls.push(f.objectUrl)
+        })
+        if (disposed) {
+          cleanupThumbs()
+          return
+        }
+        updateVideoTrimModal({
+          thumbnails: [...thumbUrls],
+          originalDuration: typeof duration === 'number' && duration > 0 ? duration : durationHint,
+        })
+      } catch (error) {
+        if (disposed) return
+        // ignore thumbnail failures (often caused by CORS)
+      }
+    })()
+  }, [
+    data,
+    openVideoTrimModal,
+    updateVideoTrimModal,
+    videoClipRange,
+    videoPrimaryIndex,
+    videoResults,
+    videoUrl,
+  ])
 
   const [characterTokens, setCharacterTokens] = React.useState<ModelTokenDto[]>([])
   const [characterTokensLoading, setCharacterTokensLoading] = React.useState(false)
@@ -1486,6 +1632,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
         rgba={rgba}
         videoSurface={videoSurface}
         onOpenVideoModal={() => setVideoExpanded(true)}
+        onCreateCharacter={viewOnly ? undefined : handleCreateCharacterFromVideo}
         onOpenWebCut={
           viewOnly
             ? undefined

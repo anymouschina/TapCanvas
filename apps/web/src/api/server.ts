@@ -2045,3 +2045,35 @@ export async function fetchSora2ApiCharacterResult(taskId: string) {
   }
   return r.json()
 }
+
+// --- Comfly Sora official format: create character from video ---
+
+export type ComflySoraCharacterDto = {
+  id: string
+  username: string
+  permalink: string
+  profile_picture_url: string
+}
+
+export async function createComflySoraCharacter(input: {
+  timestamps: string
+  url?: string
+  from_task?: string
+}): Promise<ComflySoraCharacterDto> {
+  const r = await apiFetch(`${API_BASE}/sora/comfly/v1/characters`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+  if (!r.ok) {
+    let msg = `create comfly sora character failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}

@@ -4,6 +4,8 @@ import { authMiddleware } from "../../middleware/auth";
 import {
 	CreateSoraVideoRequestSchema,
 	CreateSoraVideoResponseSchema,
+	ComflyCreateCharacterRequestSchema,
+	ComflyCreateCharacterResponseSchema,
 	SoraDraftListSchema,
 	SoraVideoDraftResponseSchema,
 	PublishSoraVideoRequestSchema,
@@ -13,6 +15,7 @@ import {
 } from "./sora.schemas";
 import {
 	checkCharacterUsername,
+	createComflyCharacterFromVideo,
 	createSoraVideoTask,
 	deleteSoraCharacter,
 	deleteSoraDraft,
@@ -143,6 +146,22 @@ soraRouter.get("/characters", async (c) => {
 		limit,
 	});
 	return c.json(result);
+});
+
+soraRouter.post("/comfly/v1/characters", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = ComflyCreateCharacterRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+	const result = await createComflyCharacterFromVideo(c, userId, parsed.data);
+	const validated = ComflyCreateCharacterResponseSchema.parse(result);
+	return c.json(validated);
 });
 
 soraRouter.get("/characters/delete", async (c) => {

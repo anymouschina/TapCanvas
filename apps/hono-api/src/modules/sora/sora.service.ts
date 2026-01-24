@@ -800,6 +800,82 @@ export async function listSoraCharacters(
 	};
 }
 
+export async function createComflyCharacterFromVideo(
+	c: AppContext,
+	userId: string,
+	input: { url?: string; from_task?: string; timestamps?: string },
+) {
+	const ctx = await resolveVendorContext(c, userId, "comfly");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = ctx.apiKey.trim();
+	if (!baseUrl || !apiKey) {
+		throw new AppError("comfly 代理未配置 Host 或 API Key", {
+			status: 400,
+			code: "comfly_proxy_misconfigured",
+		});
+	}
+
+	const timestamps = (input.timestamps || "").trim();
+	if (!timestamps) {
+		throw new AppError("timestamps is required", {
+			status: 400,
+			code: "timestamps_missing",
+		});
+	}
+
+	const body: Record<string, any> = {
+		timestamps,
+	};
+	if (typeof input.url === "string" && input.url.trim()) {
+		body.url = input.url.trim();
+	}
+	if (typeof input.from_task === "string" && input.from_task.trim()) {
+		body.from_task = input.from_task.trim();
+	}
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl}/sora/v1/characters`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ tag: "comfly:sora:characters:create" },
+		);
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("comfly 创建角色请求失败", {
+			status: 502,
+			code: "comfly_request_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	if (!res.ok) {
+		const msg =
+			(data && (data.message || data.error || data.msg)) ||
+			`comfly 创建角色失败：${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "comfly_request_failed",
+			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+		});
+	}
+
+	return data;
+}
+
 export async function deleteSoraCharacter(
 	c: AppContext,
 	userId: string,

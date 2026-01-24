@@ -1,6 +1,6 @@
 import React from 'react'
 import { Button, Group, Text } from '@mantine/core'
-import { IconClock, IconPhotoSearch, IconScissors } from '@tabler/icons-react'
+import { IconClock, IconPhotoSearch, IconScissors, IconUserPlus } from '@tabler/icons-react'
 import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 
 type FrameSample = {
@@ -35,6 +35,7 @@ type VideoContentProps = {
   cleanupFrameSamples: () => void
   onOpenVideoModal: () => void
   onOpenWebCut?: () => void
+  onCreateCharacter?: () => void
 }
 
 export function VideoContent({
@@ -57,6 +58,7 @@ export function VideoContent({
   cleanupFrameSamples,
   onOpenVideoModal,
   onOpenWebCut,
+  onCreateCharacter,
 }: VideoContentProps) {
   const didDragFrameRef = React.useRef(false)
   const canClip = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
@@ -92,6 +94,16 @@ export function VideoContent({
             leftSection={<IconScissors className="video-content-clip-icon" size={12} />}
           >
             剪辑
+          </Button>
+          <Button
+            className="video-content-character-button"
+            size="compact-xs"
+            variant="subtle"
+            disabled={!canClip || !onCreateCharacter}
+            onClick={onCreateCharacter}
+            leftSection={<IconUserPlus className="video-content-character-icon" size={12} />}
+          >
+            创建角色
           </Button>
           <Button
             className="video-content-history-button"

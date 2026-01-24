@@ -283,7 +283,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       >
         <div className="video-trim-modal-header-inner" style={{ width: '100%', maxWidth: contentMaxWidth, padding: contentPadding, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text className="video-trim-modal-title" fw={500} style={{ color: '#f9fafb' }}>
-            Trim your video
+            截取视频片段
           </Text>
           <ActionIcon className="video-trim-modal-close" variant="light" onClick={onClose} title="关闭">
             <IconX className="video-trim-modal-close-icon" size={18} />
@@ -418,25 +418,14 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             >
               {thumbnails.map((src, idx) => (
                 <div className="video-trim-modal-thumb" key={idx} style={{ width: THUMB_WIDTH, height: '100%', overflow: 'hidden' }}>
-                  {src.startsWith('blob:') ? (
-                    <video
-                      className="video-trim-modal-thumb-video"
-                      src={src}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  ) : (
-                    <img
-                      className="video-trim-modal-thumb-img"
-                      src={src}
-                      alt={`frame-${idx}`}
-                      draggable
-                      onDragStart={(evt) => setTapImageDragData(evt, src)}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  )}
+                  <img
+                    className="video-trim-modal-thumb-img"
+                    src={src}
+                    alt={`frame-${idx}`}
+                    draggable
+                    onDragStart={(evt) => setTapImageDragData(evt, src)}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
                 </div>
               ))}
             </div>
