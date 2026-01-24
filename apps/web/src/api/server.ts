@@ -2060,11 +2060,24 @@ export async function createComflySoraCharacter(input: {
   url?: string
   from_task?: string
 }): Promise<ComflySoraCharacterDto> {
-  const r = await apiFetch(`${API_BASE}/sora/comfly/v1/characters`, withAuth({
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  }))
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timeoutId = controller ? globalThis.setTimeout(() => controller.abort(), 20_000) : null
+  let r: Response
+  try {
+    r = await apiFetch(`${API_BASE}/sora/comfly/v1/characters`, withAuth({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-tap-no-retry': '1' },
+      body: JSON.stringify(input),
+      ...(controller ? { signal: controller.signal } : {}),
+    }))
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('创建角色请求超时，请稍后重试')
+    }
+    throw err
+  } finally {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId)
+  }
   if (!r.ok) {
     let msg = `create comfly sora character failed: ${r.status}`
     try {

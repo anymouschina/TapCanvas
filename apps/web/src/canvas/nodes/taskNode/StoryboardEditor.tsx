@@ -12,12 +12,28 @@ import {
   type StoryboardScene,
 } from '../storyboardUtils'
 
+type MentionMeta = {
+  at: number
+  caret: number
+  target?: 'prompt' | 'storyboard_scene' | 'storyboard_notes'
+  sceneId?: string
+}
+
 type Props = {
   scenes: StoryboardScene[]
   title: string
   notes: string
   totalDuration: number
   lightContentBackground: string
+  mentionOpen: boolean
+  mentionItems: any[]
+  mentionLoading: boolean
+  mentionFilter: string
+  setMentionFilter: (value: string) => void
+  setMentionOpen: (value: boolean) => void
+  mentionMetaRef: React.MutableRefObject<MentionMeta | null>
+  isDarkUi: boolean
+  nodeShellText: string
   onGenerateScript?: () => void
   generateScriptLoading?: boolean
   generateScriptDisabled?: boolean
@@ -35,6 +51,15 @@ export function StoryboardEditor({
   notes,
   totalDuration,
   lightContentBackground,
+  mentionOpen,
+  mentionItems,
+  mentionLoading,
+  mentionFilter,
+  setMentionFilter,
+  setMentionOpen,
+  mentionMetaRef,
+  isDarkUi,
+  nodeShellText,
   onGenerateScript,
   generateScriptLoading,
   generateScriptDisabled,
@@ -45,6 +70,200 @@ export function StoryboardEditor({
   onUpdateScene,
   onNotesChange,
 }: Props) {
+  const sceneTextareaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({})
+  const notesTextareaRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const [activeMention, setActiveMention] = React.useState(0)
+
+  React.useEffect(() => {
+    if (!mentionOpen) {
+      setActiveMention(0)
+      return
+    }
+    setActiveMention(0)
+  }, [mentionOpen, mentionItems.length])
+
+  const detectMention = React.useCallback((value: string, caret: number) => {
+    const before = value.slice(0, caret)
+    const lastAt = before.lastIndexOf('@')
+    const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
+    if (lastAt >= 0 && lastAt >= lastSpace) {
+      return { at: lastAt, filter: before.slice(lastAt + 1) }
+    }
+    return null
+  }, [])
+
+  const closeMentions = React.useCallback(() => {
+    setMentionOpen(false)
+    setMentionFilter('')
+    mentionMetaRef.current = null
+  }, [mentionMetaRef, setMentionFilter, setMentionOpen])
+
+  const applyMention = React.useCallback((item: any) => {
+    const usernameRaw = String(item?.username || '').replace(/^@/, '').trim()
+    if (!usernameRaw) return
+    const mention = `@${usernameRaw}`
+    const meta = mentionMetaRef.current
+    if (!meta) return
+
+    if (meta.target === 'storyboard_scene' && meta.sceneId) {
+      const scene = scenes.find((s) => s.id === meta.sceneId)
+      if (!scene) return
+      const current = String(scene.description || '')
+      const before = current.slice(0, meta.at)
+      const after = current.slice(meta.caret)
+      const needsSpace = after.length === 0 || !/^\s/.test(after)
+      const suffix = needsSpace ? ' ' : ''
+      const next = `${before}${mention}${suffix}${after}`
+      const nextCaret = before.length + mention.length + suffix.length
+      onUpdateScene(meta.sceneId, { description: next })
+      closeMentions()
+      window.requestAnimationFrame(() => {
+        const el = sceneTextareaRefs.current[meta.sceneId!]
+        if (!el) return
+        try {
+          el.focus()
+          el.setSelectionRange(nextCaret, nextCaret)
+        } catch {
+          // ignore
+        }
+      })
+      return
+    }
+
+    if (meta.target === 'storyboard_notes') {
+      const current = String(notes || '')
+      const before = current.slice(0, meta.at)
+      const after = current.slice(meta.caret)
+      const needsSpace = after.length === 0 || !/^\s/.test(after)
+      const suffix = needsSpace ? ' ' : ''
+      const next = `${before}${mention}${suffix}${after}`
+      const nextCaret = before.length + mention.length + suffix.length
+      onNotesChange(next)
+      closeMentions()
+      window.requestAnimationFrame(() => {
+        const el = notesTextareaRef.current
+        if (!el) return
+        try {
+          el.focus()
+          el.setSelectionRange(nextCaret, nextCaret)
+        } catch {
+          // ignore
+        }
+      })
+    }
+  }, [closeMentions, mentionMetaRef, notes, onNotesChange, onUpdateScene, scenes])
+
+  const handleMentionKeyDown = React.useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape' && mentionOpen) {
+      e.stopPropagation()
+      closeMentions()
+      return
+    }
+
+    if (!mentionOpen) return
+
+    if (e.key === 'ArrowDown') {
+      if (mentionItems.length > 0) {
+        e.preventDefault()
+        setActiveMention((idx) => (idx + 1) % mentionItems.length)
+      }
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      if (mentionItems.length > 0) {
+        e.preventDefault()
+        setActiveMention((idx) => (idx - 1 + mentionItems.length) % mentionItems.length)
+      }
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const active = mentionItems[activeMention]
+      if (active) {
+        e.preventDefault()
+        applyMention(active)
+      }
+    }
+  }, [activeMention, applyMention, closeMentions, mentionItems, mentionOpen])
+
+  const mentionOverlay = mentionOpen ? (
+    <div
+      className="storyboard-editor-mentions"
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: '100%',
+        marginTop: 6,
+        borderRadius: 10,
+        padding: 8,
+        background: isDarkUi ? 'rgba(0,0,0,0.72)' : '#fff',
+        boxShadow: '0 16px 32px rgba(0,0,0,0.25)',
+        zIndex: 32,
+      }}
+    >
+      <Text className="storyboard-editor-mentions-title" size="xs" c="dimmed" mb={4}>
+        选择角色引用
+      </Text>
+      {mentionItems.map((item: any, idx: number) => {
+        const avatar =
+          (typeof item?.profile_picture_url === 'string' && item.profile_picture_url.trim()) ||
+          (typeof item?.profilePictureUrl === 'string' && item.profilePictureUrl.trim()) ||
+          null
+        const username = String(item?.username || '').replace(/^@/, '').trim()
+        const display = String(item?.display_name || item?.displayName || item?.username || '角色')
+        return (
+          <div
+            className="storyboard-editor-mention"
+            key={username || item?.id || idx}
+            style={{
+              padding: '6px 8px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              background: idx === activeMention ? 'rgba(59,130,246,0.15)' : 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            onMouseDown={(ev) => {
+              ev.preventDefault()
+              applyMention(item)
+            }}
+            onMouseEnter={() => setActiveMention(idx)}
+          >
+            {avatar && (
+              <img
+                className="storyboard-editor-mention-avatar"
+                src={avatar}
+                alt={username ? `@${username}` : 'avatar'}
+                style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+              />
+            )}
+            <div className="storyboard-editor-mention-text" style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+              <Text className="storyboard-editor-mention-name" size="sm" style={{ color: nodeShellText }} lineClamp={1}>
+                {display}
+              </Text>
+              {username && (
+                <Text className="storyboard-editor-mention-username" size="xs" c="dimmed" lineClamp={1}>
+                  @{username}
+                </Text>
+              )}
+            </div>
+          </div>
+        )
+      })}
+      {mentionLoading && (
+        <Text className="storyboard-editor-mention-loading" size="xs" c="dimmed">
+          加载中...
+        </Text>
+      )}
+      {!mentionLoading && mentionItems.length === 0 && (
+        <Text className="storyboard-editor-mention-empty" size="xs" c="dimmed">
+          {mentionFilter.trim() ? '无匹配角色' : '暂无可用角色'}
+        </Text>
+      )}
+    </div>
+  ) : null
+
   return (
     <Stack className="storyboard-editor" gap="xs">
       <TextInput
@@ -78,7 +297,7 @@ export function StoryboardEditor({
             key={scene.id}
             radius="md"
             p="xs"
-            style={{ background: lightContentBackground }}
+            style={{ background: lightContentBackground, position: 'relative' }}
           >
             <Group className="storyboard-editor-scene-header" justify="space-between" align="flex-start" mb={6}>
               <div className="storyboard-editor-scene-title">
@@ -115,15 +334,43 @@ export function StoryboardEditor({
             </Group>
             <Textarea
               className="storyboard-editor-scene-text"
+              ref={(el) => {
+                sceneTextareaRefs.current[scene.id] = el
+              }}
               autosize
               minRows={3}
               maxRows={6}
               placeholder="描写镜头构图、动作、情绪、台词，以及需要引用的 @角色……"
               value={scene.description}
-              onChange={(e) =>
-                onUpdateScene(scene.id, { description: e.currentTarget.value })
-              }
+              onChange={(e) => {
+                const el = e.currentTarget
+                const v = el.value
+                onUpdateScene(scene.id, { description: v })
+                const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
+                const hit = detectMention(v, caret)
+                if (hit) {
+                  setMentionFilter(hit.filter)
+                  setMentionOpen(true)
+                  mentionMetaRef.current = { at: hit.at, caret, target: 'storyboard_scene', sceneId: scene.id }
+                } else {
+                  const meta = mentionMetaRef.current
+                  if (meta?.target === 'storyboard_scene' && meta.sceneId === scene.id) {
+                    closeMentions()
+                  }
+                }
+              }}
+              onBlur={() => {
+                const meta = mentionMetaRef.current
+                if (meta?.target === 'storyboard_scene' && meta.sceneId === scene.id) {
+                  closeMentions()
+                }
+              }}
+              onKeyDown={handleMentionKeyDown}
             />
+            {(() => {
+              const meta = mentionMetaRef.current
+              return meta?.target === 'storyboard_scene' && meta.sceneId === scene.id && mentionOverlay
+            })()}
             <Group className="storyboard-editor-scene-controls" gap="xs" mt={6} align="flex-end" wrap="wrap">
               <Select
                 className="storyboard-editor-scene-select"
@@ -182,16 +429,46 @@ export function StoryboardEditor({
       >
         添加 Scene
       </Button>
-      <Textarea
-        className="storyboard-editor-notes"
-        label="全局风格 / 备注"
-        autosize
-        minRows={2}
-        maxRows={4}
-        placeholder="补充整体风格、镜头节奏、素材要求，或写下 Sora 需要遵循的额外说明。"
-        value={notes}
-        onChange={(e) => onNotesChange(e.currentTarget.value)}
-      />
+      <div className="storyboard-editor-notes-wrap" style={{ position: 'relative' }}>
+        <Textarea
+          className="storyboard-editor-notes"
+          ref={notesTextareaRef}
+          label="全局风格 / 备注"
+          autosize
+          minRows={2}
+          maxRows={4}
+          placeholder="补充整体风格、镜头节奏、素材要求，或写下 Sora 需要遵循的额外说明。"
+          value={notes}
+          onChange={(e) => {
+            const el = e.currentTarget
+            const v = el.value
+            onNotesChange(v)
+            const caret = typeof el.selectionStart === 'number' ? el.selectionStart : v.length
+            const hit = detectMention(v, caret)
+            if (hit) {
+              setMentionFilter(hit.filter)
+              setMentionOpen(true)
+              mentionMetaRef.current = { at: hit.at, caret, target: 'storyboard_notes' }
+            } else {
+              const meta = mentionMetaRef.current
+              if (meta?.target === 'storyboard_notes') {
+                closeMentions()
+              }
+            }
+          }}
+          onBlur={() => {
+            const meta = mentionMetaRef.current
+            if (meta?.target === 'storyboard_notes') {
+              closeMentions()
+            }
+          }}
+          onKeyDown={handleMentionKeyDown}
+        />
+        {(() => {
+          const meta = mentionMetaRef.current
+          return meta?.target === 'storyboard_notes' && mentionOverlay
+        })()}
+      </div>
       <Group className="storyboard-editor-summary" justify="space-between">
         <Text className="storyboard-editor-summary-text" size="xs" c="dimmed">
           当前共 {scenes.length} 个镜头。You're using {scenes.length} video gens with current settings.

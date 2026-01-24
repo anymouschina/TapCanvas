@@ -87,28 +87,48 @@ export const ComflyCreateCharacterRequestSchema = z
 		from_task: z.string().trim().optional(),
 		timestamps: z.string().trim().min(1),
 	})
-	.superRefine((val, ctx) => {
-		const hasUrl = typeof val.url === "string" && val.url.trim().length > 0;
-		const hasTask =
-			typeof val.from_task === "string" && val.from_task.trim().length > 0;
-		if (!hasUrl && !hasTask) {
+		.superRefine((val, ctx) => {
+			const hasUrl = typeof val.url === "string" && val.url.trim().length > 0;
+			const hasTask =
+				typeof val.from_task === "string" && val.from_task.trim().length > 0;
+			if (!hasUrl && !hasTask) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "url 或 from_task 必须提供一个",
 				path: ["url"],
 			});
 		}
-		if (hasUrl && hasTask) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "url 与 from_task 只能二选一",
-				path: ["from_task"],
-			});
-		}
+			if (hasUrl && hasTask) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "url 与 from_task 只能二选一",
+					path: ["from_task"],
+				});
+			}
+			if (hasUrl) {
+				const url = val.url!.trim();
+				if (!/^https?:\/\//i.test(url)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: "url 必须是 http(s) 链接",
+						path: ["url"],
+					});
+				}
+			}
+			if (hasTask) {
+				const task = val.from_task!.trim();
+				if (!task.startsWith("video_")) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: "from_task 必须是 Sora 视频任务 ID（以 video_ 开头）",
+						path: ["from_task"],
+					});
+				}
+			}
 
-		const [startRaw, endRaw] = (val.timestamps || "").split(",");
-		const start = Number(startRaw);
-		const end = Number(endRaw);
+			const [startRaw, endRaw] = (val.timestamps || "").split(",");
+			const start = Number(startRaw);
+			const end = Number(endRaw);
 		if (!Number.isFinite(start) || !Number.isFinite(end)) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,

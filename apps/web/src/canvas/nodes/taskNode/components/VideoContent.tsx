@@ -62,6 +62,12 @@ export function VideoContent({
 }: VideoContentProps) {
   const didDragFrameRef = React.useRef(false)
   const canClip = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
+  const characterButtonTitle =
+    !canClip
+      ? '暂无可用视频'
+      : !onCreateCharacter
+        ? '仅支持使用 Sora 生成的视频创建角色'
+        : '从当前视频片段创建角色'
   return (
     <div
       className="video-content"
@@ -102,6 +108,7 @@ export function VideoContent({
             disabled={!canClip || !onCreateCharacter}
             onClick={onCreateCharacter}
             leftSection={<IconUserPlus className="video-content-character-icon" size={12} />}
+            title={characterButtonTitle}
           >
             创建角色
           </Button>

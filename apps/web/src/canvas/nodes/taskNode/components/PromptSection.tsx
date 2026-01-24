@@ -28,7 +28,12 @@ type PromptSectionProps = {
   mentionFilter: string
   setMentionFilter: (value: string) => void
   setMentionOpen: (value: boolean) => void
-  mentionMetaRef: React.MutableRefObject<{ at: number; caret: number } | null>
+  mentionMetaRef: React.MutableRefObject<{
+    at: number
+    caret: number
+    target?: 'prompt' | 'storyboard_scene' | 'storyboard_notes'
+    sceneId?: string
+  } | null>
   showSystemPrompt: boolean
   systemPrompt: string
   handleSystemPromptToggle: (value: boolean) => void
@@ -353,27 +358,53 @@ export function PromptSection({
           <Text className="task-node-prompt__mentions-title" size="xs" c="dimmed" mb={4}>
             选择角色引用
           </Text>
-          {mentionItems.map((item: any, idx: number) => (
-            <div
-              className="task-node-prompt__mention"
-              key={item?.username || item?.id || item?.name}
-              style={{
-                padding: '6px 8px',
-                borderRadius: 6,
-                cursor: 'pointer',
-                background: idx === activeMention ? 'rgba(59,130,246,0.15)' : 'transparent',
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                applyMention(item)
-              }}
-              onMouseEnter={() => setActiveMention(idx)}
-            >
-              <Text className="task-node-prompt__mention-name" size="sm">
-                {item?.display_name || item?.username || '角色'}
-              </Text>
-            </div>
-          ))}
+          {mentionItems.map((item: any, idx: number) => {
+            const avatar =
+              (typeof item?.profile_picture_url === 'string' && item.profile_picture_url.trim()) ||
+              (typeof item?.profilePictureUrl === 'string' && item.profilePictureUrl.trim()) ||
+              null
+            const username = String(item?.username || '').replace(/^@/, '').trim()
+            const display = String(item?.display_name || item?.displayName || item?.username || '角色')
+            return (
+              <div
+                className="task-node-prompt__mention"
+                key={username || item?.id || item?.name || idx}
+                style={{
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  background: idx === activeMention ? 'rgba(59,130,246,0.15)' : 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  applyMention(item)
+                }}
+                onMouseEnter={() => setActiveMention(idx)}
+              >
+                {avatar && (
+                  <img
+                    className="task-node-prompt__mention-avatar"
+                    src={avatar}
+                    alt={username ? `@${username}` : 'avatar'}
+                    style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  />
+                )}
+                <div className="task-node-prompt__mention-text" style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <Text className="task-node-prompt__mention-name" size="sm" lineClamp={1}>
+                    {display}
+                  </Text>
+                  {username && (
+                    <Text className="task-node-prompt__mention-username" size="xs" c="dimmed" lineClamp={1}>
+                      @{username}
+                    </Text>
+                  )}
+                </div>
+              </div>
+            )
+          })}
           {mentionLoading && (
             <Text className="task-node-prompt__mention-loading" size="xs" c="dimmed">
               加载中...
