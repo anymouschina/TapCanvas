@@ -131,7 +131,8 @@ export function PromptSection({
   }, [mentionMetaRef, onUpdateNodeData, prompt, setMentionFilter, setMentionOpen, setPrompt])
 
   return (
-    <div className="task-node-prompt__root" style={{ position: 'relative' }}>
+    <div className="task-node-prompt__root">
+      <div className="task-node-prompt__input-wrap" style={{ position: 'relative' }}>
       <div
         className="task-node-prompt__toolbar"
         style={{
@@ -417,6 +418,7 @@ export function PromptSection({
           )}
         </div>
       )}
+      </div>
       {isCharacterNode ? (
         <Text className="task-node-prompt__hint" size="xs" c="dimmed" mb={6}>
           挑选或创建角色，供后续节点通过 @角色名 自动引用。
