@@ -61,6 +61,7 @@ function nowLabel() {
 const SORA_VIDEO_MODEL_WHITELIST = new Set(['sora-2', 'sy-8', 'sy_8'])
 const SORA_POLL_TIMEOUT_MS = 300_000
 const MAX_VIDEO_DURATION_SECONDS = 15
+const SORA2_PRO_MAX_VIDEO_DURATION_SECONDS = 25
 const IMAGE_NODE_KINDS = new Set(['image', 'textToImage', 'mosaic', 'storyboardImage', 'imageFission'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['composeVideo', 'video'])
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -845,6 +846,8 @@ async function runSora2ApiVideoTask(
   try {
     const videoModelValue = (data as any)?.videoModel as string | undefined
     const modelKey = (videoModelValue || '').trim() || 'sora-2'
+    const isSora2ProModel = modelKey.toLowerCase() === 'sora-2-pro'
+    const videoHd = typeof (data as any)?.videoHd === 'boolean' ? Boolean((data as any).videoHd) : false
     const existingTaskId = (data as any)?.videoTaskId as string | undefined
     const existingStatus = (data as any)?.status as NodeStatusValue | undefined
     const canResumeExisting =
@@ -887,6 +890,7 @@ async function runSora2ApiVideoTask(
           modelKey,
           durationSeconds,
           orientation,
+          ...(isSora2ProModel ? { hd: videoHd } : {}),
           ...(remixTargetId ? { remixTargetId } : {}),
           ...(referenceImageUrl ? { url: referenceImageUrl } : {}),
           persistAssets: persist,
@@ -1562,7 +1566,12 @@ async function runVideoTask(ctx: RunnerContext) {
     if (isStoryboard && storyboardTotalDuration > 0) {
       videoDurationSeconds = Math.min(videoDurationSeconds, storyboardTotalDuration)
     }
-    const maxDurationSeconds = isStoryboard ? STORYBOARD_MAX_TOTAL_DURATION : MAX_VIDEO_DURATION_SECONDS
+    const normalizedVideoModel = typeof videoModelValue === 'string' ? videoModelValue.trim().toLowerCase() : ''
+    const maxDurationSeconds = isStoryboard
+      ? STORYBOARD_MAX_TOTAL_DURATION
+      : normalizedVideoModel === 'sora-2-pro'
+        ? SORA2_PRO_MAX_VIDEO_DURATION_SECONDS
+        : MAX_VIDEO_DURATION_SECONDS
     videoDurationSeconds = Math.max(2, Math.min(videoDurationSeconds, maxDurationSeconds))
 
     if (videoVendor === 'minimax') {

@@ -722,6 +722,10 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   const [modelKey, setModelKey] = React.useState<string>((data as any)?.geminiModel || 'gemini-2.5-flash')
   const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || getDefaultModel('image'))
   const [videoModel, setVideoModel] = React.useState<string>((data as any)?.videoModel || 'sora-2')
+  const [videoHd, setVideoHd] = React.useState<boolean>(() => {
+    const raw = (data as any)?.videoHd
+    return typeof raw === 'boolean' ? raw : false
+  })
   const [videoDuration, setVideoDuration] = React.useState<number>(() => {
     const raw = Number((data as any)?.videoDurationSeconds)
     if (!Number.isNaN(raw) && raw > 0) {
@@ -892,6 +896,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
   }, [existingVideoVendor, findVendorForModel, videoModel])
   const isSoraVideoVendor = resolvedVideoVendor === 'sora' || resolvedVideoVendor === 'sora2api'
   const isSoraVideoNode = isVideoNode && isSoraVideoVendor
+  const isSora2ProVideoModel = isVideoNode && resolvedVideoVendor === 'sora2api' && (videoModel || '').trim().toLowerCase() === 'sora-2-pro'
   const handlePoseSaved = React.useCallback(
     ({ poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, maskUrl, prompt: posePrompt }: { poseStickmanUrl: string | null; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string }) => {
     const stateBefore = useRFStore.getState()
@@ -1204,10 +1209,27 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
     if (resolvedVideoVendor === 'minimax') {
       return [...MINIMAX_DURATION_OPTIONS]
     }
-    return isStoryboardNode
+    if (isStoryboardNode) {
+      return [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
+    }
+    return isSora2ProVideoModel
       ? [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
       : BASE_DURATION_OPTIONS
-  }, [isStoryboardNode, resolvedVideoVendor])
+  }, [isSora2ProVideoModel, isStoryboardNode, resolvedVideoVendor])
+
+  React.useEffect(() => {
+    const raw = (data as any)?.videoHd
+    const next = typeof raw === 'boolean' ? raw : false
+    setVideoHd((prev) => (prev === next ? prev : next))
+  }, [(data as any)?.videoHd])
+
+  React.useEffect(() => {
+    if (!isVideoNode) return
+    if (isSora2ProVideoModel) return
+    if (!videoHd) return
+    setVideoHd(false)
+    updateNodeData(id, { videoHd: false })
+  }, [id, isSora2ProVideoModel, isVideoNode, updateNodeData, videoHd])
 
   React.useEffect(() => {
     if (!isVideoNode || !hasDuration) return
@@ -3171,6 +3193,7 @@ const rewritePromptWithCharacters = React.useCallback(
               controlValueStyle={controlValueStyle}
               summaryModelLabel={summaryModelLabel}
               summaryDuration={summaryDuration}
+              summaryQuality={videoHd ? 'HD' : '标准'}
               summaryResolution={summaryResolution}
               summaryExec={summaryExec}
               showModelMenu={hasModelSelect}
@@ -3194,6 +3217,16 @@ const rewritePromptWithCharacters = React.useCallback(
               onDurationChange={(num) => {
                 setVideoDuration(num)
                 updateNodeData(id, { videoDurationSeconds: num })
+              }}
+              showQualityMenu={isSora2ProVideoModel}
+              qualityOptions={[
+                { value: 'standard', label: '标准' },
+                { value: 'hd', label: 'HD' },
+              ]}
+              onQualityChange={(value) => {
+                const next = value === 'hd'
+                setVideoHd(next)
+                updateNodeData(id, { videoHd: next })
               }}
               showResolutionMenu={showResolutionMenu && kind !== 'imageFission'}
               onAspectChange={(value) => {

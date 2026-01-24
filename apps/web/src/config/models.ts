@@ -38,6 +38,7 @@ export const IMAGE_MODELS: ModelOption[] = [
 
 export const VIDEO_MODELS: ModelOption[] = [
   { value: 'sora-2', label: 'Sora 2', vendor: 'sora2api' },
+  { value: 'sora-2-pro', label: 'Sora 2 Pro', vendor: 'sora2api' },
   { value: 'MiniMax-Hailuo-02', label: 'Hailuo 02 (MiniMax)', vendor: 'minimax' },
   { value: 'I2V-01-Director', label: 'I2V-01 Director (MiniMax)', vendor: 'minimax' },
   { value: 'I2V-01-live', label: 'I2V-01 Live (MiniMax)', vendor: 'minimax' },
@@ -119,6 +120,7 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'nano-banana-fast': 'google',
   'nano-banana-pro': 'google',
   'sora-2': 'openai', // 假设使用OpenAI
+  'sora-2-pro': 'openai', // 假设使用OpenAI
   'veo3.1-pro': 'google',
   'veo3.1-fast': 'google',
 }

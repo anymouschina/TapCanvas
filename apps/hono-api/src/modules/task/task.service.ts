@@ -806,6 +806,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 		progressCtx: ProgressContext | null,
 	): Promise<TaskResult> {
 		const model = (input.model || "").trim() || "sora-2";
+		const isProModel = model.toLowerCase() === "sora-2-pro";
 		const extras = (req.extras || {}) as Record<string, any>;
 
 		const aspectRatio = (() => {
@@ -835,7 +836,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 					: 10;
 			if (seconds <= 10) return "10";
 			if (seconds <= 15) return "15";
-			return "25";
+			return isProModel ? "25" : "15";
 		})();
 
 		const images = (() => {
@@ -851,7 +852,8 @@ function parseComflyProgress(value: unknown): number | undefined {
 			const deduped = Array.from(new Set(urls));
 			return deduped.length ? deduped.slice(0, 8) : undefined;
 		})();
-		const hd = typeof extras.hd === "boolean" ? extras.hd : null;
+		const hd =
+			isProModel && typeof extras.hd === "boolean" ? extras.hd : null;
 		const notifyHook =
 			(typeof extras.notify_hook === "string" &&
 				extras.notify_hook.trim()) ||

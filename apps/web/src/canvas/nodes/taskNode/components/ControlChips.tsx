@@ -7,6 +7,7 @@ type ControlChipsProps = {
   controlValueStyle: React.CSSProperties
   summaryModelLabel: string
   summaryDuration: string
+  summaryQuality?: string
   summaryResolution: string
   summaryExec: string
   showModelMenu: boolean
@@ -15,6 +16,9 @@ type ControlChipsProps = {
   showTimeMenu: boolean
   durationOptions: { value: string; label: string }[]
   onDurationChange: (value: number) => void
+  showQualityMenu?: boolean
+  qualityOptions?: { value: string; label: string }[]
+  onQualityChange?: (value: string) => void
   showResolutionMenu: boolean
   onAspectChange: (value: string) => void
   showImageSizeMenu: boolean
@@ -38,6 +42,7 @@ export function ControlChips({
   controlValueStyle,
   summaryModelLabel,
   summaryDuration,
+  summaryQuality,
   summaryResolution,
   summaryExec,
   showModelMenu,
@@ -46,6 +51,9 @@ export function ControlChips({
   showTimeMenu,
   durationOptions,
   onDurationChange,
+  showQualityMenu,
+  qualityOptions,
+  onQualityChange,
   showResolutionMenu,
   onAspectChange,
   showImageSizeMenu,
@@ -116,6 +124,33 @@ export function ControlChips({
           <Menu.Dropdown className="control-chips-menu-dropdown">
             {durationOptions.map((option) => (
               <Menu.Item className="control-chips-menu-item" key={option.value} onClick={() => onDurationChange(Number(option.value))}>
+                {option.label}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      )}
+      {showQualityMenu && summaryQuality && (
+        <Menu className="control-chips-menu" withinPortal position="bottom-start" transition="pop-top-left">
+          <Menu.Target className="control-chips-menu-target">
+            <Button
+              className="control-chips-button"
+              type="button"
+              variant="transparent"
+              radius={0}
+              size="compact-sm"
+              style={{
+                ...summaryChipStyles,
+                minWidth: 0,
+              }}
+              title="质量"
+            >
+              <span className="control-chips-value" style={controlValueStyle}>{summaryQuality}</span>
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown className="control-chips-menu-dropdown">
+            {(qualityOptions || []).map((option) => (
+              <Menu.Item className="control-chips-menu-item" key={option.value} onClick={() => onQualityChange?.(option.value)}>
                 {option.label}
               </Menu.Item>
             ))}

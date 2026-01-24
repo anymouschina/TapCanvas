@@ -9,6 +9,7 @@ export type GrsaiStatusModel = {
 
 export const GRSAI_STATUS_MODELS: GrsaiStatusModel[] = [
   { group: 'Sora 视频', label: 'Sora 2', value: 'sora-2' },
+  { group: 'Sora 视频', label: 'Sora 2 Pro', value: 'sora-2-pro' },
   { group: 'Veo3 视频', label: 'Veo3.1 Fast', value: 'veo3.1-fast' },
   { group: 'Veo3 视频', label: 'Veo3.1 Pro', value: 'veo3.1-pro' },
   { group: 'Veo3 视频', label: 'Veo3 Fast', value: 'veo3-fast' },
