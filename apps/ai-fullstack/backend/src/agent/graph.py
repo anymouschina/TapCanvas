@@ -2473,24 +2473,50 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
                     cfg = args.get("config")
                     if not isinstance(cfg, dict):
                         continue
-                    # Enforce single-run duration constraint: 10–15 seconds.
-                    # If the model requested a longer duration, clamp to 15s (and let the UX create additional segments).
+                    # Enforce single-run duration constraint:
+                    # - Default: 10–15 seconds.
+                    # - MiniMax: 6s or 10s.
+                    # If the model requested a longer duration, clamp (and let the UX create additional segments).
                     try:
-                        raw_dur = cfg.get("durationSeconds") if cfg.get("durationSeconds") is not None else cfg.get("duration")
+                        model_raw = cfg.get("videoModel") or cfg.get("model") or cfg.get("modelKey") or ""
+                        vendor_raw = cfg.get("videoModelVendor") or cfg.get("vendor") or ""
+                        model_lower = str(model_raw).lower()
+                        vendor_lower = str(vendor_raw).lower()
+                        is_minimax = ("minimax" in vendor_lower) or any(
+                            kw in model_lower for kw in ("minimax", "hailuo", "i2v")
+                        )
+
+                        raw_dur = (
+                            cfg.get("videoDurationSeconds")
+                            if cfg.get("videoDurationSeconds") is not None
+                            else cfg.get("durationSeconds")
+                            if cfg.get("durationSeconds") is not None
+                            else cfg.get("duration")
+                        )
                         if isinstance(raw_dur, (int, float)):
                             requested = float(raw_dur)
-                            if requested < 10:
-                                cfg["durationSeconds"] = 10
-                            elif requested > 15:
-                                cfg["durationSeconds"] = 15
-                                # Add a gentle hint so the user can continue with Part 2, without forcing extra nodes.
-                                if isinstance(cfg.get("prompt"), str) and "分段" not in cfg["prompt"]:
-                                    cfg["prompt"] = (
-                                        cfg["prompt"].rstrip()
-                                        + "\n\n约束：本次为第1段（<=15秒）。如需更长成片，请分段生成第2段/第3段。"
-                                    )
+                            if is_minimax:
+                                # MiniMax video only supports 6s / 10s.
+                                normalized = 10 if requested >= 8 else 6
+                                cfg["videoDurationSeconds"] = int(normalized)
+                                cfg["durationSeconds"] = int(normalized)
                             else:
-                                cfg["durationSeconds"] = int(round(requested))
+                                if requested < 10:
+                                    cfg["videoDurationSeconds"] = 10
+                                    cfg["durationSeconds"] = 10
+                                elif requested > 15:
+                                    cfg["videoDurationSeconds"] = 15
+                                    cfg["durationSeconds"] = 15
+                                    # Add a gentle hint so the user can continue with Part 2, without forcing extra nodes.
+                                    if isinstance(cfg.get("prompt"), str) and "分段" not in cfg["prompt"]:
+                                        cfg["prompt"] = (
+                                            cfg["prompt"].rstrip()
+                                            + "\n\n约束：本次为第1段（<=15秒）。如需更长成片，请分段生成第2段/第3段。"
+                                        )
+                                else:
+                                    normalized = int(round(requested))
+                                    cfg["videoDurationSeconds"] = normalized
+                                    cfg["durationSeconds"] = normalized
                     except Exception:
                         pass
                     prompt_val = cfg.get("prompt")

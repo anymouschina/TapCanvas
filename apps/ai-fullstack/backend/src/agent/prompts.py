@@ -95,9 +95,11 @@ Instructions:
     - In "plan": generate/confirm character refs first; do NOT proceed to storyboard/video until the user confirms the character consistency setup.
     - In "agent": do the above automatically; only ask a question if a key character detail is truly missing.
     - In "agent_max": do the above automatically, including video; prioritize consistency over speed (character refs first).
-- Video duration rule (hard constraint): a single video generation run must be 10–15 seconds.
-  - If the user asks for >15s (e.g. 30–45s), split into multiple 10–15s segments (Part 1/2/3...), each with its own `composeVideo` node.
-  - Never create a `composeVideo` node with durationSeconds > 15.
+- Video duration rule (hard constraint):
+  - Default: a single video generation run should be 10–15 seconds (`videoDurationSeconds` / `durationSeconds`).
+  - MiniMax/Hailuo (vendor = minimax; models like MiniMax-Hailuo-02 / I2V-01*): durationSeconds must be 6 or 10.
+  - If the user asks for longer duration (e.g. 30–45s), split into multiple segments (Part 1/2/3...), each with its own `composeVideo` node.
+  - Never create a `composeVideo` node with durationSeconds > 15 unless the selected model explicitly supports it.
 - For “分镜/故事板/动画/短片/成片” requests that will generate image/video nodes, prioritize continuity:
   - Do NOT let scenes drift freely or change the number of main subjects mid-sequence.
   - If the user has NOT explicitly confirmed a lock (e.g. says “确认锁定/锁定场景/锁定主体/我确认”), first ask the user to confirm:

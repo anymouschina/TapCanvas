@@ -76,7 +76,7 @@ import { StoryboardEditor } from './taskNode/StoryboardEditor'
 import { renderFeatureBlocks } from './taskNode/featureRenderers'
 import { REMOTE_IMAGE_URL_REGEX, normalizeClipRange } from './taskNode/utils'
 import { runNodeRemote } from '../../runner/remoteRunner'
-import { BASE_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION } from './taskNode/constants'
+import { BASE_DURATION_OPTIONS, MINIMAX_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION } from './taskNode/constants'
 import type { FrameSample } from './taskNode/types'
 
 type Data = {
@@ -1200,13 +1200,42 @@ export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.E
       : `${sampleCount}x`
   const summaryResolution = aspect
   const summaryExec = `${sampleCount} x`
-  const durationOptions = React.useMemo(
-    () =>
-      isStoryboardNode
-        ? [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
-        : BASE_DURATION_OPTIONS,
-    [isStoryboardNode],
-  )
+  const durationOptions = React.useMemo(() => {
+    if (resolvedVideoVendor === 'minimax') {
+      return [...MINIMAX_DURATION_OPTIONS]
+    }
+    return isStoryboardNode
+      ? [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
+      : BASE_DURATION_OPTIONS
+  }, [isStoryboardNode, resolvedVideoVendor])
+
+  React.useEffect(() => {
+    if (!isVideoNode || !hasDuration) return
+    const allowed = durationOptions
+      .map((opt) => Number(opt.value))
+      .filter((v) => Number.isFinite(v) && v > 0)
+    if (!allowed.length) return
+    const current =
+      typeof videoDuration === 'number' && Number.isFinite(videoDuration) && videoDuration > 0
+        ? videoDuration
+        : allowed[0]
+    if (allowed.includes(current) && current === videoDuration) return
+
+    let best = allowed[0]
+    let bestDiff = Math.abs(current - best)
+    for (const candidate of allowed) {
+      const diff = Math.abs(current - candidate)
+      if (diff < bestDiff || (diff === bestDiff && candidate > best)) {
+        best = candidate
+        bestDiff = diff
+      }
+    }
+
+    if (best !== videoDuration) {
+      setVideoDuration(best)
+      updateNodeData(id, { videoDurationSeconds: best })
+    }
+  }, [durationOptions, hasDuration, id, isVideoNode, updateNodeData, videoDuration])
   React.useEffect(() => {
     if (typeof persistedCharacterRewriteModel === 'string' && persistedCharacterRewriteModel.trim() && persistedCharacterRewriteModel !== characterRewriteModel) {
       setCharacterRewriteModel(persistedCharacterRewriteModel)

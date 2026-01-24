@@ -2210,6 +2210,40 @@ export async function fetchSora2ApiTaskResult(
 		return trimmed;
 	}
 
+	function normalizeEnumSeconds(
+		requestedSeconds: number | null | undefined,
+		allowedSeconds: readonly number[],
+		fallbackSeconds: number,
+	): { seconds: number; changed: boolean } {
+		const fallback =
+			typeof fallbackSeconds === "number" && Number.isFinite(fallbackSeconds)
+				? Math.floor(fallbackSeconds)
+				: 10;
+		const requested =
+			typeof requestedSeconds === "number" && Number.isFinite(requestedSeconds)
+				? Math.floor(requestedSeconds)
+				: NaN;
+
+		if (!Number.isFinite(requested) || requested <= 0) {
+			return { seconds: fallback, changed: true };
+		}
+
+		if (!allowedSeconds.length) {
+			return { seconds: requested, changed: false };
+		}
+
+		let best = allowedSeconds[0]!;
+		let bestDiff = Math.abs(requested - best);
+		for (const candidate of allowedSeconds) {
+			const diff = Math.abs(requested - candidate);
+			if (diff < bestDiff || (diff === bestDiff && candidate > best)) {
+				best = candidate;
+				bestDiff = diff;
+			}
+		}
+		return { seconds: best, changed: best !== requested };
+	}
+
 	function extractMiniMaxErrorMessage(data: any): string | null {
 		if (!data) return null;
 		const candidates = [
@@ -2341,12 +2375,20 @@ export async function fetchSora2ApiTaskResult(
 					? (extras as any).prompt_optimizer
 					: undefined;
 
+		// MiniMax duration only supports 6s / 10s; normalize to avoid upstream 2013 invalid params.
+		const normalizedDuration = normalizeEnumSeconds(
+			durationSeconds,
+			[6, 10],
+			10,
+		);
+
 		const body: Record<string, any> = {
 			model,
 			prompt: req.prompt,
 			first_frame_image: firstFrameImage,
-			...(typeof durationSeconds === "number" && durationSeconds > 0
-				? { duration: durationSeconds }
+			...(typeof normalizedDuration.seconds === "number" &&
+			normalizedDuration.seconds > 0
+				? { duration: normalizedDuration.seconds }
 				: {}),
 			...(resolution ? { resolution } : {}),
 			...(typeof promptOptimizer === "boolean"

@@ -1563,6 +1563,24 @@ async function runVideoTask(ctx: RunnerContext) {
     }
     const maxDurationSeconds = isStoryboard ? STORYBOARD_MAX_TOTAL_DURATION : MAX_VIDEO_DURATION_SECONDS
     videoDurationSeconds = Math.max(2, Math.min(videoDurationSeconds, maxDurationSeconds))
+
+    if (videoVendor === 'minimax') {
+      const allowed = [6, 10]
+      let best = allowed[0]
+      let bestDiff = Math.abs(videoDurationSeconds - best)
+      for (const candidate of allowed) {
+        const diff = Math.abs(videoDurationSeconds - candidate)
+        if (diff < bestDiff || (diff === bestDiff && candidate > best)) {
+          best = candidate
+          bestDiff = diff
+        }
+      }
+      if (best !== videoDurationSeconds) {
+        appendLog(id, `[${nowLabel()}] MiniMax 仅支持 6s/10s 时长，已自动调整为 ${best}s`)
+        videoDurationSeconds = best
+      }
+    }
+
     const nFrames = Math.round(Math.max(videoDurationSeconds, 1) * 30)
     const getCurrentVideoTokenId = () =>
       (ctx.getState().nodes.find((n: Node) => n.id === id)?.data as any)
