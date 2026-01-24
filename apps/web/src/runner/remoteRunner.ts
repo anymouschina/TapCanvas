@@ -957,7 +957,7 @@ async function runSora2ApiVideoTask(
         continue
       }
 
-      if (snapshot.status === 'running') {
+      if (snapshot.status === 'running' || snapshot.status === 'queued') {
         const rawProgress =
           (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
           (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
@@ -965,7 +965,7 @@ async function runSora2ApiVideoTask(
         if (typeof rawProgress === 'number') {
           const normalized = Math.min(95, Math.max(lastProgress, Math.max(5, Math.round(rawProgress))))
           lastProgress = normalized
-          setNodeStatus(id, 'running', { progress: normalized })
+          setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', { progress: normalized })
         }
         await sleep(pollIntervalMs)
         continue
@@ -1236,7 +1236,7 @@ async function runMiniMaxVideoTask(
         continue
       }
 
-      if (snapshot.status === 'running') {
+      if (snapshot.status === 'running' || snapshot.status === 'queued') {
         const rawProgress =
           (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
           (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
@@ -1244,7 +1244,7 @@ async function runMiniMaxVideoTask(
         if (typeof rawProgress === 'number') {
           const normalized = Math.min(95, Math.max(lastProgress, Math.max(5, Math.round(rawProgress))))
           lastProgress = normalized
-          setNodeStatus(id, 'running', { progress: normalized })
+          setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', { progress: normalized })
         }
         await sleep(pollIntervalMs)
         continue
@@ -1348,7 +1348,7 @@ export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
     return
   }
 
-  if (snapshot.status === 'running') {
+  if (snapshot.status === 'running' || snapshot.status === 'queued') {
     const rawProgress =
       (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
       (snapshot.raw && (snapshot.raw.response?.progress as number | undefined)) ||
@@ -1356,7 +1356,7 @@ export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
     if (typeof rawProgress === 'number') {
       const current = typeof (data as any)?.progress === 'number' ? (data as any).progress : 10
       const normalized = Math.min(95, Math.max(current, Math.max(5, Math.round(rawProgress))))
-      setNodeStatus(id, 'running', { progress: normalized })
+      setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', { progress: normalized })
     }
     return
   }
@@ -2183,14 +2183,14 @@ async function pollVeoResultClient(ctx: RunnerContext, options: VeoResultPollOpt
     await sleep(VEO_RESULT_POLL_INTERVAL_MS)
     try {
       const snapshot = await fetchVeoTaskResult(taskId)
-      if (snapshot.status === 'running') {
+      if (snapshot.status === 'running' || snapshot.status === 'queued') {
         const rawProgress =
           (snapshot.raw && (snapshot.raw.progress as number | undefined)) ||
           (snapshot.raw?.response && (snapshot.raw.response.progress as number | undefined)) ||
           null
         if (typeof rawProgress === 'number') {
           const normalized = Math.min(99, Math.max(5, Math.round(rawProgress)))
-          setNodeStatus(id, 'running', { progress: normalized })
+          setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', { progress: normalized })
         }
         continue
       }

@@ -2476,15 +2476,61 @@ export async function fetchSora2ApiTaskResult(
 }
 
 function normalizeMiniMaxStatus(value: unknown): TaskStatus {
-	if (typeof value !== "string") return "running";
-	const normalized = value.trim().toLowerCase();
-	if (!normalized) return "running";
-	if (normalized === "success" || normalized === "succeeded" || normalized === "completed") {
-		return "succeeded";
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if (!normalized) return "running";
+		if (
+			normalized === "queued" ||
+			normalized === "queue" ||
+			normalized === "pending" ||
+			normalized === "waiting"
+		) {
+			return "queued";
+		}
+		if (
+			normalized === "running" ||
+			normalized === "processing" ||
+			normalized === "in_progress" ||
+			normalized === "in-progress" ||
+			normalized === "generating"
+		) {
+			return "running";
+		}
+		if (
+			normalized === "success" ||
+			normalized === "succeeded" ||
+			normalized === "completed" ||
+			normalized === "done" ||
+			normalized === "finish" ||
+			normalized === "finished"
+		) {
+			return "succeeded";
+		}
+		if (
+			normalized === "fail" ||
+			normalized === "failed" ||
+			normalized === "failure" ||
+			normalized === "error"
+		) {
+			return "failed";
+		}
+		return "running";
 	}
-	if (normalized === "fail" || normalized === "failed" || normalized === "failure" || normalized === "error") {
-		return "failed";
+
+	// Some MiniMax gateways return numeric status codes:
+	// 0=queued, 1=running, 2=succeeded, 3=failed (best-effort mapping).
+	if (typeof value === "number" && Number.isFinite(value)) {
+		const code = Math.floor(value);
+		if (code === 2) return "succeeded";
+		if (code === 3 || code === -1) return "failed";
+		if (code === 0) return "queued";
+		return "running";
 	}
+
+	if (typeof value === "boolean") {
+		return value ? "succeeded" : "running";
+	}
+
 	return "running";
 }
 
@@ -2595,8 +2641,9 @@ export async function fetchMiniMaxTaskResult(
 		}
 
 	const payload = data?.data ?? data ?? {};
-	const status = normalizeMiniMaxStatus(payload?.status || data?.status);
+	const status = normalizeMiniMaxStatus(payload?.status ?? data?.status);
 	const progress = parseComflyProgress(payload?.progress || data?.progress);
+	const videoUrlFromPayload = extractMiniMaxVideoUrl(payload);
 
 	if (status === "failed") {
 		const msg =
@@ -2619,11 +2666,50 @@ export async function fetchMiniMaxTaskResult(
 		});
 	}
 
+	// Some gateways may not provide a reliable `status` field; when a video URL exists,
+	// treat the task as succeeded to unblock the frontend polling loop.
+	if (videoUrlFromPayload && status !== "failed") {
+		const asset = TaskAssetSchema.parse({
+			type: "video",
+			url: videoUrlFromPayload,
+			thumbnailUrl: null,
+		});
+		const hostedAssets = await hostTaskAssetsInWorker({
+			c,
+			userId,
+			assets: [asset],
+			meta: {
+				taskKind: "text_to_video",
+				prompt:
+					typeof payload?.prompt === "string" && payload.prompt.trim()
+						? payload.prompt.trim()
+						: null,
+				vendor: "minimax",
+				modelKey:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
+				taskId,
+			},
+		});
+
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "minimax",
+				response: payload,
+			},
+		});
+	}
+
 	if (status !== "succeeded") {
 		return TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
-			status: "running",
+			status,
 			assets: [],
 			raw: {
 				provider: "minimax",
@@ -2633,7 +2719,7 @@ export async function fetchMiniMaxTaskResult(
 		});
 	}
 
-	const videoUrl = extractMiniMaxVideoUrl(payload);
+	const videoUrl = videoUrlFromPayload;
 	if (!videoUrl) {
 		return TaskResultSchema.parse({
 			id: taskId,
