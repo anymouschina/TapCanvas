@@ -1,9 +1,16 @@
 import type { AppContext, WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
-import { SoraVideoDraftResponseSchema } from "./sora.schemas";
+import {
+	ComflyCreateCharacterResponseSchema,
+	SoraVideoDraftResponseSchema,
+} from "./sora.schemas";
 import { resolveVendorContext } from "../task/task.service";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
+import {
+	searchSavedSoraCharacters,
+	upsertSavedSoraCharacter,
+} from "./sora.saved-characters.repo";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -873,6 +880,32 @@ export async function createComflyCharacterFromVideo(
 		});
 	}
 
+	const parsed = ComflyCreateCharacterResponseSchema.safeParse(data);
+	if (parsed.success) {
+		try {
+			const nowIso = new Date().toISOString();
+			await upsertSavedSoraCharacter(
+				c.env.DB,
+				userId,
+				{
+					characterId: parsed.data.id,
+					username: parsed.data.username,
+					permalink: parsed.data.permalink,
+					profilePictureUrl: parsed.data.profile_picture_url,
+					source: "comfly",
+				},
+				nowIso,
+			);
+		} catch (err) {
+			console.warn("[sora] failed to persist comfly character", {
+				userId,
+				characterId: parsed.data.id,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+		return parsed.data;
+	}
+
 	return data;
 }
 
@@ -1042,6 +1075,25 @@ export async function searchSoraMentions(
 	userId: string,
 	input: { tokenId?: string | null; username: string; intent?: string; limit?: number },
 ) {
+	const query = (input.username || "").trim();
+	const limit =
+		typeof input.limit === "number" && Number.isFinite(input.limit)
+			? Math.max(1, Math.min(50, Math.floor(input.limit)))
+			: 10;
+
+	const localRows = await searchSavedSoraCharacters(c.env.DB, userId, {
+		query,
+		limit,
+	});
+	const localItems = localRows.map((row) => ({
+		id: row.character_id,
+		username: row.username,
+		display_name: row.username,
+		permalink: row.permalink,
+		profile_picture_url: row.profile_picture_url,
+		source: row.source,
+	}));
+
 	// 优先尝试使用官方 Sora Token；若未配置，则兜底使用 Sora2API Token。
 	let token: SoraToken;
 	try {
@@ -1061,14 +1113,19 @@ export async function searchSoraMentions(
 		try {
 			token = await resolveSora2ApiToken(c, userId, input.tokenId);
 		} catch {
-			// 对于纯 mentions 功能，缺少 Token 时退化为“无结果”而非报错，避免打断编辑体验。
-			return { items: [] };
+			// mentions 属于编辑体验增强：缺少 Token 时退化为“仅本地缓存”。
+			return { items: localItems };
 		}
 	}
 
-	// 若 token 来自 Sora2API，自建服务通常不提供 profile/search_mentions，直接退化为空列表。
+	// 若 token 来自 Sora2API，自建服务通常不提供 profile/search_mentions，直接退化为本地缓存。
 	if ((token.providerVendor || "").toLowerCase() === "sora2api") {
-		return { items: [] };
+		return { items: localItems };
+	}
+
+	// 空查询时仅返回本地缓存，避免上游 400/无意义请求。
+	if (!query) {
+		return { items: localItems };
 	}
 
 	const baseUrl = buildSoraBaseUrl(c.env, token);
@@ -1076,44 +1133,78 @@ export async function searchSoraMentions(
 		"/backend/project_y/profile/search_mentions",
 		baseUrl,
 	);
-	url.searchParams.set("username", input.username);
+	url.searchParams.set("username", query);
 	url.searchParams.set("intent", input.intent || "cameo");
-	if (typeof input.limit === "number" && !Number.isNaN(input.limit)) {
-		url.searchParams.set("limit", String(input.limit));
-	}
+	url.searchParams.set("limit", String(limit));
 
-	const res = await fetchWithHttpDebugLog(
-		c,
-		url.toString(),
-		{
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${token.secretToken}`,
-				"User-Agent": token.userAgent || "TapCanvas/1.0",
-				Accept: "*/*",
-			},
-		},
-		{ tag: "sora:searchMentions" },
-	);
-
-	let data: any = null;
 	try {
-		data = await res.json();
-	} catch {
-		data = null;
-	}
+		const res = await fetchWithHttpDebugLog(
+			c,
+			url.toString(),
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token.secretToken}`,
+					"User-Agent": token.userAgent || "TapCanvas/1.0",
+					Accept: "*/*",
+				},
+			},
+			{ tag: "sora:searchMentions" },
+		);
 
-	if (!res.ok) {
-		const msg =
-			(data && (data.message || data.error)) ||
-			`Sora search mentions failed: ${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
-			code: "sora_mentions_failed",
+		let data: any = null;
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+
+		if (!res.ok) {
+			const msg =
+				(data && (data.message || data.error)) ||
+				`Sora search mentions failed: ${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "sora_mentions_failed",
+			});
+		}
+
+		const remoteItems: any[] = Array.isArray(data?.items)
+			? data.items
+			: Array.isArray(data)
+				? data
+				: [];
+
+		if (localItems.length === 0) return { items: remoteItems };
+		if (remoteItems.length === 0) return { items: localItems };
+
+		const seen = new Set<string>();
+		const merged: any[] = [];
+		for (const item of localItems) {
+			const key = String(item?.username || "")
+				.replace(/^@/, "")
+				.toLowerCase();
+			if (!key || seen.has(key)) continue;
+			seen.add(key);
+			merged.push(item);
+		}
+		for (const item of remoteItems) {
+			const key = String(item?.username || "")
+				.replace(/^@/, "")
+				.toLowerCase();
+			if (!key || seen.has(key)) continue;
+			seen.add(key);
+			merged.push(item);
+		}
+		return { items: merged };
+	} catch (err) {
+		console.warn("[sora] search mentions failed; falling back to local cache", {
+			userId,
+			query,
+			error: err instanceof Error ? err.message : String(err),
 		});
+		return { items: localItems };
 	}
-
-	return data;
 }
 
 export async function getCameoStatus(

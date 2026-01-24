@@ -85,6 +85,45 @@ export function PromptSection({
     : suggestionsEnabled
       ? '智能建议已启用 (Ctrl/Cmd+Space 切换)'
       : '智能建议已禁用 (Ctrl/Cmd+Space 启用)'
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const [activeMention, setActiveMention] = React.useState(0)
+
+  React.useEffect(() => {
+    if (!mentionOpen) {
+      setActiveMention(0)
+      return
+    }
+    setActiveMention(0)
+  }, [mentionOpen, mentionItems.length])
+
+  const applyMention = React.useCallback((item: any) => {
+    const usernameRaw = String(item?.username || '').replace(/^@/, '').trim()
+    if (!usernameRaw) return
+    const mention = `@${usernameRaw}`
+    const meta = mentionMetaRef.current
+    if (!meta) return
+    const before = prompt.slice(0, meta.at)
+    const after = prompt.slice(meta.caret)
+    const needsSpace = after.length === 0 || !/^\s/.test(after)
+    const suffix = needsSpace ? ' ' : ''
+    const next = `${before}${mention}${suffix}${after}`
+    const nextCaret = before.length + mention.length + suffix.length
+    setPrompt(next)
+    onUpdateNodeData({ prompt: next })
+    setMentionOpen(false)
+    setMentionFilter('')
+    mentionMetaRef.current = null
+    window.requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      try {
+        el.focus()
+        el.setSelectionRange(nextCaret, nextCaret)
+      } catch {
+        // ignore
+      }
+    })
+  }, [mentionMetaRef, onUpdateNodeData, prompt, setMentionFilter, setMentionOpen, setPrompt])
 
   return (
     <div className="task-node-prompt__root" style={{ position: 'relative' }}>
@@ -142,6 +181,7 @@ export function PromptSection({
       </div>
       <Textarea
         className="task-node-prompt__textarea"
+        ref={textareaRef}
         autosize
         minRows={typeof minRows === 'number' ? minRows : 2}
         maxRows={typeof maxRows === 'number' ? maxRows : 6}
@@ -193,6 +233,31 @@ export function PromptSection({
             }
           }
 
+          if (mentionOpen) {
+            if (e.key === 'ArrowDown') {
+              if (mentionItems.length > 0) {
+                e.preventDefault()
+                setActiveMention((idx) => (idx + 1) % mentionItems.length)
+              }
+              return
+            }
+            if (e.key === 'ArrowUp') {
+              if (mentionItems.length > 0) {
+                e.preventDefault()
+                setActiveMention((idx) => (idx - 1 + mentionItems.length) % mentionItems.length)
+              }
+              return
+            }
+            if (e.key === 'Enter' || e.key === 'Tab') {
+              const active = mentionItems[activeMention]
+              if (active) {
+                e.preventDefault()
+                applyMention(active)
+              }
+              return
+            }
+          }
+
           if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
             e.preventDefault()
             if (!suggestionsAllowed) return
@@ -225,7 +290,7 @@ export function PromptSection({
           }
         }}
       />
-      {promptSuggestions.length > 0 && (
+      {!mentionOpen && promptSuggestions.length > 0 && (
         <div
           className="task-node-prompt__suggestions"
           style={{
@@ -269,7 +334,7 @@ export function PromptSection({
           ))}
         </div>
       )}
-      {mentionOpen && mentionItems.length > 0 && (
+      {mentionOpen && (
         <div
           className="task-node-prompt__mentions"
           style={{
@@ -288,25 +353,21 @@ export function PromptSection({
           <Text className="task-node-prompt__mentions-title" size="xs" c="dimmed" mb={4}>
             选择角色引用
           </Text>
-          {mentionItems.map((item: any) => (
+          {mentionItems.map((item: any, idx: number) => (
             <div
               className="task-node-prompt__mention"
               key={item?.username || item?.id || item?.name}
-              style={{ padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                background: idx === activeMention ? 'rgba(59,130,246,0.15)' : 'transparent',
+              }}
               onMouseDown={(e) => {
                 e.preventDefault()
-                const mention = `@${String(item?.username || '').replace(/^@/, '')}`
-                const meta = mentionMetaRef.current
-                if (!meta) return
-                const before = prompt.slice(0, meta.at)
-                const after = prompt.slice(meta.caret)
-                const next = `${before}${mention}${after}`
-                setPrompt(next)
-                onUpdateNodeData({ prompt: next })
-                setMentionOpen(false)
-                setMentionFilter('')
-                mentionMetaRef.current = null
+                applyMention(item)
               }}
+              onMouseEnter={() => setActiveMention(idx)}
             >
               <Text className="task-node-prompt__mention-name" size="sm">
                 {item?.display_name || item?.username || '角色'}

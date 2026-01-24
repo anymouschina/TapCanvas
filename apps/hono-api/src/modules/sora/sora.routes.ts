@@ -422,12 +422,6 @@ soraRouter.get("/mentions", async (c) => {
 		typeof limitParam === "string" && limitParam
 			? Number(limitParam)
 			: undefined;
-	if (!username) {
-		return c.json(
-			{ error: "username is required" },
-			400,
-		);
-	}
 	const result = await searchSoraMentions(c, userId, {
 		tokenId,
 		username,

@@ -285,6 +285,24 @@ CREATE INDEX IF NOT EXISTS idx_video_history_user ON video_generation_histories(
 CREATE INDEX IF NOT EXISTS idx_video_history_task ON video_generation_histories(task_id);
 CREATE INDEX IF NOT EXISTS idx_video_history_provider ON video_generation_histories(provider);
 
+-- Saved Sora characters (local cache for @mentions, e.g. comfly character creation)
+CREATE TABLE IF NOT EXISTS sora_saved_characters (
+	user_id TEXT NOT NULL,
+	character_id TEXT NOT NULL,
+	username TEXT NOT NULL,
+	permalink TEXT,
+	profile_picture_url TEXT,
+	source TEXT NOT NULL DEFAULT 'comfly',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, character_id),
+	FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sora_saved_characters_user_id ON sora_saved_characters(user_id);
+CREATE INDEX IF NOT EXISTS idx_sora_saved_characters_user_username ON sora_saved_characters(user_id, username);
+CREATE INDEX IF NOT EXISTS idx_sora_saved_characters_updated_at ON sora_saved_characters(updated_at);
+
 -- Model profiles (logical presets for AI tasks)
 CREATE TABLE IF NOT EXISTS model_profiles (
 	id TEXT PRIMARY KEY,
