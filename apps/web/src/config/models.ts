@@ -38,7 +38,10 @@ export const IMAGE_MODELS: ModelOption[] = [
 
 export const VIDEO_MODELS: ModelOption[] = [
   { value: 'sora-2', label: 'Sora 2', vendor: 'sora2api' },
-  { value: 'hailuo', label: 'Hailuo (MiniMax)', vendor: 'minimax' },
+  { value: 'MiniMax-Hailuo-02', label: 'Hailuo 02 (MiniMax)', vendor: 'minimax' },
+  { value: 'I2V-01-Director', label: 'I2V-01 Director (MiniMax)', vendor: 'minimax' },
+  { value: 'I2V-01-live', label: 'I2V-01 Live (MiniMax)', vendor: 'minimax' },
+  { value: 'I2V-01', label: 'I2V-01 (MiniMax)', vendor: 'minimax' },
   { value: 'veo3.1-pro', label: 'Veo 3.1 Pro', vendor: 'veo' },
   { value: 'veo3.1-fast', label: 'Veo 3.1 Fast', vendor: 'veo' },
   // Sora2API OpenAI-compatible: Veo models via /v1/chat/completions (model ids are veo_*)

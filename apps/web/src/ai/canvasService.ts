@@ -39,7 +39,10 @@ const IMAGE_MODEL_WHITELIST = new Set([
 
 const VIDEO_MODEL_WHITELIST = new Set([
   'sora-2',
-  'hailuo',
+  'MiniMax-Hailuo-02',
+  'I2V-01-Director',
+  'I2V-01-live',
+  'I2V-01',
   'veo3.1-fast',
   'veo3.1-pro',
 ])

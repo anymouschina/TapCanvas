@@ -1120,14 +1120,19 @@ async function runMiniMaxVideoTask(
     prompt: string
     durationSeconds: number
     orientation: 'portrait' | 'landscape'
+    referenceImageUrl?: string | null
   },
 ) {
   const { id, data, kind, setNodeStatus, appendLog, isCanceled, endRunToken } = ctx
   const { prompt, durationSeconds, orientation } = options
+  const referenceImageUrl =
+    typeof options.referenceImageUrl === 'string' && options.referenceImageUrl.trim()
+      ? options.referenceImageUrl.trim()
+      : null
 
   try {
     const videoModelValue = (data as any)?.videoModel as string | undefined
-    const modelKey = (videoModelValue || '').trim() || 'hailuo'
+    const modelKey = (videoModelValue || '').trim() || 'MiniMax-Hailuo-02'
     const existingTaskId = (data as any)?.videoTaskId as string | undefined
     const existingStatus = (data as any)?.status as NodeStatusValue | undefined
     const canResumeExisting =
@@ -1165,6 +1170,7 @@ async function runMiniMaxVideoTask(
           modelKey,
           durationSeconds,
           orientation,
+          firstFrameImage: referenceImageUrl,
         },
       })
 
@@ -1672,10 +1678,19 @@ async function runVideoTask(ctx: RunnerContext) {
     }
 
     if (videoVendor === 'minimax') {
+      const referenceImageUrl = autoReferenceImages[0] || null
+      if (!referenceImageUrl) {
+        const msg = 'MiniMax/Hailuo 图生视频需要首帧图片：请连接一张上游图片（或视频缩略图）到当前节点'
+        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+        appendLog(id, `[${nowLabel()}] error: ${msg}`)
+        ctx.endRunToken(id)
+        return
+      }
       await runMiniMaxVideoTask(ctx, {
         prompt: finalPrompt,
         durationSeconds: videoDurationSeconds,
         orientation,
+        referenceImageUrl,
       })
       return
     }
