@@ -2416,6 +2416,12 @@ function normalizeMiniMaxStatus(value: unknown): TaskStatus {
 function extractMiniMaxVideoUrl(payload: any): string | null {
 	const pick = (v: any): string | null =>
 		typeof v === "string" && v.trim() ? v.trim() : null;
+	const file =
+		(payload?.file && typeof payload.file === "object" ? payload.file : null) ||
+		(payload?.data?.file && typeof payload.data.file === "object"
+			? payload.data.file
+			: null) ||
+		null;
 	return (
 		pick(payload?.video_url) ||
 		pick(payload?.videoUrl) ||
@@ -2424,6 +2430,11 @@ function extractMiniMaxVideoUrl(payload: any): string | null {
 		pick(payload?.fileUrl) ||
 		pick(payload?.download_url) ||
 		pick(payload?.downloadUrl) ||
+		pick(file?.download_url) ||
+		pick(file?.downloadUrl) ||
+		pick(file?.url) ||
+		pick(file?.file_url) ||
+		pick(file?.fileUrl) ||
 		(Array.isArray(payload?.results) && payload.results.length
 			? pick(payload.results[0]?.url) ||
 				pick(payload.results[0]?.video_url) ||
