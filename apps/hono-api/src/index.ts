@@ -29,9 +29,6 @@ const app = new Hono<AppEnv>();
 // Global HTTP debug logger (local-only; enable via DEBUG_HTTP_LOG=1)
 app.use("*", httpDebugLoggerMiddleware);
 
-// Global error handler
-app.use("*", errorMiddleware);
-
 // Global CORS
 app.use(
 	"*",
@@ -51,6 +48,10 @@ app.use(
 		credentials: true,
 	}),
 );
+
+// Global error handler
+// Keep it after CORS so error responses also get CORS headers.
+app.use("*", errorMiddleware);
 
 // Setup OpenAPI registry (currently only for demo tasks)
 const openapi = fromHono(app, {

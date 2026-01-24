@@ -1,4 +1,5 @@
 import type { Next } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { AppContext } from "../types";
 
 export class AppError extends Error {
@@ -15,20 +16,57 @@ export class AppError extends Error {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object";
+}
+
+function normalizeHttpStatus(value: unknown, fallback: ContentfulStatusCode): ContentfulStatusCode {
+	const n = typeof value === "number" ? value : Number(value);
+	if (!Number.isFinite(n)) return fallback;
+	const status = Math.trunc(n);
+	if (status < 400 || status > 599) return fallback;
+	return status as ContentfulStatusCode;
+}
+
+function isAppErrorLike(err: unknown): err is {
+	name?: unknown;
+	message?: unknown;
+	status?: unknown;
+	code?: unknown;
+	details?: unknown;
+} {
+	if (!isRecord(err)) return false;
+	return err.name === "AppError" || (typeof err.status === "number" && typeof err.code === "string");
+}
+
 export async function errorMiddleware(c: AppContext, next: Next) {
 	try {
 		await next();
 	} catch (err) {
-		if (err instanceof AppError) {
+		// NOTE:
+		// In some bundling/dev setups, `instanceof AppError` can fail due to module duplication.
+		// Fallback to a shape-based check so upstream/vendor errors keep their intended HTTP status.
+		if (err instanceof AppError || isAppErrorLike(err)) {
+			const anyErr = err as any;
+			const status = normalizeHttpStatus(anyErr?.status, 400);
+			const code =
+				typeof anyErr?.code === "string" && anyErr.code.trim()
+					? anyErr.code
+					: "bad_request";
+			const message =
+				typeof anyErr?.message === "string" && anyErr.message.trim()
+					? anyErr.message
+					: "Bad Request";
+
 			return c.json(
 				{
 					// 兼容前端：同时提供 message 和 error 字段
-					message: err.message,
-					error: err.message,
-					code: err.code,
-					details: err.details,
+					message,
+					error: message,
+					code,
+					details: anyErr?.details,
 				},
-				err.status,
+				status,
 			);
 		}
 

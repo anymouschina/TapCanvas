@@ -1315,7 +1315,8 @@ async function runMiniMaxVideoTask(
     appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
   } catch (err: any) {
     const msg = err?.message || 'MiniMax 视频任务执行失败'
-    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    const status = (err as any)?.status || 'unknown'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg, httpStatus: status })
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
   } finally {
     endRunToken(id)
