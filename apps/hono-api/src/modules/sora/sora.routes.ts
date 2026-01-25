@@ -39,6 +39,10 @@ import {
 	updateSoraCharacter,
 } from "./sora.service";
 import { listSoraVideoHistory } from "./sora.history";
+import {
+	getVendorTaskRefByPid,
+	getVendorTaskRefByTaskId,
+} from "../task/vendor-task-refs.repo";
 
 export const soraRouter = new Hono<AppEnv>();
 
@@ -276,9 +280,7 @@ soraRouter.post("/sora2api/characters/upload", async (c) => {
 		shutProgress,
 		vendor,
 	});
-	if (vendor === "grsai") {
-		(result as any).vendor = "grsai";
-	}
+	(result as any).vendor = vendor;
 	return c.json(result);
 });
 
@@ -288,6 +290,18 @@ soraRouter.post("/sora2api/characters/create", async (c) => {
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const pid = typeof body.pid === "string" ? body.pid.trim() : "";
 	if (!pid) return c.json({ error: "pid is required" }, 400);
+	const vendorRaw = typeof body.vendor === "string" ? body.vendor.trim() : "";
+	let vendor: "sora2api" | "grsai" =
+		vendorRaw.toLowerCase() === "grsai" ? "grsai" : "sora2api";
+	if (!vendorRaw) {
+		try {
+			const ref = await getVendorTaskRefByPid(c.env.DB, userId, "video", pid);
+			const refVendor = (ref?.vendor || "").trim().toLowerCase();
+			if (refVendor === "grsai") vendor = "grsai";
+		} catch {
+			// ignore; fallback to default vendor
+		}
+	}
 	const timestamps =
 		typeof body.timestamps === "string" && body.timestamps.trim()
 			? body.timestamps.trim()
@@ -302,7 +316,9 @@ soraRouter.post("/sora2api/characters/create", async (c) => {
 		timestamps,
 		webHook,
 		shutProgress,
+		vendor,
 	});
+	(result as any).vendor = vendor;
 	return c.json(result);
 });
 
@@ -312,7 +328,25 @@ soraRouter.post("/sora2api/characters/result", async (c) => {
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
 	if (!taskId) return c.json({ error: "taskId is required" }, 400);
-	const result = await fetchSora2ApiCharacterResult(c, userId, taskId);
+	const vendorRaw = typeof body.vendor === "string" ? body.vendor.trim() : "";
+	let vendor: "sora2api" | "grsai" =
+		vendorRaw.toLowerCase() === "grsai" ? "grsai" : "sora2api";
+	if (!vendorRaw) {
+		try {
+			const ref = await getVendorTaskRefByTaskId(
+				c.env.DB,
+				userId,
+				"character",
+				taskId,
+			);
+			const refVendor = (ref?.vendor || "").trim().toLowerCase();
+			if (refVendor === "grsai") vendor = "grsai";
+		} catch {
+			// ignore; fallback to default vendor
+		}
+	}
+	const result = await fetchSora2ApiCharacterResult(c, userId, taskId, vendor);
+	(result as any).vendor = vendor;
 	return c.json(result);
 });
 

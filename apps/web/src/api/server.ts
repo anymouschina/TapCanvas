@@ -2008,6 +2008,7 @@ export async function createSora2ApiCharacterFromPid(input: {
   timestamps?: string
   webHook?: string
   shutProgress?: boolean
+  vendor?: 'sora2api' | 'grsai'
 }) {
   const r = await apiFetch(`${API_BASE}/sora/sora2api/characters/create`, withAuth({
     method: 'POST',
@@ -2027,11 +2028,11 @@ export async function createSora2ApiCharacterFromPid(input: {
   return r.json()
 }
 
-export async function fetchSora2ApiCharacterResult(taskId: string) {
+export async function fetchSora2ApiCharacterResult(taskId: string, vendor?: 'sora2api' | 'grsai') {
   const r = await apiFetch(`${API_BASE}/sora/sora2api/characters/result`, withAuth({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ taskId }),
+    body: JSON.stringify(typeof vendor === 'string' && vendor ? { taskId, vendor } : { taskId }),
   }))
   if (!r.ok) {
     let msg = `fetch sora2api character result failed: ${r.status}`
