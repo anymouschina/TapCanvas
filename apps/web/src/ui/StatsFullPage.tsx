@@ -2,6 +2,7 @@ import React from 'react'
 import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Paper, SegmentedControl, SimpleGrid, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
 import { IconArrowLeft, IconRefresh, IconUsers } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
+import { useIsAdmin } from '../auth/isAdmin'
 import { getDailyActiveUsers, getStats, getVendorApiCallStats, type VendorApiCallStatDto } from '../api/server'
 import { ToastHost, toast } from './toast'
 import { $ } from '../canvas/i18n'
@@ -42,7 +43,7 @@ function Sparkline({ values }: { values: number[] }): JSX.Element | null {
 
 export default function StatsFullPage(): JSX.Element {
   const user = useAuth((s) => s.user)
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 

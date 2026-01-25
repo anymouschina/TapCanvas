@@ -32,7 +32,7 @@ import { getPublicProjectFlows, listPublicAssets, listPublicProjects, type FlowD
 import PreviewModal from './PreviewModal'
 import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
-import { useAuth } from '../auth/store'
+import { useIsAdmin } from '../auth/isAdmin'
 import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 
 type MediaFilter = 'all' | 'image' | 'video'
@@ -399,7 +399,7 @@ function PublicProjectCard({ item, onOpen, className }: PublicProjectCardProps):
 
 function TapshowFullPageInner({ className }: { className?: string }): JSX.Element {
   const openPreview = useUIStore((s) => s.openPreview)
-  const isAdmin = useAuth((s) => s.user?.role === 'admin')
+  const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
