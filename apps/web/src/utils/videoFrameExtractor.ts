@@ -37,78 +37,127 @@ export async function captureFramesAtTimes(
   const revokeObjectUrl = source.type === 'file' ? URL.createObjectURL(source.file) : null
   video.src = source.type === 'file' ? revokeObjectUrl! : source.url
 
-  await new Promise<void>((resolve, reject) => {
-    const onLoaded = () => resolve()
-    const onError = () => reject(new Error('Failed to load video'))
-    video.addEventListener('loadedmetadata', onLoaded, { once: true })
-    video.addEventListener('error', onError, { once: true })
-  })
-
-  const meta = {
-    duration: video.duration || 0,
-    width: video.videoWidth,
-    height: video.videoHeight,
-  }
-
-  const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Canvas 2D context unavailable')
-
-  const mime = options?.mimeType || 'image/jpeg'
-  const quality = options?.quality ?? 0.9
-
   const frames: CapturedFrame[] = []
-
-  for (const t of times) {
-    // Clamp to duration range
-    const target = Math.max(0, Math.min(t, meta.duration || t))
-    await seekVideo(video, target)
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Failed to encode frame'))), mime, quality)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onLoaded = () => resolve()
+      const onError = () => reject(new Error('Failed to load video'))
+      video.addEventListener('loadedmetadata', onLoaded, { once: true })
+      video.addEventListener('error', onError, { once: true })
     })
-    const objectUrl = URL.createObjectURL(blob)
-    frames.push({ time: target, blob, objectUrl, width: canvas.width, height: canvas.height })
-  }
 
-  if (revokeObjectUrl) {
-    URL.revokeObjectURL(revokeObjectUrl)
-  }
+    const meta = {
+      duration: video.duration || 0,
+      width: video.videoWidth,
+      height: video.videoHeight,
+    }
 
-  return { frames, duration: meta.duration, width: meta.width, height: meta.height }
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas 2D context unavailable')
+
+    const mime = options?.mimeType || 'image/jpeg'
+    const quality = options?.quality ?? 0.9
+
+    for (const t of times) {
+      // Clamp to duration range
+      const target = Math.max(0, Math.min(t, meta.duration || t))
+      await seekVideo(video, target)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Failed to encode frame'))), mime, quality)
+      })
+      const objectUrl = URL.createObjectURL(blob)
+      frames.push({ time: target, blob, objectUrl, width: canvas.width, height: canvas.height })
+    }
+
+    return { frames, duration: meta.duration, width: meta.width, height: meta.height }
+  } catch (err) {
+    frames.forEach((f) => {
+      try {
+        URL.revokeObjectURL(f.objectUrl)
+      } catch {
+        // ignore
+      }
+    })
+    throw err
+  } finally {
+    if (revokeObjectUrl) {
+      try {
+        URL.revokeObjectURL(revokeObjectUrl)
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
-  if ('requestVideoFrameCallback' in video) {
-    // Modern browsers: more reliable frame readiness
-    return new Promise((resolve, reject) => {
-      const onError = () => reject(new Error('Seek failed'))
-      const onFrame = () => {
-        video.removeEventListener('error', onError)
-        resolve()
-      }
-      video.addEventListener('error', onError, { once: true })
-      ;(video as any).requestVideoFrameCallback(() => {
-        video.removeEventListener('error', onError)
-        onFrame()
-      })
-      video.currentTime = time
-    })
-  }
+  const hasRequestVideoFrameCallback = typeof (video as any).requestVideoFrameCallback === 'function'
+  const epsilon = 0.01
+  const isSameTime = Math.abs((video.currentTime || 0) - time) < epsilon
 
   return new Promise((resolve, reject) => {
-    const onSeeked = () => {
+    let done = false
+    const timeout = window.setTimeout(() => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(new Error('Seek timeout'))
+    }, 2500)
+    const cleanup = () => {
+      window.clearTimeout(timeout)
+      video.removeEventListener('seeked', onSeeked)
+      video.removeEventListener('loadeddata', onLoadedData)
       video.removeEventListener('error', onError)
+    }
+    const finish = () => {
+      if (done) return
+      done = true
+      cleanup()
       resolve()
     }
     const onError = () => {
-      video.removeEventListener('seeked', onSeeked)
+      if (done) return
+      done = true
+      cleanup()
       reject(new Error('Seek failed'))
     }
+    const onLoadedData = () => {
+      if (!isSameTime) return
+      finish()
+    }
+    const onSeeked = () => {
+      if (!hasRequestVideoFrameCallback) {
+        finish()
+        return
+      }
+      ;(video as any).requestVideoFrameCallback(() => {
+        finish()
+      })
+    }
+
     video.addEventListener('seeked', onSeeked, { once: true })
+    video.addEventListener('loadeddata', onLoadedData, { once: true })
     video.addEventListener('error', onError, { once: true })
-    video.currentTime = time
+
+    try {
+      video.currentTime = time
+    } catch {
+      // keep waiting (or timeout)
+    }
+
+    // Some browsers don't fire `seeked` when seeking to the current time (e.g. 0s on first load).
+    if (isSameTime) {
+      if (hasRequestVideoFrameCallback) {
+        ;(video as any).requestVideoFrameCallback(() => {
+          finish()
+        })
+      } else if (video.readyState >= 2) {
+        finish()
+      }
+    }
   })
 }
