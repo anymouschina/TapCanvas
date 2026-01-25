@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Button, Group, Loader, Stack, Text } from '@mantine/core'
 import { IconPlayerPause, IconPlayerPlay, IconX, IconArrowRight } from '@tabler/icons-react'
 import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
+import { toast } from './toast'
 
 type VideoTrimModalProps = {
   opened: boolean
@@ -38,26 +39,181 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   )
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [videoReady, setVideoReady] = useState(false)
+  const [videoDuration, setVideoDuration] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const seekQueueRef = useRef<{ inFlight: boolean; pending: number | null }>({ inFlight: false, pending: null })
+  const videoTokenRef = useRef(0)
   const dragStateRef = useRef<null | {
     type: 'start' | 'end' | 'playhead' | 'range'
     startX: number
     startValue: number
     rangeLength?: number
+    playheadOffset?: number
+    wasPlaying?: boolean
   }>(null)
+
+  const duration = useMemo(() => {
+    const d = Number(videoDuration || originalDuration || 0)
+    return Number.isFinite(d) && d > 0 ? d : 0
+  }, [originalDuration, videoDuration])
 
   const timelineWidth = useMemo(() => {
     if (!thumbnails.length) return 0
     return thumbnails.length * THUMB_WIDTH
   }, [thumbnails.length])
 
+  useEffect(() => {
+    if (!opened) return
+    videoTokenRef.current += 1
+    seekQueueRef.current = { inFlight: false, pending: null }
+    setVideoReady(false)
+    setVideoDuration(0)
+    setPlaying(false)
+  }, [opened, videoUrl])
+
+  const waitForVideoMetadata = (video: HTMLVideoElement, token: number) =>
+    new Promise<void>((resolve, reject) => {
+      if (videoTokenRef.current !== token) return reject(new Error('stale video'))
+      if (Number.isFinite(video.duration) && video.duration > 0) return resolve()
+      const onLoaded = () => {
+        cleanup()
+        resolve()
+      }
+      const onError = () => {
+        cleanup()
+        reject(new Error('Failed to load video metadata'))
+      }
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', onLoaded)
+        video.removeEventListener('error', onError)
+      }
+      video.addEventListener('loadedmetadata', onLoaded, { once: true })
+      video.addEventListener('error', onError, { once: true })
+    })
+
+  const seekVideoFrame = async (video: HTMLVideoElement, time: number, token: number): Promise<void> => {
+    if (videoTokenRef.current !== token) throw new Error('stale video')
+    if (!Number.isFinite(time)) return
+
+    const run = () => {
+      try {
+        const anyVideo = video as any
+        if (typeof anyVideo.fastSeek === 'function') anyVideo.fastSeek(time)
+        else video.currentTime = time
+      } catch {
+        // ignore
+      }
+    }
+
+    const hasRequestVideoFrameCallback =
+      typeof (video as any).requestVideoFrameCallback === 'function'
+    if (hasRequestVideoFrameCallback) {
+      await new Promise<void>((resolve, reject) => {
+        let done = false
+        const timeout = window.setTimeout(() => {
+          if (done) return
+          done = true
+          cleanup()
+          resolve()
+        }, 1200)
+        const onError = () => {
+          if (done) return
+          done = true
+          cleanup()
+          reject(new Error('Seek failed'))
+        }
+        const cleanup = () => {
+          window.clearTimeout(timeout)
+          video.removeEventListener('error', onError)
+        }
+        video.addEventListener('error', onError, { once: true })
+        ;(video as any).requestVideoFrameCallback(() => {
+          if (done) return
+          done = true
+          cleanup()
+          resolve()
+        })
+        run()
+      })
+      return
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let done = false
+      const timeout = window.setTimeout(() => {
+        if (done) return
+        done = true
+        cleanup()
+        resolve()
+      }, 1200)
+      const onSeeked = () => {
+        if (done) return
+        done = true
+        cleanup()
+        resolve()
+      }
+      const onError = () => {
+        if (done) return
+        done = true
+        cleanup()
+        reject(new Error('Seek failed'))
+      }
+      const cleanup = () => {
+        window.clearTimeout(timeout)
+        video.removeEventListener('seeked', onSeeked)
+        video.removeEventListener('error', onError)
+      }
+      video.addEventListener('seeked', onSeeked, { once: true })
+      video.addEventListener('error', onError, { once: true })
+      run()
+    })
+  }
+
+  const requestSeek = (time: number) => {
+    const d = duration
+    const t = d > 0 ? Math.min(d, Math.max(0, time)) : Math.max(0, time)
+    setCurrentTime(t)
+    seekQueueRef.current.pending = t
+
+    const video = videoRef.current
+    const token = videoTokenRef.current
+    if (!opened || !video) return
+    if (seekQueueRef.current.inFlight) return
+    seekQueueRef.current.inFlight = true
+
+    void (async () => {
+      try {
+        await waitForVideoMetadata(video, token)
+        while (videoTokenRef.current === token) {
+          const pending = seekQueueRef.current.pending
+          if (pending == null) break
+          seekQueueRef.current.pending = null
+          try {
+            await seekVideoFrame(video, pending, token)
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (videoTokenRef.current === token) {
+          seekQueueRef.current.inFlight = false
+        }
+      }
+    })()
+  }
+
   // 当弹窗打开且拿到有效时长时，默认选中 0~MAX_TRIM_DURATION 区间
   useEffect(() => {
-    if (!opened || originalDuration <= 0) return
-    const fallbackEnd = Math.min(originalDuration, MAX_TRIM_DURATION)
+    if (!opened) return
+    const d = Number(originalDuration || 0)
+    if (!Number.isFinite(d) || d <= 0) return
+    const fallbackEnd = Math.min(d, MAX_TRIM_DURATION)
     if (defaultRange) {
       const rawStart = Number(defaultRange.start)
       const rawEnd = Number(defaultRange.end)
@@ -66,26 +222,26 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       if (end <= start) {
         end = start + MIN_TRIM_DURATION
       }
-      end = Math.min(originalDuration, Math.min(start + MAX_TRIM_DURATION, Math.max(start + MIN_TRIM_DURATION, end)))
-      if (end > originalDuration) {
-        const diff = end - originalDuration
-        end = originalDuration
+      end = Math.min(d, Math.min(start + MAX_TRIM_DURATION, Math.max(start + MIN_TRIM_DURATION, end)))
+      if (end > d) {
+        const diff = end - d
+        end = d
         start = Math.max(0, start - diff)
       }
       if (end - start > MAX_TRIM_DURATION) {
         end = start + MAX_TRIM_DURATION
       }
-      if (start > originalDuration) {
-        start = Math.max(0, originalDuration - MAX_TRIM_DURATION)
-        end = Math.min(originalDuration, start + MAX_TRIM_DURATION)
+      if (start > d) {
+        start = Math.max(0, d - MAX_TRIM_DURATION)
+        end = Math.min(d, start + MAX_TRIM_DURATION)
       }
       setTrimStart(start)
       setTrimEnd(end)
-      setCurrentTime(start)
+      requestSeek(start)
     } else {
       setTrimStart(0)
       setTrimEnd(fallbackEnd)
-      setCurrentTime(0)
+      requestSeek(0)
     }
   }, [opened, originalDuration, defaultRange])
 
@@ -106,10 +262,9 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       const t = v.currentTime
       setCurrentTime(t)
       if (t >= trimEnd) {
-        v.currentTime = trimStart
-        setCurrentTime(trimStart)
-        setPlaying(false)
+        requestSeek(trimStart)
         v.pause()
+        setPlaying(false)
         return
       }
       animationFrameRef.current = requestAnimationFrame(step)
@@ -127,7 +282,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       if (e.key === 'Escape') onClose()
       if (e.key === ' ') {
         e.preventDefault()
-        togglePlay()
+        void togglePlay()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -142,17 +297,17 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   }
   const timeToX = (time: number) => {
     const width = getTimelineWidth()
-    if (!width || !originalDuration) return 0
-    return (time / originalDuration) * width
+    if (!width || !duration) return 0
+    return (time / duration) * width
   }
   const xToTime = (x: number) => {
     const width = getTimelineWidth()
-    if (!width || !originalDuration) return 0
+    if (!width || !duration) return 0
     const ratio = Math.min(1, Math.max(0, x / width))
-    return ratio * originalDuration
+    return ratio * duration
   }
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const v = videoRef.current
     if (!v) return
     if (playing) {
@@ -160,21 +315,31 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       setPlaying(false)
       return
     }
-    if (currentTime < trimStart || currentTime > trimEnd) {
-      v.currentTime = trimStart
-      setCurrentTime(trimStart)
+
+    if (!videoReady) {
+      try {
+        await waitForVideoMetadata(v, videoTokenRef.current)
+        const d = Number(v.duration || 0)
+        if (Number.isFinite(d) && d > 0) setVideoDuration(d)
+        setVideoReady(true)
+      } catch {
+        // ignore
+      }
     }
-    v.play().catch(() => {})
-    setPlaying(true)
+
+    const startAt = currentTime < trimStart || currentTime > trimEnd ? trimStart : currentTime
+    requestSeek(startAt)
+
+    try {
+      await v.play()
+      setPlaying(true)
+    } catch (err) {
+      setPlaying(false)
+      toast((err as any)?.message || '视频播放失败（可能需要用户手势或链接不可用）', 'error')
+    }
   }
 
-  const seekTo = (time: number) => {
-    const t = Math.min(originalDuration, Math.max(0, time))
-    setCurrentTime(t)
-    if (videoRef.current) {
-      videoRef.current.currentTime = t
-    }
-  }
+  const seekTo = (time: number) => requestSeek(time)
 
   const startDrag = (e: React.MouseEvent, type: 'start' | 'end' | 'playhead') => {
     if (!timelineRef.current) return
@@ -182,7 +347,11 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
     const startX = e.clientX - rect.left
     const startValue =
       type === 'start' ? trimStart : type === 'end' ? trimEnd : currentTime
-    dragStateRef.current = { type, startX, startValue }
+    const v = videoRef.current
+    const wasPlaying = Boolean(v && !v.paused && playing)
+    if (wasPlaying) v!.pause()
+    if (wasPlaying) setPlaying(false)
+    dragStateRef.current = { type, startX, startValue, wasPlaying }
     window.addEventListener('mousemove', onDrag)
     window.addEventListener('mouseup', endDrag)
   }
@@ -201,15 +370,15 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       )
       ns = Math.max(ns, trimEnd - MAX_TRIM_DURATION)
       setTrimStart(ns)
-      if (currentTime < ns) seekTo(ns)
+      seekTo(ns)
     } else if (dragStateRef.current.type === 'end') {
       let ne = Math.min(
-        originalDuration,
+        duration,
         Math.max(nextTime, trimStart + MIN_TRIM_DURATION),
       )
       ne = Math.min(ne, trimStart + MAX_TRIM_DURATION)
       setTrimEnd(ne)
-      if (currentTime > ne) seekTo(ne)
+      seekTo(ne)
     } else if (dragStateRef.current.type === 'range') {
       const rangeLength =
         typeof dragStateRef.current.rangeLength === 'number'
@@ -219,15 +388,17 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       const baseX = timeToX(dragStateRef.current.startValue)
       const newXStart = baseX + dx
       let ns = xToTime(newXStart)
-      const maxStart = Math.max(0, originalDuration - Math.max(rangeLength, MIN_TRIM_DURATION))
+      const maxStart = Math.max(0, duration - Math.max(rangeLength, MIN_TRIM_DURATION))
       if (!Number.isFinite(ns)) ns = 0
       ns = Math.max(0, Math.min(ns, maxStart))
       const ne = ns + rangeLength
       setTrimStart(ns)
       setTrimEnd(ne)
-      if (currentTime < ns || currentTime > ne) {
-        seekTo(Math.min(ne, Math.max(ns, currentTime)))
-      }
+      const offset =
+        typeof dragStateRef.current.playheadOffset === 'number'
+          ? dragStateRef.current.playheadOffset
+          : 0
+      seekTo(Math.min(ne, Math.max(ns, ns + offset)))
     } else if (dragStateRef.current.type === 'playhead') {
       let nt = Math.min(trimEnd, Math.max(trimStart, nextTime))
       seekTo(nt)
@@ -235,9 +406,17 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   }
 
   const endDrag = () => {
+    const v = videoRef.current
+    const shouldResume = Boolean(dragStateRef.current?.wasPlaying)
     dragStateRef.current = null
     window.removeEventListener('mousemove', onDrag)
     window.removeEventListener('mouseup', endDrag)
+    if (shouldResume && v) {
+      void v.play().then(
+        () => setPlaying(true),
+        () => setPlaying(false),
+      )
+    }
   }
 
   useEffect(() => {
@@ -330,6 +509,20 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             src={videoUrl}
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             muted
+            playsInline
+            preload="auto"
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget
+              const d = Number(v.duration || 0)
+              if (Number.isFinite(d) && d > 0) setVideoDuration(d)
+              setVideoReady(true)
+              const pending = seekQueueRef.current.pending
+              if (pending != null) requestSeek(pending)
+            }}
+            onError={() => {
+              setPlaying(false)
+              setVideoReady(false)
+            }}
           />
           {loading && (
             <div
@@ -362,7 +555,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             {playing ? <IconPlayerPause className="video-trim-modal-play-icon" size={18} /> : <IconPlayerPlay className="video-trim-modal-play-icon" size={18} />}
           </ActionIcon>
           <Text className="video-trim-modal-time" size="xs" c="dimmed">
-            {currentTime.toFixed(1)}s / {originalDuration.toFixed(1)}s
+            {currentTime.toFixed(1)}s / {(duration || originalDuration || 0).toFixed(1)}s
           </Text>
         </Group>
       </div>
@@ -396,10 +589,15 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               const t = xToTime(x)
               const clamped = Math.min(trimEnd, Math.max(trimStart, t))
               seekTo(clamped)
+              const v = videoRef.current
+              const wasPlaying = Boolean(v && !v.paused && playing)
+              if (wasPlaying) v!.pause()
+              if (wasPlaying) setPlaying(false)
               dragStateRef.current = {
                 type: 'playhead',
                 startX: x,
                 startValue: clamped,
+                wasPlaying,
               }
               window.addEventListener('mousemove', onDrag)
               window.addEventListener('mouseup', endDrag)
@@ -489,11 +687,18 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
                 const rect = timelineRef.current.getBoundingClientRect()
                 const startXLocal = e.clientX - rect.left
                 const rangeLength = trimEnd - trimStart
+                const offset = Math.min(rangeLength, Math.max(0, currentTime - trimStart))
+                const v = videoRef.current
+                const wasPlaying = Boolean(v && !v.paused && playing)
+                if (wasPlaying) v!.pause()
+                if (wasPlaying) setPlaying(false)
                 dragStateRef.current = {
                   type: 'range',
                   startX: startXLocal,
                   startValue: trimStart,
                   rangeLength,
+                  playheadOffset: offset,
+                  wasPlaying,
                 }
                 window.addEventListener('mousemove', onDrag)
                 window.addEventListener('mouseup', endDrag)
