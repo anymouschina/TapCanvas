@@ -1,9 +1,8 @@
 # Cloudflare Workers OpenAPI 3.1
 
-This is a Cloudflare Worker with OpenAPI 3.1 using [chanfana](https://github.com/cloudflare/chanfana) and [Hono](https://github.com/honojs/hono).
+This is a Cloudflare Worker with OpenAPI 3.1 using [@hono/zod-openapi](https://github.com/honojs/middleware/tree/main/packages/zod-openapi) and [Hono](https://github.com/honojs/hono).
 
-This is an example project made to be used as a quick start into building OpenAPI compliant Workers that generates the
-`openapi.json` schema automatically from code and validates the incoming request to the defined parameters or request body.
+This worker generates an OpenAPI schema from code and validates requests against the defined Zod schemas.
 
 ## Get started
 
@@ -15,14 +14,15 @@ This is an example project made to be used as a quick start into building OpenAP
 ## Project structure
 
 1. Your main router is defined in `src/index.ts`.
-2. Each endpoint has its own file in `src/endpoints/`.
-3. For more information read the [chanfana documentation](https://chanfana.pages.dev/) and [Hono documentation](https://hono.dev/docs).
+2. Example OpenAPI routes live in `src/openapi/`.
+3. For more information read the [@hono/zod-openapi docs](https://hono.dev/examples/zod-openapi) and [Hono documentation](https://hono.dev/docs).
 
 ## Development
 
 1. Run `wrangler dev` to start a local instance of the API.
-2. Open `http://localhost:8787/` in your browser to see the Swagger interface where you can try the endpoints.
-3. Changes made in the `src/` folder will automatically trigger the server to reload, you only need to refresh the Swagger interface.
+2. Open `http://localhost:8788/` in your browser to see the **copyable Markdown API docs**.
+3. Open `http://localhost:8788/openapi.json` to get the OpenAPI 3.1 schema.
+4. Changes made in the `src/` folder will automatically trigger the server to reload.
 
 ### Local HTTP debug logs
 

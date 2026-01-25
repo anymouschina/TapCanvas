@@ -16,12 +16,13 @@
     "@ai-sdk/anthropic": "^2.0.45",
     "@ai-sdk/google": "^2.0.39",
     "@ai-sdk/openai": "^2.0.69",
+    "@hono/zod-openapi": "^0.19.10",
     "ai": "^5.0.97",
-    "chanfana": "^2.6.3",
     "hono": "^4.6.20",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260124.0",
     "@types/node": "22.13.0",
     "@types/service-worker-mock": "^2.0.4",
     "wrangler": "^4.53.0"

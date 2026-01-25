@@ -1,10 +1,12 @@
-import { DateTime, Str } from "chanfana";
 import type { Context } from "hono";
-import { z } from "zod";
-import type { DurableObjectNamespace, Queue } from "@cloudflare/workers-types";
+import type {
+	D1Database as CloudflareD1Database,
+	DurableObjectNamespace,
+	Queue,
+} from "@cloudflare/workers-types";
 
 export type WorkerEnv = Env & {
-	DB: D1Database;
+	DB: CloudflareD1Database;
 	// Workflow engine bindings (Cloudflare)
 	EXECUTION_DO?: DurableObjectNamespace;
 	WORKFLOW_NODE_QUEUE?: Queue;
@@ -42,11 +44,3 @@ export type AppEnv = {
 export type AppContext = Context<AppEnv>;
 
 export type D1Database = WorkerEnv["DB"];
-
-export const Task = z.object({
-	name: Str({ example: "lorem" }),
-	slug: Str(),
-	description: Str({ required: false }),
-	completed: z.boolean().default(false),
-	due_date: DateTime(),
-});

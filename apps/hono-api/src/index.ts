@@ -1,5 +1,4 @@
-import { fromHono } from "chanfana";
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { errorMiddleware } from "./middleware/error";
 import { httpDebugLoggerMiddleware } from "./middleware/httpDebugLogger";
@@ -15,17 +14,28 @@ import { taskRouter } from "./modules/task/task.routes";
 import { statsRouter } from "./modules/stats/stats.routes";
 import { executionRouter } from "./modules/execution/execution.routes";
 import { apiKeyRouter, publicApiRouter } from "./modules/apiKey/apiKey.routes";
-import { TaskCreate } from "./endpoints/taskCreate";
-import { TaskDelete } from "./endpoints/taskDelete";
-import { TaskFetch } from "./endpoints/taskFetch";
-import { TaskList } from "./endpoints/taskList";
 import type { AppEnv } from "./types";
 import type { MessageBatch } from "@cloudflare/workers-types";
 import { handleWorkflowNodeJob, type WorkflowNodeJob } from "./modules/execution/execution.queue";
 import { ExecutionDO } from "./modules/execution/execution.do";
+import { registerDemoTasksOpenApi } from "./openapi/demoTasks.openapi";
+import { API_DOCS_ZH_MD, renderCopyableDocsHtml } from "./openapi/docs.zh";
 
 // Start a Hono app
-const app = new Hono<AppEnv>();
+const app = new OpenAPIHono<AppEnv>({
+	defaultHook: (result, c) => {
+		if (result.success === false) {
+			return c.json(
+				{
+					success: false,
+					error: "请求参数不合法",
+					issues: result.error.issues,
+				},
+				400,
+			);
+		}
+	},
+});
 
 // Global HTTP debug logger (local-only; enable via DEBUG_HTTP_LOG=1)
 app.use("*", httpDebugLoggerMiddleware);
@@ -55,16 +65,34 @@ app.use(
 // Keep it after CORS so error responses also get CORS headers.
 app.use("*", errorMiddleware);
 
-// Setup OpenAPI registry (currently only for demo tasks)
-const openapi = fromHono(app, {
-	docs_url: "/",
-});
+// Copyable Chinese API docs (Markdown)
+app.get("/", (c) =>
+	c.html(
+		renderCopyableDocsHtml({
+			title: "TapCanvas 接口文档（可一键复制）",
+			markdown: API_DOCS_ZH_MD,
+			openapiJsonUrl: "/openapi.json",
+			rawMarkdownUrl: "/docs.md",
+		}),
+	),
+);
+app.get("/docs.md", (c) =>
+	c.text(API_DOCS_ZH_MD, 200, {
+		"Content-Type": "text/markdown; charset=utf-8",
+	}),
+);
 
 // Demo Tasks OpenAPI endpoints
-openapi.get("/api/tasks", TaskList);
-openapi.post("/api/tasks", TaskCreate);
-openapi.get("/api/tasks/:taskSlug", TaskFetch);
-openapi.delete("/api/tasks/:taskSlug", TaskDelete);
+registerDemoTasksOpenApi(app);
+
+// OpenAPI schema (only includes routes registered via `app.openapi(...)`)
+app.doc31("/openapi.json", {
+	openapi: "3.1.0",
+	info: {
+		title: "TapCanvas Hono API",
+		version: "0.1.0",
+	},
+});
 
 // Auth routes
 app.route("/auth", authRouter);
