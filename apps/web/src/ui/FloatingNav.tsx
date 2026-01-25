@@ -2,6 +2,7 @@ import React from 'react'
 import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
 import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar, IconTerminal2 } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
+import { useIsAdmin } from '../auth/isAdmin'
 import { useUIStore } from './uiStore'
 import { $ } from '../canvas/i18n'
 
@@ -97,9 +98,7 @@ export default function FloatingNav({ className }: { className?: string }): JSX.
     }
   }, [])
 
-  const token = useAuth((s) => s.token)
-  const role = useAuth((s) => s.user?.role || null)
-  const isAdmin = role === 'admin'
+  const isAdmin = useIsAdmin()
   // Removed presence ping heartbeat: Cloudflare Workers does not need keep-alive and this endpoint isn't used elsewhere.
 
   const Item = ({ label, icon, onHover, badge }: { label: string; icon: React.ReactNode; onHover: (y: number) => void; badge?: string }) => (
