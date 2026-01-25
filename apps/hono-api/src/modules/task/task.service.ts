@@ -23,6 +23,7 @@ import {
 import {
 	upsertVendorCallLogFinal,
 	upsertVendorCallLogStarted,
+	ensureVendorCallLogsSchema,
 } from "./vendor-call-logs.repo";
 
 type VendorContext = {
@@ -173,13 +174,23 @@ async function recordVendorCallFromTaskResult(
 	const taskId =
 		typeof input.result?.id === "string" ? input.result.id.trim() : "";
 	if (!taskId) return;
+	const vendorKey = normalizeVendorKey(input.vendor);
+	const channelVendor = extractChannelVendor(vendorKey);
 	if (input.result.status === "queued" || input.result.status === "running") {
 		await recordVendorCallStarted(c, {
 			userId: input.userId,
-			vendor: input.vendor,
+			vendor: vendorKey,
 			taskId,
 			taskKind: input.taskKind ?? null,
 		});
+		if (channelVendor && channelVendor !== vendorKey) {
+			await recordVendorCallStarted(c, {
+				userId: input.userId,
+				vendor: channelVendor,
+				taskId,
+				taskKind: input.taskKind ?? null,
+			});
+		}
 		return;
 	}
 	if (input.result.status === "succeeded" || input.result.status === "failed") {
@@ -207,13 +218,24 @@ async function recordVendorCallFromTaskResult(
 
 		await recordVendorCallFinal(c, {
 			userId: input.userId,
-			vendor: input.vendor,
+			vendor: vendorKey,
 			taskId,
 			taskKind: input.taskKind ?? null,
 			status: input.result.status,
 			errorMessage,
 			durationMs: input.durationMs ?? null,
 		});
+		if (channelVendor && channelVendor !== vendorKey) {
+			await recordVendorCallFinal(c, {
+				userId: input.userId,
+				vendor: channelVendor,
+				taskId,
+				taskKind: input.taskKind ?? null,
+				status: input.result.status,
+				errorMessage,
+				durationMs: input.durationMs ?? null,
+			});
+		}
 	}
 }
 
@@ -287,6 +309,18 @@ function normalizeVendorKey(vendor: string): string {
 	return v;
 }
 
+function extractChannelVendor(vendorKey: string): "grsai" | "comfly" | null {
+	const v = normalizeVendorKey(vendorKey);
+	if (!v) return null;
+	if (v === "comfly" || v.startsWith("comfly-") || v.startsWith("comfly:")) {
+		return "comfly";
+	}
+	if (v === "grsai" || v.startsWith("grsai-") || v.startsWith("grsai:")) {
+		return "grsai";
+	}
+	return null;
+}
+
 function isGrsaiBaseUrl(url: string): boolean {
 	const val = url.toLowerCase();
 	// New Sora2API/GRSAI protocol uses chat/completions for image/character.
@@ -356,14 +390,133 @@ async function resolveProxyForVendor(
 	}
 	if (!all.length) return null;
 
+	const readRoutingTaskKind = (): string | null => {
+		try {
+			const kind = c.get("routingTaskKind");
+			return typeof kind === "string" && kind.trim() ? kind.trim() : null;
+		} catch {
+			return null;
+		}
+	};
+
+	const readProxyDisabled = (): boolean => {
+		try {
+			return c.get("proxyDisabled") === true;
+		} catch {
+			return false;
+		}
+	};
+
+	const readProxyVendorHint = (): string | null => {
+		try {
+			const hint = c.get("proxyVendorHint");
+			return typeof hint === "string" && hint.trim()
+				? hint.trim().toLowerCase()
+				: null;
+		} catch {
+			return null;
+		}
+	};
+
+	const isPublicApiRequest = (): boolean => {
+		try {
+			const apiKeyId = c.get("apiKeyId");
+			return typeof apiKeyId === "string" && !!apiKeyId.trim();
+		} catch {
+			return false;
+		}
+	};
+
 	const parseEpoch = (iso?: string | null) => {
 		if (!iso || typeof iso !== "string") return 0;
 		const t = Date.parse(iso);
 		return Number.isFinite(t) ? t : 0;
 	};
 
-	// Prefer the most recently updated proxy config to make vendor switching predictable
-	return [...all].sort((a, b) => {
+	const proxyVendorHint = readProxyVendorHint();
+	const candidates = (() => {
+		// Public API calls: ignore misconfigured proxies and fall back to direct providers.
+		if (!isPublicApiRequest()) return all;
+		const eligible = all.filter((p) => {
+			const baseUrl = normalizeBaseUrl((p as any).base_url);
+			const apiKey = typeof (p as any).api_key === "string" ? (p as any).api_key.trim() : "";
+			return !!baseUrl && !!apiKey;
+		});
+		return eligible;
+	})();
+	if (!candidates.length) return null;
+
+	if (proxyVendorHint) {
+		const matched = candidates.find(
+			(p) => (p.vendor || "").trim().toLowerCase() === proxyVendorHint,
+		);
+		if (matched) return matched;
+	}
+
+	// Public API: prefer higher-success proxies when multiple are enabled.
+	if (isPublicApiRequest() && candidates.length > 1 && !readProxyDisabled()) {
+		const taskKind = readRoutingTaskKind();
+		const sinceIso = new Date(
+			Date.now() - 7 * 24 * 60 * 60 * 1000,
+		).toISOString();
+
+		const scoreProxy = async (proxyVendor: string) => {
+			const vkey = (proxyVendor || "").trim().toLowerCase();
+			if (!vkey) return { vendor: proxyVendor, success: 0, total: 0, rate: 0 };
+			try {
+				await ensureVendorCallLogsSchema(c.env.DB);
+				const where: string[] = [
+					"user_id = ?",
+					"vendor = ?",
+					"status IN ('succeeded','failed')",
+					"finished_at IS NOT NULL",
+					"finished_at >= ?",
+				];
+				const bindings: unknown[] = [userId, vkey, sinceIso];
+				if (taskKind) {
+					where.push("task_kind = ?");
+					bindings.push(taskKind);
+				}
+				const row = await c.env.DB.prepare(
+					`
+            SELECT
+              COUNT(1) AS total,
+              SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS success
+            FROM vendor_api_call_logs
+            WHERE ${where.join(" AND ")}
+          `,
+				)
+					.bind(...bindings)
+					.first<any>();
+				const total = Number(row?.total ?? 0) || 0;
+				const success = Number(row?.success ?? 0) || 0;
+				// Laplace smoothing to avoid 0/0 and reduce cold-start noise
+				const rate = (success + 1) / (total + 2);
+				return { vendor: proxyVendor, success, total, rate };
+			} catch {
+				return { vendor: proxyVendor, success: 0, total: 0, rate: 0 };
+			}
+		};
+
+		const scored = await Promise.all(
+			candidates.map(async (p) => {
+				const stat = await scoreProxy(p.vendor);
+				return { proxy: p, ...stat };
+			}),
+		);
+
+		const best = scored.sort((a, b) => {
+			if (b.rate !== a.rate) return b.rate - a.rate;
+			if (b.total !== a.total) return b.total - a.total;
+			const bt = parseEpoch(b.proxy.updated_at) || parseEpoch(b.proxy.created_at);
+			const at = parseEpoch(a.proxy.updated_at) || parseEpoch(a.proxy.created_at);
+			return bt - at;
+		})[0];
+		if (best?.proxy) return best.proxy;
+	}
+
+	// Default: prefer most recently updated proxy config to make vendor switching predictable
+	return [...candidates].sort((a, b) => {
 		const bt = parseEpoch(b.updated_at) || parseEpoch(b.created_at);
 		const at = parseEpoch(a.updated_at) || parseEpoch(a.created_at);
 		return bt - at;
@@ -378,7 +531,14 @@ export async function resolveVendorContext(
 	const v = normalizeVendorKey(vendor);
 
 	// 1) Try user-level proxy config (proxy_providers + enabled_vendors)
-	const proxy = await resolveProxyForVendor(c, userId, v);
+	const proxyDisabled = (() => {
+		try {
+			return c.get("proxyDisabled") === true;
+		} catch {
+			return false;
+		}
+	})();
+	const proxy = proxyDisabled ? null : await resolveProxyForVendor(c, userId, v);
 	const hasUserProxy = !!(proxy && proxy.enabled === 1);
 
 	if (proxy && proxy.enabled === 1) {
@@ -1228,6 +1388,12 @@ function parseComflyProgress(value: unknown): number | undefined {
 
 		const ctx = await resolveVendorContext(c, userId, "veo");
 		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+		const channelVendor: "grsai" | "comfly" | null =
+			ctx.viaProxyVendor === "comfly"
+				? "comfly"
+				: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+					? "grsai"
+					: null;
 		const apiKey = ctx.apiKey.trim();
 		if (!apiKey) {
 			throw new AppError("未配置 Veo API Key", {
@@ -1288,6 +1454,14 @@ function parseComflyProgress(value: unknown): number | undefined {
 				taskKind: req.kind,
 				result,
 			});
+			if (channelVendor) {
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: channelVendor,
+					taskKind: req.kind,
+					result,
+				});
+			}
 			return result;
 		}
 
@@ -1388,13 +1562,21 @@ function parseComflyProgress(value: unknown): number | undefined {
 			response: payload,
 		},
 	});
-	await recordVendorCallFromTaskResult(c, {
-		userId,
-		vendor: "veo",
-		taskKind: req.kind,
-		result,
-	});
-	return result;
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "veo",
+			taskKind: req.kind,
+			result,
+		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: req.kind,
+				result,
+			});
+		}
+		return result;
 }
 
 export async function fetchVeoTaskResult(
@@ -1423,9 +1605,17 @@ export async function fetchVeoTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "comfly",
+			taskKind: "text_to_video",
+			result,
+		});
 		return result;
 	}
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+	const channelVendor: "grsai" | "comfly" | null =
+		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai" ? "grsai" : null;
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError("未配置 Veo API Key", {
@@ -1502,6 +1692,16 @@ export async function fetchVeoTaskResult(
 			status: "failed",
 			errorMessage: errMsg,
 		});
+		if (channelVendor) {
+			await recordVendorCallFinal(c, {
+				userId,
+				vendor: channelVendor,
+				taskId,
+				taskKind: "text_to_video",
+				status: "failed",
+				errorMessage: errMsg,
+			});
+		}
 		throw new AppError(errMsg, {
 			status: 502,
 			code: "veo_result_failed",
@@ -1569,6 +1769,14 @@ export async function fetchVeoTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
 		return result;
 	}
 
@@ -1695,7 +1903,7 @@ export async function runSora2ApiVideoTask(
 		const size = sizeFromExtras || (orientation === "portrait" ? "720x1280" : "1280x720");
 		const watermark =
 			typeof extras.watermark === "boolean" ? extras.watermark : null;
-		return createComflySora2VideoTask(
+		const result = await createComflySora2VideoTask(
 			c,
 			userId,
 			req,
@@ -1709,6 +1917,37 @@ export async function runSora2ApiVideoTask(
 			},
 			progressCtx,
 		);
+		{
+			const nowIso = new Date().toISOString();
+			const vendorForRef = `comfly-${model || "sora-2"}`;
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{
+						kind: "video",
+						taskId: result.id,
+						vendor: vendorForRef,
+					},
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert comfly video ref failed",
+					err?.message || err,
+				);
+			}
+		}
+		{
+			const vendorForLog = `comfly-${model || "sora-2"}`;
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
+		return result;
 	}
 
 	const body: Record<string, any> = isGrsaiBase
@@ -1987,6 +2226,16 @@ export async function fetchSora2ApiTaskResult(
 	})();
 	const refVendorRaw =
 		typeof refForTask?.vendor === "string" ? refForTask.vendor.trim() : "";
+	{
+		const hint = extractChannelVendor(refVendorRaw);
+		if (hint) {
+			try {
+				c.set("proxyVendorHint", hint);
+			} catch {
+				// ignore
+			}
+		}
+	}
 	const vendorForTask: "sora2api" | "grsai" = refVendorRaw
 		.toLowerCase()
 		.startsWith("grsai")
@@ -2680,6 +2929,12 @@ export async function fetchGrsaiDrawTaskResult(
 
 	const ctx = await resolveVendorContext(c, userId, "minimax");
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const channelVendor: "grsai" | "comfly" | null =
+		ctx.viaProxyVendor === "comfly"
+			? "comfly"
+			: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+				? "grsai"
+				: null;
 	const apiKey = ctx.apiKey.trim();
 	if (!baseUrl || !apiKey) {
 		throw new AppError("未配置 MiniMax API Key", {
@@ -2880,6 +3135,14 @@ export async function fetchGrsaiDrawTaskResult(
 		taskKind: req.kind,
 		result,
 	});
+	if (channelVendor) {
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: channelVendor,
+			taskKind: req.kind,
+			result,
+		});
+	}
 	return result;
 }
 
@@ -2987,6 +3250,12 @@ export async function fetchMiniMaxTaskResult(
 
 	const ctx = await resolveVendorContext(c, userId, "minimax");
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const channelVendor: "grsai" | "comfly" | null =
+		ctx.viaProxyVendor === "comfly"
+			? "comfly"
+			: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+				? "grsai"
+				: null;
 	const apiKey = ctx.apiKey.trim();
 	if (!baseUrl || !apiKey) {
 		throw new AppError("未配置 MiniMax API Key", {
@@ -3089,6 +3358,14 @@ export async function fetchMiniMaxTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
 		return result;
 	}
 
@@ -3135,6 +3412,14 @@ export async function fetchMiniMaxTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
 		return result;
 	}
 
@@ -3156,6 +3441,14 @@ export async function fetchMiniMaxTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
 		return result;
 	}
 
@@ -3180,6 +3473,14 @@ export async function fetchMiniMaxTaskResult(
 			taskKind: "text_to_video",
 			result,
 		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
 		return result;
 	}
 
@@ -3223,6 +3524,14 @@ export async function fetchMiniMaxTaskResult(
 		taskKind: "text_to_video",
 		result,
 	});
+	if (channelVendor) {
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: channelVendor,
+			taskKind: "text_to_video",
+			result,
+		});
+	}
 	return result;
 }
 

@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Button, CopyButton, Divider, Group, Loader, Modal, P
 import { IconCheck, IconCopy, IconPencil, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { API_BASE, createApiKey, deleteApiKey, listApiKeys, listTaskLogs, updateApiKey, type ApiKeyDto, type VendorCallLogDto, type VendorCallLogStatus } from '../api/server'
 import { toast } from './toast'
+import StatsVendorChannels from './StatsVendorChannels'
 
 function parseOriginsInput(input: string): string[] {
   return String(input || '')
@@ -89,16 +90,60 @@ export default function StatsSystemManagement({ className }: { className?: strin
   }, [reloadKeys])
 
   const publicChatUrl = `${API_BASE || ''}/public/chat`
-  const fetchSnippet = `fetch('${publicChatUrl}', {
+  const publicDrawUrl = `${API_BASE || ''}/public/draw`
+  const publicVideoUrl = `${API_BASE || ''}/public/video`
+  const publicTaskResultUrl = `${API_BASE || ''}/public/tasks/result`
+
+  const fetchSnippet = `// 1) 绘图（POST ${publicDrawUrl}）
+fetch('${publicDrawUrl}', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
     'X-API-Key': '<YOUR_KEY>',
   },
   body: JSON.stringify({
-    vendor: 'openai',
-    prompt: '你好，帮我用中文回答…'
+    vendor: 'auto',
+    prompt: '一个赛博风格的透明玻璃徽章，中文“TapCanvas”，高细节，干净背景',
+    extras: { modelKey: 'nano-banana-pro' }
   }),
+}).then(r => r.json())
+
+// 2) 生成视频（POST ${publicVideoUrl}）
+fetch('${publicVideoUrl}', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': '<YOUR_KEY>',
+  },
+  body: JSON.stringify({
+    vendor: 'auto',
+    prompt: '一只白猫在雨夜霓虹街头慢慢走过，电影感镜头，稳定光影',
+    durationSeconds: 10,
+    extras: { modelKey: 'veo3.1-fast' }
+  }),
+}).then(r => r.json())
+
+// 3) 查任务（POST ${publicTaskResultUrl}）
+fetch('${publicTaskResultUrl}', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': '<YOUR_KEY>',
+  },
+  body: JSON.stringify({
+    taskId: '<TASK_ID>',
+    taskKind: 'text_to_video'
+  }),
+}).then(r => r.json())
+
+// （可选）文本（POST ${publicChatUrl}）
+fetch('${publicChatUrl}', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': '<YOUR_KEY>',
+  },
+  body: JSON.stringify({ vendor: 'auto', prompt: '你好，帮我用中文回答…' }),
 }).then(r => r.json())`
 
   const handleCreate = async () => {
@@ -229,7 +274,7 @@ export default function StatsSystemManagement({ className }: { className?: strin
           <div className="stats-system-card-header-left">
             <Title className="stats-system-title" order={3}>系统管理</Title>
             <Text className="stats-system-subtitle" size="sm" c="dimmed">
-              三方 API Key 管理、Origin 白名单、生成任务列表（后台管理风格）。
+              渠道（grsai/comfly）配置、外站 API Key、生成任务日志（后台管理风格）。
             </Text>
           </div>
           <Group className="stats-system-card-header-actions" gap={6}>
@@ -260,21 +305,36 @@ export default function StatsSystemManagement({ className }: { className?: strin
           </Group>
         </Group>
 
+        <Divider className="stats-system-divider" my="md" label="渠道配置" labelPosition="left" />
+        <StatsVendorChannels className="stats-system-vendor-channels" />
+
         <Divider className="stats-system-divider" my="md" label="外站调用地址" labelPosition="left" />
-        <Group className="stats-system-endpoint" justify="space-between" align="center" gap="xs" wrap="nowrap">
-          <Text className="stats-system-endpoint-url" size="sm" style={{ wordBreak: 'break-all' }}>
-            {publicChatUrl}
-          </Text>
-          <CopyButton value={publicChatUrl} timeout={1200}>
-            {({ copied, copy }) => (
-              <Tooltip className="stats-system-endpoint-copy-tooltip" label={copied ? '已复制' : '复制'} position="top" withArrow>
-                <ActionIcon className="stats-system-endpoint-copy" variant="light" onClick={copy} aria-label="copy-endpoint">
-                  {copied ? <IconCheck className="stats-system-endpoint-copy-icon" size={16} /> : <IconCopy className="stats-system-endpoint-copy-icon" size={16} />}
-                </ActionIcon>
-              </Tooltip>
-            )}
-          </CopyButton>
-        </Group>
+        <Stack className="stats-system-endpoints" gap={6}>
+          {[
+            { label: '绘图', url: publicDrawUrl },
+            { label: '生成视频', url: publicVideoUrl },
+            { label: '查任务', url: publicTaskResultUrl },
+            { label: '文本', url: publicChatUrl },
+          ].map((it) => (
+            <Group className="stats-system-endpoint" key={it.label} justify="space-between" align="center" gap="xs" wrap="nowrap">
+              <Group className="stats-system-endpoint-left" gap={8} wrap="nowrap">
+                <Badge className="stats-system-endpoint-badge" size="xs" variant="light">{it.label}</Badge>
+                <Text className="stats-system-endpoint-url" size="sm" style={{ wordBreak: 'break-all' }}>
+                  {it.url}
+                </Text>
+              </Group>
+              <CopyButton value={it.url} timeout={1200}>
+                {({ copied, copy }) => (
+                  <Tooltip className="stats-system-endpoint-copy-tooltip" label={copied ? '已复制' : '复制'} position="top" withArrow>
+                    <ActionIcon className="stats-system-endpoint-copy" variant="light" onClick={copy} aria-label="copy-endpoint">
+                      {copied ? <IconCheck className="stats-system-endpoint-copy-icon" size={16} /> : <IconCopy className="stats-system-endpoint-copy-icon" size={16} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            </Group>
+          ))}
+        </Stack>
         <pre className="stats-system-endpoint-snippet" style={{ margin: 0, marginTop: 10, padding: 12, borderRadius: 12, background: 'rgba(0,0,0,0.18)', overflowX: 'auto' }}>
           <code className="stats-system-endpoint-snippet-code">{fetchSnippet}</code>
         </pre>
@@ -617,4 +677,3 @@ export default function StatsSystemManagement({ className }: { className?: strin
     </Stack>
   )
 }
-
