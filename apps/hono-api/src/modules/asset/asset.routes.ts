@@ -92,6 +92,65 @@ function inferMediaKind(options: {
 	return null;
 }
 
+function parseHttpByteRangeHeader(header: string): R2Range | null {
+	const raw = typeof header === "string" ? header.trim() : "";
+	if (!raw) return null;
+	const match = raw.match(/^bytes=(.+)$/i);
+	if (!match || !match[1]) return null;
+
+	// Only support a single range: `bytes=start-end` / `bytes=start-` / `bytes=-suffix`
+	const spec = match[1].split(",")[0]?.trim() || "";
+	if (!spec) return null;
+	const [startStr, endStr] = spec.split("-");
+	if (typeof endStr === "undefined") return null;
+
+	if (!startStr) {
+		const suffix = Number(endStr);
+		if (!Number.isFinite(suffix) || suffix <= 0) return null;
+		return { suffix: Math.floor(suffix) };
+	}
+
+	const start = Number(startStr);
+	if (!Number.isFinite(start) || start < 0) return null;
+	if (!endStr) return { offset: Math.floor(start) };
+
+	const end = Number(endStr);
+	if (!Number.isFinite(end) || end < start) return null;
+	return { offset: Math.floor(start), length: Math.floor(end - start + 1) };
+}
+
+function resolveR2ServedRange(
+	range: R2Range | undefined,
+	size: number,
+): { start: number; end: number; length: number } | null {
+	if (!range) return null;
+	if (!Number.isFinite(size) || size <= 0) return null;
+
+	if ("suffix" in range) {
+		const requested = Math.floor(range.suffix);
+		if (!Number.isFinite(requested) || requested <= 0) return null;
+		const length = Math.min(size, requested);
+		const start = Math.max(0, size - length);
+		const end = start + length - 1;
+		return { start, end, length };
+	}
+
+	const offsetRaw = "offset" in range ? range.offset : undefined;
+	const offset =
+		typeof offsetRaw === "number" && Number.isFinite(offsetRaw) && offsetRaw >= 0
+			? Math.floor(offsetRaw)
+			: 0;
+	const lengthRaw = "length" in range ? range.length : undefined;
+	const length =
+		typeof lengthRaw === "number" && Number.isFinite(lengthRaw) && lengthRaw > 0
+			? Math.floor(lengthRaw)
+			: Math.max(0, size - offset);
+
+	if (offset >= size || length <= 0) return null;
+	const capped = Math.min(length, size - offset);
+	return { start: offset, end: offset + capped - 1, length: capped };
+}
+
 async function readStreamToBytes(
 	stream: ReadableStream<Uint8Array>,
 	maxBytes: number,
@@ -316,8 +375,31 @@ assetRouter.get("/r2/*", async (c) => {
 		return c.json({ error: "key is required" }, 400);
 	}
 
-	const obj = await bucket.get(key);
+	const rangeHeader = c.req.header("range") || c.req.header("Range") || "";
+	const range = rangeHeader ? parseHttpByteRangeHeader(rangeHeader) : null;
+
+	let obj: R2ObjectBody | null = null;
+	try {
+		obj = range ? await bucket.get(key, { range }) : await bucket.get(key);
+	} catch {
+		obj = null;
+	}
+
 	if (!obj) {
+		if (range) {
+			try {
+				const head = await bucket.head(key);
+				if (head) {
+					const headers = new Headers();
+					headers.set("Accept-Ranges", "bytes");
+					headers.set("Content-Range", `bytes */${head.size}`);
+					headers.set("Access-Control-Allow-Origin", "*");
+					return new Response(null, { status: 416, headers });
+				}
+			} catch {
+				// ignore
+			}
+		}
 		return c.json({ error: "not found" }, 404);
 	}
 
@@ -333,8 +415,20 @@ assetRouter.get("/r2/*", async (c) => {
 			"public, max-age=31536000, immutable",
 	);
 	headers.set("Access-Control-Allow-Origin", "*");
+	headers.set("Access-Control-Expose-Headers", "Content-Length,Content-Range,Accept-Ranges,ETag");
+	headers.set("Accept-Ranges", "bytes");
 	if ((obj as any).etag) headers.set("ETag", String((obj as any).etag));
 
+	if (range) {
+		const served = resolveR2ServedRange(obj.range, obj.size);
+		if (served) {
+			headers.set("Content-Length", String(served.length));
+			headers.set("Content-Range", `bytes ${served.start}-${served.end}/${obj.size}`);
+			return new Response(obj.body, { status: 206, headers });
+		}
+	}
+
+	headers.set("Content-Length", String(obj.size));
 	return new Response(obj.body, { status: 200, headers });
 });
 
