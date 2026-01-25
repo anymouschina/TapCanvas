@@ -1,5 +1,5 @@
 import type { D1Database } from "../../types";
-import { execute } from "../../db/db";
+import { execute, queryAll } from "../../db/db";
 
 export type VendorCallLogStatus = "running" | "succeeded" | "failed";
 
@@ -11,6 +11,20 @@ export type VendorCallLogUpsertInput = {
 	status: VendorCallLogStatus;
 	errorMessage?: string | null;
 	nowIso: string;
+};
+
+export type VendorCallLogRow = {
+	user_id: string;
+	vendor: string;
+	task_id: string;
+	task_kind: string | null;
+	status: string;
+	started_at: string | null;
+	finished_at: string | null;
+	duration_ms: number | null;
+	error_message: string | null;
+	created_at: string;
+	updated_at: string;
 };
 
 let schemaEnsured = false;
@@ -155,3 +169,64 @@ export async function upsertVendorCallLogFinal(
 	);
 }
 
+export async function listVendorCallLogsForUser(
+	db: D1Database,
+	userId: string,
+	opts?: {
+		limit?: number;
+		before?: string | null;
+		vendor?: string | null;
+		status?: VendorCallLogStatus | null;
+		taskKind?: string | null;
+	},
+): Promise<VendorCallLogRow[]> {
+	await ensureVendorCallLogsSchema(db);
+	const limit = Math.max(1, Math.min(201, Math.floor(opts?.limit ?? 50)));
+	const before =
+		typeof opts?.before === "string" && opts.before.trim()
+			? opts.before.trim()
+			: null;
+	const vendor =
+		typeof opts?.vendor === "string" && opts.vendor.trim()
+			? normalizeVendorKey(opts.vendor)
+			: null;
+	const status =
+		opts?.status === "running" ||
+		opts?.status === "succeeded" ||
+		opts?.status === "failed"
+			? opts.status
+			: null;
+	const taskKind = normalizeTaskKind(opts?.taskKind ?? null);
+
+	const where: string[] = ["user_id = ?"];
+	const bindings: unknown[] = [userId];
+
+	if (vendor) {
+		where.push("vendor = ?");
+		bindings.push(vendor);
+	}
+	if (status) {
+		where.push("status = ?");
+		bindings.push(status);
+	}
+	if (taskKind) {
+		where.push("task_kind = ?");
+		bindings.push(taskKind);
+	}
+	if (before) {
+		where.push("created_at < ?");
+		bindings.push(before);
+	}
+
+	const sql = `
+    SELECT user_id, vendor, task_id, task_kind, status,
+           started_at, finished_at, duration_ms, error_message,
+           created_at, updated_at
+    FROM vendor_api_call_logs
+    WHERE ${where.join(" AND ")}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `;
+
+	return queryAll<VendorCallLogRow>(db, sql, [...bindings, limit]);
+}

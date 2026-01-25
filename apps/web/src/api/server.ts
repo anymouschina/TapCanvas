@@ -106,6 +106,38 @@ export type ProxyConfigDto = {
   updatedAt?: string
 }
 
+export type ApiKeyDto = {
+  id: string
+  label: string
+  keyPrefix: string
+  allowedOrigins: string[]
+  enabled: boolean
+  lastUsedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type VendorCallLogStatus = 'running' | 'succeeded' | 'failed'
+
+export type VendorCallLogDto = {
+  vendor: string
+  taskId: string
+  taskKind?: string | null
+  status: VendorCallLogStatus
+  startedAt?: string | null
+  finishedAt?: string | null
+  durationMs?: number | null
+  errorMessage?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type VendorCallLogListResponseDto = {
+  items: VendorCallLogDto[]
+  hasMore: boolean
+  nextBefore: string | null
+}
+
 export type WorkflowExecutionDto = {
   id: string
   flowId: string
@@ -944,6 +976,57 @@ export async function deleteModelToken(id: string): Promise<void> {
 export async function listModelEndpoints(providerId: string): Promise<ModelEndpointDto[]> {
   const r = await apiFetch(`${API_BASE}/models/providers/${encodeURIComponent(providerId)}/endpoints`, withAuth())
   if (!r.ok) throw new Error(`list endpoints failed: ${r.status}`)
+  return r.json()
+}
+
+// External API key management (dashboard)
+export async function listApiKeys(): Promise<ApiKeyDto[]> {
+  const r = await apiFetch(`${API_BASE}/api-keys`, withAuth())
+  if (!r.ok) throw new Error(`list api keys failed: ${r.status}`)
+  return r.json()
+}
+
+export async function createApiKey(payload: { label: string; allowedOrigins: string[]; enabled?: boolean }): Promise<{ key: string; apiKey: ApiKeyDto }> {
+  const r = await apiFetch(`${API_BASE}/api-keys`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`create api key failed: ${r.status}`)
+  return r.json()
+}
+
+export async function updateApiKey(id: string, payload: { label?: string; allowedOrigins?: string[]; enabled?: boolean }): Promise<ApiKeyDto> {
+  const r = await apiFetch(`${API_BASE}/api-keys/${encodeURIComponent(id)}`, withAuth({
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) throw new Error(`update api key failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deleteApiKey(id: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/api-keys/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) throw new Error(`delete api key failed: ${r.status}`)
+}
+
+export async function listTaskLogs(params?: {
+  limit?: number
+  before?: string | null
+  vendor?: string | null
+  status?: VendorCallLogStatus | null
+  taskKind?: string | null
+}): Promise<VendorCallLogListResponseDto> {
+  const u = new URL(`${API_BASE}/tasks/logs`)
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) u.searchParams.set('limit', String(params.limit))
+  if (params?.before) u.searchParams.set('before', params.before)
+  if (params?.vendor) u.searchParams.set('vendor', params.vendor)
+  if (params?.status) u.searchParams.set('status', params.status)
+  if (params?.taskKind) u.searchParams.set('taskKind', params.taskKind)
+
+  const r = await apiFetch(u.toString(), withAuth())
+  if (!r.ok) throw new Error(`list task logs failed: ${r.status}`)
   return r.json()
 }
 

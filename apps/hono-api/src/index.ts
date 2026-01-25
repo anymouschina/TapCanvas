@@ -14,6 +14,7 @@ import { assetRouter } from "./modules/asset/asset.routes";
 import { taskRouter } from "./modules/task/task.routes";
 import { statsRouter } from "./modules/stats/stats.routes";
 import { executionRouter } from "./modules/execution/execution.routes";
+import { apiKeyRouter, publicApiRouter } from "./modules/apiKey/apiKey.routes";
 import { TaskCreate } from "./endpoints/taskCreate";
 import { TaskDelete } from "./endpoints/taskDelete";
 import { TaskFetch } from "./endpoints/taskFetch";
@@ -41,6 +42,7 @@ app.use(
 			"Authorization",
 			"Accept",
 			"Range",
+			"X-API-Key",
 			"X-File-Name",
 			"X-File-Size",
 			"X-Tap-No-Retry",
@@ -66,6 +68,10 @@ openapi.delete("/api/tasks/:taskSlug", TaskDelete);
 
 // Auth routes
 app.route("/auth", authRouter);
+
+// External API keys & public endpoints
+app.route("/api-keys", apiKeyRouter);
+app.route("/public", publicApiRouter);
 
 // Project & Flow routes
 app.route("/projects", projectRouter);
