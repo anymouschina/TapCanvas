@@ -350,16 +350,16 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
 
     const rawStartAt = currentTime < trimStart || currentTime >= trimEnd ? trimStart : currentTime
     const startAt = Math.min(trimEnd, Math.max(trimStart, rawStartAt))
-    setCurrentTime(startAt)
-    seekQueueRef.current.pending = startAt
-    try {
-      await waitForVideoMetadata(v, token)
-      await seekVideoFrame(v, startAt, token)
-    } catch {
+    const epsilon = 0.02
+    if (Math.abs((v.currentTime || 0) - startAt) > epsilon) {
+      setCurrentTime(startAt)
+      seekQueueRef.current.pending = startAt
       try {
-        v.currentTime = startAt
+        await waitForVideoMetadata(v, token)
+        await seekVideoFrame(v, startAt, token)
       } catch {
-        // ignore
+        toast('视频无法跳转到截取区间（可能链接不支持 Range），请稍后重试或更换视频源', 'error')
+        return
       }
     }
 
@@ -544,6 +544,15 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
             muted
             playsInline
             preload="auto"
+            onPlay={() => {
+              const v = videoRef.current
+              if (!v) return
+              const t = Number(v.currentTime || 0)
+              if (!Number.isFinite(t)) return
+              if (t < trimStart || t >= trimEnd) {
+                requestSeek(trimStart)
+              }
+            }}
             onLoadedMetadata={(e) => {
               const v = e.currentTarget
               const d = Number(v.duration || 0)
