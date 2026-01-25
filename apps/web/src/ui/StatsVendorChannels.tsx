@@ -40,6 +40,7 @@ export default function StatsVendorChannels({ className }: { className?: string 
   const rootClassName = ['stats-vendor-channels', className].filter(Boolean).join(' ')
 
   const [loading, setLoading] = React.useState(false)
+  const loadingRef = React.useRef(false)
 
   const [grsaiCfg, setGrsaiCfg] = React.useState<ProxyConfigDto | null>(null)
   const [grsaiHost, setGrsaiHost] = React.useState('https://api.grsai.com')
@@ -76,7 +77,8 @@ export default function StatsVendorChannels({ className }: { className?: string 
   }, [])
 
   const reload = React.useCallback(async () => {
-    if (loading) return
+    if (loadingRef.current) return
+    loadingRef.current = true
     setLoading(true)
     try {
       const [grsai, comfly] = await Promise.allSettled([
@@ -97,8 +99,9 @@ export default function StatsVendorChannels({ className }: { className?: string 
       }
     } finally {
       setLoading(false)
+      loadingRef.current = false
     }
-  }, [loading, syncFromCfg])
+  }, [syncFromCfg])
 
   React.useEffect(() => {
     void reload()
@@ -307,4 +310,3 @@ export default function StatsVendorChannels({ className }: { className?: string 
     </Stack>
   )
 }
-
