@@ -309,9 +309,14 @@ function normalizeVendorKey(vendor: string): string {
 	return v;
 }
 
-function extractChannelVendor(vendorKey: string): "grsai" | "comfly" | null {
+function extractChannelVendor(
+	vendorKey: string,
+): "grsai" | "comfly" | "apimart" | null {
 	const v = normalizeVendorKey(vendorKey);
 	if (!v) return null;
+	if (v === "apimart" || v.startsWith("apimart-") || v.startsWith("apimart:")) {
+		return "apimart";
+	}
 	if (v === "comfly" || v.startsWith("comfly-") || v.startsWith("comfly:")) {
 		return "comfly";
 	}
@@ -1841,7 +1846,8 @@ export async function runSora2ApiVideoTask(
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
-	const isApimartBase = isApimartBaseUrl(baseUrl);
+	const isApimartBase =
+		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const isComflyProxy = ctx.viaProxyVendor === "comfly";
@@ -2404,7 +2410,8 @@ export async function fetchSora2ApiTaskResult(
 		(vendorForTask === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
-	const isApimartBase = isApimartBaseUrl(baseUrl);
+	const isApimartBase =
+		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError(
@@ -2959,6 +2966,16 @@ export async function fetchGrsaiDrawTaskResult(
 	let vendorForLog =
 		(typeof refForLog?.vendor === "string" && refForLog.vendor.trim()) ||
 		"grsai";
+	{
+		const hint = extractChannelVendor(vendorForLog);
+		if (hint) {
+			try {
+				c.set("proxyVendorHint", hint);
+			} catch {
+				// ignore
+			}
+		}
+	}
 	const taskKind: TaskRequestDto["kind"] =
 		typeof options?.taskKind === "string" && options.taskKind.trim()
 			? (options.taskKind as TaskRequestDto["kind"])
@@ -2997,7 +3014,8 @@ export async function fetchGrsaiDrawTaskResult(
 	}
 
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-	const isApimartBase = isApimartBaseUrl(baseUrl);
+	const isApimartBase =
+		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
 	if (vendorForLog === "grsai" && isApimartBase) {
 		vendorForLog = "apimart";
 	}
@@ -4948,7 +4966,8 @@ async function runGeminiBananaImageTask(
 	const ctx = await resolveVendorContext(c, userId, "gemini");
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-	const isApimartBase = isApimartBaseUrl(baseUrl);
+	const isApimartBase =
+		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError(
