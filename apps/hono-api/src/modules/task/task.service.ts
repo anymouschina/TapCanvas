@@ -2376,6 +2376,11 @@ export async function fetchGrsaiDrawTaskResult(
 	const vendorForLog =
 		(typeof refForLog?.vendor === "string" && refForLog.vendor.trim()) ||
 		"grsai";
+	const upstreamTaskId = (() => {
+		const pid =
+			typeof refForLog?.pid === "string" ? refForLog.pid.trim() : "";
+		return pid || taskId.trim();
+	})();
 
 	const ctx = await resolveVendorContext(c, userId, "gemini");
 	if (ctx.viaProxyVendor === "comfly") {
@@ -2406,7 +2411,7 @@ export async function fetchGrsaiDrawTaskResult(
 					"Content-Type": "application/json",
 					Authorization: `Bearer ${apiKey}`,
 				},
-				body: JSON.stringify({ id: taskId.trim() }),
+				body: JSON.stringify({ id: upstreamTaskId }),
 			},
 			{ tag: "grsai:drawResult" },
 		);
@@ -2487,14 +2492,14 @@ export async function fetchGrsaiDrawTaskResult(
 				options.promptFromClient.trim()) ||
 			(typeof payload?.prompt === "string" && payload.prompt.trim()) ||
 			null;
-		const hostedAssets = await hostTaskAssetsInWorker({
+	const hostedAssets = await hostTaskAssetsInWorker({
 			c,
 			userId,
 			assets,
 			meta: {
 				taskKind,
 				prompt: promptForAsset,
-				vendor: "grsai",
+				vendor: vendorForLog,
 				taskId: taskId ?? null,
 			},
 		});
@@ -2508,7 +2513,8 @@ export async function fetchGrsaiDrawTaskResult(
 		assets,
 		raw: {
 			provider: "grsai",
-			vendor: "grsai",
+			vendor: vendorForLog,
+			upstreamTaskId,
 			response: payload,
 			progress,
 			failureReason: failureReasonRaw,
@@ -4174,6 +4180,32 @@ async function runGeminiBananaImageTask(
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
 	const endpoint = `${baseUrl}/v1/draw/nano-banana`;
+	const vendorKeyForLog = `grsai-${normalizedModel}`;
+	const localTaskId = `banana-${Date.now().toString(36)}-${crypto
+		.randomUUID()
+		.slice(0, 8)}`;
+	{
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{ kind: "image", taskId: localTaskId, vendor: vendorKeyForLog },
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert image ref failed",
+				err?.message || err,
+			);
+		}
+	}
+	await recordVendorCallStarted(c, {
+		userId,
+		vendor: vendorKeyForLog,
+		taskId: localTaskId,
+		taskKind: req.kind,
+	});
 
 	const referenceImages: string[] = Array.isArray(extras.referenceImages)
 		? extras.referenceImages
@@ -4322,7 +4354,7 @@ async function runGeminiBananaImageTask(
 			});
 		}
 
-	// 对齐前端「创建任务 → 轮询结果」协议：这里仅创建任务并返回 taskId。
+	// 对齐前端「创建任务 → 轮询结果」协议：优先拿到上游 taskId 并走 /v1/draw/result 轮询。
 	const body: any = {
 		model: normalizedModel,
 		prompt: req.prompt,
@@ -4410,34 +4442,89 @@ async function runGeminiBananaImageTask(
 
 	const normalized = normalizeBananaResponse(data);
 	const payload = normalized.payload ?? {};
-	const createdTaskId = (() => {
+	const coerceTaskId = (value: any): string | null => {
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (typeof value === "number" && Number.isFinite(value)) return String(value);
+		return null;
+	};
+	const upstreamTaskId = (() => {
 		const candidates = [
 			(payload as any)?.id,
 			(payload as any)?.task_id,
 			(payload as any)?.taskId,
+			(payload as any)?.request_id,
+			(payload as any)?.requestId,
+			(payload as any)?.pid,
+			(payload as any)?.postId,
+			(payload as any)?.post_id,
 			(payload as any)?.data?.id,
 			(payload as any)?.data?.task_id,
 			(payload as any)?.data?.taskId,
+			(payload as any)?.data?.request_id,
+			(payload as any)?.data?.requestId,
+			(payload as any)?.data?.pid,
+			(payload as any)?.data?.postId,
+			(payload as any)?.data?.post_id,
 			(data as any)?.id,
 			(data as any)?.task_id,
 			(data as any)?.taskId,
+			(data as any)?.request_id,
+			(data as any)?.requestId,
+			(data as any)?.pid,
+			(data as any)?.postId,
+			(data as any)?.post_id,
 			(data as any)?.data?.id,
 			(data as any)?.data?.task_id,
 			(data as any)?.data?.taskId,
+			(data as any)?.data?.request_id,
+			(data as any)?.data?.requestId,
+			(data as any)?.data?.pid,
+			(data as any)?.data?.postId,
+			(data as any)?.data?.post_id,
 		];
 		for (const value of candidates) {
-			if (typeof value === "string" && value.trim()) return value.trim();
+			const coerced = coerceTaskId(value);
+			if (coerced) return coerced;
 		}
-		return "";
+		const events = Array.isArray((normalized as any)?.events)
+			? ((normalized as any).events as any[])
+			: [];
+		for (const event of events) {
+			if (!event || typeof event !== "object") continue;
+			const evCandidates = [
+				(event as any).id,
+				(event as any).task_id,
+				(event as any).taskId,
+				(event as any).request_id,
+				(event as any).requestId,
+				(event as any).pid,
+				(event as any).postId,
+				(event as any).post_id,
+				(event as any).data?.id,
+				(event as any).data?.task_id,
+				(event as any).data?.taskId,
+				(event as any).data?.request_id,
+				(event as any).data?.requestId,
+				(event as any).data?.pid,
+				(event as any).data?.postId,
+				(event as any).data?.post_id,
+			];
+			for (const value of evCandidates) {
+				const coerced = coerceTaskId(value);
+				if (coerced) return coerced;
+			}
+		}
+		return null;
 	})();
 
-	if (!createdTaskId) {
-		throw new AppError("Banana 图像任务创建失败：未返回任务 ID", {
-			status: 502,
-			code: "banana_task_id_missing",
-			details: { upstreamData: payload ?? data ?? null },
-		});
-	}
+	const imageUrls = extractBananaImageUrls(payload);
+	const assets = imageUrls.map((url) =>
+		TaskAssetSchema.parse({
+			type: "image",
+			url,
+			thumbnailUrl: null,
+		}),
+	);
 
 	const statusRaw =
 		(typeof (payload as any)?.status === "string" &&
@@ -4446,8 +4533,18 @@ async function runGeminiBananaImageTask(
 			String((data as any).status).trim()) ||
 		"queued";
 	let creationStatus = normalizeGrsaiDrawTaskStatus(statusRaw);
-	// 创建接口即使返回 succeeded，也统一走轮询以保证耗时统计与前端一致。
-	if (creationStatus === "succeeded") creationStatus = "running";
+	// 没有上游 id 时无法轮询；若没有素材则视为失败。
+	if (!upstreamTaskId && assets.length === 0) {
+		creationStatus = "failed";
+	}
+	// 创建接口即使返回 succeeded，也统一走轮询以保证耗时统计与前端一致（仅在能轮询时生效）。
+	if (upstreamTaskId && creationStatus === "succeeded") {
+		creationStatus = "running";
+	}
+	// 如果上游直接返回图片，则视为已完成（除非明确 failed）。
+	if (assets.length > 0 && creationStatus !== "failed") {
+		creationStatus = "succeeded";
+	}
 
 	const creationProgress = clampProgress(
 		typeof (payload as any)?.progress === "number"
@@ -4461,37 +4558,54 @@ async function runGeminiBananaImageTask(
 				: undefined,
 	);
 
-	const vendorKeyForLog = `grsai-${normalizedModel}`;
-	{
+	if (upstreamTaskId) {
 		const nowIso = new Date().toISOString();
 		try {
 			await upsertVendorTaskRef(
 				c.env.DB,
 				userId,
-				{ kind: "image", taskId: createdTaskId, vendor: vendorKeyForLog },
+				{
+					kind: "image",
+					taskId: localTaskId,
+					vendor: vendorKeyForLog,
+					pid: upstreamTaskId,
+				},
 				nowIso,
 			);
 		} catch (err: any) {
 			console.warn(
-				"[vendor-task-refs] upsert image ref failed",
+				"[vendor-task-refs] upsert image pid failed",
 				err?.message || err,
 			);
 		}
 	}
 
+	const failureReasonRaw =
+		(typeof (payload as any)?.failure_reason === "string" &&
+			String((payload as any).failure_reason).trim()) ||
+		(typeof (payload as any)?.error === "string" &&
+			String((payload as any).error).trim()) ||
+		(typeof (payload as any)?.message === "string" &&
+			String((payload as any).message).trim()) ||
+		(!upstreamTaskId && assets.length === 0
+			? "Banana 图像任务创建失败：上游未返回任务 ID"
+			: null);
+
 	return TaskResultSchema.parse({
-		id: createdTaskId,
+		id: localTaskId,
 		kind: req.kind,
 		status: creationStatus,
-		assets: [],
+		assets: creationStatus === "succeeded" ? assets : [],
 		raw: {
 			provider: "gemini",
 			vendor: vendorKeyForLog,
 			model: normalizedModel,
-			taskId: createdTaskId,
+			taskId: localTaskId,
+			upstreamTaskId: upstreamTaskId ?? null,
 			status: creationStatus,
 			progress: creationProgress ?? null,
 			response: payload ?? data,
+			failureReason: failureReasonRaw,
 			events:
 				normalized.events && normalized.events.length
 					? normalized.events
