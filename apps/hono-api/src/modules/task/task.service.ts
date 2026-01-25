@@ -16,6 +16,10 @@ import {
 import { emitTaskProgress } from "./task.progress";
 import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
+import {
+	getVendorTaskRefByTaskId,
+	upsertVendorTaskRef,
+} from "./vendor-task-refs.repo";
 
 type VendorContext = {
 	baseUrl: string;
@@ -1734,6 +1738,29 @@ export async function runSora2ApiVideoTask(
 		});
 	}
 
+	{
+		const vendorForRef =
+			ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api";
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "video",
+					taskId: createdTaskId,
+					vendor: vendorForRef,
+				},
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert video ref failed",
+				err?.message || err,
+			);
+		}
+	}
+
 	return TaskResultSchema.parse({
 		id: createdTaskId,
 		kind: "text_to_video",
@@ -1763,7 +1790,22 @@ export async function fetchSora2ApiTaskResult(
 			code: "task_id_required",
 		});
 	}
-	const ctx = await resolveVendorContext(c, userId, "sora2api");
+	const vendorForTask = await (async (): Promise<"sora2api" | "grsai"> => {
+		try {
+			const ref = await getVendorTaskRefByTaskId(
+				c.env.DB,
+				userId,
+				"video",
+				taskId,
+			);
+			const raw = (ref?.vendor || "").trim().toLowerCase();
+			return raw === "grsai" ? "grsai" : "sora2api";
+		} catch {
+			return "sora2api";
+		}
+	})();
+
+	const ctx = await resolveVendorContext(c, userId, vendorForTask);
 	if (ctx.viaProxyVendor === "comfly") {
 		return fetchComflySora2VideoTaskResult(
 			c,
@@ -1774,7 +1816,8 @@ export async function fetchSora2ApiTaskResult(
 		);
 	}
 	const baseUrl =
-		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+		normalizeBaseUrl(ctx.baseUrl) ||
+		(vendorForTask === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const apiKey = ctx.apiKey.trim();
@@ -1912,6 +1955,39 @@ export async function fetchSora2ApiTaskResult(
 			}
 			return merged;
 		})();
+
+		const pidForRef = (() => {
+			const candidate =
+				typeof (mergedPayload as any)?.pid === "string"
+					? String((mergedPayload as any).pid).trim()
+					: typeof (mergedPayload as any)?.postId === "string"
+						? String((mergedPayload as any).postId).trim()
+						: typeof (mergedPayload as any)?.post_id === "string"
+							? String((mergedPayload as any).post_id).trim()
+							: "";
+			return candidate ? candidate : null;
+		})();
+		if (pidForRef) {
+			const nowIso = new Date().toISOString();
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{
+						kind: "video",
+						taskId,
+						vendor: vendorForTask,
+						pid: pidForRef,
+					},
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert video pid failed",
+					err?.message || err,
+				);
+			}
+		}
 		const status = mapTaskStatus(payload.status || data?.status);
 		const progress = clampProgress(
 			typeof payload.progress === "number"

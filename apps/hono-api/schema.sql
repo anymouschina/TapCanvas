@@ -285,6 +285,22 @@ CREATE INDEX IF NOT EXISTS idx_video_history_user ON video_generation_histories(
 CREATE INDEX IF NOT EXISTS idx_video_history_task ON video_generation_histories(task_id);
 CREATE INDEX IF NOT EXISTS idx_video_history_provider ON video_generation_histories(provider);
 
+-- Vendor task refs (mapping vendor task ids to pid for follow-up operations)
+CREATE TABLE IF NOT EXISTS vendor_task_refs (
+	user_id TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	task_id TEXT NOT NULL,
+	vendor TEXT NOT NULL,
+	pid TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, kind, task_id),
+	FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_task_refs_user_kind_pid ON vendor_task_refs(user_id, kind, pid);
+CREATE INDEX IF NOT EXISTS idx_vendor_task_refs_user_kind_vendor ON vendor_task_refs(user_id, kind, vendor);
+
 -- Saved Sora characters (local cache for @mentions, e.g. comfly character creation)
 CREATE TABLE IF NOT EXISTS sora_saved_characters (
 	user_id TEXT NOT NULL,

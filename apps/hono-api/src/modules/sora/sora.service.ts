@@ -11,6 +11,7 @@ import {
 	searchSavedSoraCharacters,
 	upsertSavedSoraCharacter,
 } from "./sora.saved-characters.repo";
+import { upsertVendorTaskRef } from "../task/vendor-task-refs.repo";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -2134,10 +2135,52 @@ export async function uploadCharacterViaSora2Api(
 	const characterId = extractCharacterId(result.payload);
 	const status = characterId ? "succeeded" : result.status;
 	const progress = characterId ? 100 : result.progress;
+	const results = characterId
+		? [{ character_id: characterId }]
+		: Array.isArray((result.payload as any)?.results)
+			? (result.payload as any).results
+			: [];
+	const failure_reason =
+		(typeof (result.payload as any)?.failure_reason === "string" &&
+			(result.payload as any).failure_reason.trim()) ||
+		(typeof (result.payload as any)?.failureReason === "string" &&
+			(result.payload as any).failureReason.trim()) ||
+		null;
+	const error =
+		(typeof (result.payload as any)?.error === "string" &&
+			(result.payload as any).error.trim()) ||
+		(typeof (result.payload as any)?.message === "string" &&
+			(result.payload as any).message.trim()) ||
+		(typeof (result.payload as any)?.msg === "string" &&
+			(result.payload as any).msg.trim()) ||
+		null;
+	{
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "character",
+					taskId: result.id,
+					vendor,
+				},
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert character upload ref failed",
+				err?.message || err,
+			);
+		}
+	}
 	return {
 		...result,
 		status,
 		progress,
+		results,
+		failure_reason,
+		error,
 		characterId: characterId || null,
 	};
 }
@@ -2173,10 +2216,53 @@ export async function createCharacterFromPidViaSora2Api(
 	const characterId = extractCharacterId(result.payload);
 	const status = characterId ? "succeeded" : result.status;
 	const progress = characterId ? 100 : result.progress;
+	const results = characterId
+		? [{ character_id: characterId }]
+		: Array.isArray((result.payload as any)?.results)
+			? (result.payload as any).results
+			: [];
+	const failure_reason =
+		(typeof (result.payload as any)?.failure_reason === "string" &&
+			(result.payload as any).failure_reason.trim()) ||
+		(typeof (result.payload as any)?.failureReason === "string" &&
+			(result.payload as any).failureReason.trim()) ||
+		null;
+	const error =
+		(typeof (result.payload as any)?.error === "string" &&
+			(result.payload as any).error.trim()) ||
+		(typeof (result.payload as any)?.message === "string" &&
+			(result.payload as any).message.trim()) ||
+		(typeof (result.payload as any)?.msg === "string" &&
+			(result.payload as any).msg.trim()) ||
+		null;
+	{
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "character",
+					taskId: result.id,
+					vendor,
+					pid: input.pid,
+				},
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert character pid ref failed",
+				err?.message || err,
+			);
+		}
+	}
 	return {
 		...result,
 		status,
 		progress,
+		results,
+		failure_reason,
+		error,
 		characterId: characterId || null,
 	};
 }
@@ -2185,57 +2271,119 @@ export async function fetchSora2ApiCharacterResult(
 	c: AppContext,
 	userId: string,
 	taskId: string,
+	vendor: "sora2api" | "grsai" = "sora2api",
 ) {
-	const ctx = await resolveVendorContext(c, userId, "sora2api");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const ctx = await resolveVendorContext(c, userId, vendor);
+	const baseUrl =
+		normalizeBaseUrl(ctx.baseUrl) ||
+		(vendor === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 sora2api API Key", {
+		throw new AppError(`未配置 ${vendor} API Key`, {
 			status: 400,
 			code: "sora2api_api_key_missing",
 		});
 	}
 
-	const endpoint = `${baseUrl}/v1/video/tasks/${encodeURIComponent(taskId.trim())}`;
+	const endpoints: Array<{
+		url: string;
+		method: "GET" | "POST";
+		body?: any;
+	}> =
+		vendor === "grsai"
+			? [
+					{
+						url: `${baseUrl}/v1/draw/result`,
+						method: "POST",
+						body: JSON.stringify({ id: taskId.trim() }),
+					},
+					{
+						url: `${baseUrl}/v1/video/tasks/${encodeURIComponent(
+							taskId.trim(),
+						)}`,
+						method: "GET",
+					},
+				]
+			: [
+					{
+						url: `${baseUrl}/v1/video/tasks/${encodeURIComponent(
+							taskId.trim(),
+						)}`,
+						method: "GET",
+					},
+				];
 
-	let res: Response;
+	let lastError: {
+		status: number;
+		data: any;
+		message: string;
+		endpoint?: string;
+	} | null = null;
 	let data: any = null;
-	try {
-		res = await fetchWithHttpDebugLog(
-			c,
-			endpoint,
-			{
-				method: "GET",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-				},
-			},
-			{ tag: "sora2api:characterResult" },
-		);
+
+	for (const endpoint of endpoints) {
+		let res: Response;
+		data = null;
 		try {
-			data = await res.json();
-		} catch {
-			data = null;
+			res = await fetchWithHttpDebugLog(
+				c,
+				endpoint.url,
+				{
+					method: endpoint.method,
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						...(endpoint.method === "POST"
+							? { "Content-Type": "application/json" }
+							: {}),
+					},
+					body: endpoint.body,
+				},
+				{ tag: `${vendor}:characterResult` },
+			);
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (error: any) {
+			lastError = {
+				status: 502,
+				data: null,
+				message: error?.message ?? String(error),
+				endpoint: endpoint.url,
+			};
+			continue;
 		}
-	} catch (error: any) {
-		throw new AppError("sora2api 结果查询失败", {
-			status: 502,
-			code: "sora2api_result_failed",
-			details: { message: error?.message ?? String(error) },
-		});
+
+		if (res.status < 200 || res.status >= 300) {
+			lastError = {
+				status: res.status,
+				data,
+				message:
+					(data &&
+						(data.error?.message ||
+							data.message ||
+							data.error)) ||
+					`${vendor} 任务查询失败: ${res.status}`,
+				endpoint: endpoint.url,
+			};
+			continue;
+		}
+
+		lastError = null;
+		break;
 	}
 
-	if (res.status < 200 || res.status >= 300) {
-		const msg =
-			(data &&
-				(data.error?.message ||
-					data.message ||
-					data.error)) ||
-			`sora2api 任务查询失败: ${res.status}`;
-		throw new AppError(msg, {
-			status: res.status,
+	if (lastError) {
+		throw new AppError(lastError.message || `${vendor} 结果查询失败`, {
+			status: lastError.status ?? 502,
 			code: "sora2api_result_failed",
-			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			details: {
+				upstreamStatus: lastError.status ?? null,
+				upstreamData: lastError.data ?? null,
+				endpointTried: lastError.endpoint ?? null,
+				vendor,
+			},
 		});
 	}
 
@@ -2249,11 +2397,33 @@ export async function fetchSora2ApiCharacterResult(
 	const characterId = extractCharacterId(payload);
 	const finalStatus = characterId ? "succeeded" : status;
 	const finalProgress = characterId ? 100 : progress;
+	const results = characterId
+		? [{ character_id: characterId }]
+		: Array.isArray((payload as any)?.results)
+			? (payload as any).results
+			: [];
+	const failure_reason =
+		(typeof (payload as any)?.failure_reason === "string" &&
+			(payload as any).failure_reason.trim()) ||
+		(typeof (payload as any)?.failureReason === "string" &&
+			(payload as any).failureReason.trim()) ||
+		null;
+	const error =
+		(typeof (payload as any)?.error === "string" &&
+			(payload as any).error.trim()) ||
+		(typeof (payload as any)?.message === "string" &&
+			(payload as any).message.trim()) ||
+		(typeof (payload as any)?.msg === "string" &&
+			(payload as any).msg.trim()) ||
+		null;
 
 	return {
 		id: payload.id,
 		status: finalStatus,
 		progress: finalProgress,
+		results,
+		failure_reason,
+		error,
 		characterId,
 		raw: payload,
 	};
