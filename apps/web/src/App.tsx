@@ -44,7 +44,6 @@ import { CharacterCreatorModal } from './ui/CharacterCreatorModal'
 import { VideoTrimModalHost } from './ui/VideoTrimModalHost'
 import { WebCutVideoEditModalHost } from './ui/WebCutVideoEditModalHost'
 import ModelPanel from './ui/ModelPanel'
-import ThirdPartyApiPanel from './ui/ThirdPartyApiPanel'
 import HistoryPanel from './ui/HistoryPanel'
 import ExecutionPanel from './ui/ExecutionPanel'
 import ParamModal from './ui/ParamModal'
@@ -1103,7 +1102,6 @@ function CanvasApp(): JSX.Element {
       <AssetPanel />
       <TapshowPanel />
       <ModelPanel />
-      <ThirdPartyApiPanel />
       <HistoryPanel />
       <ExecutionPanel
         onOpenLog={(id) => {

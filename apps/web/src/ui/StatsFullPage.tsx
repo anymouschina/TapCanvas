@@ -6,6 +6,7 @@ import { useIsAdmin } from '../auth/isAdmin'
 import { getDailyActiveUsers, getStats, getVendorApiCallStats, type VendorApiCallStatDto } from '../api/server'
 import { ToastHost, toast } from './toast'
 import { $ } from '../canvas/i18n'
+import StatsSystemManagement from './StatsSystemManagement'
 
 function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   if (!values.length) return null
@@ -46,6 +47,8 @@ export default function StatsFullPage(): JSX.Element {
   const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
+
+  const [section, setSection] = React.useState<'overview' | 'system'>('overview')
 
   const [loading, setLoading] = React.useState(false)
   const [stats, setStats] = React.useState<{ onlineUsers: number; totalUsers: number; newUsersToday: number } | null>(null)
@@ -169,10 +172,25 @@ export default function StatsFullPage(): JSX.Element {
             <Text className="stats-page-subtitle" size="sm" c="dimmed" maw={720}>
               {$('在线/新增/日活统计（UTC 口径）。')}
             </Text>
+            <SegmentedControl
+              className="stats-page-section-control"
+              size="xs"
+              radius="xl"
+              value={section}
+              onChange={(v) => setSection(v as any)}
+              data={[
+                { value: 'overview', label: '概览' },
+                { value: 'system', label: '系统管理' },
+              ]}
+            />
           </Stack>
         </Box>
 
-        {loading && !stats ? (
+        {section === 'system' ? (
+          <Stack className="stats-page-system" gap="md" pb="xl">
+            <StatsSystemManagement className="stats-page-system-management" />
+          </Stack>
+        ) : loading && !stats ? (
           <Center className="stats-page-loading" mih={260}>
             <Stack className="stats-page-loading-stack" gap={8} align="center">
               <Loader className="stats-page-loading-icon" size="sm" />
