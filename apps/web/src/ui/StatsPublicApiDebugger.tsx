@@ -85,7 +85,12 @@ export default function StatsPublicApiDebugger({
   const [apiKey, setApiKey] = React.useState(() => readStoredApiKey())
   const [apiKeyVisible, setApiKeyVisible] = React.useState(false)
   const [endpointKind, setEndpointKind] = React.useState<DebugEndpointKind>('draw')
-  const [bodyText, setBodyText] = React.useState(() => JSON.stringify(templateFor('draw'), null, 2))
+  const [bodyByKind, setBodyByKind] = React.useState<Record<DebugEndpointKind, string>>(() => ({
+    draw: JSON.stringify(templateFor('draw'), null, 2),
+    video: JSON.stringify(templateFor('video'), null, 2),
+    taskResult: JSON.stringify(templateFor('taskResult'), null, 2),
+    chat: JSON.stringify(templateFor('chat'), null, 2),
+  }))
   const [loading, setLoading] = React.useState(false)
   const [responseText, setResponseText] = React.useState<string>('')
   const [responseMeta, setResponseMeta] = React.useState<{ status: number; ok: boolean; tookMs: number } | null>(null)
@@ -105,9 +110,13 @@ export default function StatsPublicApiDebugger({
   )
 
   const currentUrl = endpoints[endpointKind]
+  const bodyText = bodyByKind[endpointKind]
 
   const resetTemplate = React.useCallback(() => {
-    setBodyText(JSON.stringify(templateFor(endpointKind), null, 2))
+    setBodyByKind((prev) => ({
+      ...prev,
+      [endpointKind]: JSON.stringify(templateFor(endpointKind), null, 2),
+    }))
     toast('已重置模板', 'success')
   }, [endpointKind])
 
@@ -254,7 +263,10 @@ export default function StatsPublicApiDebugger({
             className="stats-public-debugger-request"
             label="请求 JSON"
             value={bodyText}
-            onChange={(e) => setBodyText(e.currentTarget.value)}
+            onChange={(e) => {
+              const next = e.currentTarget.value
+              setBodyByKind((prev) => ({ ...prev, [endpointKind]: next }))
+            }}
             minRows={8}
             autosize
             styles={{ input: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' } }}
