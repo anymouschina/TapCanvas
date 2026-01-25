@@ -35,6 +35,9 @@ TapCanvas 项目主要针对 Sora 2 做了专门的画布能力优化，支持�
 - **Nano Banana 三档模型**：默认图像节点已经接入 Nano Banana / Fast / Pro 模型，并默认使用 Nano Banana Pro，可通过同一个表单拖拽提示词、参考图或整段剧情，直接生成分镜垫图、角色定妆照与高质量文生图/图生图结果。
 - **Sora 2 + Veo 3.1 双引擎**：视频节点即插即用 Sora 2 与 Veo3.1 Fast/Pro，支持 Remix、参考第一帧/最后一帧、复用 Storyboard 片段，让多镜头视频在画布内一气呵成。
 - **图生图链路**：图像节点支持上传参考图、抽帧、资产拖拽，任何生成的图片都可以作为下一次调用的输入，实现文本→图像→图像（图生图）→视频的完整闭环。
+- **视频抽帧拖拽生成参考图**：支持从视频抽帧预览里直接拖拽画面到画布，用于图生图/参考图快速起稿。
+
+![视频抽帧拖拽生成参考图](assets/video-to-image.jpg)
 - **GRSAI 中转站适配**：内置 grsai 代理配置面板，可以一次性填入 Host 与 API Key，同步展示积分与可用模型状态，将 Nano Banana、Sora 2、Veo 3 等请求稳定转发到海外节点或国内直连。
 - **Comfly 代理接口**：新增 comfly 代理配置，可按需将 Veo/Sora2（/v2/videos/generations）、Nano Banana（Gemini /v1beta/models/...:generateContent）与 Hailuo（MiniMax /minimax/v1/...）走代理接口调用。
 
