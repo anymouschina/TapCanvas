@@ -328,6 +328,16 @@ function isGrsaiBaseUrl(url: string): boolean {
 	return val.includes("grsai") || val.includes("sora2api");
 }
 
+function isApimartBaseUrl(url: string): boolean {
+	const val = (url || "").toLowerCase();
+	return val.includes("apimart.ai");
+}
+
+function normalizeApimartBaseUrl(url: string): string {
+	const normalized = normalizeBaseUrl(url);
+	return normalized.replace(/\/v1$/i, "");
+}
+
 function expandProxyVendorKeys(vendor: string): string[] {
 	const v = normalizeVendorKey(vendor);
 	const keys = [v];
@@ -1831,15 +1841,19 @@ export async function runSora2ApiVideoTask(
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
+	const isApimartBase = isApimartBaseUrl(baseUrl);
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const isComflyProxy = ctx.viaProxyVendor === "comfly";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 sora2api API Key", {
-			status: 400,
-			code: "sora2api_api_key_missing",
-		});
+		throw new AppError(
+			isApimartBase ? "未配置 apimart API Key" : "未配置 sora2api API Key",
+			{
+				status: 400,
+				code: "sora2api_api_key_missing",
+			},
+		);
 	}
 
 	const extras = (req.extras || {}) as Record<string, any>;
@@ -1947,6 +1961,131 @@ export async function runSora2ApiVideoTask(
 				result,
 			});
 		}
+		return result;
+	}
+
+	if (isApimartBase) {
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		const modelForApimart = (() => {
+			const raw = (modelKeyRaw || "").trim().toLowerCase();
+			if (raw === "sora-2-pro") return "sora-2-pro";
+			return "sora-2";
+		})();
+
+		const imageUrls = (() => {
+			const urls: string[] = [];
+			const pushAll = (value: any) => {
+				const arr = Array.isArray(value) ? value : [value];
+				for (const item of arr) {
+					if (typeof item === "string" && item.trim()) urls.push(item.trim());
+				}
+			};
+			pushAll((extras as any).image_urls);
+			pushAll((extras as any).imageUrls);
+			pushAll((extras as any).urls);
+			if (referenceUrl) urls.push(referenceUrl);
+			return Array.from(new Set(urls)).slice(0, 14);
+		})();
+
+		const body: Record<string, any> = {
+			model: modelForApimart,
+			prompt: req.prompt,
+			duration: durationSeconds,
+			aspect_ratio: aspectRatio,
+			...(typeof extras.private === "boolean" ? { private: extras.private } : {}),
+			...(typeof extras.watermark === "boolean"
+				? { watermark: extras.watermark }
+				: {}),
+			...(typeof extras.thumbnail === "boolean"
+				? { thumbnail: extras.thumbnail }
+				: {}),
+			...(imageUrls.length ? { image_urls: imageUrls } : {}),
+		};
+
+		const data = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/videos/generations`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof data?.code === "number" && data.code !== 200) {
+			throw new AppError(
+				(data?.error?.message ||
+					data?.message ||
+					`apimart 视频生成失败: code ${data.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_request_failed",
+					details: { upstreamData: data ?? null, requestBody: body },
+				},
+			);
+		}
+
+		const first = Array.isArray(data?.data) ? data.data[0] : null;
+		const createdTaskId =
+			(typeof first?.task_id === "string" && first.task_id.trim()) ||
+			(typeof first?.taskId === "string" && first.taskId.trim()) ||
+			null;
+		if (!createdTaskId) {
+			throw new AppError("apimart 未返回 task_id", {
+				status: 502,
+				code: "apimart_task_id_missing",
+				details: { upstreamData: data ?? null, requestBody: body },
+			});
+		}
+
+		{
+			const nowIso = new Date().toISOString();
+			const vendorForRef = `apimart-${modelForApimart}`;
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{
+						kind: "video",
+						taskId: createdTaskId,
+						vendor: vendorForRef,
+					},
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert apimart video ref failed",
+					err?.message || err,
+				);
+			}
+		}
+
+		const vendorForLog = `apimart-${modelForApimart}`;
+		const result = TaskResultSchema.parse({
+			id: createdTaskId,
+			kind: "text_to_video",
+			status: "queued",
+			assets: [],
+			raw: {
+				provider: "apimart",
+				model: modelForApimart,
+				taskId: createdTaskId,
+				status: "queued",
+				request: body,
+				response: data ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind: "text_to_video",
+			result,
+		});
 		return result;
 	}
 
@@ -2265,12 +2404,126 @@ export async function fetchSora2ApiTaskResult(
 		(vendorForTask === "grsai" ? "https://api.grsai.com" : "http://localhost:8000");
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
+	const isApimartBase = isApimartBaseUrl(baseUrl);
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 sora2api API Key", {
-			status: 400,
-			code: "sora2api_api_key_missing",
+		throw new AppError(
+			isApimartBase ? "未配置 apimart API Key" : "未配置 sora2api API Key",
+			{
+				status: 400,
+				code: "sora2api_api_key_missing",
+			},
+		);
+	}
+
+	if (isApimartBase) {
+		const wrapper = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/tasks/${encodeURIComponent(taskId.trim())}?language=zh`,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${apiKey}` },
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof wrapper?.code === "number" && wrapper.code !== 200) {
+			throw new AppError(
+				(wrapper?.error?.message ||
+					wrapper?.message ||
+					`apimart 任务查询失败: code ${wrapper.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_result_failed",
+					details: { upstreamData: wrapper ?? null },
+				},
+			);
+		}
+
+		const payload =
+			wrapper && typeof wrapper === "object" && wrapper.data
+				? wrapper.data
+				: wrapper ?? {};
+		let status = normalizeApimartTaskStatus(payload?.status);
+		const progress = clampProgress(
+			typeof payload?.progress === "number" ? payload.progress : undefined,
+		);
+
+		const urls = extractApimartMediaUrls(payload, "videos");
+		const thumbnailUrl = extractApimartThumbnailUrl(payload);
+		if (status === "succeeded" && urls.length === 0) {
+			status = "running";
+		}
+
+		if (status === "succeeded" && urls.length > 0) {
+			const asset = TaskAssetSchema.parse({
+				type: "video",
+				url: urls[0]!,
+				thumbnailUrl: thumbnailUrl,
+			});
+
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt:
+						typeof promptFromClient === "string" &&
+						promptFromClient.trim()
+							? promptFromClient.trim()
+							: null,
+					vendor: vendorForLog,
+					taskId: taskId ?? null,
+				},
+			});
+
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "succeeded",
+				assets: hostedAssets,
+				raw: {
+					provider: "apimart",
+					response: payload,
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind: "text_to_video",
+				result,
+			});
+			return result;
+		}
+
+		const failureReasonRaw =
+			(typeof payload?.error?.message === "string" &&
+				payload.error.message.trim()) ||
+			(typeof wrapper?.error?.message === "string" &&
+				wrapper.error.message.trim()) ||
+			null;
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status,
+			assets: [],
+			raw: {
+				provider: "apimart",
+				response: payload,
+				progress,
+				failureReason: failureReasonRaw,
+				wrapper: wrapper ?? null,
+			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	const endpoints: Array<{
@@ -2627,6 +2880,56 @@ function normalizeGrsaiDrawTaskStatus(value: unknown): TaskStatus {
 	return "running";
 }
 
+function normalizeApimartTaskStatus(value: unknown): TaskStatus {
+	if (typeof value !== "string") return "running";
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) return "running";
+	if (normalized === "submitted" || normalized === "pending") return "queued";
+	if (normalized === "processing") return "running";
+	if (normalized === "completed") return "succeeded";
+	if (normalized === "failed" || normalized === "cancelled") return "failed";
+	return "running";
+}
+
+function extractApimartMediaUrls(
+	payload: any,
+	key: "images" | "videos",
+): string[] {
+	const result = payload && typeof payload === "object" ? payload.result : null;
+	const items = Array.isArray(result?.[key]) ? result[key] : [];
+	const urls: string[] = [];
+	for (const item of items) {
+		const value = (item as any)?.url;
+		if (typeof value === "string" && value.trim()) {
+			urls.push(value.trim());
+			continue;
+		}
+		if (Array.isArray(value)) {
+			for (const entry of value) {
+				if (typeof entry === "string" && entry.trim()) {
+					urls.push(entry.trim());
+				}
+			}
+		}
+	}
+	return Array.from(new Set(urls));
+}
+
+function extractApimartThumbnailUrl(payload: any): string | null {
+	if (!payload || typeof payload !== "object") return null;
+	const result = (payload as any).result;
+	const candidates = [
+		result?.thumbnail_url,
+		result?.thumbnailUrl,
+		(payload as any).thumbnail_url,
+		(payload as any).thumbnailUrl,
+	];
+	for (const value of candidates) {
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return null;
+}
+
 export async function fetchGrsaiDrawTaskResult(
 	c: AppContext,
 	userId: string,
@@ -2653,7 +2956,7 @@ export async function fetchGrsaiDrawTaskResult(
 		}
 	})();
 
-	const vendorForLog =
+	let vendorForLog =
 		(typeof refForLog?.vendor === "string" && refForLog.vendor.trim()) ||
 		"grsai";
 	const taskKind: TaskRequestDto["kind"] =
@@ -2694,12 +2997,120 @@ export async function fetchGrsaiDrawTaskResult(
 	}
 
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+	const isApimartBase = isApimartBaseUrl(baseUrl);
+	if (vendorForLog === "grsai" && isApimartBase) {
+		vendorForLog = "apimart";
+	}
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 grsai API Key", {
+		throw new AppError(
+			isApimartBase ? "未配置 apimart API Key" : "未配置 grsai API Key",
+			{
 			status: 400,
 			code: "banana_api_key_missing",
+			},
+		);
+	}
+
+	if (isApimartBase) {
+		const wrapper = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/tasks/${encodeURIComponent(
+				upstreamTaskId,
+			)}?language=zh`,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${apiKey}` },
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof wrapper?.code === "number" && wrapper.code !== 200) {
+			throw new AppError(
+				(wrapper?.error?.message ||
+					wrapper?.message ||
+					`apimart 任务查询失败: code ${wrapper.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_result_failed",
+					details: { upstreamData: wrapper ?? null },
+				},
+			);
+		}
+
+		const payload =
+			wrapper && typeof wrapper === "object" && wrapper.data
+				? wrapper.data
+				: wrapper ?? {};
+		let status = normalizeApimartTaskStatus(payload?.status);
+		const progress = clampProgress(
+			typeof payload?.progress === "number" ? payload.progress : undefined,
+		);
+
+		const urls = extractApimartMediaUrls(payload, "images");
+		if (urls.length > 0 && status !== "failed") {
+			status = "succeeded";
+		}
+		if (status === "succeeded" && urls.length === 0) {
+			status = "running";
+		}
+
+		const failureReasonRaw =
+			(typeof payload?.error?.message === "string" &&
+				payload.error.message.trim()) ||
+			(typeof payload?.error?.type === "string" &&
+				payload.error.type.trim()) ||
+			(typeof wrapper?.error?.message === "string" &&
+				wrapper.error.message.trim()) ||
+			null;
+
+		let assets: Array<ReturnType<typeof TaskAssetSchema.parse>> = [];
+		if (status === "succeeded" && urls.length > 0) {
+			assets = urls.map((url) =>
+				TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+			);
+			const promptForAsset =
+				(typeof options?.promptFromClient === "string" &&
+					options.promptFromClient.trim()) ||
+				null;
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets,
+				meta: {
+					taskKind,
+					prompt: promptForAsset,
+					vendor: vendorForLog,
+					taskId: taskId ?? null,
+				},
+			});
+			assets = hostedAssets;
+		}
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: taskKind,
+			status,
+			assets,
+			raw: {
+				provider: "apimart",
+				vendor: vendorForLog,
+				upstreamTaskId,
+				response: payload,
+				progress,
+				failureReason: failureReasonRaw,
+				wrapper: wrapper ?? null,
+			},
 		});
+
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+
+		return result;
 	}
 
 	let res: Response;
@@ -4087,7 +4498,7 @@ async function runOpenAiTextTask(
 					req,
 					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
 				)
-			: pickSystemPrompt(req, "");
+			: pickSystemPrompt(req, "请用中文回答。");
 
 	const temperature = normalizeTemperature(extras.temperature, 0.7);
 
@@ -4272,7 +4683,7 @@ async function runGeminiTextTask(
 					req,
 					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
 				)
-			: pickSystemPrompt(req, "");
+			: pickSystemPrompt(req, "请用中文回答。");
 
 	const contents: any[] = [];
 	if (systemPrompt) {
@@ -4356,7 +4767,21 @@ function normalizeBananaModelKey(modelKey?: string | null): string | null {
 	if (!modelKey) return null;
 	const trimmed = modelKey.trim();
 	if (!trimmed) return null;
-	return trimmed.startsWith("models/") ? trimmed.slice(7) : trimmed;
+	const raw = trimmed.startsWith("models/") ? trimmed.slice(7) : trimmed;
+	const normalized = raw.trim().toLowerCase();
+	if (!normalized) return null;
+	// Backward compatibility: "nanobanana-fast" -> "nano-banana-fast"
+	if (normalized === "nanobanana") return "nano-banana";
+	if (normalized.startsWith("nanobanana-")) {
+		return `nano-banana-${normalized.slice("nanobanana-".length)}`;
+	}
+	return normalized;
+}
+
+function mapBananaModelToApimartModelKey(model: string): string {
+	const m = (model || "").trim().toLowerCase();
+	if (m === "nano-banana-pro") return "gemini-3-pro-image-preview";
+	return "gemini-2.5-flash-image-preview";
 }
 
 function parseBananaSseEvents(raw: string): any[] {
@@ -4521,12 +4946,18 @@ async function runGeminiBananaImageTask(
 	req: TaskRequestDto,
 ): Promise<TaskResult> {
 	const ctx = await resolveVendorContext(c, userId, "gemini");
+	const baseUrl =
+		normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+	const isApimartBase = isApimartBaseUrl(baseUrl);
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 grsai API Key", {
-			status: 400,
-			code: "banana_api_key_missing",
-		});
+		throw new AppError(
+			isApimartBase ? "未配置 apimart API Key" : "未配置 grsai API Key",
+			{
+				status: 400,
+				code: "banana_api_key_missing",
+			},
+		);
 	}
 
 	const extras = (req.extras || {}) as Record<string, any>;
@@ -4543,13 +4974,15 @@ async function runGeminiBananaImageTask(
 		});
 	}
 
-	const baseUrl =
-		normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-	const endpoint = `${baseUrl}/v1/draw/nano-banana`;
+	const endpoint = isApimartBase
+		? `${normalizeApimartBaseUrl(baseUrl)}/v1/images/generations`
+		: `${baseUrl}/v1/draw/nano-banana`;
 	const vendorKeyForLog =
 		ctx.viaProxyVendor === "comfly"
 			? `comfly-${normalizedModel}`
-			: `grsai-${normalizedModel}`;
+			: isApimartBase
+				? `apimart-${mapBananaModelToApimartModelKey(normalizedModel)}`
+				: `grsai-${normalizedModel}`;
 	const localTaskId = `banana-${Date.now().toString(36)}-${crypto
 		.randomUUID()
 		.slice(0, 8)}`;
@@ -4722,6 +5155,126 @@ async function runGeminiBananaImageTask(
 				},
 			});
 		}
+
+	if (isApimartBase) {
+		const model = mapBananaModelToApimartModelKey(normalizedModel);
+		const resolvedAspect = (() => {
+			const raw =
+				typeof aspectRatio === "string" && aspectRatio.trim()
+					? aspectRatio.trim()
+					: "";
+			if (!raw || raw.toLowerCase() === "auto") return null;
+			const allowed = new Set([
+				"4:3",
+				"3:4",
+				"16:9",
+				"9:16",
+				"2:3",
+				"3:2",
+				"1:1",
+				"4:5",
+				"5:4",
+				"21:9",
+			]);
+			return allowed.has(raw) ? raw : null;
+		})();
+		const resolution =
+			typeof extras.resolution === "string" && extras.resolution.trim()
+				? extras.resolution.trim()
+				: typeof (extras as any).imageResolution === "string" &&
+						String((extras as any).imageResolution).trim()
+					? String((extras as any).imageResolution).trim()
+					: null;
+
+		const body: Record<string, any> = {
+			model,
+			prompt: req.prompt,
+			n: 1,
+			...(resolvedAspect ? { size: resolvedAspect } : {}),
+			...(resolution ? { resolution } : {}),
+			...(referenceImages.length
+				? { image_urls: referenceImages.slice(0, 14) }
+				: {}),
+		};
+
+		const data = await callJsonApi(
+			c,
+			endpoint,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof data?.code === "number" && data.code !== 200) {
+			throw new AppError(
+				(data?.error?.message ||
+					data?.message ||
+					`apimart 图像生成失败: code ${data.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_request_failed",
+					details: { upstreamData: data ?? null, requestBody: body },
+				},
+			);
+		}
+
+		const first = Array.isArray(data?.data) ? data.data[0] : null;
+		const upstreamTaskId =
+			(typeof first?.task_id === "string" && first.task_id.trim()) ||
+			(typeof first?.taskId === "string" && first.taskId.trim()) ||
+			null;
+		if (!upstreamTaskId) {
+			throw new AppError("apimart 未返回 task_id", {
+				status: 502,
+				code: "apimart_task_id_missing",
+				details: { upstreamData: data ?? null, requestBody: body },
+			});
+		}
+
+		{
+			const nowIso = new Date().toISOString();
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{
+						kind: "image",
+						taskId: localTaskId,
+						vendor: vendorKeyForLog,
+						pid: upstreamTaskId,
+					},
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert apimart image pid failed",
+					err?.message || err,
+				);
+			}
+		}
+
+		return TaskResultSchema.parse({
+			id: localTaskId,
+			kind: req.kind,
+			status: "queued",
+			assets: [],
+			raw: {
+				provider: "apimart",
+				vendor: vendorKeyForLog,
+				model,
+				taskId: localTaskId,
+				upstreamTaskId,
+				request: body,
+				response: data ?? null,
+			},
+		});
+	}
 
 	const coerceTaskId = (value: any): string | null => {
 		if (typeof value === "string" && value.trim()) return value.trim();
@@ -5623,7 +6176,7 @@ async function runAnthropicTextTask(
 					req,
 					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
 				)
-			: pickSystemPrompt(req, "");
+			: pickSystemPrompt(req, "请用中文回答。");
 
 	const messages = [
 		{
