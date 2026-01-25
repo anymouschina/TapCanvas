@@ -127,38 +127,9 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       }
     }
 
-    const hasRequestVideoFrameCallback =
-      typeof (video as any).requestVideoFrameCallback === 'function'
-    if (hasRequestVideoFrameCallback) {
-      await new Promise<void>((resolve, reject) => {
-        let done = false
-        const timeout = window.setTimeout(() => {
-          if (done) return
-          done = true
-          cleanup()
-          resolve()
-        }, 1200)
-        const onError = () => {
-          if (done) return
-          done = true
-          cleanup()
-          reject(new Error('Seek failed'))
-        }
-        const cleanup = () => {
-          window.clearTimeout(timeout)
-          video.removeEventListener('error', onError)
-        }
-        video.addEventListener('error', onError, { once: true })
-        ;(video as any).requestVideoFrameCallback(() => {
-          if (done) return
-          done = true
-          cleanup()
-          resolve()
-        })
-        run()
-      })
-      return
-    }
+    const hasRequestVideoFrameCallback = typeof (video as any).requestVideoFrameCallback === 'function'
+    const epsilon = 0.01
+    const isSameTime = Math.abs((video.currentTime || 0) - time) < epsilon
 
     await new Promise<void>((resolve, reject) => {
       let done = false
@@ -166,9 +137,15 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
         if (done) return
         done = true
         cleanup()
-        resolve()
-      }, 1200)
-      const onSeeked = () => {
+        reject(new Error('Seek timeout'))
+      }, 2500)
+      const cleanup = () => {
+        window.clearTimeout(timeout)
+        video.removeEventListener('seeked', onSeeked)
+        video.removeEventListener('loadeddata', onLoadedData)
+        video.removeEventListener('error', onError)
+      }
+      const finish = () => {
         if (done) return
         done = true
         cleanup()
@@ -180,14 +157,38 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
         cleanup()
         reject(new Error('Seek failed'))
       }
-      const cleanup = () => {
-        window.clearTimeout(timeout)
-        video.removeEventListener('seeked', onSeeked)
-        video.removeEventListener('error', onError)
+      const onLoadedData = () => {
+        if (!isSameTime) return
+        if (done) return
+        finish()
       }
+      const onSeeked = () => {
+        if (done) return
+        if (!hasRequestVideoFrameCallback) {
+          finish()
+          return
+        }
+        ;(video as any).requestVideoFrameCallback(() => {
+          finish()
+        })
+      }
+
       video.addEventListener('seeked', onSeeked, { once: true })
+      video.addEventListener('loadeddata', onLoadedData, { once: true })
       video.addEventListener('error', onError, { once: true })
+
       run()
+
+      // Some browsers don't fire `seeked` when seeking to the current time (e.g. 0s on first load).
+      if (isSameTime) {
+        if (hasRequestVideoFrameCallback) {
+          ;(video as any).requestVideoFrameCallback(() => {
+            finish()
+          })
+        } else if (video.readyState >= 2) {
+          finish()
+        }
+      }
     })
   }
 
@@ -334,9 +335,11 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       return
     }
 
+    const token = videoTokenRef.current
+
     if (!videoReady) {
       try {
-        await waitForVideoMetadata(v, videoTokenRef.current)
+        await waitForVideoMetadata(v, token)
         const d = Number(v.duration || 0)
         if (Number.isFinite(d) && d > 0) setVideoDuration(d)
         setVideoReady(true)
@@ -345,8 +348,20 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
       }
     }
 
-    const startAt = currentTime < trimStart || currentTime > trimEnd ? trimStart : currentTime
-    requestSeek(startAt)
+    const rawStartAt = currentTime < trimStart || currentTime >= trimEnd ? trimStart : currentTime
+    const startAt = Math.min(trimEnd, Math.max(trimStart, rawStartAt))
+    setCurrentTime(startAt)
+    seekQueueRef.current.pending = startAt
+    try {
+      await waitForVideoMetadata(v, token)
+      await seekVideoFrame(v, startAt, token)
+    } catch {
+      try {
+        v.currentTime = startAt
+      } catch {
+        // ignore
+      }
+    }
 
     try {
       await v.play()
