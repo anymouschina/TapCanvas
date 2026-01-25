@@ -4,6 +4,7 @@ import { IconCheck, IconCopy, IconPencil, IconPlus, IconRefresh, IconTrash } fro
 import { API_BASE, createApiKey, deleteApiKey, listApiKeys, listTaskLogs, updateApiKey, type ApiKeyDto, type VendorCallLogDto, type VendorCallLogStatus } from '../api/server'
 import { toast } from './toast'
 import StatsVendorChannels from './StatsVendorChannels'
+import StatsPublicApiDebugger from './StatsPublicApiDebugger'
 
 function parseOriginsInput(input: string): string[] {
   return String(input || '')
@@ -338,6 +339,17 @@ fetch('${publicChatUrl}', {
         <pre className="stats-system-endpoint-snippet" style={{ margin: 0, marginTop: 10, padding: 12, borderRadius: 12, background: 'rgba(0,0,0,0.18)', overflowX: 'auto' }}>
           <code className="stats-system-endpoint-snippet-code">{fetchSnippet}</code>
         </pre>
+
+        <Divider className="stats-system-divider" my="md" label="在线调试" labelPosition="left" />
+        <StatsPublicApiDebugger
+          className="stats-system-public-debugger"
+          endpoints={{
+            chat: publicChatUrl,
+            draw: publicDrawUrl,
+            video: publicVideoUrl,
+            taskResult: publicTaskResultUrl,
+          }}
+        />
 
         <Divider className="stats-system-divider" my="md" label="创建新 Key" labelPosition="left" />
         <Stack className="stats-system-create" gap="xs">
