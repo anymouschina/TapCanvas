@@ -5,6 +5,7 @@ import {
   Controls,
   MiniMap,
   useReactFlow,
+  useStore,
   NodeTypes,
   ConnectionLineType,
   ReactFlowProvider,
@@ -1007,8 +1008,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     setMenu({ show: true, x: evt.clientX, y: evt.clientY, type: 'edge', id: edge.id })
   }, [])
 
-  const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>(() => rf.getViewport?.() || { x: 0, y: 0, zoom: 1 })
-  const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * viewport.zoom + viewport.x, y: p.y * viewport.zoom + viewport.y }), [viewport.x, viewport.y, viewport.zoom])
   const screenToFlow = useCallback((p: { x: number; y: number }) => rf.screenToFlowPosition ? rf.screenToFlowPosition(p) : p, [rf])
 
   const insertMenuRef = useRef<HTMLDivElement | null>(null)
@@ -1580,7 +1579,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           const nodeCenterX = nearestNode.position.x + nodeW / 2
           const nodeCenterY = nearestNode.position.y + nodeH / 2
 
-          rf.setCenter?.(nodeCenterX, nodeCenterY, { zoom: viewport.zoom || 1, duration: 300 })
+          const currentZoom = rf.getViewport?.().zoom ?? 1
+          rf.setCenter?.(nodeCenterX, nodeCenterY, { zoom: currentZoom, duration: 300 })
         } else {
           // No node near click, treat as normal view centering
           const rx = Math.max(0, Math.min(1, clickX / rect.width))
@@ -1592,7 +1592,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
           const worldX = minX + rx * (maxX - minX)
           const worldY = minY + ry * (maxY - minY)
-          const z = viewport.zoom || 1
+          const z = rf.getViewport?.().zoom ?? 1
           rf.setCenter?.(worldX, worldY, { zoom: z, duration: 200 })
         }
       }
@@ -1601,7 +1601,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     minimapClickRef.current = null
     e.stopPropagation()
     e.preventDefault()
-  }, [nodes, rf, viewport.zoom, findNearestNode])
+  }, [nodes, rf, findNearestNode])
 
   const handleRootMouseDown = useCallback((e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
@@ -1659,14 +1659,14 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
       const worldX = minX + rx * (maxX - minX)
       const worldY = minY + ry * (maxY - minY)
-      const z = viewport.zoom || 1
+      const z = rf.getViewport?.().zoom ?? 1
       rf.setCenter?.(worldX, worldY, { zoom: z, duration: 0 })
     }
     const onUp = () => { minimapDragRef.current = null }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-  }, [nodes, rf, viewport.zoom])
+  }, [nodes, rf])
 
   // Share/view-only: format the whole graph once after initial load, and avoid selection side effects.
   useEffect(() => {
@@ -1885,9 +1885,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
             setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
           }
         }}
-
-        onMove={(_evt, vp) => {
-          setViewport(vp)
+        onMoveEnd={(_evt, vp) => {
           setCanvasViewport(vp)
         }}
         nodeTypes={nodeTypes}
@@ -1990,56 +1988,17 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           </Paper>
         </div>
       )}
-      {/* Group visuals moved to a real group node (compound). Legacy overlays removed. */}
-      {!viewOnly && groupRectFlow && (
-        <>
-          {/* Selection outline in screen space to avoid transform artifacts */}
-          <div
-            className="tc-canvas__group-selection"
-            style={{
-              position: 'absolute',
-              left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
-              top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y,
-              width: groupRectFlow.w * (viewport.zoom || 1),
-              height: groupRectFlow.h * (viewport.zoom || 1),
-              borderRadius: 12,
-              border: `1px dashed ${selectionBorderColor}`,
-              background: 'transparent',
-              pointerEvents: 'none'
-            }}
-          />
-          <Paper className="tc-canvas__group-toolbar glass" withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x, top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
-              <Group className="tc-canvas__group-toolbar-group" gap={6} style={{ flexWrap: 'nowrap' }}>
-                <Text className="tc-canvas__group-toolbar-title" size="xs" c="dimmed">新建组</Text>
-                <Divider className="tc-canvas__group-toolbar-divider" orientation="vertical" style={{ height: 16 }} />
-              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => formatTree()}>{$('格式化')}</Button>
-              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={async ()=>{
-                const name = prompt('保存为资产名称：')?.trim(); if (!name) return;
-                const sel = nodes.filter(n=>n.selected)
-                const setIds = new Set(sel.map(n=>n.id))
-                const es = edges.filter(e=> setIds.has(e.source) && setIds.has(e.target))
-                const data = { nodes: sel, edges: es }
-                // 资产现在是用户级别的，不需要项目ID
-                const { createServerAsset } = await import('../api/server')
-                const { notifyAssetRefresh } = await import('../ui/assetEvents')
-                await createServerAsset({ name, data })
-                notifyAssetRefresh()
-              }}>生成工作流</Button>
-              {!selectionPartialOverlaps && (
-                <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={()=>{
-                  // 直接打组为父节点
-                  useRFStore.getState().addGroupForSelection(undefined)
-                }}>打组</Button>
-              )}
-            </Group>
-          </Paper>
-        </>
-      )}
-      {guides?.vx !== undefined && (
-        <div className="tc-canvas__guide-vertical" style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
-      )}
-      {guides?.hy !== undefined && (
-        <div className="tc-canvas__guide-horizontal" style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
+      {((!viewOnly && !!groupRectFlow) || guides?.vx !== undefined || guides?.hy !== undefined) && (
+        <CanvasViewportOverlays
+          viewOnly={viewOnly}
+          groupRectFlow={groupRectFlow}
+          selectionBorderColor={selectionBorderColor}
+          guides={guides}
+          selectionPartialOverlaps={selectionPartialOverlaps}
+          nodes={nodes}
+          edges={edges}
+          onFormatTree={formatTree}
+        />
       )}
       {menu?.show && (
         <Paper className="tc-canvas__context-menu" withBorder shadow="md" onMouseLeave={() => setMenu(null)} style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 60, minWidth: 200 }}>
@@ -2224,6 +2183,101 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         </div>
       )}
     </div>
+  )
+}
+
+type FlowRect = { x: number; y: number; w: number; h: number }
+
+function CanvasViewportOverlays({
+  viewOnly,
+  groupRectFlow,
+  selectionBorderColor,
+  guides,
+  selectionPartialOverlaps,
+  nodes,
+  edges,
+  onFormatTree,
+}: {
+  viewOnly: boolean
+  groupRectFlow: FlowRect | null
+  selectionBorderColor: string
+  guides: { vx?: number; hy?: number } | null
+  selectionPartialOverlaps: boolean
+  nodes: any[]
+  edges: any[]
+  onFormatTree: () => void
+}): JSX.Element | null {
+  const [tx, ty, zoom] = useStore((s) => s.transform)
+  const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * zoom + tx, y: p.y * zoom + ty }), [tx, ty, zoom])
+
+  return (
+    <>
+      {/* Group visuals moved to a real group node (compound). Legacy overlays removed. */}
+      {!viewOnly && groupRectFlow && (
+        <>
+          {/* Selection outline in screen space to avoid transform artifacts */}
+          <div
+            className="tc-canvas__group-selection"
+            style={{
+              position: 'absolute',
+              left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
+              top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y,
+              width: groupRectFlow.w * (zoom || 1),
+              height: groupRectFlow.h * (zoom || 1),
+              borderRadius: 12,
+              border: `1px dashed ${selectionBorderColor}`,
+              background: 'transparent',
+              pointerEvents: 'none'
+            }}
+          />
+          <Paper
+            className="tc-canvas__group-toolbar glass"
+            withBorder
+            shadow="sm"
+            radius="xl"
+            p={4}
+            style={{
+              position: 'absolute',
+              left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
+              top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36,
+              pointerEvents: 'auto',
+              whiteSpace: 'nowrap',
+              overflowX: 'auto'
+            }}
+          >
+            <Group className="tc-canvas__group-toolbar-group" gap={6} style={{ flexWrap: 'nowrap' }}>
+              <Text className="tc-canvas__group-toolbar-title" size="xs" c="dimmed">新建组</Text>
+              <Divider className="tc-canvas__group-toolbar-divider" orientation="vertical" style={{ height: 16 }} />
+              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => onFormatTree()}>{$('格式化')}</Button>
+              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={async () => {
+                const name = prompt('保存为资产名称：')?.trim(); if (!name) return;
+                const sel = nodes.filter(n => n.selected)
+                const setIds = new Set(sel.map(n => n.id))
+                const es = edges.filter(e => setIds.has(e.source) && setIds.has(e.target))
+                const data = { nodes: sel, edges: es }
+                // 资产现在是用户级别的，不需要项目ID
+                const { createServerAsset } = await import('../api/server')
+                const { notifyAssetRefresh } = await import('../ui/assetEvents')
+                await createServerAsset({ name, data })
+                notifyAssetRefresh()
+              }}>生成工作流</Button>
+              {!selectionPartialOverlaps && (
+                <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => {
+                  // 直接打组为父节点
+                  useRFStore.getState().addGroupForSelection(undefined)
+                }}>打组</Button>
+              )}
+            </Group>
+          </Paper>
+        </>
+      )}
+      {guides?.vx !== undefined && (
+        <div className="tc-canvas__guide-vertical" style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
+      )}
+      {guides?.hy !== undefined && (
+        <div className="tc-canvas__guide-horizontal" style={{ position: 'absolute', left: 0, top: flowToScreen({ x: 0, y: guides.hy! }).y, width: '100%', height: 1, background: 'rgba(16,185,129,.5)' }} />
+      )}
+    </>
   )
 }
 

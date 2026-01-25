@@ -117,6 +117,11 @@ body {
   outline: none !important;
 }
 
+/* Performance: avoid jank during pan/zoom */
+.tc-canvas__flow .react-flow__viewport {
+  will-change: transform;
+}
+
 /* Connecting highlight: dim all handles when connecting, highlight compatible ones */
 [data-connecting-active="true"] .react-flow__handle {
   opacity: 0.2;
