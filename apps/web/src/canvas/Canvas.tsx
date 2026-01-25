@@ -27,7 +27,7 @@ import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
-import { syncMiniMaxVideoNodeOnce, syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
+import { syncGrsaiImageNodeOnce, syncMiniMaxVideoNodeOnce, syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
 import { useInsertMenuStore } from './insertMenuStore'
 import { uuid } from 'zod/v4'
 import { getQuickStartSampleFlow } from './quickStartSample'
@@ -119,6 +119,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const viewOnlyFormattedOnceRef = useRef(false)
   const soraSyncingRef = useRef<Set<string>>(new Set())
   const minimaxSyncingRef = useRef<Set<string>>(new Set())
+  const grsaiImageSyncingRef = useRef<Set<string>>(new Set())
   const rootRef = useRef<HTMLDivElement | null>(null)
   const initialFitAppliedRef = useRef(false)
   const restoreAppliedRef = useRef(false)
@@ -486,31 +487,44 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       for (const n of list) {
         const data: any = n?.data || {}
         const kind = String(data.kind || '')
-        if (kind !== 'composeVideo' && kind !== 'video' && kind !== 'storyboard') continue
         const status = String(data.status || '')
         if (status !== 'running' && status !== 'queued') continue
-        const vendorRaw = String(data.videoModelVendor || data.videoVendor || '')
-        const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
-        const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
-        if (!taskId) continue
 
         const nodeId = String(n.id || '')
         if (!nodeId) continue
-        if (vendor === 'sora2api') {
-          if (!taskId.startsWith('task_')) continue
-          if (soraSyncingRef.current.has(nodeId)) continue
-          soraSyncingRef.current.add(nodeId)
-          void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
-            soraSyncingRef.current.delete(nodeId)
-          })
+
+        if (kind === 'composeVideo' || kind === 'video' || kind === 'storyboard') {
+          const vendorRaw = String(data.videoModelVendor || data.videoVendor || '')
+          const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
+          const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
+          if (!taskId) continue
+
+          if (vendor === 'sora2api') {
+            if (!taskId.startsWith('task_')) continue
+            if (soraSyncingRef.current.has(nodeId)) continue
+            soraSyncingRef.current.add(nodeId)
+            void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+              soraSyncingRef.current.delete(nodeId)
+            })
+            continue
+          }
+
+          if (vendor === 'minimax') {
+            if (minimaxSyncingRef.current.has(nodeId)) continue
+            minimaxSyncingRef.current.add(nodeId)
+            void syncMiniMaxVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+              minimaxSyncingRef.current.delete(nodeId)
+            })
+          }
           continue
         }
 
-        if (vendor === 'minimax') {
-          if (minimaxSyncingRef.current.has(nodeId)) continue
-          minimaxSyncingRef.current.add(nodeId)
-          void syncMiniMaxVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
-            minimaxSyncingRef.current.delete(nodeId)
+        const imageTaskId = typeof data.imageTaskId === 'string' ? data.imageTaskId.trim() : ''
+        if (imageTaskId) {
+          if (grsaiImageSyncingRef.current.has(nodeId)) continue
+          grsaiImageSyncingRef.current.add(nodeId)
+          void syncGrsaiImageNodeOnce(nodeId, useRFStore.getState).finally(() => {
+            grsaiImageSyncingRef.current.delete(nodeId)
           })
         }
       }

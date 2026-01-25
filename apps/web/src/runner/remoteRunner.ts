@@ -1503,6 +1503,98 @@ export async function syncSora2ApiVideoNodeOnce(id: string, get: Getter) {
   }
 }
 
+export async function syncGrsaiImageNodeOnce(id: string, get: Getter) {
+  const ctx = buildRunnerContext(id, get)
+  if (!ctx) return
+  if (!ctx.isImageTask) return
+  if (ctx.isCanceled(id)) return
+
+  const { data, kind, prompt, setNodeStatus, appendLog } = ctx
+  const status = (data as any)?.status as NodeStatusValue | undefined
+  if (status !== 'running' && status !== 'queued') return
+
+  const vendorRaw = ((data as any)?.imageModelVendor as string | undefined) || ((data as any)?.imageVendor as string | undefined) || ''
+  const vendor = vendorRaw.toLowerCase() === 'google' ? 'gemini' : vendorRaw.toLowerCase()
+  if (vendor !== 'gemini') return
+
+  const taskId = (data as any)?.imageTaskId as string | undefined
+  if (!taskId || !taskId.trim()) return
+
+  const effectiveTaskKind = ((data as any)?.imageTaskKind as TaskKind | undefined) || 'text_to_image'
+
+  let snapshot: TaskResultDto
+  try {
+    snapshot = await fetchGrsaiTaskResult(taskId.trim(), effectiveTaskKind, prompt)
+  } catch (err: any) {
+    const msg = err?.message || '查询图像任务进度失败'
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  if (snapshot.status === 'queued' || snapshot.status === 'running') {
+    const raw = snapshot.raw as any
+    const rawProgress =
+      (typeof raw?.progress === 'number' ? raw.progress : null) ??
+      (typeof raw?.response?.progress === 'number' ? raw.response.progress : null) ??
+      (typeof raw?.response?.progress_pct === 'number' ? raw.response.progress_pct * 100 : null)
+    if (typeof rawProgress === 'number' && Number.isFinite(rawProgress)) {
+      const current = typeof (data as any)?.progress === 'number' ? (data as any).progress : 10
+      const normalized = Math.min(95, Math.max(current, Math.max(5, Math.round(rawProgress))))
+      setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', {
+        progress: normalized,
+        imageTaskId: taskId.trim(),
+        imageTaskKind: effectiveTaskKind,
+      })
+    }
+    return
+  }
+
+  if (snapshot.status === 'failed') {
+    const msg =
+      (snapshot.raw && ((snapshot.raw as any)?.failureReason as string | undefined)) ||
+      (snapshot.raw && ((snapshot.raw as any)?.response?.error as string | undefined)) ||
+      (snapshot.raw && ((snapshot.raw as any)?.response?.message as string | undefined)) ||
+      '图像任务失败'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  const imageUrl = extractFirstImageAssetUrl(snapshot)
+  if (!imageUrl) {
+    const msg = '图像任务执行失败：未返回有效图片地址'
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  const existing = (data.imageResults as { url: string }[] | undefined) || []
+  const nextAssets = (snapshot.assets || [])
+    .filter((a: any) => a?.type === 'image' && typeof a.url === 'string' && a.url.trim().length > 0)
+    .map((a: any) => ({ url: String(a.url).trim() }))
+  const merged = [...existing, ...nextAssets]
+  const newPrimaryIndex = existing.length
+
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    lastResult: {
+      id: snapshot.id || taskId.trim(),
+      at: Date.now(),
+      kind,
+      preview: { type: 'image', src: imageUrl },
+    },
+    imageUrl,
+    imageResults: merged,
+    imagePrimaryIndex: newPrimaryIndex,
+    imageTaskId: taskId.trim(),
+    imageTaskKind: effectiveTaskKind,
+  })
+  appendLog(id, `[${nowLabel()}] 已同步图像结果。`)
+  if (snapshot.assets && snapshot.assets.length) {
+    notifyAssetRefresh()
+  }
+}
+
 export async function syncMiniMaxVideoNodeOnce(id: string, get: Getter) {
   const ctx = buildRunnerContext(id, get)
   if (!ctx) return
@@ -3062,6 +3154,7 @@ async function runGenericTask(ctx: RunnerContext) {
         setNodeStatus(id, 'running', {
           progress: Math.max(10, progressBase),
           imageTaskId: taskId,
+          imageTaskKind: effectiveTaskKind,
           imageModel: selectedModel,
           imageModelVendor: (data as any)?.imageModelVendor || vendor,
           lastResult: {

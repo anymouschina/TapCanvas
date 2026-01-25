@@ -10,6 +10,7 @@ export type VendorCallLogUpsertInput = {
 	taskKind?: string | null;
 	status: VendorCallLogStatus;
 	errorMessage?: string | null;
+	durationMs?: number | null;
 	nowIso: string;
 };
 
@@ -135,6 +136,14 @@ export async function upsertVendorCallLogFinal(
 				: "running";
 	const finishedAt = status === "running" ? null : nowIso;
 	const errorMessage = normalizeErrorMessage(input.errorMessage);
+	const durationMs =
+		status === "running"
+			? null
+			: typeof input.durationMs === "number" &&
+					Number.isFinite(input.durationMs) &&
+					input.durationMs >= 0
+				? Math.round(input.durationMs)
+				: 0;
 
 	await execute(
 		db,
@@ -161,7 +170,7 @@ export async function upsertVendorCallLogFinal(
 			status,
 			nowIso,
 			finishedAt,
-			status === "running" ? null : 0,
+			durationMs,
 			errorMessage,
 			nowIso,
 			nowIso,
