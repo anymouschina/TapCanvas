@@ -4,8 +4,9 @@
   --mantine-color-dimmed: #5b647f;
   --mantine-color-default: #ffffff;
   --mantine-color-default-hover: #e9efff;
-  --mantine-color-gray-6: #dbe2f4;
-  --mantine-color-gray-7: #f2f5ff;
+  /* Mantine components (e.g. SegmentedControl) use gray-6/7 for text in light mode */
+  --mantine-color-gray-6: #64748b;
+  --mantine-color-gray-7: #475569;
   --mantine-color-anchor: #2563eb;
 
   --canvas-node-bg: #ffffff;
