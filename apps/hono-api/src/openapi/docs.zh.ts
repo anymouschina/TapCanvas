@@ -139,6 +139,74 @@ type DemoTask = {
   "issues": []
 }
 \`\`\`
+
+---
+
+## 外站 Public API（X-API-Key）
+
+用于“其他网站”通过你在 \`/stats\` 里生成的 \`API Key\` 调用绘图/视频/任务查询接口。
+
+### 1) 认证与安全
+
+- Header（推荐）：
+  - \`X-API-Key: tc_sk_...\`
+  - 或 \`Authorization: Bearer tc_sk_...\`
+- Origin 白名单：
+  - 浏览器跨站调用会自动携带 \`Origin\`，必须命中你创建 Key 时配置的白名单。
+  - 纯服务端（Node/Go/Java）请求通常没有 \`Origin\`：此时请在 Key 的 \`allowedOrigins\` 配置 \`*\`，或自行补 \`Origin\` 请求头。
+
+### 2) 通用返回结构
+
+大部分接口返回：
+
+\`\`\`json
+{
+  "vendor": "auto 或具体厂商",
+  "result": {
+    "id": "task id",
+    "kind": "text_to_image | image_edit | text_to_video | ...",
+    "status": "queued | running | succeeded | failed",
+    "assets": [{ "type": "image|video", "url": "...", "thumbnailUrl": null }],
+    "raw": {}
+  }
+}
+\`\`\`
+
+当 \`status\` 为 \`queued/running\` 时，用 \`/public/tasks/result\` 轮询结果。
+
+### 3) 生成视频
+
+- \`POST /public/video\`
+
+请求体（简化版）：
+
+\`\`\`json
+{
+  "vendor": "auto",
+  "prompt": "雨夜霓虹街头，一只白猫缓慢走过…",
+  "durationSeconds": 10,
+  "extras": { "modelKey": "veo3.1-fast" }
+}
+\`\`\`
+
+说明：
+- \`vendor=auto\` 默认优先 \`veo\` / \`sora2api\`，如带首帧参数也会尝试 \`minimax\`。
+- MiniMax（hailuo）通常需要首帧图片，放在 \`extras.firstFrameUrl\` / \`extras.firstFrameImage\` / \`extras.first_frame_image\` / \`extras.url\` 等字段中。
+
+参考响应（200）：
+
+\`\`\`json
+{
+  "vendor": "veo",
+  "result": {
+    "id": "task_01HXYZ...",
+    "kind": "text_to_video",
+    "status": "queued",
+    "assets": [],
+    "raw": {}
+  }
+}
+\`\`\`
 `;
 
 function escapeHtml(raw: string) {

@@ -1,4 +1,6 @@
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { Hono } from "hono";
+import { AppError } from "../../middleware/error";
 import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { apiKeyAuthMiddleware } from "./apiKey.middleware";
@@ -30,7 +32,50 @@ import {
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
-export const publicApiRouter = new Hono<AppEnv>();
+export const publicApiRouter = new OpenAPIHono<AppEnv>({
+	defaultHook: (result, c) => {
+		if (result.success === false) {
+			return c.json(
+				{
+					error: "Invalid request body",
+					issues: result.error.issues,
+				},
+				400,
+			);
+		}
+	},
+});
+
+const PublicValidationErrorSchema = z.object({
+	error: z.string(),
+	issues: z.array(z.any()).optional(),
+});
+
+const PublicAppErrorSchema = z.object({
+	message: z.string(),
+	error: z.string(),
+	code: z.string(),
+	details: z.any().optional(),
+});
+
+const PublicTaskKindErrorSchema = z.object({
+	error: z.string(),
+	code: z.string(),
+	details: z.any().optional(),
+});
+
+const PUBLIC_TAG = "Public API";
+
+function requirePublicUserId(c: any): string {
+	const userId = c.get("userId");
+	if (!userId) {
+		throw new AppError("Unauthorized", {
+			status: 401,
+			code: "unauthorized",
+		});
+	}
+	return userId;
+}
 
 // ---- Management (dashboard) ----
 
@@ -86,24 +131,72 @@ apiKeyRouter.delete("/:id", async (c) => {
 
 publicApiRouter.use("*", apiKeyAuthMiddleware);
 
-publicApiRouter.post("/chat", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+const PublicChatOpenApiRoute = createRoute({
+	method: "post",
+	path: "/chat",
+	tags: [PUBLIC_TAG],
+	summary: "文本对话 /public/chat",
+	description:
+		"通过 X-API-Key 调用文本模型；不传 systemPrompt 时默认使用“请用中文回答。”。",
+	request: {
+		body: {
+			required: true,
+			content: {
+				"application/json": {
+					schema: PublicChatRequestSchema,
+					example: {
+						vendor: "auto",
+						prompt: "你好，帮我用中文回答：TapCanvas 是什么？",
+						systemPrompt: "请用中文回答。",
+						temperature: 0.7,
+					},
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: "OK",
+			content: {
+				"application/json": {
+					schema: PublicChatResponseSchema,
+					example: {
+						id: "task_01HXYZ...",
+						vendor: "openai",
+						text: "TapCanvas 是一个用于把文字/图片创意组织成可执行工作流的画布工具…",
+					},
+				},
+			},
+		},
+		400: {
+			description: "Invalid request body",
+			content: {
+				"application/json": {
+					schema: PublicValidationErrorSchema,
+					example: { error: "Invalid request body", issues: [] },
+				},
+			},
+		},
+		401: {
+			description: "Unauthorized (missing/invalid API key)",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+		403: {
+			description: "Origin not allowed",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+	},
+});
 
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = PublicChatRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
+	const userId = requirePublicUserId(c);
 
-	const vendor = (parsed.data.vendor || "openai").trim().toLowerCase();
-	const prompt = parsed.data.prompt;
+	const input = c.req.valid("json");
+
+	const vendor = (input.vendor || "openai").trim().toLowerCase();
+	const prompt = input.prompt;
 	const systemPrompt =
-		(typeof parsed.data.systemPrompt === "string" &&
-			parsed.data.systemPrompt.trim()) ||
+		(typeof input.systemPrompt === "string" && input.systemPrompt.trim()) ||
 		"请用中文回答。";
 
 	const req = {
@@ -111,12 +204,11 @@ publicApiRouter.post("/chat", async (c) => {
 		prompt,
 		extras: {
 			systemPrompt,
-			...(typeof parsed.data.modelKey === "string" &&
-			parsed.data.modelKey.trim()
-				? { modelKey: parsed.data.modelKey.trim() }
+			...(typeof input.modelKey === "string" && input.modelKey.trim()
+				? { modelKey: input.modelKey.trim() }
 				: {}),
-			...(typeof parsed.data.temperature === "number"
-				? { temperature: parsed.data.temperature }
+			...(typeof input.temperature === "number"
+				? { temperature: input.temperature }
 				: {}),
 		},
 	};
@@ -131,6 +223,7 @@ publicApiRouter.post("/chat", async (c) => {
 			vendor,
 			text,
 		}),
+		200,
 	);
 });
 
@@ -265,30 +358,91 @@ async function runPublicTaskWithFallback(
 }
 
 // Unified public task API: supports image/video/chat via API key.
-publicApiRouter.post("/tasks", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+const PublicRunTaskOpenApiRoute = createRoute({
+	method: "post",
+	path: "/tasks",
+	tags: [PUBLIC_TAG],
+	summary: "统一任务入口 /public/tasks",
+	description:
+		"统一任务入口：当你希望完全复用内部 TaskRequest 结构时使用（支持 image/video/chat 等）。",
+	request: {
+		body: {
+			required: true,
+			content: {
+				"application/json": {
+					schema: PublicRunTaskRequestSchema,
+					example: {
+						vendor: "auto",
+						request: {
+							kind: "text_to_video",
+							prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
+							extras: { modelKey: "veo3.1-fast", durationSeconds: 10 },
+						},
+					},
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: "OK",
+			content: {
+				"application/json": {
+					schema: PublicRunTaskResponseSchema,
+					example: {
+						vendor: "veo",
+						result: {
+							id: "task_01HXYZ...",
+							kind: "text_to_video",
+							status: "queued",
+							assets: [],
+							raw: {},
+						},
+					},
+				},
+			},
+		},
+		400: {
+			description: "Invalid request body / unsupported task kind",
+			content: {
+				"application/json": {
+					schema: z.union([PublicValidationErrorSchema, PublicTaskKindErrorSchema]),
+					example: {
+						error: "Unsupported task kind for public API",
+						code: "unsupported_task_kind",
+						details: { kind: "image_to_video" },
+					},
+				},
+			},
+		},
+		401: {
+			description: "Unauthorized (missing/invalid API key)",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+		403: {
+			description: "Origin not allowed",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+	},
+});
 
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = PublicRunTaskRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+publicApiRouter.openapi(PublicRunTaskOpenApiRoute, async (c) => {
+	const userId = requirePublicUserId(c);
+
+	const input = c.req.valid("json");
 
 	try {
 		const { vendor, result } = await runPublicTaskWithFallback(
 			c,
 			userId,
-			parsed.data,
+			input,
 		);
 		return c.json(
 			PublicRunTaskResponseSchema.parse({
 				vendor,
 				result,
 			}),
+			200,
 		);
 	} catch (err: any) {
 		if (err?.code === "unsupported_task_kind") {
@@ -306,38 +460,92 @@ publicApiRouter.post("/tasks", async (c) => {
 });
 
 // Convenience endpoints (explicit "draw" / "video" naming) for external callers.
-publicApiRouter.post("/draw", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = PublicDrawRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+const PublicDrawOpenApiRoute = createRoute({
+	method: "post",
+	path: "/draw",
+	tags: [PUBLIC_TAG],
+	summary: "绘图 /public/draw",
+	description:
+		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（会自动 vendor 回退）。",
+	request: {
+		body: {
+			required: true,
+			content: {
+				"application/json": {
+					schema: PublicDrawRequestSchema,
+					example: {
+						vendor: "auto",
+						kind: "text_to_image",
+						prompt: "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
+						extras: { modelKey: "nano-banana-pro" },
+					},
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: "OK",
+			content: {
+				"application/json": {
+					schema: PublicRunTaskResponseSchema,
+					example: {
+						vendor: "gemini",
+						result: {
+							id: "task_01HXYZ...",
+							kind: "text_to_image",
+							status: "queued",
+							assets: [],
+							raw: {},
+						},
+					},
+				},
+			},
+		},
+		400: {
+			description: "Invalid request body",
+			content: {
+				"application/json": {
+					schema: PublicValidationErrorSchema,
+					example: { error: "Invalid request body", issues: [] },
+				},
+			},
+		},
+		401: {
+			description: "Unauthorized (missing/invalid API key)",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+		403: {
+			description: "Origin not allowed",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+	},
+});
+
+publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
+	const userId = requirePublicUserId(c);
+	const input = c.req.valid("json");
 
 	const request = {
-		kind: parsed.data.kind || "text_to_image",
-		prompt: parsed.data.prompt,
-		...(typeof parsed.data.negativePrompt === "string"
-			? { negativePrompt: parsed.data.negativePrompt }
+		kind: input.kind || "text_to_image",
+		prompt: input.prompt,
+		...(typeof input.negativePrompt === "string"
+			? { negativePrompt: input.negativePrompt }
 			: {}),
-		...(typeof parsed.data.seed === "number" ? { seed: parsed.data.seed } : {}),
-		...(typeof parsed.data.width === "number" ? { width: parsed.data.width } : {}),
-		...(typeof parsed.data.height === "number"
-			? { height: parsed.data.height }
+		...(typeof input.seed === "number" ? { seed: input.seed } : {}),
+		...(typeof input.width === "number" ? { width: input.width } : {}),
+		...(typeof input.height === "number"
+			? { height: input.height }
 			: {}),
-		...(typeof parsed.data.steps === "number" ? { steps: parsed.data.steps } : {}),
-		...(typeof parsed.data.cfgScale === "number"
-			? { cfgScale: parsed.data.cfgScale }
+		...(typeof input.steps === "number" ? { steps: input.steps } : {}),
+		...(typeof input.cfgScale === "number"
+			? { cfgScale: input.cfgScale }
 			: {}),
-		...(parsed.data.extras ? { extras: parsed.data.extras } : {}),
+		...(input.extras ? { extras: input.extras } : {}),
 	};
 
 	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
-		vendor: parsed.data.vendor,
+		vendor: input.vendor,
 		request,
 	});
 
@@ -346,34 +554,89 @@ publicApiRouter.post("/draw", async (c) => {
 			vendor,
 			result,
 		}),
+		200,
 	);
 });
 
-publicApiRouter.post("/video", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = PublicVideoRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+const PublicVideoOpenApiRoute = createRoute({
+	method: "post",
+	path: "/video",
+	tags: [PUBLIC_TAG],
+	summary: "生成视频 /public/video",
+	description:
+		"便捷视频接口：创建 text_to_video 任务（会自动 vendor 回退；可通过 extras.modelKey 指定模型）。",
+	request: {
+		body: {
+			required: true,
+			content: {
+				"application/json": {
+					schema: PublicVideoRequestSchema,
+					example: {
+						vendor: "auto",
+						prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
+						durationSeconds: 10,
+						extras: { modelKey: "veo3.1-fast" },
+					},
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: "OK",
+			content: {
+				"application/json": {
+					schema: PublicRunTaskResponseSchema,
+					example: {
+						vendor: "veo",
+						result: {
+							id: "task_01HXYZ...",
+							kind: "text_to_video",
+							status: "queued",
+							assets: [],
+							raw: {},
+						},
+					},
+				},
+			},
+		},
+		400: {
+			description: "Invalid request body",
+			content: {
+				"application/json": {
+					schema: PublicValidationErrorSchema,
+					example: { error: "Invalid request body", issues: [] },
+				},
+			},
+		},
+		401: {
+			description: "Unauthorized (missing/invalid API key)",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+		403: {
+			description: "Origin not allowed",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+	},
+});
 
-	const extras: Record<string, any> = parsed.data.extras ? { ...parsed.data.extras } : {};
-	if (typeof parsed.data.durationSeconds === "number") {
-		extras.durationSeconds = parsed.data.durationSeconds;
+publicApiRouter.openapi(PublicVideoOpenApiRoute, async (c) => {
+	const userId = requirePublicUserId(c);
+	const input = c.req.valid("json");
+
+	const extras: Record<string, any> = input.extras ? { ...input.extras } : {};
+	if (typeof input.durationSeconds === "number") {
+		extras.durationSeconds = input.durationSeconds;
 	}
 
 	const request = {
 		kind: "text_to_video",
-		prompt: parsed.data.prompt,
+		prompt: input.prompt,
 		extras,
 	};
 
 	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
-		vendor: parsed.data.vendor,
+		vendor: input.vendor,
 		request,
 	});
 
@@ -382,27 +645,79 @@ publicApiRouter.post("/video", async (c) => {
 			vendor,
 			result,
 		}),
+		200,
 	);
 });
 
 // Unified public polling API: resolve vendor via vendor_task_refs when possible.
-publicApiRouter.post("/tasks/result", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+const PublicFetchTaskResultOpenApiRoute = createRoute({
+	method: "post",
+	path: "/tasks/result",
+	tags: [PUBLIC_TAG],
+	summary: "查询任务结果 /public/tasks/result",
+	description: "轮询任务状态与结果；支持 vendor=auto 自动基于 taskId 推断。",
+	request: {
+		body: {
+			required: true,
+			content: {
+				"application/json": {
+					schema: PublicFetchTaskResultRequestSchema,
+					example: { taskId: "task_01HXYZ...", taskKind: "text_to_video" },
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: "OK",
+			content: {
+				"application/json": {
+					schema: PublicFetchTaskResultResponseSchema,
+					example: {
+						vendor: "veo",
+						result: {
+							id: "task_01HXYZ...",
+							kind: "text_to_video",
+							status: "running",
+							assets: [],
+							raw: {},
+						},
+					},
+				},
+			},
+		},
+		400: {
+			description: "Invalid request body / vendor required",
+			content: {
+				"application/json": {
+					schema: z.union([PublicValidationErrorSchema, PublicTaskKindErrorSchema]),
+					example: {
+						error: "vendor is required (or the task vendor cannot be inferred)",
+						code: "vendor_required",
+					},
+				},
+			},
+		},
+		401: {
+			description: "Unauthorized (missing/invalid API key)",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+		403: {
+			description: "Origin not allowed",
+			content: { "application/json": { schema: PublicAppErrorSchema } },
+		},
+	},
+});
 
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = PublicFetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
+	const userId = requirePublicUserId(c);
 
-	const taskId = parsed.data.taskId.trim();
-	const vendorInput = (parsed.data.vendor || "").trim();
-	const taskKind = parsed.data.taskKind ?? null;
-	const prompt = typeof parsed.data.prompt === "string" ? parsed.data.prompt : null;
+	const input = c.req.valid("json");
+
+	const taskId = input.taskId.trim();
+	const vendorInput = (input.vendor || "").trim();
+	const taskKind = input.taskKind ?? null;
+	const prompt = typeof input.prompt === "string" ? input.prompt : null;
 
 	const resolveRefKind = (): "video" | "image" | null => {
 		if (taskKind === "text_to_video" || taskKind === "image_to_video") return "video";
@@ -494,5 +809,6 @@ publicApiRouter.post("/tasks/result", async (c) => {
 			vendor: resolved.vendor,
 			result,
 		}),
+		200,
 	);
 });

@@ -100,13 +100,100 @@ app.get("/docs.md", (c) =>
 // Demo Tasks OpenAPI endpoints
 registerDemoTasksOpenApi(app);
 
-// OpenAPI schema (only includes routes registered via `app.openapi(...)`)
-app.doc31("/openapi.json", {
-	openapi: "3.1.0",
-	info: {
-		title: "TapCanvas Hono API",
-		version: "0.1.0",
-	},
+// OpenAPI schema
+// NOTE: `doc31()` only includes routes registered on this `app` instance via `app.openapi(...)`.
+// We also expose Public API routes under `/public/*` via a sub-router, so we merge its OpenAPI doc here.
+app.get("/openapi.json", (c) => {
+	const config = {
+		openapi: "3.1.0",
+		info: {
+			title: "TapCanvas Hono API",
+			version: "0.1.0",
+		},
+	};
+
+	const rootDoc = app.getOpenAPI31Document(config);
+	const publicDoc = publicApiRouter.getOpenAPI31Document(config);
+
+	const publicPaths = Object.fromEntries(
+		Object.entries(publicDoc.paths ?? {}).map(([path, item]) => [
+			`/public${path}`,
+			item,
+		]),
+	);
+
+	const mergedTags = (() => {
+		const out: any[] = [];
+		const seen = new Set<string>();
+		for (const tag of [...(rootDoc.tags ?? []), ...(publicDoc.tags ?? [])]) {
+			const name = typeof (tag as any)?.name === "string" ? (tag as any).name : "";
+			if (!name || seen.has(name)) continue;
+			seen.add(name);
+			out.push(tag as any);
+		}
+		return out.length ? out : undefined;
+	})();
+
+	const mergedComponents = (() => {
+		const a = (rootDoc as any).components ?? {};
+		const b = (publicDoc as any).components ?? {};
+		const mergeRecord = (key: string) => ({
+			...(a?.[key] ?? {}),
+			...(b?.[key] ?? {}),
+		});
+
+		const merged = { ...a, ...b };
+		merged.schemas = mergeRecord("schemas");
+		merged.parameters = mergeRecord("parameters");
+		merged.responses = mergeRecord("responses");
+		merged.requestBodies = mergeRecord("requestBodies");
+		merged.headers = mergeRecord("headers");
+		merged.securitySchemes = mergeRecord("securitySchemes");
+		merged.examples = mergeRecord("examples");
+		merged.links = mergeRecord("links");
+		merged.callbacks = mergeRecord("callbacks");
+
+		// Drop empty components to keep the output clean.
+		const hasAny = Object.keys(merged).some(
+			(k) => merged[k] && Object.keys(merged[k]).length > 0,
+		);
+		return hasAny ? merged : undefined;
+	})();
+
+	return c.json(
+		{
+			...rootDoc,
+			paths: {
+				...(rootDoc.paths ?? {}),
+				...publicPaths,
+			},
+			...(mergedTags ? { tags: mergedTags } : {}),
+			...(mergedComponents ? { components: mergedComponents } : {}),
+		},
+		200,
+	);
+});
+
+// Public API only (handy for external consumers)
+app.get("/openapi.public.json", (c) => {
+	const config = {
+		openapi: "3.1.0",
+		info: {
+			title: "TapCanvas Public API",
+			version: "0.1.0",
+		},
+	};
+	const doc = publicApiRouter.getOpenAPI31Document(config);
+	const publicPaths = Object.fromEntries(
+		Object.entries(doc.paths ?? {}).map(([path, item]) => [`/public${path}`, item]),
+	);
+	return c.json(
+		{
+			...doc,
+			paths: publicPaths,
+		},
+		200,
+	);
 });
 
 // Auth routes
