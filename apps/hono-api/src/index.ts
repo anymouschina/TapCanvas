@@ -19,7 +19,11 @@ import type { MessageBatch } from "@cloudflare/workers-types";
 import { handleWorkflowNodeJob, type WorkflowNodeJob } from "./modules/execution/execution.queue";
 import { ExecutionDO } from "./modules/execution/execution.do";
 import { registerDemoTasksOpenApi } from "./openapi/demoTasks.openapi";
-import { API_DOCS_ZH_MD, renderCopyableDocsHtml } from "./openapi/docs.zh";
+import {
+	API_DOCS_ZH_MD,
+	renderCopyableDocsHtml,
+	renderEndpointExplorerHtml,
+} from "./openapi/docs.zh";
 
 // Start a Hono app
 const app = new OpenAPIHono<AppEnv>({
@@ -72,6 +76,17 @@ app.get("/", (c) =>
 			title: "TapCanvas 接口文档（可一键复制）",
 			markdown: API_DOCS_ZH_MD,
 			openapiJsonUrl: "/openapi.json",
+			rawMarkdownUrl: "/docs.md",
+			endpointExplorerUrl: "/docs",
+		}),
+	),
+);
+app.get("/docs", (c) =>
+	c.html(
+		renderEndpointExplorerHtml({
+			title: "单接口可视化",
+			openapiJsonUrl: "/openapi.json",
+			copyableDocsUrl: "/",
 			rawMarkdownUrl: "/docs.md",
 		}),
 	),
