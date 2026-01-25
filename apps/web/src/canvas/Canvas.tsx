@@ -105,6 +105,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const [mouse, setMouse] = useState<{x:number;y:number}>({x:0,y:0})
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; type: 'node'|'edge'|'canvas'; id?: string } | null>(null)
   const [guides, setGuides] = useState<{ vx?: number; hy?: number } | null>(null)
+  const lastGuidesRef = useRef<{ vx?: number; hy?: number } | null>(null)
   const [longSelect, setLongSelect] = useState(false)
   const downPos = useRef<{x:number;y:number}|null>(null)
   const timerRef = useRef<number | undefined>(undefined)
@@ -1023,7 +1024,12 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       if (Math.abs(n.position.x - node.position.x) <= threshold) vx = n.position.x
       if (Math.abs(n.position.y - node.position.y) <= threshold) hy = n.position.y
     }
-    setGuides({ vx, hy })
+    const prev = lastGuidesRef.current
+    if (prev?.vx !== vx || prev?.hy !== hy) {
+      const next = { vx, hy }
+      lastGuidesRef.current = next
+      setGuides(next)
+    }
 
     // If dragging IO summary nodes in focus mode, persist relative position into group node data
     if (node?.type === 'ioNode' && (node as any)?.parentNode) {
@@ -1044,6 +1050,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }, [nodes])
 
   const onNodeDragStop = useCallback(() => {
+    lastGuidesRef.current = null
     setGuides(null)
     setDragging(false)
   }, [])

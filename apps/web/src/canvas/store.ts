@@ -426,6 +426,11 @@ function getRemixTargetIdFromNode(node?: Node) {
   return null
 }
 
+// Dragging generates high-frequency `position` updates. Track active drag node IDs so we can:
+// - snapshot history only once per drag (better perf + better undo UX)
+// - avoid expensive group auto-fit work during drag moves
+const activeDragNodeIds = new Set<string>()
+
 export const useRFStore = create<RFState>((set, get) => ({
   nodes: [],
   edges: [],
@@ -437,17 +442,47 @@ export const useRFStore = create<RFState>((set, get) => ({
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
     const dimChanges = new Map<string, { width?: number; height?: number }>()
+    let hasDragMove = false
+    let hasDragStop = false
+    let isDragStart = false
+    let hasNonDragRelatedChange = false
+
     for (const change of changes as any[]) {
       if (!change || typeof change !== 'object') continue
-      if (change.type !== 'dimensions') continue
       const id = typeof change.id === 'string' ? change.id : ''
-      if (!id) continue
-      const width = Number(change.dimensions?.width)
-      const height = Number(change.dimensions?.height)
-      dimChanges.set(id, {
-        ...(Number.isFinite(width) && width > 0 ? { width: Math.round(width) } : null),
-        ...(Number.isFinite(height) && height > 0 ? { height: Math.round(height) } : null),
-      })
+
+      if (change.type === 'position') {
+        const draggingFlag = (change as any).dragging
+        if (draggingFlag === true) {
+          hasDragMove = true
+          if (id && !activeDragNodeIds.has(id)) {
+            activeDragNodeIds.add(id)
+            isDragStart = true
+          }
+          continue
+        }
+        if (draggingFlag === false) {
+          hasDragStop = true
+          if (id) activeDragNodeIds.delete(id)
+          continue
+        }
+        // Programmatic or non-drag position change: treat as normal update.
+        hasNonDragRelatedChange = true
+        continue
+      }
+
+      // Any non-position change is not part of drag ticks.
+      hasNonDragRelatedChange = true
+
+      if (change.type === 'dimensions') {
+        if (!id) continue
+        const width = Number(change.dimensions?.width)
+        const height = Number(change.dimensions?.height)
+        dimChanges.set(id, {
+          ...(Number.isFinite(width) && width > 0 ? { width: Math.round(width) } : null),
+          ...(Number.isFinite(height) && height > 0 ? { height: Math.round(height) } : null),
+        })
+      }
     }
 
     const rawUpdated = applyNodeChanges(changes, s.nodes)
@@ -472,7 +507,15 @@ export const useRFStore = create<RFState>((set, get) => ({
       }
     })
 
-    const updated = autoFitGroupNodes(updatedWithDims).map(enforceNodeSelectability)
+    const shouldAutoFitGroups = !hasDragMove
+    const updated = shouldAutoFitGroups
+      ? autoFitGroupNodes(updatedWithDims).map(enforceNodeSelectability)
+      : updatedWithDims
+
+    const isDragRelated = hasDragMove || hasDragStop
+    const shouldCaptureHistory = hasNonDragRelatedChange || !isDragRelated || isDragStart
+    if (!shouldCaptureHistory) return { nodes: updated }
+
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
