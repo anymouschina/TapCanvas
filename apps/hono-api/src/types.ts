@@ -32,6 +32,10 @@ export type AppEnv = {
 		auth?: unknown;
 		apiKeyId?: string;
 		requestId?: string;
+		// Public API routing hints (set by /public endpoints)
+		routingTaskKind?: string;
+		proxyVendorHint?: string;
+		proxyDisabled?: boolean;
 	};
 };
 
