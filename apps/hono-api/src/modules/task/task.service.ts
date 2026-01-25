@@ -42,6 +42,16 @@ type ProgressContext = {
 	vendor: string;
 };
 
+function pickApiVendorForTask(
+	result: TaskResult,
+	fallbackVendor: string,
+): string {
+	const raw: any = result?.raw;
+	const rawVendor = typeof raw?.vendor === "string" ? raw.vendor : "";
+	const normalized = normalizeVendorKey(rawVendor);
+	return normalized || fallbackVendor;
+}
+
 function extractProgressContext(
 	req: TaskRequestDto,
 	vendor: string,
@@ -4553,6 +4563,7 @@ async function runQwenTextToImageTask(
 			assets,
 			raw: {
 				provider: "sora2api",
+				vendor: ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api",
 				model,
 				response: payload,
 				rawBody: rawText,
@@ -5008,6 +5019,7 @@ export async function runGenericTaskForVendor(
 			});
 		}
 
+		const apiVendor = pickApiVendorForTask(result, v);
 		const persistAssets =
 			typeof (req.extras as any)?.persistAssets === "boolean"
 				? (req.extras as any).persistAssets
@@ -5022,7 +5034,7 @@ export async function runGenericTaskForVendor(
 				meta: {
 					taskKind: req.kind,
 					prompt: req.prompt,
-					vendor: v,
+					vendor: apiVendor,
 					modelKey:
 						(typeof (req.extras as any)?.modelKey === "string" &&
 							(req.extras as any).modelKey) ||
@@ -5049,7 +5061,7 @@ export async function runGenericTaskForVendor(
 
 		await recordVendorCallFromTaskResult(c, {
 			userId,
-			vendor: v,
+			vendor: apiVendor,
 			taskKind: req.kind,
 			result,
 		});
