@@ -253,6 +253,7 @@ cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 - **前端应用**：http://localhost:5173
 - **API 服务**：http://localhost:8788
 - **API 文档**：http://localhost:8788/
+- **外站 Public API 文档**：`docs/PublicAPI.zh-CN.md`
 
 如果看到 TapCanvas 的界面，说明运行成功！
 
