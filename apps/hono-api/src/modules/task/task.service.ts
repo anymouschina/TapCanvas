@@ -133,6 +133,7 @@ async function recordVendorCallFinal(
 		taskKind?: string | null;
 		status: "succeeded" | "failed";
 		errorMessage?: string | null;
+		durationMs?: number | null;
 	},
 ): Promise<void> {
 	const nowIso = new Date().toISOString();
@@ -144,6 +145,11 @@ async function recordVendorCallFinal(
 			taskKind: input.taskKind ?? null,
 			status: input.status,
 			errorMessage: input.errorMessage ?? null,
+			durationMs:
+				typeof input.durationMs === "number" &&
+				Number.isFinite(input.durationMs)
+					? Math.max(0, Math.round(input.durationMs))
+					: null,
 			nowIso,
 		});
 	} catch (err: any) {
@@ -161,6 +167,7 @@ async function recordVendorCallFromTaskResult(
 		vendor: string;
 		taskKind?: string | null;
 		result: TaskResult;
+		durationMs?: number | null;
 	},
 ): Promise<void> {
 	const taskId =
@@ -176,12 +183,36 @@ async function recordVendorCallFromTaskResult(
 		return;
 	}
 	if (input.result.status === "succeeded" || input.result.status === "failed") {
+		const errorMessage = (() => {
+			if (input.result.status !== "failed") return null;
+			const raw: any = input.result?.raw as any;
+			const candidates = [
+				raw?.failureReason,
+				raw?.message,
+				raw?.error,
+				raw?.response?.failureReason,
+				raw?.response?.failure_reason,
+				raw?.response?.error?.message,
+				raw?.response?.error_message,
+				raw?.response?.error,
+				raw?.response?.message,
+			];
+			for (const value of candidates) {
+				if (typeof value === "string" && value.trim()) {
+					return value.trim();
+				}
+			}
+			return null;
+		})();
+
 		await recordVendorCallFinal(c, {
 			userId: input.userId,
 			vendor: input.vendor,
 			taskId,
 			taskKind: input.taskKind ?? null,
 			status: input.result.status,
+			errorMessage,
+			durationMs: input.durationMs ?? null,
 		});
 	}
 }
@@ -2376,11 +2407,34 @@ export async function fetchGrsaiDrawTaskResult(
 	const vendorForLog =
 		(typeof refForLog?.vendor === "string" && refForLog.vendor.trim()) ||
 		"grsai";
-	const upstreamTaskId = (() => {
-		const pid =
-			typeof refForLog?.pid === "string" ? refForLog.pid.trim() : "";
-		return pid || taskId.trim();
-	})();
+	const taskKind: TaskRequestDto["kind"] =
+		typeof options?.taskKind === "string" && options.taskKind.trim()
+			? (options.taskKind as TaskRequestDto["kind"])
+			: "text_to_image";
+	const pid =
+		typeof refForLog?.pid === "string" ? refForLog.pid.trim() : "";
+	if (refForLog && !pid) {
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: taskKind,
+			status: "running",
+			assets: [],
+			raw: {
+				provider: "grsai",
+				vendor: vendorForLog,
+				upstreamTaskId: null,
+				waitingUpstreamTaskId: true,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+		return result;
+	}
+	const upstreamTaskId = pid || taskId.trim();
 
 	const ctx = await resolveVendorContext(c, userId, "gemini");
 	if (ctx.viaProxyVendor === "comfly") {
@@ -2476,11 +2530,6 @@ export async function fetchGrsaiDrawTaskResult(
 		(typeof payload?.message === "string" && payload.message.trim()) ||
 		(typeof data?.error === "string" && data.error.trim()) ||
 		null;
-
-	const taskKind: TaskRequestDto["kind"] =
-		typeof options?.taskKind === "string" && options.taskKind.trim()
-			? (options.taskKind as TaskRequestDto["kind"])
-			: "text_to_image";
 
 	let assets: Array<ReturnType<typeof TaskAssetSchema.parse>> = [];
 	if (status === "succeeded" && urls.length > 0) {
@@ -3964,6 +4013,12 @@ async function runGeminiTextTask(
 		.trim();
 
 	const id = `gemini-${Date.now().toString(36)}`;
+	const modelId = model.startsWith("models/") ? model.slice(7) : model;
+	const vendorForLog = (() => {
+		const raw = (modelId || "").trim();
+		if (!raw) return "gemini";
+		return raw.toLowerCase().startsWith("gemini-") ? raw : `gemini-${raw}`;
+	})();
 
 	return TaskResultSchema.parse({
 		id,
@@ -3972,6 +4027,8 @@ async function runGeminiTextTask(
 		assets: [],
 		raw: {
 			provider: "gemini",
+			vendor: vendorForLog,
+			model: modelId,
 			response: data,
 			text,
 		},
@@ -4180,7 +4237,10 @@ async function runGeminiBananaImageTask(
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
 	const endpoint = `${baseUrl}/v1/draw/nano-banana`;
-	const vendorKeyForLog = `grsai-${normalizedModel}`;
+	const vendorKeyForLog =
+		ctx.viaProxyVendor === "comfly"
+			? `comfly-${normalizedModel}`
+			: `grsai-${normalizedModel}`;
 	const localTaskId = `banana-${Date.now().toString(36)}-${crypto
 		.randomUUID()
 		.slice(0, 8)}`;
@@ -4340,13 +4400,13 @@ async function runGeminiBananaImageTask(
 			);
 
 			return TaskResultSchema.parse({
-				id: `comfly-img-${Date.now().toString(36)}`,
+				id: localTaskId,
 				kind: req.kind,
 				status: assets.length ? "succeeded" : "failed",
 				assets,
 				raw: {
 					provider: "comfly",
-					vendor: "comfly",
+					vendor: vendorKeyForLog,
 					model,
 					request: body,
 					response: data ?? null,
@@ -4354,13 +4414,45 @@ async function runGeminiBananaImageTask(
 			});
 		}
 
-	// 对齐前端「创建任务 → 轮询结果」协议：优先拿到上游 taskId 并走 /v1/draw/result 轮询。
+	const coerceTaskId = (value: any): string | null => {
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (typeof value === "number" && Number.isFinite(value)) return String(value);
+		return null;
+	};
+	const extractUpstreamTaskId = (value: any): string | null => {
+		if (!value || typeof value !== "object") return null;
+		const candidates = [
+			(value as any).id,
+			(value as any).task_id,
+			(value as any).taskId,
+			(value as any).request_id,
+			(value as any).requestId,
+			(value as any).pid,
+			(value as any).postId,
+			(value as any).post_id,
+			(value as any).data?.id,
+			(value as any).data?.task_id,
+			(value as any).data?.taskId,
+			(value as any).data?.request_id,
+			(value as any).data?.requestId,
+			(value as any).data?.pid,
+			(value as any).data?.postId,
+			(value as any).data?.post_id,
+		];
+		for (const candidate of candidates) {
+			const coerced = coerceTaskId(candidate);
+			if (coerced) return coerced;
+		}
+		return null;
+	};
+
+	// 对齐前端「创建任务 → 轮询结果」协议：返回本地 taskId，上游 taskId 到来后写入 pid 供轮询使用。
 	const body: any = {
 		model: normalizedModel,
 		prompt: req.prompt,
 		aspectRatio,
-		// grsai /v1/draw/nano-banana 支持异步任务：关闭进度流以便快速返回 taskId。
-		shutProgress: true,
+		// 部分实现只会在 SSE 事件中返回 taskId；这里开启进度流以便抓取上游 taskId。
+		shutProgress: false,
 	};
 	if (imageSize) {
 		body.imageSize = imageSize;
@@ -4382,27 +4474,13 @@ async function runGeminiBananaImageTask(
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Accept: "application/json",
+					Accept: "text/event-stream,application/json",
 					Authorization: `Bearer ${apiKey}`,
 				},
 				body: JSON.stringify(body),
 			},
 			{ tag: "banana:image" },
 		);
-		const ct = (res.headers.get("content-type") || "").toLowerCase();
-		if (ct.includes("application/json")) {
-			try {
-				data = await res.json();
-			} catch {
-				data = null;
-			}
-		} else {
-			try {
-				data = await res.text();
-			} catch {
-				data = null;
-			}
-		}
 	} catch (error: any) {
 		throw new AppError("Banana 图像生成请求失败", {
 			status: 502,
@@ -4411,7 +4489,23 @@ async function runGeminiBananaImageTask(
 		});
 	}
 
+	const ct = (res.headers.get("content-type") || "").toLowerCase();
+	if (ct.includes("application/json")) {
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	}
+
 	if (!res.ok || (typeof data?.code === "number" && data.code !== 0)) {
+		if (!res.ok && data === null) {
+			try {
+				data = await res.text();
+			} catch {
+				data = null;
+			}
+		}
 		const normalizedError = normalizeBananaResponse(data);
 		const msg =
 			(normalizedError.payload &&
@@ -4441,81 +4535,126 @@ async function runGeminiBananaImageTask(
 	}
 
 	const normalized = normalizeBananaResponse(data);
-	const payload = normalized.payload ?? {};
-	const coerceTaskId = (value: any): string | null => {
-		if (typeof value === "string" && value.trim()) return value.trim();
-		if (typeof value === "number" && Number.isFinite(value)) return String(value);
-		return null;
-	};
-	const upstreamTaskId = (() => {
-		const candidates = [
-			(payload as any)?.id,
-			(payload as any)?.task_id,
-			(payload as any)?.taskId,
-			(payload as any)?.request_id,
-			(payload as any)?.requestId,
-			(payload as any)?.pid,
-			(payload as any)?.postId,
-			(payload as any)?.post_id,
-			(payload as any)?.data?.id,
-			(payload as any)?.data?.task_id,
-			(payload as any)?.data?.taskId,
-			(payload as any)?.data?.request_id,
-			(payload as any)?.data?.requestId,
-			(payload as any)?.data?.pid,
-			(payload as any)?.data?.postId,
-			(payload as any)?.data?.post_id,
-			(data as any)?.id,
-			(data as any)?.task_id,
-			(data as any)?.taskId,
-			(data as any)?.request_id,
-			(data as any)?.requestId,
-			(data as any)?.pid,
-			(data as any)?.postId,
-			(data as any)?.post_id,
-			(data as any)?.data?.id,
-			(data as any)?.data?.task_id,
-			(data as any)?.data?.taskId,
-			(data as any)?.data?.request_id,
-			(data as any)?.data?.requestId,
-			(data as any)?.data?.pid,
-			(data as any)?.data?.postId,
-			(data as any)?.data?.post_id,
-		];
-		for (const value of candidates) {
-			const coerced = coerceTaskId(value);
-			if (coerced) return coerced;
+	let upstreamTaskId: string | null = null;
+	if (!ct.includes("application/json")) {
+		const resolveUpstreamFromSse = async (): Promise<{
+			upstreamTaskId: string | null;
+			firstEvent: any | null;
+		}> => {
+			const reader = res.body?.getReader();
+			if (!reader) return { upstreamTaskId: null, firstEvent: null };
+			const decoder = new TextDecoder();
+			let buf = "";
+			let bytes = 0;
+			const deadline = Date.now() + 15_000;
+			const maxBytes = 256 * 1024;
+			let firstEvent: any | null = null;
+			let found: string | null = null;
+			try {
+				while (Date.now() < deadline && bytes < maxBytes && !found) {
+					const chunk = await reader.read();
+					if (chunk.done) break;
+					if (chunk.value) {
+						bytes += chunk.value.byteLength;
+						buf += decoder.decode(chunk.value, { stream: true });
+					}
+					const lines = buf.split(/\r?\n/);
+					buf = lines.pop() || "";
+					for (const line of lines) {
+						const match = line.match(/^\s*data:\s*(.+)$/i);
+						if (!match) continue;
+						const payloadText = match[1]?.trim();
+						if (!payloadText || payloadText === "[DONE]") continue;
+						let eventObj: any = null;
+						try {
+							eventObj = JSON.parse(payloadText);
+						} catch {
+							continue;
+						}
+						if (!firstEvent) firstEvent = eventObj;
+						const candidate =
+							extractUpstreamTaskId(eventObj) ||
+							extractUpstreamTaskId((eventObj as any)?.data) ||
+							null;
+						if (candidate) {
+							found = candidate;
+							break;
+						}
+					}
+				}
+			} catch (err: any) {
+				console.warn(
+					"[banana:image] resolve upstream taskId from SSE failed",
+					err?.message || err,
+				);
+			} finally {
+				try {
+					await reader.cancel();
+				} catch {
+					// ignore
+				}
+			}
+
+			if (found) {
+				const nowIso = new Date().toISOString();
+				try {
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{
+							kind: "image",
+							taskId: localTaskId,
+							vendor: vendorKeyForLog,
+							pid: found,
+						},
+						nowIso,
+					);
+				} catch (err: any) {
+					console.warn(
+						"[vendor-task-refs] upsert image pid failed",
+						err?.message || err,
+					);
+				}
+			}
+
+			return { upstreamTaskId: found, firstEvent };
+		};
+
+		const ssePromise = resolveUpstreamFromSse();
+		const execCtx = (c as any)?.executionCtx;
+		if (execCtx && typeof execCtx.waitUntil === "function") {
+			execCtx.waitUntil(ssePromise);
+			try {
+				const quick = await Promise.race([
+					ssePromise,
+					new Promise<null>((r) =>
+						setTimeout(() => r(null), 250),
+					),
+				]);
+				if (quick && quick.upstreamTaskId) upstreamTaskId = quick.upstreamTaskId;
+			} catch {
+				// ignore
+			}
+		} else {
+			const resolved = await ssePromise;
+			if (resolved.upstreamTaskId) upstreamTaskId = resolved.upstreamTaskId;
 		}
+	}
+
+	const payload = normalized.payload ?? {};
+	if (!upstreamTaskId) {
+		upstreamTaskId =
+			extractUpstreamTaskId(payload) ||
+			extractUpstreamTaskId(data) ||
+			null;
 		const events = Array.isArray((normalized as any)?.events)
 			? ((normalized as any).events as any[])
 			: [];
 		for (const event of events) {
-			if (!event || typeof event !== "object") continue;
-			const evCandidates = [
-				(event as any).id,
-				(event as any).task_id,
-				(event as any).taskId,
-				(event as any).request_id,
-				(event as any).requestId,
-				(event as any).pid,
-				(event as any).postId,
-				(event as any).post_id,
-				(event as any).data?.id,
-				(event as any).data?.task_id,
-				(event as any).data?.taskId,
-				(event as any).data?.request_id,
-				(event as any).data?.requestId,
-				(event as any).data?.pid,
-				(event as any).data?.postId,
-				(event as any).data?.post_id,
-			];
-			for (const value of evCandidates) {
-				const coerced = coerceTaskId(value);
-				if (coerced) return coerced;
-			}
+			if (upstreamTaskId) break;
+			upstreamTaskId = extractUpstreamTaskId(event);
 		}
-		return null;
-	})();
+	}
 
 	const imageUrls = extractBananaImageUrls(payload);
 	const assets = imageUrls.map((url) =>
@@ -4533,10 +4672,6 @@ async function runGeminiBananaImageTask(
 			String((data as any).status).trim()) ||
 		"queued";
 	let creationStatus = normalizeGrsaiDrawTaskStatus(statusRaw);
-	// 没有上游 id 时无法轮询；若没有素材则视为失败。
-	if (!upstreamTaskId && assets.length === 0) {
-		creationStatus = "failed";
-	}
 	// 创建接口即使返回 succeeded，也统一走轮询以保证耗时统计与前端一致（仅在能轮询时生效）。
 	if (upstreamTaskId && creationStatus === "succeeded") {
 		creationStatus = "running";
@@ -4580,6 +4715,11 @@ async function runGeminiBananaImageTask(
 		}
 	}
 
+	const waitingUpstreamTaskId =
+		!upstreamTaskId &&
+		assets.length === 0 &&
+		creationStatus !== "failed" &&
+		creationStatus !== "succeeded";
 	const failureReasonRaw =
 		(typeof (payload as any)?.failure_reason === "string" &&
 			String((payload as any).failure_reason).trim()) ||
@@ -4587,9 +4727,7 @@ async function runGeminiBananaImageTask(
 			String((payload as any).error).trim()) ||
 		(typeof (payload as any)?.message === "string" &&
 			String((payload as any).message).trim()) ||
-		(!upstreamTaskId && assets.length === 0
-			? "Banana 图像任务创建失败：上游未返回任务 ID"
-			: null);
+		(waitingUpstreamTaskId ? "等待上游返回任务 ID" : null);
 
 	return TaskResultSchema.parse({
 		id: localTaskId,
@@ -5248,6 +5386,7 @@ export async function runGenericTaskForVendor(
 ): Promise<TaskResult> {
 	const v = normalizeVendorKey(vendor);
 	const progressCtx = extractProgressContext(req, v);
+	const startedAtMs = Date.now();
 
 	// 所有厂商统一：/tasks 视为“创建任务”，立即发出 queued/running 事件
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
@@ -5429,6 +5568,7 @@ export async function runGenericTaskForVendor(
 			vendor: apiVendor,
 			taskKind: req.kind,
 			result,
+			durationMs: Date.now() - startedAtMs,
 		});
 
 		return result;
