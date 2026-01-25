@@ -16,6 +16,14 @@ TapCanvas now ships an **Immersive Creation** entry (aka **XiaoT**) that lets yo
   <img src="assets/2025-12-16.jpg" alt="Immersive Creation (XiaoT) preview" width="1000" />
 </p>
 
+## Latest Capabilities
+
+- **Video-to-image reference via frame preview**: drag a frame from the video preview directly onto the canvas to use it as a reference image for image generation.
+
+<p align="center">
+  <img src="assets/video-to-image.jpg" alt="Drag frame to generate reference image" width="1000" />
+</p>
+
 ### How to use (Immersive Creation / XiaoT)
 
 1) Open TapCanvas and click the left floating icon labeled **“沉浸式创作（小T）”**  
