@@ -89,4 +89,5 @@ export const RunTaskRequestSchema = z.union([
 export const FetchTaskResultRequestSchema = z.object({
 	taskId: z.string(),
 	prompt: z.string().nullable().optional(),
+	taskKind: TaskKindSchema.optional(),
 });

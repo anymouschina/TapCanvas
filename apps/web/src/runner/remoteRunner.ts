@@ -12,6 +12,7 @@ import {
   fetchVeoTaskResult,
   fetchSora2ApiTaskResult,
   fetchMiniMaxTaskResult,
+  fetchGrsaiTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -3032,7 +3033,7 @@ async function runGenericTask(ctx: RunnerContext) {
         `[${nowLabel()}] 调用${vendorName} ${modelType}模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
       )
 
-      const res = await runTaskByVendor(vendor, {
+      let res = await runTaskByVendor(vendor, {
         kind: effectiveTaskKind,
         prompt: promptForModel,
         extras: {
@@ -3052,6 +3053,92 @@ async function runGenericTask(ctx: RunnerContext) {
         },
       })
 
+      if (isImageTask && (res.status === 'queued' || res.status === 'running')) {
+        const taskId = typeof res.id === 'string' ? res.id.trim() : String(res.id || '').trim()
+        if (!taskId) {
+          throw new Error('图像任务创建失败：未返回任务 ID')
+        }
+
+        setNodeStatus(id, 'running', {
+          progress: Math.max(10, progressBase),
+          imageTaskId: taskId,
+          imageModel: selectedModel,
+          imageModelVendor: (data as any)?.imageModelVendor || vendor,
+          lastResult: {
+            id: taskId,
+            at: Date.now(),
+            kind,
+            preview: { type: 'text', value: `已创建图像任务（ID: ${taskId}）` },
+          },
+        })
+        appendLog(id, `[${nowLabel()}] 已创建图像任务（ID: ${taskId}），开始轮询进度…`)
+
+        if (typeof window !== 'undefined' && typeof (window as any).silentSaveProject === 'function') {
+          try {
+            ;(window as any).silentSaveProject()
+          } catch {}
+        }
+
+        const pollIntervalMs = 2500
+        const pollTimeoutMs = 420_000
+        const startedAt = Date.now()
+        let lastProgress = Math.max(10, progressBase)
+
+        while (Date.now() - startedAt < pollTimeoutMs) {
+          if (isCanceled(id)) {
+            setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
+            appendLog(id, `[${nowLabel()}] 已取消图像任务`)
+            ctx.endRunToken(id)
+            return
+          }
+
+          let snapshot: TaskResultDto
+          try {
+            snapshot = await fetchGrsaiTaskResult(taskId, effectiveTaskKind, promptForModel)
+          } catch (err: any) {
+            const msg = err?.message || '查询图像任务进度失败'
+            appendLog(id, `[${nowLabel()}] error: ${msg}`)
+            await sleep(pollIntervalMs)
+            continue
+          }
+
+          if (snapshot.status === 'queued' || snapshot.status === 'running') {
+            const raw = snapshot.raw as any
+            const rawProgress =
+              (typeof raw?.progress === 'number' ? raw.progress : null) ??
+              (typeof raw?.response?.progress === 'number' ? raw.response.progress : null) ??
+              (typeof raw?.response?.progress_pct === 'number' ? raw.response.progress_pct * 100 : null)
+            if (typeof rawProgress === 'number') {
+              const normalized = Math.min(95, Math.max(lastProgress, Math.max(5, Math.round(rawProgress))))
+              lastProgress = normalized
+              setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', {
+                progress: normalized,
+                imageTaskId: taskId,
+              })
+            }
+            await sleep(pollIntervalMs)
+            continue
+          }
+
+          if (snapshot.status === 'failed') {
+            const msg =
+              (snapshot.raw && ((snapshot.raw as any)?.failureReason as string | undefined)) ||
+              (snapshot.raw && ((snapshot.raw as any)?.response?.error as string | undefined)) ||
+              (snapshot.raw && ((snapshot.raw as any)?.response?.message as string | undefined)) ||
+              '图像任务失败'
+            throw new Error(msg)
+          }
+
+          // succeeded
+          res = snapshot
+          break
+        }
+
+        if (res.status === 'queued' || res.status === 'running') {
+          throw new Error('图像任务超时，请稍后重试')
+        }
+      }
+
       lastRes = res
 
       if (vendor === 'qwen' && res.status === 'failed') {
@@ -3065,7 +3152,7 @@ async function runGenericTask(ctx: RunnerContext) {
         throw new Error(errMsg)
       }
 
-      if (vendor === 'gemini' && res.status === 'failed') {
+      if ((vendor === 'gemini' || vendor === 'google') && res.status === 'failed') {
         const rawResponse = (res.raw as any)?.response || res.raw
         const errMsg =
           rawResponse?.failure_reason ||

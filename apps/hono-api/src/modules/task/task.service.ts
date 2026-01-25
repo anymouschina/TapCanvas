@@ -1879,8 +1879,12 @@ export async function runSora2ApiVideoTask(
 	}
 
 	{
-		const vendorForRef =
-			ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api";
+		const normalizedModelForVendor = model.trim().startsWith("models/")
+			? model.trim().slice(7)
+			: model.trim();
+		const vendorForRef = isGrsaiBase
+			? `grsai-${normalizedModelForVendor || "sora-2"}`
+			: "sora2api";
 		const nowIso = new Date().toISOString();
 		try {
 			await upsertVendorTaskRef(
@@ -1901,8 +1905,12 @@ export async function runSora2ApiVideoTask(
 		}
 	}
 
-	const vendorForLog =
-		ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api";
+	const normalizedModelForVendor = model.trim().startsWith("models/")
+		? model.trim().slice(7)
+		: model.trim();
+	const vendorForLog = isGrsaiBase
+		? `grsai-${normalizedModelForVendor || "sora-2"}`
+		: "sora2api";
 	const result = TaskResultSchema.parse({
 		id: createdTaskId,
 		kind: "text_to_video",
@@ -1939,20 +1947,21 @@ export async function fetchSora2ApiTaskResult(
 			code: "task_id_required",
 		});
 	}
-	const vendorForTask = await (async (): Promise<"sora2api" | "grsai"> => {
+	const refForTask = await (async () => {
 		try {
-			const ref = await getVendorTaskRefByTaskId(
-				c.env.DB,
-				userId,
-				"video",
-				taskId,
-			);
-			const raw = (ref?.vendor || "").trim().toLowerCase();
-			return raw === "grsai" ? "grsai" : "sora2api";
+			return await getVendorTaskRefByTaskId(c.env.DB, userId, "video", taskId);
 		} catch {
-			return "sora2api";
+			return null;
 		}
 	})();
+	const refVendorRaw =
+		typeof refForTask?.vendor === "string" ? refForTask.vendor.trim() : "";
+	const vendorForTask: "sora2api" | "grsai" = refVendorRaw
+		.toLowerCase()
+		.startsWith("grsai")
+		? "grsai"
+		: "sora2api";
+	const vendorForLog = refVendorRaw || vendorForTask;
 
 	const ctx = await resolveVendorContext(c, userId, vendorForTask);
 	if (ctx.viaProxyVendor === "comfly") {
@@ -1965,7 +1974,7 @@ export async function fetchSora2ApiTaskResult(
 		);
 		await recordVendorCallFromTaskResult(c, {
 			userId,
-			vendor: vendorForTask,
+			vendor: vendorForLog,
 			taskKind: "text_to_video",
 			result,
 		});
@@ -2132,7 +2141,7 @@ export async function fetchSora2ApiTaskResult(
 					{
 						kind: "video",
 						taskId,
-						vendor: vendorForTask,
+						vendor: vendorForLog,
 						pid: pidForRef,
 					},
 					nowIso,
@@ -2269,7 +2278,7 @@ export async function fetchSora2ApiTaskResult(
 			});
 			await recordVendorCallFromTaskResult(c, {
 				userId,
-				vendor: vendorForTask,
+				vendor: vendorForLog,
 				taskKind: "text_to_video",
 				result,
 			});
@@ -2289,7 +2298,7 @@ export async function fetchSora2ApiTaskResult(
 		});
 		await recordVendorCallFromTaskResult(c, {
 			userId,
-			vendor: vendorForTask,
+			vendor: vendorForLog,
 			taskKind: "text_to_video",
 			result,
 		});
@@ -2305,6 +2314,216 @@ export async function fetchSora2ApiTaskResult(
 			endpointTried: lastError?.endpoint ?? null,
 		},
 	});
+}
+
+function normalizeGrsaiDrawTaskStatus(value: unknown): TaskStatus {
+	if (typeof value !== "string") return "running";
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) return "running";
+	if (
+		normalized === "succeeded" ||
+		normalized === "success" ||
+		normalized === "completed"
+	) {
+		return "succeeded";
+	}
+	if (
+		normalized === "failed" ||
+		normalized === "failure" ||
+		normalized === "error"
+	) {
+		return "failed";
+	}
+	if (normalized === "queued" || normalized === "submitted") {
+		return "queued";
+	}
+	if (
+		normalized === "processing" ||
+		normalized === "in_progress" ||
+		normalized === "running"
+	) {
+		return "running";
+	}
+	return "running";
+}
+
+export async function fetchGrsaiDrawTaskResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+	options?: { taskKind?: TaskRequestDto["kind"] | null; promptFromClient?: string | null },
+): Promise<TaskResult> {
+	if (!taskId || !taskId.trim()) {
+		throw new AppError("taskId is required", {
+			status: 400,
+			code: "task_id_required",
+		});
+	}
+
+	const refForLog = await (async () => {
+		try {
+			return await getVendorTaskRefByTaskId(
+				c.env.DB,
+				userId,
+				"image",
+				taskId,
+			);
+		} catch {
+			return null;
+		}
+	})();
+
+	const vendorForLog =
+		(typeof refForLog?.vendor === "string" && refForLog.vendor.trim()) ||
+		"grsai";
+
+	const ctx = await resolveVendorContext(c, userId, "gemini");
+	if (ctx.viaProxyVendor === "comfly") {
+		throw new AppError("comfly 代理暂不支持 /v1/draw/result 查询", {
+			status: 400,
+			code: "draw_result_not_supported",
+		});
+	}
+
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
+	const apiKey = ctx.apiKey.trim();
+	if (!apiKey) {
+		throw new AppError("未配置 grsai API Key", {
+			status: 400,
+			code: "banana_api_key_missing",
+		});
+	}
+
+	let res: Response;
+	let data: any = null;
+	try {
+		res = await fetchWithHttpDebugLog(
+			c,
+			`${baseUrl.replace(/\/+$/, "")}/v1/draw/result`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({ id: taskId.trim() }),
+			},
+			{ tag: "grsai:drawResult" },
+		);
+		try {
+			data = await res.json();
+		} catch {
+			data = null;
+		}
+	} catch (error: any) {
+		throw new AppError("grsai 任务查询失败", {
+			status: 502,
+			code: "grsai_result_failed",
+			details: { message: error?.message ?? String(error) },
+		});
+	}
+
+	if (res.status < 200 || res.status >= 300) {
+		const msg =
+			(data &&
+				(data.error?.message ||
+					data.message ||
+					data.error ||
+					data.error_message)) ||
+			`grsai 任务查询失败: ${res.status}`;
+		throw new AppError(msg, {
+			status: res.status,
+			code: "grsai_result_failed",
+			details: { upstreamStatus: res.status, upstreamData: data ?? null },
+		});
+	}
+
+	const payload =
+		data && typeof data === "object" && data.data ? data.data : data ?? {};
+
+	const statusRaw =
+		(typeof payload?.status === "string" && payload.status.trim()) ||
+		(typeof data?.status === "string" && data.status.trim()) ||
+		null;
+	let status = normalizeGrsaiDrawTaskStatus(statusRaw);
+
+	const progress = clampProgress(
+		typeof payload?.progress === "number"
+			? payload.progress <= 1
+				? payload.progress * 100
+				: payload.progress
+			: typeof payload?.progress_pct === "number"
+				? payload.progress_pct <= 1
+					? payload.progress_pct * 100
+					: payload.progress_pct
+				: undefined,
+	);
+
+	const urls = extractBananaImageUrls(payload);
+	if (urls.length > 0 && status !== "failed") {
+		status = "succeeded";
+	}
+
+	const failureReasonRaw =
+		(typeof payload?.failure_reason === "string" &&
+			payload.failure_reason.trim()) ||
+		(typeof payload?.error === "string" && payload.error.trim()) ||
+		(typeof payload?.message === "string" && payload.message.trim()) ||
+		(typeof data?.error === "string" && data.error.trim()) ||
+		null;
+
+	const taskKind: TaskRequestDto["kind"] =
+		typeof options?.taskKind === "string" && options.taskKind.trim()
+			? (options.taskKind as TaskRequestDto["kind"])
+			: "text_to_image";
+
+	let assets: Array<ReturnType<typeof TaskAssetSchema.parse>> = [];
+	if (status === "succeeded" && urls.length > 0) {
+		assets = urls.map((url) =>
+			TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+		);
+		const promptForAsset =
+			(typeof options?.promptFromClient === "string" &&
+				options.promptFromClient.trim()) ||
+			(typeof payload?.prompt === "string" && payload.prompt.trim()) ||
+			null;
+		const hostedAssets = await hostTaskAssetsInWorker({
+			c,
+			userId,
+			assets,
+			meta: {
+				taskKind,
+				prompt: promptForAsset,
+				vendor: "grsai",
+				taskId: taskId ?? null,
+			},
+		});
+		assets = hostedAssets;
+	}
+
+	const result = TaskResultSchema.parse({
+		id: taskId,
+		kind: taskKind,
+		status,
+		assets,
+		raw: {
+			provider: "grsai",
+			vendor: "grsai",
+			response: payload,
+			progress,
+			failureReason: failureReasonRaw,
+			wrapper: data ?? null,
+		},
+	});
+
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: vendorForLog,
+		taskKind,
+		result,
+	});
+
+	return result;
 }
 
 	// ---------- MiniMax / Hailuo ----------
@@ -4103,16 +4322,13 @@ async function runGeminiBananaImageTask(
 			});
 		}
 
-	const shouldStreamProgress =
-		extras.shutProgress === true ? false : true;
-
+	// 对齐前端「创建任务 → 轮询结果」协议：这里仅创建任务并返回 taskId。
 	const body: any = {
 		model: normalizedModel,
 		prompt: req.prompt,
 		aspectRatio,
-		// 默认启用 Banana 侧进度流（与 Nest 保持一致），
-		// 但允许通过 extras.shutProgress === true 显式关闭。
-		shutProgress: shouldStreamProgress ? false : true,
+		// grsai /v1/draw/nano-banana 支持异步任务：关闭进度流以便快速返回 taskId。
+		shutProgress: true,
 	};
 	if (imageSize) {
 		body.imageSize = imageSize;
@@ -4134,9 +4350,7 @@ async function runGeminiBananaImageTask(
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Accept: shouldStreamProgress
-						? "text/event-stream,application/json"
-						: "application/json",
+					Accept: "application/json",
 					Authorization: `Bearer ${apiKey}`,
 				},
 				body: JSON.stringify(body),
@@ -4196,51 +4410,88 @@ async function runGeminiBananaImageTask(
 
 	const normalized = normalizeBananaResponse(data);
 	const payload = normalized.payload ?? {};
+	const createdTaskId = (() => {
+		const candidates = [
+			(payload as any)?.id,
+			(payload as any)?.task_id,
+			(payload as any)?.taskId,
+			(payload as any)?.data?.id,
+			(payload as any)?.data?.task_id,
+			(payload as any)?.data?.taskId,
+			(data as any)?.id,
+			(data as any)?.task_id,
+			(data as any)?.taskId,
+			(data as any)?.data?.id,
+			(data as any)?.data?.task_id,
+			(data as any)?.data?.taskId,
+		];
+		for (const value of candidates) {
+			if (typeof value === "string" && value.trim()) return value.trim();
+		}
+		return "";
+	})();
 
-	const imageUrls = extractBananaImageUrls(payload);
-	const assets = imageUrls.map((url) =>
-		TaskAssetSchema.parse({
-			type: "image",
-			url,
-			thumbnailUrl: null,
-		}),
-	);
-
-	const statusValue =
-		typeof payload?.status === "string"
-			? payload.status.toLowerCase()
-			: undefined;
-	const failureReasonRaw =
-		(typeof payload?.failure_reason === "string" &&
-			payload.failure_reason.trim()) ||
-		(typeof payload?.error === "string" && payload.error.trim()) ||
-		undefined;
-
-	// 没有图片但上游明确标记 failed（例如 output_moderation）时，
-	// 视为「任务失败」而不是 HTTP 级别错误，交由前端根据 status 处理。
-	let status: TaskResult["status"];
-	if (assets.length > 0) {
-		status =
-			statusValue === "failed" ? "failed" : "succeeded";
-	} else {
-		status = "failed";
+	if (!createdTaskId) {
+		throw new AppError("Banana 图像任务创建失败：未返回任务 ID", {
+			status: 502,
+			code: "banana_task_id_missing",
+			details: { upstreamData: payload ?? data ?? null },
+		});
 	}
 
-	const id =
-		(typeof payload?.id === "string" && payload.id.trim()) ||
-		`banana-${Date.now().toString(36)}`;
+	const statusRaw =
+		(typeof (payload as any)?.status === "string" &&
+			String((payload as any).status).trim()) ||
+		(typeof (data as any)?.status === "string" &&
+			String((data as any).status).trim()) ||
+		"queued";
+	let creationStatus = normalizeGrsaiDrawTaskStatus(statusRaw);
+	// 创建接口即使返回 succeeded，也统一走轮询以保证耗时统计与前端一致。
+	if (creationStatus === "succeeded") creationStatus = "running";
+
+	const creationProgress = clampProgress(
+		typeof (payload as any)?.progress === "number"
+			? (payload as any).progress <= 1
+				? (payload as any).progress * 100
+				: (payload as any).progress
+			: typeof (payload as any)?.progress_pct === "number"
+				? (payload as any).progress_pct <= 1
+					? (payload as any).progress_pct * 100
+					: (payload as any).progress_pct
+				: undefined,
+	);
+
+	const vendorKeyForLog = `grsai-${normalizedModel}`;
+	{
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{ kind: "image", taskId: createdTaskId, vendor: vendorKeyForLog },
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert image ref failed",
+				err?.message || err,
+			);
+		}
+	}
 
 	return TaskResultSchema.parse({
-		id,
+		id: createdTaskId,
 		kind: req.kind,
-		status,
-		assets,
+		status: creationStatus,
+		assets: [],
 		raw: {
 			provider: "gemini",
-			vendor: "grsai",
+			vendor: vendorKeyForLog,
 			model: normalizedModel,
+			taskId: createdTaskId,
+			status: creationStatus,
+			progress: creationProgress ?? null,
 			response: payload ?? data,
-			failureReason: failureReasonRaw,
 			events:
 				normalized.events && normalized.events.length
 					? normalized.events

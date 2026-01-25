@@ -1,7 +1,7 @@
 import type { D1Database } from "../../types";
 import { execute, queryOne } from "../../db/db";
 
-export type VendorTaskRefKind = "video" | "character";
+export type VendorTaskRefKind = "video" | "character" | "image";
 
 export type VendorTaskRefRow = {
 	user_id: string;
@@ -47,7 +47,9 @@ export async function ensureVendorTaskRefsSchema(
 }
 
 function normalizeKind(kind: VendorTaskRefKind): VendorTaskRefKind {
-	return kind === "character" ? "character" : "video";
+	if (kind === "character") return "character";
+	if (kind === "image") return "image";
+	return "video";
 }
 
 function normalizePid(pid?: string | null): string | null {
@@ -128,4 +130,3 @@ export async function getVendorTaskRefByPid(
 		[userId, normalizeKind(kind), normalizedPid],
 	);
 }
-

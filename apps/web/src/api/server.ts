@@ -2015,6 +2015,32 @@ export async function fetchMiniMaxTaskResult(taskId: string): Promise<TaskResult
   return r.json()
 }
 
+export async function fetchGrsaiTaskResult(
+  taskId: string,
+  taskKind?: TaskKind,
+  prompt?: string | null,
+): Promise<TaskResultDto> {
+  const body: Record<string, any> = { taskId }
+  if (typeof prompt === 'string' && prompt.trim()) body.prompt = prompt
+  if (typeof taskKind === 'string' && taskKind.trim()) body.taskKind = taskKind
+  const r = await apiFetch(`${API_BASE}/tasks/grsai/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  if (!r.ok) {
+    let msg = `fetch grsai result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
 export async function unwatermarkSoraVideo(url: string): Promise<{ downloadUrl: string; raw: any }> {
   const r = await apiFetch(`${API_BASE}/sora/video/unwatermark`, withAuth({
     method: 'POST',
