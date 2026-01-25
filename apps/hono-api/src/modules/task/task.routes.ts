@@ -7,6 +7,9 @@ import {
 	TaskResultSchema,
 	TaskProgressSnapshotSchema,
 	FetchTaskResultRequestSchema,
+	VendorCallLogListResponseSchema,
+	VendorCallLogStatusSchema,
+	VendorCallLogSchema,
 } from "./task.schemas";
 import {
 	fetchSora2ApiTaskResult,
@@ -25,6 +28,7 @@ import {
 	type TaskProgressSubscriber,
 	getPendingTaskSnapshots,
 } from "./task.progress";
+import { listVendorCallLogsForUser } from "./vendor-call-logs.repo";
 
 export const taskRouter = new Hono<AppEnv>();
 
@@ -182,6 +186,70 @@ taskRouter.get("/pending", async (c) => {
 	const items = getPendingTaskSnapshots(userId, vendor);
 	return c.json(
 		items.map((x) => TaskProgressSnapshotSchema.parse(x)),
+	);
+});
+
+// GET /tasks/logs - per-user generation logs (vendor_api_call_logs)
+taskRouter.get("/logs", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const limitRaw = c.req.query("limit");
+	const parsedLimit = Number(limitRaw ?? 50);
+	const limit = Number.isFinite(parsedLimit)
+		? Math.max(1, Math.min(200, Math.floor(parsedLimit)))
+		: 50;
+
+	const before = c.req.query("before") || null;
+	const vendor = c.req.query("vendor") || null;
+
+	const statusRaw = c.req.query("status") || null;
+	const statusParsed = (() => {
+		if (!statusRaw) return null;
+		const parsed = VendorCallLogStatusSchema.safeParse(statusRaw);
+		return parsed.success ? parsed.data : null;
+	})();
+
+	const taskKind = c.req.query("taskKind") || null;
+
+	// Fetch one extra row to detect "hasMore"
+	const rows = await listVendorCallLogsForUser(c.env.DB, userId, {
+		limit: limit + 1,
+		before,
+		vendor,
+		status: statusParsed,
+		taskKind,
+	});
+
+	const hasMore = rows.length > limit;
+	const sliced = hasMore ? rows.slice(0, limit) : rows;
+	const items = sliced.map((r) =>
+		VendorCallLogSchema.parse({
+			vendor: r.vendor,
+			taskId: r.task_id,
+			taskKind: r.task_kind ?? null,
+			status: r.status,
+			startedAt: r.started_at ?? null,
+			finishedAt: r.finished_at ?? null,
+			durationMs:
+				typeof r.duration_ms === "number" && Number.isFinite(r.duration_ms)
+					? Math.round(r.duration_ms)
+					: null,
+			errorMessage: r.error_message ?? null,
+			createdAt: r.created_at,
+			updatedAt: r.updated_at,
+		}),
+	);
+
+	const nextBefore =
+		items.length > 0 ? items[items.length - 1]!.createdAt : null;
+
+	return c.json(
+		VendorCallLogListResponseSchema.parse({
+			items,
+			hasMore,
+			nextBefore,
+		}),
 	);
 });
 

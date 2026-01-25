@@ -30,6 +30,7 @@ export type AppEnv = {
 	Variables: {
 		userId?: string;
 		auth?: unknown;
+		apiKeyId?: string;
 		requestId?: string;
 	};
 };

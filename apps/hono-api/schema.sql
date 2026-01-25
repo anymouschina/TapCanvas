@@ -455,3 +455,21 @@ CREATE TABLE IF NOT EXISTS vendor_api_call_logs (
 CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_vendor_finished_at ON vendor_api_call_logs(vendor, finished_at);
 CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_finished_at ON vendor_api_call_logs(finished_at);
 CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_status ON vendor_api_call_logs(status);
+
+-- External API keys (for browser/server clients; enforce Origin allowlist at runtime)
+CREATE TABLE IF NOT EXISTS api_keys (
+	id TEXT PRIMARY KEY,
+	owner_id TEXT NOT NULL,
+	label TEXT NOT NULL,
+	key_prefix TEXT NOT NULL,
+	key_hash TEXT NOT NULL,
+	allowed_origins TEXT NOT NULL, -- JSON array of origins or ["*"]
+	enabled INTEGER NOT NULL DEFAULT 1,
+	last_used_at TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (owner_id) REFERENCES users(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id);

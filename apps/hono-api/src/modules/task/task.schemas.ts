@@ -91,3 +91,38 @@ export const FetchTaskResultRequestSchema = z.object({
 	prompt: z.string().nullable().optional(),
 	taskKind: TaskKindSchema.optional(),
 });
+
+// ---- Vendor API call logs (per-user generation history) ----
+
+export const VendorCallLogStatusSchema = z.enum([
+	"running",
+	"succeeded",
+	"failed",
+]);
+
+export type VendorCallLogStatus = z.infer<typeof VendorCallLogStatusSchema>;
+
+export const VendorCallLogSchema = z.object({
+	vendor: z.string(),
+	taskId: z.string(),
+	taskKind: z.string().nullable().optional(),
+	status: VendorCallLogStatusSchema,
+	startedAt: z.string().nullable().optional(),
+	finishedAt: z.string().nullable().optional(),
+	durationMs: z.number().nullable().optional(),
+	errorMessage: z.string().nullable().optional(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export type VendorCallLogDto = z.infer<typeof VendorCallLogSchema>;
+
+export const VendorCallLogListResponseSchema = z.object({
+	items: z.array(VendorCallLogSchema),
+	hasMore: z.boolean(),
+	nextBefore: z.string().nullable(),
+});
+
+export type VendorCallLogListResponseDto = z.infer<
+	typeof VendorCallLogListResponseSchema
+>;
