@@ -440,6 +440,19 @@ export type StatsDto = {
 
 export type DauPointDto = { day: string; activeUsers: number }
 export type DauSeriesDto = { days: number; series: DauPointDto[] }
+export type VendorApiCallHistoryPointDto = { status: 'succeeded' | 'failed'; finishedAt: string }
+export type VendorApiCallStatDto = {
+  vendor: string
+  total: number
+  success: number
+  successRate: number
+  avgDurationMs: number | null
+  lastStatus: 'succeeded' | 'failed' | null
+  lastAt: string | null
+  lastDurationMs: number | null
+  history: VendorApiCallHistoryPointDto[]
+}
+export type VendorApiCallStatsDto = { days: number; points: number; vendors: VendorApiCallStatDto[] }
 
 export async function getStats(): Promise<StatsDto> {
   const r = await apiFetch(`${API_BASE}/stats`, withAuth())
@@ -478,6 +491,51 @@ export async function getDailyActiveUsers(days = 30): Promise<DauSeriesDto> {
     .map((p: any) => ({ day: String(p?.day || ''), activeUsers: Number(p?.activeUsers ?? 0) || 0 }))
     .filter((p: any) => typeof p.day === 'string' && p.day.length >= 10)
   return { days: Number(body?.days ?? safeDays) || safeDays, series }
+}
+
+export async function getVendorApiCallStats(days = 7, points = 60): Promise<VendorApiCallStatsDto> {
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.min(365, Math.floor(days))) : 7
+  const safePoints = Number.isFinite(points) ? Math.max(1, Math.min(180, Math.floor(points))) : 60
+  const r = await apiFetch(`${API_BASE}/stats/vendors?days=${encodeURIComponent(String(safeDays))}&points=${encodeURIComponent(String(safePoints))}`, withAuth())
+  let body: any = null
+  try {
+    body = await r.json()
+  } catch {
+    body = null
+  }
+  if (!r.ok) {
+    const msg = (body && (body.message || body.error)) || `get vendor stats failed: ${r.status}`
+    throw new Error(msg)
+  }
+  const vendorsRaw = Array.isArray(body?.vendors) ? body.vendors : []
+  const vendors = vendorsRaw
+    .map((v: any) => {
+      const historyRaw = Array.isArray(v?.history) ? v.history : []
+      const history = historyRaw
+        .map((h: any) => ({
+          status: h?.status === 'succeeded' ? 'succeeded' : 'failed',
+          finishedAt: String(h?.finishedAt || ''),
+        }))
+        .filter((h: any) => h.finishedAt && h.finishedAt.length >= 10)
+      return {
+        vendor: String(v?.vendor || ''),
+        total: Number(v?.total ?? 0) || 0,
+        success: Number(v?.success ?? 0) || 0,
+        successRate: Number(v?.successRate ?? 0) || 0,
+        avgDurationMs: typeof v?.avgDurationMs === 'number' ? v.avgDurationMs : null,
+        lastStatus: v?.lastStatus === 'succeeded' ? 'succeeded' : v?.lastStatus === 'failed' ? 'failed' : null,
+        lastAt: typeof v?.lastAt === 'string' ? v.lastAt : null,
+        lastDurationMs: typeof v?.lastDurationMs === 'number' ? v.lastDurationMs : null,
+        history,
+      } satisfies VendorApiCallStatDto
+    })
+    .filter((v: any) => v.vendor)
+
+  return {
+    days: Number(body?.days ?? safeDays) || safeDays,
+    points: Number(body?.points ?? safePoints) || safePoints,
+    vendors,
+  }
 }
 
 export async function getLangGraphProjectThread(projectId: string): Promise<LangGraphProjectThreadDto> {
