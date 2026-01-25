@@ -51,6 +51,19 @@
 - `vendor=auto` 会在可用厂商中自动回退（按任务类型）。
 - `extras.modelKey` 可用于选择模型（例如 Nano Banana 系列）。
 
+请求体（完整字段，按需填写）：
+- `vendor?: string`（默认 `auto`；绘图自动回退顺序：`gemini` → `sora2api` → `qwen`）
+- `kind?: "text_to_image" | "image_edit"`（默认 `text_to_image`）
+- `prompt: string`（必填）
+- `negativePrompt?: string`（可选；不同厂商可能忽略）
+- `seed?: number`（可选；不同厂商可能忽略）
+- `width?: number` / `height?: number`（可选；`qwen` 会使用，其他厂商可能仅用于推断横竖构图）
+- `steps?: number` / `cfgScale?: number`（可选；不同厂商可能忽略）
+- `extras?: object`（可选；透传给模型/网关，常用字段：）
+  - `extras.modelKey?: string`（模型选择）
+  - `extras.aspectRatio?: string`（建议值：`16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `4:5` / `5:4` / `21:9`，或 `auto`）
+  - `extras.referenceImages?: string[]`（参考图/首图；可为 `https://...` 或 `data:image/*;base64,...`）
+
 ### 3.2 生成视频
 
 `POST /public/video`
@@ -69,6 +82,21 @@
 说明：
 - `vendor=auto` 默认优先 `veo` / `sora2api`，如带首帧参数也会尝试 `minimax`。
 - MiniMax（hailuo）通常需要首帧图片，放在 `extras.firstFrameUrl` / `extras.firstFrameImage` / `extras.first_frame_image` / `extras.url` 等字段中。
+
+请求体（完整字段，按需填写）：
+- `vendor?: string`（默认 `auto`）
+- `prompt: string`（必填）
+- `durationSeconds?: number`（可选；会写入 `extras.durationSeconds`；不同厂商会做归一化/截断）
+- `extras?: object`（可选；透传给模型/网关，常用字段：）
+  - `extras.modelKey?: string`（模型选择）
+  - `extras.durationSeconds?: number`（等价于顶层 `durationSeconds`）
+  - `extras.firstFrameUrl?: string` / `extras.firstFrameImage?: string` / `extras.first_frame_image?: string` / `extras.url?: string`（首帧；MiniMax 必填）
+  - `extras.lastFrameUrl?: string`（尾帧；Veo 可选）
+  - `extras.urls?: string[]` / `extras.referenceImages?: string[]`（参考图；Veo 可选）
+  - `extras.orientation?: "portrait" | "landscape"`（Sora2API 可选）
+  - `extras.size?: string`（Sora2API 可选；部分通道支持 `1280x720` / `720x1280`）
+  - `extras.resolution?: string`（MiniMax 可选）
+  - `extras.promptOptimizer?: boolean` / `extras.prompt_optimizer?: boolean`（MiniMax 可选）
 
 ### 3.3 查任务（轮询）
 
@@ -130,4 +158,3 @@
 
 - 服务端内置的 OpenAPI（演示接口）入口：`http://localhost:8788/`
 - Public API 的快速示例代码也可在 `/stats -> 系统管理` 页面直接复制。
-

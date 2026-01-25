@@ -174,7 +174,36 @@ type DemoTask = {
 
 当 \`status\` 为 \`queued/running\` 时，用 \`/public/tasks/result\` 轮询结果。
 
-### 3) 生成视频
+### 3) 绘图
+
+- \`POST /public/draw\`
+
+请求体（简化版）：
+
+\`\`\`json
+{
+  "vendor": "auto",
+  "prompt": "一张电影感海报…",
+  "kind": "text_to_image",
+  "extras": { "modelKey": "nano-banana-pro" }
+}
+\`\`\`
+
+说明：
+- \`vendor=auto\` 会在可用厂商中自动回退（按任务类型；绘图顺序：\`gemini\` → \`sora2api\` → \`qwen\`）。
+- \`extras.modelKey\` 可用于选择模型（例如 Nano Banana 系列）。
+
+请求体（完整字段，按需填写）：
+- \`vendor?: string\`（默认 \`auto\`）
+- \`kind?: "text_to_image" | "image_edit"\`（默认 \`text_to_image\`）
+- \`prompt: string\`（必填）
+- \`negativePrompt?: string\`（可选；不同厂商可能忽略）
+- \`seed?: number\`（可选；不同厂商可能忽略）
+- \`width?: number\` / \`height?: number\`（可选；\`qwen\` 会使用，其他厂商可能仅用于推断横竖构图）
+- \`steps?: number\` / \`cfgScale?: number\`（可选；不同厂商可能忽略）
+- \`extras?: object\`（可选；透传给模型/网关，常用字段：\`modelKey\` / \`aspectRatio\` / \`referenceImages\`）
+
+### 4) 生成视频
 
 - \`POST /public/video\`
 
@@ -192,6 +221,12 @@ type DemoTask = {
 说明：
 - \`vendor=auto\` 默认优先 \`veo\` / \`sora2api\`，如带首帧参数也会尝试 \`minimax\`。
 - MiniMax（hailuo）通常需要首帧图片，放在 \`extras.firstFrameUrl\` / \`extras.firstFrameImage\` / \`extras.first_frame_image\` / \`extras.url\` 等字段中。
+
+请求体（完整字段，按需填写）：
+- \`vendor?: string\`（默认 \`auto\`）
+- \`prompt: string\`（必填）
+- \`durationSeconds?: number\`（可选；会写入 \`extras.durationSeconds\`；不同厂商会做归一化/截断）
+- \`extras?: object\`（可选；透传给模型/网关，常用字段：\`modelKey\` / \`durationSeconds\` / \`firstFrameUrl\` / \`firstFrameImage\` / \`first_frame_image\` / \`url\` / \`lastFrameUrl\` / \`urls\` / \`referenceImages\` / \`orientation\` / \`size\` / \`resolution\` / \`promptOptimizer\`）
 
 参考响应（200）：
 
