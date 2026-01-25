@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar, IconTerminal2, IconKey } from '@tabler/icons-react'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar, IconTerminal2 } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
 import { useIsAdmin } from '../auth/isAdmin'
 import { useUIStore } from './uiStore'
@@ -198,7 +198,6 @@ export default function FloatingNav({ className }: { className?: string }): JSX.
             </Tooltip>
           )}
           <Item label={$('模型配置')} icon={<IconSettings className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
-          <Item label={$('三方 API')} icon={<IconKey className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('thirdPartyApi') }} />
           <Item label={$('历史记录')} icon={<IconHistory className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
 
           {/* <Item label="图片编辑" icon={<IconPhotoEdit size={18} />}  badge="Beta" /> */}
