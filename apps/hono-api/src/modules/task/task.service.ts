@@ -20,6 +20,10 @@ import {
 	getVendorTaskRefByTaskId,
 	upsertVendorTaskRef,
 } from "./vendor-task-refs.repo";
+import {
+	upsertVendorCallLogFinal,
+	upsertVendorCallLogStarted,
+} from "./vendor-call-logs.repo";
 
 type VendorContext = {
 	baseUrl: string;
@@ -87,6 +91,89 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
 	if (!val) return "";
 	return val.replace(/\/+$/, "");
+}
+
+async function recordVendorCallStarted(
+	c: AppContext,
+	input: { userId: string; vendor: string; taskId: string; taskKind?: string | null },
+): Promise<void> {
+	const nowIso = new Date().toISOString();
+	try {
+		await upsertVendorCallLogStarted(c.env.DB, {
+			userId: input.userId,
+			vendor: input.vendor,
+			taskId: input.taskId,
+			taskKind: input.taskKind ?? null,
+			nowIso,
+		});
+	} catch (err: any) {
+		console.warn(
+			"[vendor-call-logs] upsert started failed",
+			err?.message || err,
+		);
+	}
+}
+
+async function recordVendorCallFinal(
+	c: AppContext,
+	input: {
+		userId: string;
+		vendor: string;
+		taskId: string;
+		taskKind?: string | null;
+		status: "succeeded" | "failed";
+		errorMessage?: string | null;
+	},
+): Promise<void> {
+	const nowIso = new Date().toISOString();
+	try {
+		await upsertVendorCallLogFinal(c.env.DB, {
+			userId: input.userId,
+			vendor: input.vendor,
+			taskId: input.taskId,
+			taskKind: input.taskKind ?? null,
+			status: input.status,
+			errorMessage: input.errorMessage ?? null,
+			nowIso,
+		});
+	} catch (err: any) {
+		console.warn(
+			"[vendor-call-logs] upsert final failed",
+			err?.message || err,
+		);
+	}
+}
+
+async function recordVendorCallFromTaskResult(
+	c: AppContext,
+	input: {
+		userId: string;
+		vendor: string;
+		taskKind?: string | null;
+		result: TaskResult;
+	},
+): Promise<void> {
+	const taskId =
+		typeof input.result?.id === "string" ? input.result.id.trim() : "";
+	if (!taskId) return;
+	if (input.result.status === "queued" || input.result.status === "running") {
+		await recordVendorCallStarted(c, {
+			userId: input.userId,
+			vendor: input.vendor,
+			taskId,
+			taskKind: input.taskKind ?? null,
+		});
+		return;
+	}
+	if (input.result.status === "succeeded" || input.result.status === "failed") {
+		await recordVendorCallFinal(c, {
+			userId: input.userId,
+			vendor: input.vendor,
+			taskId,
+			taskKind: input.taskKind ?? null,
+			status: input.result.status,
+		});
+	}
 }
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
@@ -1085,10 +1172,17 @@ function parseComflyProgress(value: unknown): number | undefined {
 
 		// New: Veo models can be served via sora2api's OpenAI-compatible chat endpoint (model ids are veo_*)
 		if (/^veo_/i.test(model)) {
-			return runSora2ApiChatCompletionsVideoTask(c, userId, req, {
+			const result = await runSora2ApiChatCompletionsVideoTask(c, userId, req, {
 				model,
 				progressVendor: "veo",
 			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: "veo",
+				taskKind: req.kind,
+				result,
+			});
+			return result;
 		}
 
 		const ctx = await resolveVendorContext(c, userId, "veo");
@@ -1135,7 +1229,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 				}
 				return referenceImages;
 			})();
-			return createComflyVideoTask(
+			const result = await createComflyVideoTask(
 				c,
 				userId,
 				req,
@@ -1147,6 +1241,13 @@ function parseComflyProgress(value: unknown): number | undefined {
 				},
 				progressCtx,
 			);
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: "veo",
+				taskKind: req.kind,
+				result,
+			});
+			return result;
 		}
 
 	const body: Record<string, any> = {
@@ -1234,7 +1335,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 	});
 
 	// Worker 侧只做「创建任务 + 返回 running」，结果由 /tasks/veo/result 查询
-	return TaskResultSchema.parse({
+	const result = TaskResultSchema.parse({
 		id: taskId,
 		kind: "text_to_video",
 		status: "running",
@@ -1246,6 +1347,13 @@ function parseComflyProgress(value: unknown): number | undefined {
 			response: payload,
 		},
 	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: "veo",
+		taskKind: req.kind,
+		result,
+	});
+	return result;
 }
 
 export async function fetchVeoTaskResult(
@@ -1261,13 +1369,20 @@ export async function fetchVeoTaskResult(
 	}
 	const ctx = await resolveVendorContext(c, userId, "veo");
 	if (ctx.viaProxyVendor === "comfly") {
-		return fetchComflyVideoTaskResult(
+		const result = await fetchComflyVideoTaskResult(
 			c,
 			userId,
 			taskId,
 			ctx,
 			"text_to_video",
 		);
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "veo",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
 	const apiKey = ctx.apiKey.trim();
@@ -1338,6 +1453,14 @@ export async function fetchVeoTaskResult(
 	if (status === "failed") {
 		const errMsg =
 			payload.failure_reason || payload.error || "Veo 视频任务失败";
+		await recordVendorCallFinal(c, {
+			userId,
+			vendor: "veo",
+			taskId,
+			taskKind: "text_to_video",
+			status: "failed",
+			errorMessage: errMsg,
+		});
 		throw new AppError(errMsg, {
 			status: 502,
 			code: "veo_result_failed",
@@ -1389,7 +1512,7 @@ export async function fetchVeoTaskResult(
 			},
 		});
 
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: payload.id || taskId,
 			kind: "text_to_video",
 			status: "succeeded",
@@ -1399,6 +1522,13 @@ export async function fetchVeoTaskResult(
 				response: payload,
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "veo",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	return TaskResultSchema.parse({
@@ -1761,7 +1891,9 @@ export async function runSora2ApiVideoTask(
 		}
 	}
 
-	return TaskResultSchema.parse({
+	const vendorForLog =
+		ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api";
+	const result = TaskResultSchema.parse({
 		id: createdTaskId,
 		kind: "text_to_video",
 		status: creationStatus,
@@ -1776,6 +1908,13 @@ export async function runSora2ApiVideoTask(
 			response: createdPayload,
 		},
 	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: vendorForLog,
+		taskKind: "text_to_video",
+		result,
+	});
+	return result;
 }
 
 export async function fetchSora2ApiTaskResult(
@@ -1807,13 +1946,20 @@ export async function fetchSora2ApiTaskResult(
 
 	const ctx = await resolveVendorContext(c, userId, vendorForTask);
 	if (ctx.viaProxyVendor === "comfly") {
-		return fetchComflySora2VideoTaskResult(
+		const result = await fetchComflySora2VideoTaskResult(
 			c,
 			userId,
 			taskId,
 			ctx,
 			"text_to_video",
 		);
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForTask,
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 	const baseUrl =
 		normalizeBaseUrl(ctx.baseUrl) ||
@@ -2101,7 +2247,7 @@ export async function fetchSora2ApiTaskResult(
 				},
 			});
 
-			return TaskResultSchema.parse({
+			const result = TaskResultSchema.parse({
 				id: taskId,
 				kind: "text_to_video",
 				status: "succeeded",
@@ -2111,9 +2257,16 @@ export async function fetchSora2ApiTaskResult(
 					response: mergedPayload,
 				},
 			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForTask,
+				taskKind: "text_to_video",
+				result,
+			});
+			return result;
 		}
 
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
 			status,
@@ -2124,6 +2277,13 @@ export async function fetchSora2ApiTaskResult(
 				progress,
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForTask,
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	throw new AppError(lastError?.message || "sora2api 任务查询失败", {
@@ -2418,7 +2578,7 @@ export async function fetchSora2ApiTaskResult(
 		raw: data ?? null,
 	});
 
-	return TaskResultSchema.parse({
+	const result = TaskResultSchema.parse({
 		id: taskId,
 		kind: req.kind,
 		status: "running",
@@ -2430,6 +2590,13 @@ export async function fetchSora2ApiTaskResult(
 			response: data ?? null,
 		},
 	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: "minimax",
+		taskKind: req.kind,
+		result,
+	});
+	return result;
 }
 
 function normalizeMiniMaxStatus(value: unknown): TaskStatus {
@@ -2620,7 +2787,7 @@ export async function fetchMiniMaxTaskResult(
 			(typeof payload?.message === "string" && payload.message.trim()) ||
 			(typeof payload?.error === "string" && payload.error.trim()) ||
 			"MiniMax 视频任务失败";
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
 			status: "failed",
@@ -2632,6 +2799,13 @@ export async function fetchMiniMaxTaskResult(
 				message: msg,
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "minimax",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	// Some gateways may not provide a reliable `status` field; when a video URL exists,
@@ -2661,7 +2835,7 @@ export async function fetchMiniMaxTaskResult(
 			},
 		});
 
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
 			status: "succeeded",
@@ -2671,10 +2845,17 @@ export async function fetchMiniMaxTaskResult(
 				response: payload,
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "minimax",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	if (status !== "succeeded") {
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
 			status,
@@ -2685,11 +2866,18 @@ export async function fetchMiniMaxTaskResult(
 				progress,
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "minimax",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	const videoUrl = videoUrlFromPayload;
 	if (!videoUrl) {
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: taskId,
 			kind: "text_to_video",
 			status: "failed",
@@ -2702,6 +2890,13 @@ export async function fetchMiniMaxTaskResult(
 					"MiniMax 任务已完成但未返回视频链接（缺少 url/video_url）",
 			},
 		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "minimax",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	const asset = TaskAssetSchema.parse({
@@ -2728,7 +2923,7 @@ export async function fetchMiniMaxTaskResult(
 		},
 	});
 
-	return TaskResultSchema.parse({
+	const result = TaskResultSchema.parse({
 		id: taskId,
 		kind: "text_to_video",
 		status: "succeeded",
@@ -2738,6 +2933,13 @@ export async function fetchMiniMaxTaskResult(
 			response: payload,
 		},
 	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: "minimax",
+		taskKind: "text_to_video",
+		result,
+	});
+	return result;
 }
 
 // ---------- Generic text/image tasks (openai / gemini / qwen / anthropic) ----------
@@ -4843,6 +5045,13 @@ export async function runGenericTaskForVendor(
 			taskId: result.id,
 			assets: result.assets,
 			raw: result.raw,
+		});
+
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: v,
+			taskKind: req.kind,
+			result,
 		});
 
 		return result;

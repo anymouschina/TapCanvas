@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
+import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
 
 export const statsRouter = new Hono<AppEnv>();
 
@@ -139,4 +140,118 @@ statsRouter.get("/dau", async (c) => {
 	}
 
 	return c.json({ days, series: out });
+});
+
+statsRouter.get("/vendors", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+
+	await ensureVendorCallLogsSchema(c.env.DB);
+
+	const rawDays = c.req.query("days");
+	const parsedDays = Number(rawDays ?? 7);
+	const days = Number.isFinite(parsedDays)
+		? Math.max(1, Math.min(365, Math.floor(parsedDays)))
+		: 7;
+
+	const rawPoints = c.req.query("points");
+	const parsedPoints = Number(rawPoints ?? 60);
+	const points = Number.isFinite(parsedPoints)
+		? Math.max(1, Math.min(180, Math.floor(parsedPoints)))
+		: 60;
+
+	const sinceIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+	const rows = await c.env.DB.prepare(
+		`
+      SELECT vendor,
+             COUNT(1) AS total,
+             SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS success,
+             AVG(duration_ms) AS avg_duration_ms
+      FROM vendor_api_call_logs
+      WHERE status IN ('succeeded','failed')
+        AND finished_at IS NOT NULL
+        AND finished_at >= ?
+      GROUP BY vendor
+      ORDER BY total DESC
+    `,
+	)
+		.bind(sinceIso)
+		.all<any>();
+
+	const vendors = (rows.results ?? []).map((r: any) => ({
+		vendor: typeof r?.vendor === "string" ? r.vendor : "",
+		total: Number(r?.total ?? 0) || 0,
+		success: Number(r?.success ?? 0) || 0,
+		avgDurationMs:
+			typeof r?.avg_duration_ms === "number" && Number.isFinite(r.avg_duration_ms)
+				? Math.round(r.avg_duration_ms)
+				: null,
+	}));
+
+	const extras = await Promise.all(
+		vendors.map(async (v) => {
+			const last = await c.env.DB.prepare(
+				`
+          SELECT status, finished_at, duration_ms
+          FROM vendor_api_call_logs
+          WHERE vendor = ?
+            AND status IN ('succeeded','failed')
+            AND finished_at IS NOT NULL
+          ORDER BY finished_at DESC
+          LIMIT 1
+        `,
+			)
+				.bind(v.vendor)
+				.first<any>();
+
+			const historyRows = await c.env.DB.prepare(
+				`
+          SELECT status, finished_at
+          FROM vendor_api_call_logs
+          WHERE vendor = ?
+            AND status IN ('succeeded','failed')
+            AND finished_at IS NOT NULL
+            AND finished_at >= ?
+          ORDER BY finished_at DESC
+          LIMIT ?
+        `,
+			)
+				.bind(v.vendor, sinceIso, points)
+				.all<any>();
+
+			const history = (historyRows.results ?? [])
+				.map((h: any) => ({
+					status: h?.status === "succeeded" ? "succeeded" : "failed",
+					finishedAt:
+						typeof h?.finished_at === "string" ? h.finished_at : null,
+				}))
+				.filter((x) => !!x.finishedAt)
+				.reverse();
+
+			const lastStatus =
+				last?.status === "succeeded"
+					? ("succeeded" as const)
+					: last?.status === "failed"
+						? ("failed" as const)
+						: null;
+
+			const lastAt =
+				typeof last?.finished_at === "string" ? last.finished_at : null;
+			const lastDurationMs =
+				typeof last?.duration_ms === "number" && Number.isFinite(last.duration_ms)
+					? Math.round(last.duration_ms)
+					: null;
+
+			return {
+				...v,
+				successRate: v.total > 0 ? v.success / v.total : 0,
+				lastStatus,
+				lastAt,
+				lastDurationMs,
+				history,
+			};
+		}),
+	);
+
+	return c.json({ days, points, vendors: extras });
 });
