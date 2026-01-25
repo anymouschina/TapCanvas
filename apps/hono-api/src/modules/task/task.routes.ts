@@ -324,3 +324,34 @@ taskRouter.post("/grsai/result", async (c) => {
 	});
 	return c.json(TaskResultSchema.parse(result));
 });
+
+// POST /tasks/gemini/result - alias for Gemini image tasks (Banana/grsai draw result polling)
+taskRouter.post("/gemini/result", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = FetchTaskResultRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+
+	const taskKind = parsed.data.taskKind ?? null;
+	if (taskKind && taskKind !== "text_to_image" && taskKind !== "image_edit") {
+		return c.json(
+			{
+				error: "gemini result endpoint only supports text_to_image/image_edit polling",
+				code: "invalid_task_kind",
+			},
+			400,
+		);
+	}
+
+	const result = await fetchGrsaiDrawTaskResult(c, userId, parsed.data.taskId, {
+		taskKind: taskKind ?? null,
+		promptFromClient: parsed.data.prompt ?? null,
+	});
+	return c.json(TaskResultSchema.parse(result));
+});
