@@ -1,8 +1,8 @@
 import React from 'react'
-import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Paper, SegmentedControl, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Paper, SegmentedControl, SimpleGrid, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
 import { IconArrowLeft, IconRefresh, IconUsers } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
-import { getDailyActiveUsers, getStats } from '../api/server'
+import { getDailyActiveUsers, getStats, getVendorApiCallStats, type VendorApiCallStatDto } from '../api/server'
 import { ToastHost, toast } from './toast'
 import { $ } from '../canvas/i18n'
 
@@ -50,25 +50,50 @@ export default function StatsFullPage(): JSX.Element {
   const [stats, setStats] = React.useState<{ onlineUsers: number; totalUsers: number; newUsersToday: number } | null>(null)
   const [dauDays, setDauDays] = React.useState<'7' | '30'>('30')
   const [dau, setDau] = React.useState<number[]>([])
+  const [vendorDays, setVendorDays] = React.useState<'7' | '15' | '30'>('7')
+  const [vendorStats, setVendorStats] = React.useState<VendorApiCallStatDto[]>([])
   const [lastUpdated, setLastUpdated] = React.useState<number | null>(null)
 
   const reload = React.useCallback(async () => {
     setLoading(true)
     try {
-      const [nextStats, nextDau] = await Promise.all([
+      const [statsRes, dauRes, vendorRes] = await Promise.allSettled([
         getStats(),
         getDailyActiveUsers(dauDays === '7' ? 7 : 30),
+        getVendorApiCallStats(vendorDays === '15' ? 15 : vendorDays === '30' ? 30 : 7, 60),
       ])
-      setStats(nextStats)
-      setDau((nextDau?.series || []).map((p) => p.activeUsers))
-      setLastUpdated(Date.now())
-    } catch (err: any) {
-      console.error(err)
-      toast(err?.message || '加载看板失败', 'error')
+
+      let anyOk = false
+
+      if (statsRes.status === 'fulfilled') {
+        setStats(statsRes.value)
+        anyOk = true
+      } else {
+        const msg = (statsRes.reason as any)?.message || '加载统计失败'
+        toast(msg, 'error')
+      }
+
+      if (dauRes.status === 'fulfilled') {
+        setDau((dauRes.value?.series || []).map((p) => p.activeUsers))
+        anyOk = true
+      } else {
+        const msg = (dauRes.reason as any)?.message || '加载日活失败'
+        toast(msg, 'error')
+      }
+
+      if (vendorRes.status === 'fulfilled') {
+        setVendorStats(vendorRes.value?.vendors || [])
+        anyOk = true
+      } else {
+        const msg = (vendorRes.reason as any)?.message || '加载厂商统计失败'
+        toast(msg, 'error')
+      }
+
+      if (anyOk) setLastUpdated(Date.now())
     } finally {
       setLoading(false)
     }
-  }, [dauDays])
+  }, [dauDays, vendorDays])
 
   React.useEffect(() => {
     void reload()
@@ -220,6 +245,145 @@ export default function StatsFullPage(): JSX.Element {
                 <Text className="stats-page-chart-updated" size="xs" c="dimmed" mt={10}>
                   {$('更新时间')}: {new Date(lastUpdated).toLocaleString()}
                 </Text>
+              )}
+            </Paper>
+
+            <Paper className="stats-page-vendors glass" withBorder radius="lg" p="md">
+              <Group className="stats-page-vendors-header" justify="space-between" align="center" mb={10} wrap="wrap" gap={10}>
+                <Text className="stats-page-vendors-title" size="sm" fw={600}>
+                  {$('厂商 API 调用成功率')}
+                </Text>
+                <SegmentedControl
+                  className="stats-page-vendors-control"
+                  size="xs"
+                  radius="xl"
+                  value={vendorDays}
+                  onChange={(v) => setVendorDays(v as any)}
+                  data={[
+                    { value: '7', label: '7d' },
+                    { value: '15', label: '15d' },
+                    { value: '30', label: '30d' },
+                  ]}
+                />
+              </Group>
+
+              {vendorStats.length === 0 ? (
+                <Text className="stats-page-vendors-empty" size="sm" c="dimmed">
+                  {$('暂无三方调用数据（仅统计已完成的任务）。')}
+                </Text>
+              ) : (
+                <SimpleGrid
+                  className="stats-page-vendors-grid"
+                  cols={{ base: 1, sm: 2, md: 3 }}
+                  spacing="md"
+                  verticalSpacing="md"
+                >
+                  {vendorStats.map((v) => {
+                    const successPct = Math.max(0, Math.min(100, (v.successRate || 0) * 100))
+                    const lastOk = v.lastStatus === 'succeeded'
+                    const hasData = v.total > 0
+                    const badgeColor = !hasData ? 'gray' : lastOk ? 'green' : 'red'
+                    const badgeText = !hasData ? $('暂无数据') : lastOk ? $('正常') : $('异常')
+                    const avgMs = typeof v.avgDurationMs === 'number' ? v.avgDurationMs : null
+                    const avgText =
+                      typeof avgMs === 'number' && Number.isFinite(avgMs)
+                        ? avgMs >= 60_000
+                          ? `${Math.round(avgMs / 1000)}s`
+                          : avgMs >= 1000
+                            ? `${(avgMs / 1000).toFixed(1)}s`
+                            : `${Math.round(avgMs)}ms`
+                        : '—'
+
+                    return (
+                      <Paper key={v.vendor} className="stats-vendor-card glass" withBorder radius="lg" p="md">
+                        <Group className="stats-vendor-card-header" justify="space-between" align="flex-start" gap={10}>
+                          <Stack className="stats-vendor-card-title" gap={2}>
+                            <Text className="stats-vendor-card-name" size="sm" fw={700}>
+                              {v.vendor}
+                            </Text>
+                            <Text className="stats-vendor-card-subtitle" size="xs" c="dimmed">
+                              {v.lastAt ? `${$('最近完成')}: ${new Date(v.lastAt).toLocaleString()}` : $('暂无完成记录')}
+                            </Text>
+                          </Stack>
+                          <Badge className="stats-vendor-card-badge" variant="light" color={badgeColor}>
+                            {badgeText}
+                          </Badge>
+                        </Group>
+
+                        <Group className="stats-vendor-card-metrics" mt={12} gap={14} wrap="wrap">
+                          <Stack className="stats-vendor-card-metric" gap={2}>
+                            <Text className="stats-vendor-card-metric-label" size="xs" c="dimmed">
+                              {$('可用率')} ({vendorDays}d)
+                            </Text>
+                            <Text className="stats-vendor-card-metric-value" size="sm" fw={700}>
+                              {hasData ? `${successPct.toFixed(2)}%` : '—'}
+                            </Text>
+                          </Stack>
+                          <Stack className="stats-vendor-card-metric" gap={2}>
+                            <Text className="stats-vendor-card-metric-label" size="xs" c="dimmed">
+                              {$('成功/总数')}
+                            </Text>
+                            <Text className="stats-vendor-card-metric-value" size="sm" fw={700}>
+                              {v.success}/{v.total}
+                            </Text>
+                          </Stack>
+                          <Stack className="stats-vendor-card-metric" gap={2}>
+                            <Text className="stats-vendor-card-metric-label" size="xs" c="dimmed">
+                              {$('平均完成耗时')}
+                            </Text>
+                            <Text className="stats-vendor-card-metric-value" size="sm" fw={700}>
+                              {avgText}
+                            </Text>
+                          </Stack>
+                        </Group>
+
+                        <Stack className="stats-vendor-card-history" gap={6} mt={14}>
+                          <Group className="stats-vendor-card-history-header" justify="space-between" align="center">
+                            <Text className="stats-vendor-card-history-title" size="xs" c="dimmed">
+                              {$('历史')} ({Math.min(60, v.history.length)} {$('条')})
+                            </Text>
+                            <Text className="stats-vendor-card-history-hint" size="xs" c="dimmed">
+                              {$('绿=成功 / 红=失败')}
+                            </Text>
+                          </Group>
+                          <Box
+                            className="stats-vendor-card-history-bars"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'stretch',
+                              gap: 2,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {v.history.slice(-60).map((h, idx) => {
+                              const ok = h.status === 'succeeded'
+                              return (
+                                <Tooltip
+                                  key={`${h.finishedAt}-${idx}`}
+                                  className="stats-vendor-card-history-tooltip"
+                                  label={`${ok ? $('成功') : $('失败')} · ${new Date(h.finishedAt).toLocaleString()}`}
+                                  withArrow
+                                >
+                                  <Box
+                                    className="stats-vendor-card-history-bar"
+                                    style={{
+                                      flex: 1,
+                                      minWidth: 2,
+                                      height: 18,
+                                      borderRadius: 3,
+                                      background: ok ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)',
+                                      opacity: ok ? 0.9 : 0.85,
+                                    }}
+                                  />
+                                </Tooltip>
+                              )
+                            })}
+                          </Box>
+                        </Stack>
+                      </Paper>
+                    )
+                  })}
+                </SimpleGrid>
               )}
             </Paper>
           </Stack>

@@ -434,3 +434,24 @@ CREATE TABLE IF NOT EXISTS assets (
 
 CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_id);
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
+
+-- Vendor API call logs (one row per vendor task; final status driven by whether a resource is produced)
+CREATE TABLE IF NOT EXISTS vendor_api_call_logs (
+	user_id TEXT NOT NULL,
+	vendor TEXT NOT NULL,
+	task_id TEXT NOT NULL,
+	task_kind TEXT,
+	status TEXT NOT NULL, -- running | succeeded | failed
+	started_at TEXT,
+	finished_at TEXT,
+	duration_ms INTEGER,
+	error_message TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, vendor, task_id),
+	FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_vendor_finished_at ON vendor_api_call_logs(vendor, finished_at);
+CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_finished_at ON vendor_api_call_logs(finished_at);
+CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_status ON vendor_api_call_logs(status);
