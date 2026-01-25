@@ -19,7 +19,6 @@ type VideoTrimModalProps = {
 const MIN_TRIM_DURATION = 1 // seconds
 const MAX_TRIM_DURATION = 3 // seconds
 const TIMELINE_HEIGHT = 72
-const THUMB_WIDTH = 64
 
 export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const {
@@ -41,6 +40,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const [playing, setPlaying] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
   const [videoDuration, setVideoDuration] = useState(0)
+  const [timelineTrackWidth, setTimelineTrackWidth] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const timelineRef = useRef<HTMLDivElement | null>(null)
@@ -61,10 +61,28 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
     return Number.isFinite(d) && d > 0 ? d : 0
   }, [originalDuration, videoDuration])
 
-  const timelineWidth = useMemo(() => {
-    if (!thumbnails.length) return 0
-    return thumbnails.length * THUMB_WIDTH
-  }, [thumbnails.length])
+  useEffect(() => {
+    if (!opened) return
+    const el = timelineRef.current
+    if (!el) return
+
+    const updateWidth = () => {
+      const measured = el.getBoundingClientRect().width
+      if (!Number.isFinite(measured) || measured <= 0) return
+      setTimelineTrackWidth((prev) => (Math.abs(prev - measured) < 0.5 ? prev : measured))
+    }
+
+    updateWidth()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateWidth)
+      return () => window.removeEventListener('resize', updateWidth)
+    }
+
+    const ro = new ResizeObserver(() => updateWidth())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [opened, thumbnails.length])
 
   useEffect(() => {
     if (!opened) return
@@ -290,7 +308,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   }, [opened, onClose, playing, currentTime, trimStart, trimEnd])
 
   const getTimelineWidth = () => {
-    if (timelineWidth > 0) return timelineWidth
+    if (timelineTrackWidth > 0) return timelineTrackWidth
     const el = timelineRef.current
     const measured = el ? el.getBoundingClientRect().width : 0
     return measured > 0 ? measured : 0
@@ -433,7 +451,7 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
   const endX = timeToX(trimEnd)
   const playheadX = timeToX(currentTime)
   const containerWidth = getTimelineWidth()
-  const overlayWidth = Math.max(containerWidth, timelineWidth)
+  const overlayWidth = containerWidth
   const contentMaxWidth = 1180
   const contentPadding = '0 16px'
 
@@ -607,22 +625,29 @@ export function VideoTrimModal(props: VideoTrimModalProps): JSX.Element | null {
               className="video-trim-modal-timeline-thumbs"
               style={{
                 position: 'absolute',
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: overlayWidth,
+                inset: 0,
                 display: 'flex',
               }}
             >
               {thumbnails.map((src, idx) => (
-                <div className="video-trim-modal-thumb" key={idx} style={{ width: THUMB_WIDTH, height: '100%', overflow: 'hidden' }}>
+                <div
+                  className="video-trim-modal-thumb"
+                  key={idx}
+                  style={{
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    height: '100%',
+                    overflow: 'hidden',
+                    background: 'black',
+                  }}
+                >
                   <img
                     className="video-trim-modal-thumb-img"
                     src={src}
                     alt={`frame-${idx}`}
                     draggable
                     onDragStart={(evt) => setTapImageDragData(evt, src)}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   />
                 </div>
               ))}
