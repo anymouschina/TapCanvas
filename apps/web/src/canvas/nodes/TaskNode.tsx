@@ -1,5 +1,5 @@
 import React from 'react'
-import type { NodeProps } from '@xyflow/react'
+import type { Node, NodeProps } from '@xyflow/react'
 import { Position, NodeResizeControl, NodeToolbar } from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
@@ -86,7 +86,9 @@ type Data = {
   progress?: number
 }
 
-export default function TaskNode({ id, data, selected }: NodeProps<Data>): JSX.Element {
+export type TaskNodeType = Node<Data, 'taskNode'>
+
+export default function TaskNode({ id, data, selected, dragging }: NodeProps<TaskNodeType>): JSX.Element {
   const status = data?.status ?? 'idle'
   const showGenerationOverlay = status === 'running' || status === 'queued'
   const color =
@@ -3163,7 +3165,7 @@ const rewritePromptWithCharacters = React.useCallback(
         />
       )}
       <TopToolbar
-        isVisible={!!selected}
+        isVisible={!!selected && !dragging}
         selectedCount={selectedCount}
         hasContent={hasContent}
         toolbarBackground={toolbarBackground}
@@ -3182,7 +3184,7 @@ const rewritePromptWithCharacters = React.useCallback(
         defaultOutputType={defaultOutputType}
         wideHandleBase={wideHandleBase}
       />
-      {isCanvasMediaNode && selected && !variantsOpen && (
+      {isCanvasMediaNode && selected && !variantsOpen && !dragging && (
         <NodeResizeControl
           className="tc-task-node__media-resize nodrag"
           position="bottom-right"
@@ -3352,7 +3354,7 @@ const rewritePromptWithCharacters = React.useCallback(
             {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
       {/* Bottom detail panel near node */}
-      <NodeToolbar className="tc-task-node__toolbar" isVisible={!!selected && selectedCount === 1} position={Position.Bottom} align="center" >
+      <NodeToolbar className="tc-task-node__toolbar" isVisible={!!selected && selectedCount === 1 && !dragging} position={Position.Bottom} align="center" >
         <div className="tc-task-node__toolbar-frame"
           style={{
             width: 380,
