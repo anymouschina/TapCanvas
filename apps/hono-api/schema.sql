@@ -409,6 +409,51 @@ CREATE TABLE IF NOT EXISTS model_profiles (
 CREATE INDEX IF NOT EXISTS idx_model_profiles_owner ON model_profiles(owner_id);
 CREATE INDEX IF NOT EXISTS idx_model_profiles_provider ON model_profiles(provider_id);
 
+-- Model catalog (admin-configurable vendors/models/mappings)
+CREATE TABLE IF NOT EXISTS model_catalog_vendors (
+	key TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	base_url_hint TEXT,
+	auth_type TEXT NOT NULL DEFAULT 'bearer', -- none | bearer | x-api-key | query
+	auth_header TEXT,
+	auth_query_param TEXT,
+	meta TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_catalog_models (
+	model_key TEXT PRIMARY KEY,
+	vendor_key TEXT NOT NULL,
+	label_zh TEXT NOT NULL,
+	kind TEXT NOT NULL, -- text | image | video
+	enabled INTEGER NOT NULL DEFAULT 1,
+	meta TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_catalog_models_vendor_kind ON model_catalog_models(vendor_key, kind);
+CREATE INDEX IF NOT EXISTS idx_model_catalog_models_enabled ON model_catalog_models(enabled);
+
+CREATE TABLE IF NOT EXISTS model_catalog_mappings (
+	id TEXT PRIMARY KEY,
+	vendor_key TEXT NOT NULL,
+	task_kind TEXT NOT NULL, -- chat | prompt_refine | text_to_image | image_to_prompt | image_to_video | text_to_video | image_edit
+	name TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	request_mapping TEXT, -- JSON
+	response_mapping TEXT, -- JSON
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key),
+	UNIQUE (vendor_key, task_kind, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_catalog_mappings_vendor_kind ON model_catalog_mappings(vendor_key, task_kind);
+
 -- Chat sessions for AI assistant
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,

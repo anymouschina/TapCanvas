@@ -1227,6 +1227,215 @@ export async function deleteModelCreditCost(modelKey: string): Promise<void> {
   }
 }
 
+// Model catalog (admin dashboard)
+export type ModelCatalogVendorAuthType = 'none' | 'bearer' | 'x-api-key' | 'query'
+
+export type ModelCatalogVendorDto = {
+  key: string
+  name: string
+  enabled: boolean
+  baseUrlHint?: string | null
+  authType?: ModelCatalogVendorAuthType
+  authHeader?: string | null
+  authQueryParam?: string | null
+  meta?: any
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelCatalogModelDto = {
+  modelKey: string
+  vendorKey: string
+  labelZh: string
+  kind: BillingModelKind
+  enabled: boolean
+  meta?: any
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelCatalogMappingDto = {
+  id: string
+  vendorKey: string
+  taskKind: ProfileKind
+  name: string
+  enabled: boolean
+  requestMapping?: any
+  responseMapping?: any
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelCatalogImportPackageDto = {
+  version: string
+  exportedAt?: string
+  vendors: Array<{
+    vendor: {
+      key: string
+      name: string
+      enabled?: boolean
+      baseUrlHint?: string | null
+      authType?: ModelCatalogVendorAuthType
+      authHeader?: string | null
+      authQueryParam?: string | null
+      meta?: any
+    }
+    models?: Array<{
+      modelKey: string
+      vendorKey?: string
+      labelZh: string
+      kind: BillingModelKind
+      enabled?: boolean
+      meta?: any
+    }>
+    mappings?: Array<{
+      taskKind: ProfileKind
+      name: string
+      enabled?: boolean
+      requestMapping?: any
+      responseMapping?: any
+    }>
+  }>
+}
+
+export type ModelCatalogImportResultDto = {
+  imported: { vendors: number; models: number; mappings: number }
+  errors: string[]
+}
+
+export async function listModelCatalogVendors(): Promise<ModelCatalogVendorDto[]> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/vendors`, withAuth())
+  if (!r.ok) throw new Error(`list model catalog vendors failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelCatalogVendor(payload: {
+  key: string
+  name: string
+  enabled?: boolean
+  baseUrlHint?: string | null
+  authType?: ModelCatalogVendorAuthType
+  authHeader?: string | null
+  authQueryParam?: string | null
+  meta?: any
+}): Promise<ModelCatalogVendorDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/vendors`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `upsert model catalog vendor failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function deleteModelCatalogVendor(key: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/vendors/${encodeURIComponent(key)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `delete model catalog vendor failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export async function listModelCatalogModels(params?: { vendorKey?: string; kind?: BillingModelKind; enabled?: boolean }): Promise<ModelCatalogModelDto[]> {
+  const u = new URL(`${API_BASE}/model-catalog/models`)
+  if (params?.vendorKey) u.searchParams.set('vendorKey', params.vendorKey)
+  if (params?.kind) u.searchParams.set('kind', params.kind)
+  if (typeof params?.enabled === 'boolean') u.searchParams.set('enabled', params.enabled ? 'true' : 'false')
+  const r = await apiFetch(u.toString(), withAuth())
+  if (!r.ok) throw new Error(`list model catalog models failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelCatalogModel(payload: {
+  modelKey: string
+  vendorKey: string
+  labelZh: string
+  kind: BillingModelKind
+  enabled?: boolean
+  meta?: any
+}): Promise<ModelCatalogModelDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/models`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `upsert model catalog model failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function deleteModelCatalogModel(modelKey: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/models/${encodeURIComponent(modelKey)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `delete model catalog model failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export async function listModelCatalogMappings(params?: { vendorKey?: string; taskKind?: ProfileKind; enabled?: boolean }): Promise<ModelCatalogMappingDto[]> {
+  const u = new URL(`${API_BASE}/model-catalog/mappings`)
+  if (params?.vendorKey) u.searchParams.set('vendorKey', params.vendorKey)
+  if (params?.taskKind) u.searchParams.set('taskKind', params.taskKind)
+  if (typeof params?.enabled === 'boolean') u.searchParams.set('enabled', params.enabled ? 'true' : 'false')
+  const r = await apiFetch(u.toString(), withAuth())
+  if (!r.ok) throw new Error(`list model catalog mappings failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelCatalogMapping(payload: {
+  id?: string
+  vendorKey: string
+  taskKind: ProfileKind
+  name: string
+  enabled?: boolean
+  requestMapping?: any
+  responseMapping?: any
+}): Promise<ModelCatalogMappingDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/mappings`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `upsert model catalog mapping failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function deleteModelCatalogMapping(id: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/mappings/${encodeURIComponent(id)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `delete model catalog mapping failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export async function importModelCatalogPackage(payload: ModelCatalogImportPackageDto): Promise<ModelCatalogImportResultDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/import`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `import model catalog package failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
 export async function listTaskLogs(params?: {
   limit?: number
   before?: string | null

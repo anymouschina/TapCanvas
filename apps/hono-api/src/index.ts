@@ -7,6 +7,7 @@ import { projectRouter } from "./modules/project/project.routes";
 import { flowRouter } from "./modules/flow/flow.routes";
 import { soraRouter } from "./modules/sora/sora.routes";
 import { modelRouter } from "./modules/model/model.routes";
+import { modelCatalogRouter } from "./modules/model-catalog/model-catalog.routes";
 import { aiRouter } from "./modules/ai/ai.routes";
 import { draftRouter } from "./modules/draft/draft.routes";
 import { assetRouter } from "./modules/asset/asset.routes";
@@ -214,6 +215,9 @@ app.route("/sora", soraRouter);
 
 // Model routes
 app.route("/models", modelRouter);
+
+// Model catalog (admin-configurable)
+app.route("/model-catalog", modelCatalogRouter);
 
 // AI helper routes (prompt samples)
 app.route("/ai", aiRouter);
