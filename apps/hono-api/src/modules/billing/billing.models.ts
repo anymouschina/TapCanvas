@@ -8,16 +8,34 @@ export type BillingModelCatalogItem = {
 	defaultCost: number;
 };
 
-function normalizeModelKey(modelKey: string): string {
+function stripModelsPrefix(modelKey: string): string {
 	const raw = (modelKey || "").trim();
 	if (!raw) return "";
 	return raw.startsWith("models/") ? raw.slice(7) : raw;
 }
 
+function stripOrientationSegments(modelKey: string): string {
+	let key = (modelKey || "").trim();
+	if (!key) return "";
+
+	// Treat landscape/portrait as parameter variants (not different models).
+	key = key.replace(/-landscape(?=-|$)/g, "");
+	key = key.replace(/-portrait(?=-|$)/g, "");
+	key = key.replace(/_landscape(?=_|$)/g, "");
+	key = key.replace(/_portrait(?=_|$)/g, "");
+
+	// Cleanup duplicated separators that may appear after stripping.
+	key = key.replace(/--+/g, "-").replace(/__+/g, "_");
+	key = key.replace(/^-+/, "").replace(/-+$/, "");
+	key = key.replace(/^_+/, "").replace(/_+$/, "");
+
+	return key;
+}
+
 function item(input: Omit<BillingModelCatalogItem, "modelKey"> & { modelKey: string }) {
 	return {
 		...input,
-		modelKey: normalizeModelKey(input.modelKey),
+		modelKey: stripModelsPrefix(input.modelKey),
 	};
 }
 
@@ -75,6 +93,6 @@ export const BILLING_MODEL_CATALOG: BillingModelCatalogItem[] = [
 ];
 
 export function normalizeBillingModelKey(modelKey: string | null | undefined): string {
-	return normalizeModelKey(typeof modelKey === "string" ? modelKey : "");
+	const base = stripModelsPrefix(typeof modelKey === "string" ? modelKey : "");
+	return stripOrientationSegments(base);
 }
-

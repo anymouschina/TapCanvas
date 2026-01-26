@@ -4,6 +4,7 @@ import { isAdminRequest } from "../team/team.service";
 import {
 	BILLING_MODEL_CATALOG,
 	normalizeBillingModelKey,
+	type BillingModelKind,
 } from "./billing.models";
 import {
 	deleteModelCreditCost,
@@ -42,7 +43,47 @@ export async function resolveTeamCreditsCostForTask(c: AppContext, input: {
 
 export async function listBillingModelCatalog(c: AppContext) {
 	requireAdmin(c);
-	return BILLING_MODEL_CATALOG;
+	const merged = new Map<string, { modelKey: string; labelZh: string; kind: BillingModelKind; vendor?: string; fromBase: boolean }>();
+
+	const stripLabelOrientation = (label: string): string => {
+		const raw = String(label || "").trim();
+		if (!raw) return raw;
+		// Remove explicit orientation markers in labels.
+		return raw
+			.replace(/（\s*横屏\s*）/g, "")
+			.replace(/（\s*竖屏\s*）/g, "")
+			.replace(/\(\s*横屏\s*\)/g, "")
+			.replace(/\(\s*竖屏\s*\)/g, "")
+			// Within bracketed label parts like "（横屏 10s）" -> "（10s）"
+			.replace(/（\s*(横屏|竖屏)\s+/g, "（")
+			.replace(/\(\s*(横屏|竖屏)\s+/g, "(")
+			.replace(/\s{2,}/g, " ")
+			.trim();
+	};
+
+	for (const it of BILLING_MODEL_CATALOG) {
+		const canonicalKey = normalizeBillingModelKey(it.modelKey);
+		if (!canonicalKey) continue;
+
+		const fromBase = it.modelKey === canonicalKey;
+		const labelZh = stripLabelOrientation(it.labelZh);
+		const prev = merged.get(canonicalKey);
+		if (!prev) {
+			merged.set(canonicalKey, { modelKey: canonicalKey, labelZh, kind: it.kind, vendor: it.vendor, fromBase });
+			continue;
+		}
+		// Prefer the base (non-variant) catalog item label when available.
+		if (!prev.fromBase && fromBase) {
+			merged.set(canonicalKey, { modelKey: canonicalKey, labelZh, kind: it.kind, vendor: it.vendor, fromBase });
+		}
+	}
+
+	return Array.from(merged.values()).map(({ modelKey, labelZh, kind, vendor }) => ({
+		modelKey,
+		labelZh,
+		kind,
+		...(vendor ? { vendor } : {}),
+	}));
 }
 
 export async function listModelCreditCostsForAdmin(c: AppContext) {
@@ -68,4 +109,3 @@ export async function deleteModelCreditCostForAdmin(c: AppContext, modelKey: str
 	requireAdmin(c);
 	await deleteModelCreditCost(c.env.DB, modelKey);
 }
-

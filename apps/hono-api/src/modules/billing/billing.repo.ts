@@ -29,6 +29,58 @@ export async function ensureModelCreditCostsSchema(db: D1Database): Promise<void
     )`,
 	);
 
+	// Migrate legacy parameter-variant keys (e.g. -landscape/-portrait) into a
+	// single canonical model_key so admin billing config doesn't duplicate entries.
+	const existing = await queryAll<ModelCreditCostRow>(
+		db,
+		`SELECT model_key, cost, enabled, created_at, updated_at FROM model_credit_costs`,
+	);
+	const groups = new Map<string, ModelCreditCostRow[]>();
+	for (const row of existing) {
+		const canonical = normalizeBillingModelKey(row.model_key);
+		if (!canonical) continue;
+		const arr = groups.get(canonical) || [];
+		arr.push(row);
+		groups.set(canonical, arr);
+	}
+	for (const [canonical, rows] of groups) {
+		if (!rows.length) continue;
+		if (rows.length === 1 && rows[0]?.model_key === canonical) continue;
+
+		const best = rows.reduce((a, b) => {
+			const au = String(a.updated_at || "");
+			const bu = String(b.updated_at || "");
+			return bu > au ? b : a;
+		}, rows[0]);
+		const canonicalRow = rows.find((r) => r.model_key === canonical) || null;
+
+		if (!canonicalRow) {
+			await execute(
+				db,
+				`INSERT OR IGNORE INTO model_credit_costs (model_key, cost, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+				[canonical, Number(best.cost ?? 0) || 0, Number(best.enabled ?? 1) || 1, best.created_at, best.updated_at],
+			);
+		} else if (best.model_key !== canonical) {
+			await execute(
+				db,
+				`UPDATE model_credit_costs
+         SET cost = ?, enabled = ?, updated_at = ?
+         WHERE model_key = ?`,
+				[Number(best.cost ?? 0) || 0, Number(best.enabled ?? 1) || 1, best.updated_at, canonical],
+			);
+		}
+
+		for (const row of rows) {
+			if (row.model_key === canonical) continue;
+			await execute(
+				db,
+				`DELETE FROM model_credit_costs WHERE model_key = ?`,
+				[row.model_key],
+			);
+		}
+	}
+
 	const nowIso = new Date().toISOString();
 	for (const it of BILLING_MODEL_CATALOG) {
 		const key = normalizeBillingModelKey(it.modelKey);
@@ -118,4 +170,3 @@ export async function deleteModelCreditCost(
 		[key],
 	);
 }
-
