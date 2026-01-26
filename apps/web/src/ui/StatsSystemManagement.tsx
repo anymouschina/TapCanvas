@@ -5,6 +5,7 @@ import { API_BASE, createApiKey, deleteApiKey, listApiKeys, listTaskLogs, update
 import { toast } from './toast'
 import StatsVendorChannels from './StatsVendorChannels'
 import StatsPublicApiDebugger from './StatsPublicApiDebugger'
+import StatsModelCatalogManagement from './StatsModelCatalogManagement'
 
 function parseOriginsInput(input: string): string[] {
   return String(input || '')
@@ -308,6 +309,9 @@ fetch('${publicChatUrl}', {
 
         <Divider className="stats-system-divider" my="md" label="渠道配置" labelPosition="left" />
         <StatsVendorChannels className="stats-system-vendor-channels" />
+
+        <Divider className="stats-system-divider" my="md" label="模型管理（系统级）" labelPosition="left" />
+        <StatsModelCatalogManagement className="stats-system-model-catalog" />
 
         <Divider className="stats-system-divider" my="md" label="外站调用地址" labelPosition="left" />
         <Stack className="stats-system-endpoints" gap={6}>

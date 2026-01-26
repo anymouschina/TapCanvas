@@ -12,6 +12,7 @@ import {
 	listModelCreditCosts,
 	upsertModelCreditCost,
 } from "./billing.repo";
+import { listCatalogModels } from "../model-catalog/model-catalog.repo";
 
 function requireAdmin(c: AppContext): void {
 	if (!isAdminRequest(c)) {
@@ -76,6 +77,29 @@ export async function listBillingModelCatalog(c: AppContext) {
 		if (!prev.fromBase && fromBase) {
 			merged.set(canonicalKey, { modelKey: canonicalKey, labelZh, kind: it.kind, vendor: it.vendor, fromBase });
 		}
+	}
+
+	// Merge admin-configurable model catalog (system-level, dynamic)
+	try {
+		const dynamic = await listCatalogModels(c.env.DB);
+		for (const row of dynamic) {
+			if (!row) continue;
+			const canonicalKey = normalizeBillingModelKey(row.model_key);
+			if (!canonicalKey) continue;
+			const kindRaw = typeof row.kind === "string" ? row.kind.trim() : "";
+			if (kindRaw !== "text" && kindRaw !== "image" && kindRaw !== "video") continue;
+			const labelZh = stripLabelOrientation(String(row.label_zh || "").trim() || canonicalKey);
+			const vendor = typeof row.vendor_key === "string" && row.vendor_key.trim() ? row.vendor_key.trim() : undefined;
+			merged.set(canonicalKey, {
+				modelKey: canonicalKey,
+				labelZh,
+				kind: kindRaw as BillingModelKind,
+				...(vendor ? { vendor } : {}),
+				fromBase: true,
+			});
+		}
+	} catch {
+		// ignore: catalog not migrated or unavailable
 	}
 
 	return Array.from(merged.values()).map(({ modelKey, labelZh, kind, vendor }) => ({

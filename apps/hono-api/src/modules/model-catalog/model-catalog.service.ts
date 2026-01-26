@@ -355,11 +355,16 @@ export async function importModelCatalogPackage(
 
 			for (const m of bundle.models || []) {
 				try {
+					const modelVendorKey = normalizeKey(
+						(typeof (m as any)?.vendorKey === "string" &&
+							(m as any).vendorKey) ||
+							vendorKey,
+					);
 					await upsertCatalogModelRow(
 						c.env.DB,
 						{
 							modelKey: String(m.modelKey || "").trim(),
-							vendorKey,
+							vendorKey: modelVendorKey,
 							labelZh: String(m.labelZh || "").trim(),
 							kind: String(m.kind || "").trim(),
 							enabled: typeof m.enabled === "boolean" ? m.enabled : true,
@@ -412,4 +417,3 @@ export async function importModelCatalogPackage(
 
 	return ModelCatalogImportResultSchema.parse(result);
 }
-
