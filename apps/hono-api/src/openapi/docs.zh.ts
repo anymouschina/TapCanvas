@@ -151,6 +151,11 @@ type DemoTask = {
 - Header（推荐）：
   - \`X-API-Key: tc_sk_...\`
   - 或 \`Authorization: Bearer tc_sk_...\`
+- 画布内“谁用扣谁的费”（可选）：
+  - 同时携带：
+    - \`X-API-Key: tc_sk_...\`（通道 Key；用于 Origin 白名单校验）
+    - \`Authorization: Bearer <tap_token>\`（登录 JWT；用于计费与资源归属）
+  - 注意：此模式下 \`Authorization\` 需要留给 JWT，因此 API Key 请放在 \`X-API-Key\`。
 - Origin 白名单：
   - 浏览器跨站调用会自动携带 \`Origin\`，必须命中你创建 Key 时配置的白名单。
   - 纯服务端（Node/Go/Java）请求通常没有 \`Origin\`：此时请在 Key 的 \`allowedOrigins\` 配置 \`*\`，或自行补 \`Origin\` 请求头。

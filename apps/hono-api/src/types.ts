@@ -33,6 +33,7 @@ export type AppEnv = {
 		userId?: string;
 		auth?: unknown;
 		apiKeyId?: string;
+		apiKeyOwnerId?: string;
 		requestId?: string;
 		// Public API routing hints (set by /public endpoints)
 		routingTaskKind?: string;
