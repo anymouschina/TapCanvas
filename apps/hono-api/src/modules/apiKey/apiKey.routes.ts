@@ -273,43 +273,114 @@ function normalizeDispatchVendor(vendor: string): string {
 }
 
 async function listEnabledSystemVendors(c: any): Promise<Set<string>> {
+	const isLocalDevRequest = () => {
+		try {
+			const url = new URL(c?.req?.url);
+			const host = url.hostname;
+			return (
+				host === "localhost" ||
+				host === "127.0.0.1" ||
+				host === "0.0.0.0" ||
+				host === "::1"
+			);
+		} catch {
+			return false;
+		}
+	};
+
 	try {
 		await ensureModelCatalogSchema(c.env.DB);
 
-		const vendorsRes = await c.env.DB.prepare(
-			`SELECT key, enabled, auth_type FROM model_catalog_vendors`,
-		).all();
+		const readResults = (res: any): any[] => (res && Array.isArray(res.results) ? res.results : []);
 
-		const keysRes = await c.env.DB.prepare(
-			`SELECT vendor_key, enabled, length(api_key) AS api_key_len FROM model_catalog_vendor_api_keys`,
-		).all();
+		const vendorsRows = await (async () => {
+			try {
+				return readResults(
+					await c.env.DB.prepare(
+						`SELECT key, enabled, auth_type FROM model_catalog_vendors`,
+					).all(),
+				);
+			} catch {
+				// Backward-compatible fallback: tolerate older schemas without auth_type.
+				return readResults(
+					await c.env.DB.prepare(`SELECT * FROM model_catalog_vendors`).all(),
+				);
+			}
+		})();
+
+		const keyRows = await (async () => {
+			try {
+				// Avoid relying on SQL functions (length) so we can tolerate schema/runtime quirks.
+				return readResults(
+					await c.env.DB.prepare(
+						`SELECT vendor_key, enabled, api_key FROM model_catalog_vendor_api_keys`,
+					).all(),
+				);
+			} catch {
+				return readResults(
+					await c.env.DB.prepare(
+						`SELECT * FROM model_catalog_vendor_api_keys`,
+					).all(),
+				);
+			}
+		})();
 
 		const enabledKeyVendors = new Set<string>();
-		for (const row of (keysRes as any).results || []) {
-			const vendorKey =
-				typeof row?.vendor_key === "string" ? row.vendor_key.trim() : "";
+		for (const row of keyRows) {
+			const vendorKeyRaw =
+				typeof row?.vendor_key === "string"
+					? row.vendor_key.trim()
+					: typeof row?.vendorKey === "string"
+						? row.vendorKey.trim()
+						: "";
+			const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
 			if (!vendorKey) continue;
 			if (Number(row?.enabled ?? 1) === 0) continue;
-			const len = Number(row?.api_key_len ?? 0) || 0;
-			if (len <= 0) continue;
+
+			const apiKey =
+				typeof row?.api_key === "string"
+					? row.api_key
+					: typeof row?.apiKey === "string"
+						? row.apiKey
+						: "";
+			if (!apiKey || !String(apiKey).trim()) continue;
+
 			enabledKeyVendors.add(vendorKey);
 		}
 
 		const enabledVendors = new Set<string>();
-		for (const row of (vendorsRes as any).results || []) {
-			const vendorKey = typeof row?.key === "string" ? row.key.trim() : "";
+		for (const row of vendorsRows) {
+			const vendorKeyRaw =
+				typeof row?.key === "string"
+					? row.key.trim()
+					: typeof row?.vendor_key === "string"
+						? row.vendor_key.trim()
+						: typeof row?.vendorKey === "string"
+							? row.vendorKey.trim()
+							: "";
+			const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
 			if (!vendorKey) continue;
 			if (Number(row?.enabled ?? 1) === 0) continue;
 
 			const authType =
-				typeof row?.auth_type === "string" ? row.auth_type.trim() : "";
+				typeof row?.auth_type === "string"
+					? row.auth_type.trim().toLowerCase()
+					: typeof row?.authType === "string"
+						? row.authType.trim().toLowerCase()
+						: "";
 			if (authType === "none" || enabledKeyVendors.has(vendorKey)) {
 				enabledVendors.add(vendorKey);
 			}
 		}
 
 		return enabledVendors;
-	} catch {
+	} catch (err: any) {
+		if (isLocalDevRequest()) {
+			console.warn(
+				"[public-api] listEnabledSystemVendors failed",
+				err?.message || err,
+			);
+		}
 		return new Set();
 	}
 }
@@ -364,7 +435,10 @@ async function resolvePreferredVendorFromModelCatalog(
 			if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
 			const vendorKey =
 				typeof (row as any).vendor_key === "string" ? (row as any).vendor_key.trim() : "";
-			if (vendorKey) return vendorKey;
+			if (vendorKey) {
+				const normalized = normalizeDispatchVendor(vendorKey);
+				if (normalized) return normalized;
+			}
 		} catch {
 			continue;
 		}
@@ -454,7 +528,16 @@ async function runPublicTaskWithFallback(
 			{
 				status: 400,
 				code: "no_enabled_vendor",
-				details: { kind: request?.kind },
+				details: {
+					kind: request?.kind,
+					vendorRaw: vendorRaw || null,
+					rawCandidates,
+					systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+					modelKey:
+						typeof extras?.modelKey === "string" && extras.modelKey.trim()
+							? extras.modelKey.trim()
+							: null,
+				},
 			},
 		);
 	}
