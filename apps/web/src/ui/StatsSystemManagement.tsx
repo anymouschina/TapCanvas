@@ -3,7 +3,6 @@ import { ActionIcon, Badge, Button, CopyButton, Divider, Group, Loader, Modal, P
 import { IconCheck, IconCopy, IconPencil, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { API_BASE, createApiKey, deleteApiKey, listApiKeys, listTaskLogs, updateApiKey, type ApiKeyDto, type VendorCallLogDto, type VendorCallLogStatus } from '../api/server'
 import { toast } from './toast'
-import StatsVendorChannels from './StatsVendorChannels'
 import StatsPublicApiDebugger from './StatsPublicApiDebugger'
 import StatsModelCatalogManagement from './StatsModelCatalogManagement'
 
@@ -276,7 +275,7 @@ fetch('${publicChatUrl}', {
           <div className="stats-system-card-header-left">
             <Title className="stats-system-title" order={3}>系统管理</Title>
             <Text className="stats-system-subtitle" size="sm" c="dimmed">
-              渠道（grsai/comfly/yunwu/apimart）配置、外站 API Key、生成任务日志（后台管理风格）。
+              厂商（Vendor）API Key、外站 API Key、生成任务日志（后台管理风格）。
             </Text>
           </div>
           <Group className="stats-system-card-header-actions" gap={6}>
@@ -306,9 +305,6 @@ fetch('${publicChatUrl}', {
             </Tooltip>
           </Group>
         </Group>
-
-        <Divider className="stats-system-divider" my="md" label="渠道配置" labelPosition="left" />
-        <StatsVendorChannels className="stats-system-vendor-channels" />
 
         <Divider className="stats-system-divider" my="md" label="模型管理（系统级）" labelPosition="left" />
         <StatsModelCatalogManagement className="stats-system-model-catalog" />
