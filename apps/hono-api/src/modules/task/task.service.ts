@@ -2720,11 +2720,218 @@ export async function runApimartVideoTask(
 	}
 }
 
+export async function runApimartImageTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	if (req.kind !== "text_to_image" && req.kind !== "image_edit") {
+		throw new AppError("apimart 仅支持 text_to_image/image_edit 或 text_to_video", {
+			status: 400,
+			code: "invalid_task_kind",
+		});
+	}
+
+	const extras = (req.extras || {}) as Record<string, any>;
+	const rawModelKey =
+		typeof extras.modelKey === "string" && extras.modelKey.trim()
+			? extras.modelKey.trim()
+			: "";
+	const modelKey =
+		rawModelKey && rawModelKey.startsWith("models/")
+			? rawModelKey.slice(7)
+			: rawModelKey;
+
+	const normalizedMaybeBanana = normalizeBananaModelKey(modelKey);
+	const resolved = (() => {
+		if (normalizedMaybeBanana && BANANA_MODELS.has(normalizedMaybeBanana)) {
+			return {
+				modelForApimart: mapBananaModelToApimartModelKey(normalizedMaybeBanana),
+				modelForBilling: normalizedMaybeBanana,
+			};
+		}
+		const fallback = "gemini-2.5-flash-image-preview";
+		const trimmed = modelKey.trim();
+		return {
+			modelForApimart: trimmed || fallback,
+			modelForBilling: trimmed || fallback,
+		};
+	})();
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: resolved.modelForBilling,
+	});
+	const progressCtx = extractProgressContext(req, "apimart");
+
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "apimart",
+		modelKey: resolved.modelForBilling,
+	});
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+	try {
+		const ctx = await resolveVendorContext(c, userId, "apimart");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.apimart.ai";
+		const apiKey = ctx.apiKey.trim();
+		if (!apiKey) {
+			throw new AppError("未配置 apimart API Key", {
+				status: 400,
+				code: "apimart_api_key_missing",
+			});
+		}
+
+		const referenceImages: string[] = Array.isArray(extras.referenceImages)
+			? extras.referenceImages
+					.map((url: any) => (typeof url === "string" ? url.trim() : ""))
+					.filter((url: string) => url.length > 0)
+			: [];
+
+		const aspectRatio =
+			typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()
+				? extras.aspectRatio.trim()
+				: "auto";
+		const resolvedAspect = (() => {
+			const raw =
+				typeof aspectRatio === "string" && aspectRatio.trim()
+					? aspectRatio.trim()
+					: "";
+			if (!raw || raw.toLowerCase() === "auto") return null;
+			const allowed = new Set([
+				"4:3",
+				"3:4",
+				"16:9",
+				"9:16",
+				"2:3",
+				"3:2",
+				"1:1",
+				"4:5",
+				"5:4",
+				"21:9",
+			]);
+			return allowed.has(raw) ? raw : null;
+		})();
+
+		const resolution =
+			typeof extras.resolution === "string" && extras.resolution.trim()
+				? extras.resolution.trim()
+				: typeof (extras as any).imageResolution === "string" &&
+						String((extras as any).imageResolution).trim()
+					? String((extras as any).imageResolution).trim()
+					: null;
+
+		const body: Record<string, any> = {
+			model: resolved.modelForApimart,
+			prompt: req.prompt,
+			n: 1,
+			...(resolvedAspect ? { size: resolvedAspect } : {}),
+			...(resolution ? { resolution } : {}),
+			...(referenceImages.length
+				? { image_urls: referenceImages.slice(0, 14) }
+				: {}),
+		};
+
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		const data = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/images/generations`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof data?.code === "number" && data.code !== 200) {
+			throw new AppError(
+				(data?.error?.message ||
+					data?.message ||
+					`apimart 图像生成失败: code ${data.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_request_failed",
+					details: { upstreamData: data ?? null, requestBody: body },
+				},
+			);
+		}
+
+		const first = Array.isArray(data?.data) ? data.data[0] : null;
+		const taskId =
+			(typeof first?.task_id === "string" && first.task_id.trim()) ||
+			(typeof first?.taskId === "string" && first.taskId.trim()) ||
+			null;
+		if (!taskId) {
+			throw new AppError("apimart 未返回 task_id", {
+				status: 502,
+				code: "apimart_task_id_missing",
+				details: { upstreamData: data ?? null, requestBody: body },
+			});
+		}
+
+		emitProgress(userId, progressCtx, {
+			status: "queued",
+			progress: 10,
+			taskId,
+			raw: data ?? null,
+		});
+
+		{
+			const nowIso = new Date().toISOString();
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{ kind: "image", taskId: taskId.trim(), vendor: "apimart" },
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert apimart image ref failed",
+					err?.message || err,
+				);
+			}
+		}
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: req.kind,
+			status: "queued",
+			assets: [],
+			raw: {
+				provider: "apimart",
+				model: resolved.modelForApimart,
+				taskId,
+				status: "queued",
+				request: body,
+				response: data ?? null,
+			},
+		});
+		await bindReservationToTaskId(c, userId, reservation, taskId);
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "apimart",
+			taskKind: req.kind,
+			result,
+		});
+		return result;
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
+}
+
 export async function fetchApimartTaskResult(
 	c: AppContext,
 	userId: string,
 	taskId: string,
 	promptFromClient?: string | null,
+	options?: { taskKind?: TaskRequestDto["kind"] | null },
 ) {
 	if (!taskId || !taskId.trim()) {
 		throw new AppError("taskId is required", {
@@ -2773,27 +2980,59 @@ export async function fetchApimartTaskResult(
 		typeof payload?.progress === "number" ? payload.progress : undefined,
 	);
 
-	const urls = extractApimartMediaUrls(payload, "videos");
-	const thumbnailUrl = extractApimartThumbnailUrl(payload);
+	const expected = typeof options?.taskKind === "string" ? options.taskKind : null;
+	const preferImages =
+		expected === "text_to_image" || expected === "image_edit";
+	const preferVideos =
+		expected === "text_to_video" || expected === "image_to_video";
+
+	const imageUrls = extractApimartMediaUrls(payload, "images");
+	const videoUrls = extractApimartMediaUrls(payload, "videos");
+
+	const mediaKey: "images" | "videos" = (() => {
+		if (preferImages) return "images";
+		if (preferVideos) return "videos";
+		if (imageUrls.length > 0 && videoUrls.length === 0) return "images";
+		if (videoUrls.length > 0 && imageUrls.length === 0) return "videos";
+		return "videos";
+	})();
+
+	const urls = mediaKey === "images" ? imageUrls : videoUrls;
+	const thumbnailUrl =
+		mediaKey === "videos" ? extractApimartThumbnailUrl(payload) : null;
 	if (status === "succeeded" && urls.length === 0) {
 		status = "running";
 	}
 
+	const taskKind: TaskRequestDto["kind"] = (() => {
+		if (preferImages) return expected as TaskRequestDto["kind"];
+		if (preferVideos) return "text_to_video";
+		if (mediaKey === "images") return (expected as any) || "text_to_image";
+		return "text_to_video";
+	})();
+
 	if (status === "succeeded" && urls.length > 0) {
-		const asset = TaskAssetSchema.parse({
-			type: "video",
-			url: urls[0]!,
-			thumbnailUrl: thumbnailUrl,
-		});
+		const assets =
+			mediaKey === "images"
+				? urls.map((url) =>
+						TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
+					)
+				: [
+						TaskAssetSchema.parse({
+							type: "video",
+							url: urls[0]!,
+							thumbnailUrl: thumbnailUrl,
+						}),
+					];
 
 		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
 		try {
 			hostedAssets = await hostTaskAssetsInWorker({
 				c,
 				userId,
-				assets: [asset],
+				assets,
 				meta: {
-					taskKind: "text_to_video",
+					taskKind,
 					prompt:
 						typeof promptFromClient === "string" && promptFromClient.trim()
 							? promptFromClient.trim()
@@ -2809,7 +3048,7 @@ export async function fetchApimartTaskResult(
 					: "OSS 托管失败，稍后重试";
 			const result = TaskResultSchema.parse({
 				id: taskId,
-				kind: "text_to_video",
+				kind: taskKind,
 				status: "running",
 				assets: [],
 				raw: {
@@ -2822,7 +3061,7 @@ export async function fetchApimartTaskResult(
 			await recordVendorCallFromTaskResult(c, {
 				userId,
 				vendor: "apimart",
-				taskKind: "text_to_video",
+				taskKind,
 				result,
 			});
 			return result;
@@ -2830,7 +3069,7 @@ export async function fetchApimartTaskResult(
 
 		const result = TaskResultSchema.parse({
 			id: taskId,
-			kind: "text_to_video",
+			kind: taskKind,
 			status: "succeeded",
 			assets: hostedAssets,
 			raw: {
@@ -2841,7 +3080,7 @@ export async function fetchApimartTaskResult(
 		await recordVendorCallFromTaskResult(c, {
 			userId,
 			vendor: "apimart",
-			taskKind: "text_to_video",
+			taskKind,
 			result,
 		});
 		return result;
@@ -2854,7 +3093,7 @@ export async function fetchApimartTaskResult(
 
 	const result = TaskResultSchema.parse({
 		id: taskId,
-		kind: "text_to_video",
+		kind: taskKind,
 		status,
 		assets: [],
 		raw: {
@@ -2868,7 +3107,7 @@ export async function fetchApimartTaskResult(
 	await recordVendorCallFromTaskResult(c, {
 		userId,
 		vendor: "apimart",
-		taskKind: "text_to_video",
+		taskKind,
 		result,
 	});
 	return result;

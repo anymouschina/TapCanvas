@@ -18,6 +18,7 @@ import {
 	fetchMiniMaxTaskResult,
 	fetchVeoTaskResult,
 	runApimartVideoTask,
+	runApimartImageTask,
 	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
@@ -80,16 +81,19 @@ taskRouter.post("/", async (c) => {
 		}
 		result = await runVeoVideoTask(c, userId, req);
 	} else if (vendor === "apimart") {
-		if (req.kind !== "text_to_video") {
+		if (req.kind === "text_to_video") {
+			result = await runApimartVideoTask(c, userId, req);
+		} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
+			result = await runApimartImageTask(c, userId, req);
+		} else {
 			return c.json(
 				{
-					error: "apimart only supports text_to_video tasks for now",
+					error: "apimart only supports text_to_video/text_to_image/image_edit tasks",
 					code: "invalid_task_kind",
 				},
 				400,
 			);
 		}
-		result = await runApimartVideoTask(c, userId, req);
 	} else if (vendor === "minimax") {
 		if (req.kind !== "text_to_video") {
 			return c.json(
@@ -297,6 +301,7 @@ taskRouter.post("/apimart/result", async (c) => {
 		userId,
 		parsed.data.taskId,
 		parsed.data.prompt ?? null,
+		{ taskKind: (parsed.data.taskKind as any) ?? null },
 	);
 	return c.json(TaskResultSchema.parse(result));
 });

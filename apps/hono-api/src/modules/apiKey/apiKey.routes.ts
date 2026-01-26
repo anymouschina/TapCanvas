@@ -25,6 +25,7 @@ import {
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchVeoTaskResult,
+	runApimartImageTask,
 	runApimartVideoTask,
 	runGenericTaskForVendor,
 	runMiniMaxVideoTask,
@@ -411,6 +412,7 @@ async function runPublicTaskWithFallback(
 		if (!rawCandidates.length) {
 			return Promise.reject(
 				Object.assign(new Error("unsupported task kind"), {
+					status: 400,
 					code: "unsupported_task_kind",
 					details: { kind: request?.kind },
 				}),
@@ -432,23 +434,40 @@ async function runPublicTaskWithFallback(
 		try {
 			let result: any;
 			if (v === "apimart") {
-				if (request.kind !== "text_to_video") {
+				if (request.kind === "text_to_video") {
+					result = await runApimartVideoTask(c, userId, request);
+					const nowIso = new Date().toISOString();
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{ kind: "video", taskId: result.id, vendor: "apimart" },
+						nowIso,
+					);
+				} else if (
+					request.kind === "text_to_image" ||
+					request.kind === "image_edit"
+				) {
+					result = await runApimartImageTask(c, userId, request);
+					const nowIso = new Date().toISOString();
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{ kind: "image", taskId: result.id, vendor: "apimart" },
+						nowIso,
+					);
+				} else {
 					throw Object.assign(new Error("invalid task kind"), {
+						status: 400,
 						code: "invalid_task_kind",
+						details: { vendor: "apimart", kind: request.kind },
 					});
 				}
-				result = await runApimartVideoTask(c, userId, request);
-				const nowIso = new Date().toISOString();
-				await upsertVendorTaskRef(
-					c.env.DB,
-					userId,
-					{ kind: "video", taskId: result.id, vendor: "apimart" },
-					nowIso,
-				);
 			} else if (v === "veo") {
 				if (request.kind !== "text_to_video") {
 					throw Object.assign(new Error("invalid task kind"), {
+						status: 400,
 						code: "invalid_task_kind",
+						details: { vendor: "veo", kind: request.kind },
 					});
 				}
 				result = await runVeoVideoTask(c, userId, request);
@@ -475,7 +494,9 @@ async function runPublicTaskWithFallback(
 			} else if (v === "minimax") {
 				if (request.kind !== "text_to_video") {
 					throw Object.assign(new Error("invalid task kind"), {
+						status: 400,
 						code: "invalid_task_kind",
+						details: { vendor: "minimax", kind: request.kind },
 					});
 				}
 				result = await runMiniMaxVideoTask(c, userId, request);
@@ -939,15 +960,17 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 	const dispatch = normalizeDispatchVendor(resolved.vendor);
 	let result: any;
 
-	if (resolved.kind === "image") {
+	if (dispatch === "apimart") {
+		result = await fetchApimartTaskResult(c, userId, taskId, prompt, {
+			taskKind: (taskKind as any) ?? null,
+		});
+	} else if (resolved.kind === "image") {
 		result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
 	} else if (vendorHead === "sora2api") {
 		result = await fetchSora2ApiTaskResult(c, userId, taskId, prompt);
-	} else if (dispatch === "apimart") {
-		result = await fetchApimartTaskResult(c, userId, taskId, prompt);
 	} else if (dispatch === "veo") {
 		result = await fetchVeoTaskResult(c, userId, taskId);
 	} else if (dispatch === "minimax") {
