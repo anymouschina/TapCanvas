@@ -29,6 +29,7 @@ import {
 	chargeTeamCreditsOnSuccess,
 	requireSufficientTeamCredits,
 } from "../team/team.service";
+import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 
 type VendorContext = {
 	baseUrl: string;
@@ -46,13 +47,6 @@ type ProgressContext = {
 	taskKind: TaskRequestDto["kind"];
 	vendor: string;
 };
-
-function teamCreditsCostForTaskKind(kind: string | null | undefined): number {
-	const k = (kind || "").trim();
-	if (k === "text_to_image" || k === "image_edit") return 1;
-	if (k === "text_to_video" || k === "image_to_video") return 10;
-	return 0;
-}
 
 function pickApiVendorForTask(
 	result: TaskResult,
@@ -257,13 +251,32 @@ async function recordVendorCallFromTaskResult(
 							(input.result as any).kind.trim()
 						? (input.result as any).kind.trim()
 						: "";
-			const amount = teamCreditsCostForTaskKind(resolvedTaskKind);
+			const resolvedModelKey = (() => {
+				const raw: any = input.result?.raw as any;
+				const candidates = [
+					raw?.model,
+					raw?.modelKey,
+					raw?.model_key,
+					raw?.response?.model,
+					raw?.response?.modelKey,
+					raw?.response?.model_key,
+				];
+				for (const v of candidates) {
+					if (typeof v === "string" && v.trim()) return v.trim();
+				}
+				return null;
+			})();
+			const amount = await resolveTeamCreditsCostForTask(c, {
+				taskKind: resolvedTaskKind,
+				modelKey: resolvedModelKey || undefined,
+			});
 			if (amount > 0 && resolvedTaskKind) {
 				await chargeTeamCreditsOnSuccess(c, input.userId, {
 					taskId,
 					taskKind: resolvedTaskKind,
 					amount,
 					vendor: vendorKey,
+					modelKey: resolvedModelKey,
 				});
 			}
 		}
@@ -1329,6 +1342,10 @@ function parseComflyProgress(value: unknown): number | undefined {
 					raw: {
 						provider: "comfly",
 						vendor: metaVendor,
+						model:
+							typeof (data as any)?.model === "string"
+								? (data as any).model
+								: undefined,
 						response: data ?? null,
 						progress,
 						error: reason,
@@ -1352,6 +1369,10 @@ function parseComflyProgress(value: unknown): number | undefined {
 				raw: {
 					provider: "comfly",
 					vendor: metaVendor,
+					model:
+						typeof (data as any)?.model === "string"
+							? (data as any).model
+							: undefined,
 					response: data ?? null,
 					progress,
 				},
@@ -1367,6 +1388,11 @@ function parseComflyProgress(value: unknown): number | undefined {
 			assets: [],
 			raw: {
 				provider: "comfly",
+				vendor: metaVendor,
+				model:
+					typeof (data as any)?.model === "string"
+						? (data as any).model
+						: undefined,
 				response: data ?? null,
 				progress,
 			},
@@ -1410,6 +1436,10 @@ function parseComflyProgress(value: unknown): number | undefined {
 			raw: {
 				provider: "comfly",
 				vendor: metaVendor,
+				model:
+					typeof (data as any)?.model === "string"
+						? (data as any).model
+						: undefined,
 				response: data ?? null,
 			},
 		});
@@ -1420,21 +1450,25 @@ function parseComflyProgress(value: unknown): number | undefined {
 		userId: string,
 		req: TaskRequestDto,
 	): Promise<TaskResult> {
-		await requireSufficientTeamCredits(c, userId, {
-			required: teamCreditsCostForTaskKind(req.kind),
-			taskKind: req.kind,
-			vendor: "veo",
-		});
-
-		const progressCtx = extractProgressContext(req, "veo");
-		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
-
 		const extras = (req.extras || {}) as Record<string, any>;
 		const model = normalizeVeoModelKey(
 			(typeof extras.modelKey === "string" && extras.modelKey) ||
 				(req.extras && (req.extras as any).modelKey) ||
 				null,
 		);
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "veo",
+			modelKey: model,
+		});
+
+		const progressCtx = extractProgressContext(req, "veo");
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
 		// New: Veo models can be served via sora2api's OpenAI-compatible chat endpoint (model ids are veo_*)
 		if (/^veo_/i.test(model)) {
@@ -1787,6 +1821,8 @@ export async function fetchVeoTaskResult(
 				assets: [],
 				raw: {
 					provider: "veo",
+					model:
+						typeof payload.model === "string" ? payload.model : undefined,
 					response: payload,
 					progress,
 				},
@@ -1825,6 +1861,8 @@ export async function fetchVeoTaskResult(
 			assets: hostedAssets,
 			raw: {
 				provider: "veo",
+				model:
+					typeof payload.model === "string" ? payload.model : undefined,
 				response: payload,
 			},
 		});
@@ -1852,6 +1890,7 @@ export async function fetchVeoTaskResult(
 		assets: [],
 		raw: {
 			provider: "veo",
+			model: typeof payload.model === "string" ? payload.model : undefined,
 			response: payload,
 			progress,
 		},
@@ -1890,14 +1929,7 @@ export async function runSora2ApiVideoTask(
 	userId: string,
 	req: TaskRequestDto,
 ): Promise<TaskResult> {
-	await requireSufficientTeamCredits(c, userId, {
-		required: teamCreditsCostForTaskKind(req.kind),
-		taskKind: req.kind,
-		vendor: "sora2api",
-	});
-
 	const progressCtx = extractProgressContext(req, "sora2api");
-	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
 	const ctx = await resolveVendorContext(c, userId, "sora2api");
 	const baseUrl =
@@ -1950,6 +1982,19 @@ export async function runSora2ApiVideoTask(
 		: isGrsaiBase || isYunwuBase
 			? modelKeyRaw || "sora-2"
 			: normalizeSora2ApiModelKey(modelKeyRaw || undefined, orientation, durationSeconds);
+	const billingModelKey = modelKeyRaw || model;
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: billingModelKey,
+	});
+	await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "sora2api",
+		modelKey: billingModelKey,
+	});
+
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 	const aspectRatio = orientation === "portrait" ? "9:16" : "16:9";
 	const webHook =
 		typeof extras.webHook === "string" && extras.webHook.trim()
@@ -3708,37 +3753,40 @@ export async function fetchGrsaiDrawTaskResult(
 		userId: string,
 		req: TaskRequestDto,
 	): Promise<TaskResult> {
-	await requireSufficientTeamCredits(c, userId, {
-		required: teamCreditsCostForTaskKind(req.kind),
-		taskKind: req.kind,
-		vendor: "minimax",
-	});
-
-	const progressCtx = extractProgressContext(req, "minimax");
-	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
-	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
-
-	const ctx = await resolveVendorContext(c, userId, "minimax");
-	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
-	const channelVendor: "grsai" | "comfly" | null =
-		ctx.viaProxyVendor === "comfly"
-			? "comfly"
-			: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
-				? "grsai"
-				: null;
-	const apiKey = ctx.apiKey.trim();
-	if (!baseUrl || !apiKey) {
-		throw new AppError("未配置 MiniMax API Key", {
-			status: 400,
-			code: "minimax_api_key_missing",
-		});
-		}
-
 		const extras = (req.extras || {}) as Record<string, any>;
 		const modelRaw =
-			(typeof extras.modelKey === "string" && extras.modelKey.trim()) ||
-			"";
+			(typeof extras.modelKey === "string" && extras.modelKey.trim()) || "";
 		const model = normalizeMiniMaxModelKey(modelRaw);
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "minimax",
+			modelKey: model,
+		});
+
+		const progressCtx = extractProgressContext(req, "minimax");
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		const ctx = await resolveVendorContext(c, userId, "minimax");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+		const channelVendor: "grsai" | "comfly" | null =
+			ctx.viaProxyVendor === "comfly"
+				? "comfly"
+				: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+					? "grsai"
+					: null;
+		const apiKey = ctx.apiKey.trim();
+		if (!baseUrl || !apiKey) {
+			throw new AppError("未配置 MiniMax API Key", {
+				status: 400,
+				code: "minimax_api_key_missing",
+			});
+		}
 		const durationSeconds =
 			typeof (req as any).durationSeconds === "number" &&
 			Number.isFinite((req as any).durationSeconds)
@@ -4138,6 +4186,10 @@ export async function fetchMiniMaxTaskResult(
 			assets: [],
 			raw: {
 				provider: "minimax",
+				model:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
 				response: payload,
 				progress,
 				message: msg,
@@ -4194,6 +4246,10 @@ export async function fetchMiniMaxTaskResult(
 			assets: hostedAssets,
 			raw: {
 				provider: "minimax",
+				model:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
 				response: payload,
 			},
 		});
@@ -4222,6 +4278,10 @@ export async function fetchMiniMaxTaskResult(
 			assets: [],
 			raw: {
 				provider: "minimax",
+				model:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
 				response: payload,
 				progress,
 			},
@@ -4252,6 +4312,10 @@ export async function fetchMiniMaxTaskResult(
 			assets: [],
 			raw: {
 				provider: "minimax",
+				model:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
 				response: payload,
 				progress,
 				message:
@@ -4306,6 +4370,10 @@ export async function fetchMiniMaxTaskResult(
 		assets: hostedAssets,
 		raw: {
 			provider: "minimax",
+			model:
+				typeof payload?.model === "string" && payload.model.trim()
+					? payload.model.trim()
+					: undefined,
 			response: payload,
 		},
 	});
@@ -4869,6 +4937,16 @@ async function runOpenAiTextTask(
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
 		"gpt-5.2";
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "openai",
+		modelKey: model,
+	});
 
 	const extras = (req.extras || {}) as Record<string, any>;
 
@@ -4919,6 +4997,7 @@ async function runOpenAiTextTask(
 		assets: [],
 		raw: {
 				provider: "openai",
+				model,
 				response: parsed,
 				rawBody,
 				text,
@@ -4963,6 +5042,16 @@ async function runOpenAiImageToPromptTask(
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
 		"gpt-5.2";
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "openai",
+		modelKey: model,
+	});
 
 	const userPrompt =
 		req.prompt?.trim() ||
@@ -5024,6 +5113,7 @@ async function runOpenAiImageToPromptTask(
 		assets: [],
 			raw: {
 				provider: "openai",
+				model,
 				response: parsed,
 				rawBody,
 				text,
@@ -5056,6 +5146,19 @@ async function runGeminiTextTask(
 	const model = modelKey.startsWith("models/")
 		? modelKey
 		: `models/${modelKey}`;
+	const modelId = model.startsWith("models/") ? model.slice(7) : model;
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: modelId,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "gemini",
+			modelKey: modelId,
+		});
+	}
 
 	const systemPrompt =
 		req.kind === "prompt_refine"
@@ -5113,7 +5216,6 @@ async function runGeminiTextTask(
 		.trim();
 
 	const id = `gemini-${Date.now().toString(36)}`;
-	const modelId = model.startsWith("models/") ? model.slice(7) : model;
 	const vendorForLog = (() => {
 		const raw = (modelId || "").trim();
 		if (!raw) return "gemini";
@@ -5352,6 +5454,18 @@ async function runGeminiBananaImageTask(
 		throw new AppError("当前模型不支持 Banana 图片接口", {
 			status: 400,
 			code: "banana_model_not_supported",
+		});
+	}
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: normalizedModel,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "gemini",
+			modelKey: normalizedModel,
 		});
 	}
 
@@ -6017,6 +6131,18 @@ async function runQwenTextToImageTask(
 
 	const model =
 		pickModelKey(req, { modelKey: undefined }) || "qwen-image-plus";
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "qwen",
+			modelKey: model,
+		});
+	}
 
 	const width = req.width || 1328;
 	const height = req.height || 1328;
@@ -6089,6 +6215,7 @@ async function runQwenTextToImageTask(
 		assets,
 		raw: {
 			provider: "qwen",
+			model,
 			response: data,
 		},
 	});
@@ -6156,6 +6283,18 @@ async function runQwenTextToImageTask(
 		return "gemini-2.5-flash-image-" + (isPortrait ? "portrait" : "landscape");
 	})();
 	const model = normalizeSora2ApiImageModelKey(modelKeyRaw || defaultGeminiModelKey);
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "sora2api",
+			modelKey: model,
+		});
+	}
 
 	const promptParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
 		{ type: "text", text: req.prompt },
@@ -6550,6 +6689,18 @@ async function runAnthropicTextTask(
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
 		"claude-3.5-sonnet-latest";
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind: req.kind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "anthropic",
+			modelKey: model,
+		});
+	}
 
 	const systemPrompt =
 		req.kind === "prompt_refine"
@@ -6615,6 +6766,7 @@ async function runAnthropicTextTask(
 		assets: [],
 		raw: {
 			provider: "anthropic",
+			model,
 			response: data,
 			text: text || "Anthropic 调用成功",
 		},
@@ -6630,13 +6782,6 @@ export async function runGenericTaskForVendor(
 	const v = normalizeVendorKey(vendor);
 	const progressCtx = extractProgressContext(req, v);
 	const startedAtMs = Date.now();
-
-	// Team credits: block payable generations when insufficient.
-	await requireSufficientTeamCredits(c, userId, {
-		required: teamCreditsCostForTaskKind(req.kind),
-		taskKind: req.kind,
-		vendor: v,
-	});
 
 	// 所有厂商统一：/tasks 视为“创建任务”，立即发出 queued/running 事件
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });

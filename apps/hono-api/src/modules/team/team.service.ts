@@ -356,7 +356,12 @@ export async function listCreditsLedgerForTeam(
 export async function requireSufficientTeamCredits(
 	c: AppContext,
 	userId: string,
-	input: { required: number; taskKind: string; vendor?: string },
+	input: {
+		required: number;
+		taskKind: string;
+		vendor?: string;
+		modelKey?: string | null;
+	},
 ): Promise<void> {
 	const membership = await getTeamMembershipByUserId(c.env.DB, userId);
 	if (!membership) return;
@@ -373,6 +378,10 @@ export async function requireSufficientTeamCredits(
 			details: {
 				teamId: membership.team_id,
 				taskKind: input.taskKind,
+				modelKey:
+					typeof input.modelKey === "string" && input.modelKey.trim()
+						? input.modelKey.trim()
+						: undefined,
 				vendor: input.vendor,
 				required,
 				available,
@@ -384,7 +393,13 @@ export async function requireSufficientTeamCredits(
 export async function chargeTeamCreditsOnSuccess(
 	c: AppContext,
 	userId: string,
-	input: { taskId: string; taskKind: string; amount: number; vendor?: string },
+	input: {
+		taskId: string;
+		taskKind: string;
+		amount: number;
+		vendor?: string;
+		modelKey?: string | null;
+	},
 ): Promise<void> {
 	const membership = await getTeamMembershipByUserId(c.env.DB, userId);
 	if (!membership) return;
@@ -394,16 +409,23 @@ export async function chargeTeamCreditsOnSuccess(
 	if (!taskId) return;
 
 	try {
+		const note = (() => {
+			const parts: string[] = [];
+			if (typeof input.vendor === "string" && input.vendor.trim()) {
+				parts.push(`vendor:${input.vendor.trim()}`);
+			}
+			if (typeof input.modelKey === "string" && input.modelKey.trim()) {
+				parts.push(`model:${input.modelKey.trim()}`);
+			}
+			return parts.length ? parts.join(" ") : null;
+		})();
 		await tryChargeTeamCreditsOnce(c.env.DB, {
 			teamId: membership.team_id,
 			amount,
 			taskId,
 			taskKind: input.taskKind,
 			actorUserId: userId,
-			note:
-				typeof input.vendor === "string" && input.vendor.trim()
-					? `vendor:${input.vendor.trim()}`
-					: null,
+			note,
 			nowIso: new Date().toISOString(),
 		});
 	} catch (err) {

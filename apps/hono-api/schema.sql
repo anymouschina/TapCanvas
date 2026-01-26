@@ -85,6 +85,15 @@ CREATE TABLE IF NOT EXISTS team_credit_ledger (
 
 CREATE INDEX IF NOT EXISTS idx_team_credit_ledger_team_created_at ON team_credit_ledger(team_id, created_at);
 
+-- Model credit costs (admin-configurable; used for team credit deductions)
+CREATE TABLE IF NOT EXISTS model_credit_costs (
+	model_key TEXT PRIMARY KEY,
+	cost INTEGER NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
 -- Daily active users (one row per user per UTC day)
 CREATE TABLE IF NOT EXISTS user_activity_days (
 	day TEXT NOT NULL,

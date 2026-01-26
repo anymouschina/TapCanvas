@@ -15,6 +15,7 @@ import { statsRouter } from "./modules/stats/stats.routes";
 import { executionRouter } from "./modules/execution/execution.routes";
 import { apiKeyRouter, publicApiRouter } from "./modules/apiKey/apiKey.routes";
 import { teamRouter } from "./modules/team/team.routes";
+import { billingRouter } from "./modules/billing/billing.routes";
 import type { AppEnv } from "./types";
 import type { MessageBatch } from "@cloudflare/workers-types";
 import { handleWorkflowNodeJob, type WorkflowNodeJob } from "./modules/execution/execution.queue";
@@ -228,6 +229,9 @@ app.route("/stats", statsRouter);
 
 // Team / enterprise routes
 app.route("/teams", teamRouter);
+
+// Billing / plans (admin only)
+app.route("/billing", billingRouter);
 
 // Unified task routes (veo / sora2api for now)
 app.route("/tasks", taskRouter);

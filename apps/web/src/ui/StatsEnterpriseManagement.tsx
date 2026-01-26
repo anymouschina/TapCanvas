@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Button, CopyButton, Divider, Group, Loader, Modal, N
 import { IconCheck, IconCopy, IconPlus, IconRefresh, IconSettings } from '@tabler/icons-react'
 import { addTeamMember, createTeam, createTeamInvite, listTeamInvites, listTeamMembers, listTeams, topUpTeamCredits, type TeamInviteDto, type TeamListItemDto, type TeamMemberDto, type TeamRole } from '../api/server'
 import { toast } from './toast'
+import StatsPlanManagement from './StatsPlanManagement'
 
 function formatCredits(value: number): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '0'
@@ -195,6 +196,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
 
   return (
     <Stack className={rootClassName} gap="md">
+      <StatsPlanManagement className="stats-enterprise-plan-management" />
       <Paper className="stats-enterprise-card glass" withBorder radius="lg" p="md">
         <Group className="stats-enterprise-card-header" justify="space-between" align="flex-start" gap="md" wrap="wrap">
           <div className="stats-enterprise-card-header-left">
@@ -539,4 +541,3 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
     </Stack>
   )
 }
-

@@ -16,6 +16,7 @@ import {
 	chargeTeamCreditsOnSuccess,
 	requireSufficientTeamCredits,
 } from "../team/team.service";
+import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -340,11 +341,23 @@ export async function createSoraVideoTask(
 		typeof input.imageUrl === "string" && input.imageUrl.trim()
 			? "image_to_video"
 			: "text_to_video";
-	await requireSufficientTeamCredits(c, userId, {
-		required: 10,
-		taskKind,
-		vendor: "sora2api",
-	});
+	const model = (() => {
+		const raw = (input.model || "").trim();
+		if (raw) return raw;
+		return "sora-2";
+	})();
+	{
+		const required = await resolveTeamCreditsCostForTask(c, {
+			taskKind,
+			modelKey: model,
+		});
+		await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind,
+			vendor: "sora2api",
+			modelKey: model,
+		});
+	}
 
 	// 新接口：Sora2API /v1/video/sora-video（不再走 /backend/nf/create）
 	const vendor: "sora2api" | "grsai" = "sora2api";
@@ -372,12 +385,6 @@ export async function createSoraVideoTask(
 			: input.orientation === "square"
 				? "1:1"
 				: "16:9";
-
-	const model = (() => {
-		const raw = (input.model || "").trim();
-		if (raw) return raw;
-		return "sora-2";
-	})();
 
 	const body: any = {
 		model,
@@ -748,11 +755,27 @@ export async function getSoraVideoDraftByTask(
 				.run();
 
 			if (videoUrl) {
+				const modelRow = await c.env.DB.prepare(
+					`SELECT model FROM video_generation_histories
+           WHERE user_id = ? AND task_id = ?
+           LIMIT 1`,
+				)
+					.bind(userId, input.taskId)
+					.first<{ model: string | null }>();
+				const modelKey =
+					typeof modelRow?.model === "string" && modelRow.model.trim()
+						? modelRow.model.trim()
+						: null;
+				const amount = await resolveTeamCreditsCostForTask(c, {
+					taskKind: "text_to_video",
+					modelKey: modelKey || undefined,
+				});
 				await chargeTeamCreditsOnSuccess(c, userId, {
 					taskId: input.taskId,
 					taskKind: "text_to_video",
-					amount: 10,
+					amount,
 					vendor: "sora",
+					modelKey,
 				});
 			}
 

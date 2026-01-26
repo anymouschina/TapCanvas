@@ -1174,6 +1174,59 @@ export async function listTeamCreditLedger(teamId: string): Promise<TeamCreditLe
   return r.json()
 }
 
+// Billing / plans (admin dashboard)
+export type BillingModelKind = 'text' | 'image' | 'video'
+
+export type BillingModelOptionDto = {
+  modelKey: string
+  labelZh: string
+  kind: BillingModelKind
+  vendor?: string
+}
+
+export type ModelCreditCostDto = {
+  modelKey: string
+  cost: number
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export async function listBillingModels(): Promise<BillingModelOptionDto[]> {
+  const r = await apiFetch(`${API_BASE}/billing/models`, withAuth())
+  if (!r.ok) throw new Error(`list billing models failed: ${r.status}`)
+  return r.json()
+}
+
+export async function listModelCreditCosts(): Promise<ModelCreditCostDto[]> {
+  const r = await apiFetch(`${API_BASE}/billing/model-costs`, withAuth())
+  if (!r.ok) throw new Error(`list model credit costs failed: ${r.status}`)
+  return r.json()
+}
+
+export async function upsertModelCreditCost(payload: { modelKey: string; cost: number; enabled?: boolean }): Promise<ModelCreditCostDto> {
+  const r = await apiFetch(`${API_BASE}/billing/model-costs`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `upsert model credit cost failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function deleteModelCreditCost(modelKey: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/billing/model-costs/${encodeURIComponent(modelKey)}`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `delete model credit cost failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
 export async function listTaskLogs(params?: {
   limit?: number
   before?: string | null
