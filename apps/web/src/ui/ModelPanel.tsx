@@ -72,6 +72,7 @@ const COMFLY_PROXY_TARGET_OPTIONS = [
 
 const APIMART_PROXY_TARGET_OPTIONS = [
   { value: 'sora', label: 'Sora2 视频' },
+  { value: 'veo', label: 'Veo 视频' },
   { value: 'gemini', label: 'Nano Banana 图片' },
 ]
 

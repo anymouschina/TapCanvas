@@ -73,7 +73,7 @@ export default function StatsVendorChannels({ className }: { className?: string 
   const [apimartCfg, setApimartCfg] = React.useState<ProxyConfigDto | null>(null)
   const [apimartHost, setApimartHost] = React.useState(APIMART_PROXY_DEFAULT_HOST)
   const [apimartEnabled, setApimartEnabled] = React.useState(false)
-  const [apimartEnabledVendors, setApimartEnabledVendors] = React.useState<string[]>(['sora2api', 'gemini'])
+  const [apimartEnabledVendors, setApimartEnabledVendors] = React.useState<string[]>(['sora2api', 'gemini', 'veo'])
   const [apimartApiKey, setApimartApiKey] = React.useState('')
   const [apimartApiKeyTouched, setApimartApiKeyTouched] = React.useState(false)
   const [apimartSaving, setApimartSaving] = React.useState(false)

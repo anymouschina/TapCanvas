@@ -12,10 +12,12 @@ import {
 	VendorCallLogSchema,
 } from "./task.schemas";
 import {
+	fetchApimartTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchVeoTaskResult,
+	runApimartVideoTask,
 	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
@@ -77,6 +79,17 @@ taskRouter.post("/", async (c) => {
 			);
 		}
 		result = await runVeoVideoTask(c, userId, req);
+	} else if (vendor === "apimart") {
+		if (req.kind !== "text_to_video") {
+			return c.json(
+				{
+					error: "apimart only supports text_to_video tasks for now",
+					code: "invalid_task_kind",
+				},
+				400,
+			);
+		}
+		result = await runApimartVideoTask(c, userId, req);
 	} else if (vendor === "minimax") {
 		if (req.kind !== "text_to_video") {
 			return c.json(
@@ -265,6 +278,26 @@ taskRouter.post("/veo/result", async (c) => {
 		);
 	}
 	const result = await fetchVeoTaskResult(c, userId, parsed.data.taskId);
+	return c.json(TaskResultSchema.parse(result));
+});
+
+taskRouter.post("/apimart/result", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = FetchTaskResultRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+	const result = await fetchApimartTaskResult(
+		c,
+		userId,
+		parsed.data.taskId,
+		parsed.data.prompt ?? null,
+	);
 	return c.json(TaskResultSchema.parse(result));
 });
 

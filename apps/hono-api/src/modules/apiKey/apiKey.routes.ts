@@ -20,15 +20,18 @@ import {
 } from "./apiKey.schemas";
 import { createApiKey, deleteApiKey, listApiKeys, updateApiKey } from "./apiKey.service";
 import {
+	fetchApimartTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchVeoTaskResult,
+	runApimartVideoTask,
 	runGenericTaskForVendor,
 	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
 } from "../task/task.service";
+import { getCatalogModelByKey } from "../model-catalog/model-catalog.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
@@ -265,6 +268,51 @@ function normalizeDispatchVendor(vendor: string): string {
 	return last;
 }
 
+function resolveCatalogKindForTaskKind(
+	taskKind: string | null | undefined,
+): "text" | "image" | "video" | null {
+	const k = (taskKind || "").trim();
+	if (!k) return null;
+	if (k === "chat" || k === "prompt_refine" || k === "image_to_prompt") return "text";
+	if (k === "text_to_image" || k === "image_edit") return "image";
+	if (k === "text_to_video" || k === "image_to_video") return "video";
+	return null;
+}
+
+async function resolvePreferredVendorFromModelCatalog(
+	c: any,
+	taskKind: string | null | undefined,
+	extras: Record<string, any>,
+): Promise<string | null> {
+	const raw =
+		typeof extras?.modelKey === "string" && extras.modelKey.trim()
+			? extras.modelKey.trim()
+			: "";
+	if (!raw) return null;
+
+	const expectedKind = resolveCatalogKindForTaskKind(taskKind);
+	const candidates = Array.from(
+		new Set([raw, raw.startsWith("models/") ? raw.slice(7) : ""]).values(),
+	).filter(Boolean);
+
+	for (const modelKey of candidates) {
+		try {
+			const row = await getCatalogModelByKey(c.env.DB, modelKey);
+			if (!row) continue;
+			if (Number((row as any).enabled ?? 1) === 0) continue;
+			const kindRaw = typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
+			if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
+			const vendorKey =
+				typeof (row as any).vendor_key === "string" ? (row as any).vendor_key.trim() : "";
+			if (vendorKey) return vendorKey;
+		} catch {
+			continue;
+		}
+	}
+
+	return null;
+}
+
 async function runPublicTaskWithFallback(
 	c: any,
 	userId: string,
@@ -277,10 +325,26 @@ async function runPublicTaskWithFallback(
 	if (request?.kind) c.set("routingTaskKind", request.kind);
 
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
-	const vendorCandidates =
+	let vendorCandidates =
 		vendorRaw && vendorRaw !== "auto"
 			? [vendorRaw]
 			: pickAutoVendorsForKind(request.kind, extras);
+
+	if (!vendorRaw || vendorRaw === "auto") {
+		const preferred = await resolvePreferredVendorFromModelCatalog(
+			c,
+			request.kind,
+			extras,
+		);
+		if (preferred) {
+			vendorCandidates = [
+				preferred,
+				...vendorCandidates.filter(
+					(v) => normalizeDispatchVendor(v) !== normalizeDispatchVendor(preferred),
+				),
+			];
+		}
+	}
 
 	if (!vendorCandidates.length) {
 		return Promise.reject(
@@ -296,7 +360,21 @@ async function runPublicTaskWithFallback(
 		const v = normalizeDispatchVendor(vendorCandidate);
 		try {
 			let result: any;
-			if (v === "veo") {
+			if (v === "apimart") {
+				if (request.kind !== "text_to_video") {
+					throw Object.assign(new Error("invalid task kind"), {
+						code: "invalid_task_kind",
+					});
+				}
+				result = await runApimartVideoTask(c, userId, request);
+				const nowIso = new Date().toISOString();
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{ kind: "video", taskId: result.id, vendor: "apimart" },
+					nowIso,
+				);
+			} else if (v === "veo") {
 				if (request.kind !== "text_to_video") {
 					throw Object.assign(new Error("invalid task kind"), {
 						code: "invalid_task_kind",
@@ -314,6 +392,8 @@ async function runPublicTaskWithFallback(
 						? "comfly:veo"
 						: rawProvider === "sora2api"
 							? "sora2api:veo"
+							: rawProvider === "apimart"
+								? "apimart:veo"
 							: "direct:veo";
 				await upsertVendorTaskRef(
 					c.env.DB,
@@ -795,6 +875,8 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 		});
 	} else if (vendorHead === "sora2api") {
 		result = await fetchSora2ApiTaskResult(c, userId, taskId, prompt);
+	} else if (dispatch === "apimart") {
+		result = await fetchApimartTaskResult(c, userId, taskId, prompt);
 	} else if (dispatch === "veo") {
 		result = await fetchVeoTaskResult(c, userId, taskId);
 	} else if (dispatch === "minimax") {

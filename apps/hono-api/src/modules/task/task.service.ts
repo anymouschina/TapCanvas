@@ -946,6 +946,7 @@ function requiresApiKeyForVendor(vendor: string): boolean {
 		v === "qwen" ||
 		v === "anthropic" ||
 		v === "openai" ||
+		v === "apimart" ||
 		v === "veo" ||
 		v === "sora2api" ||
 		v === "grsai" ||
@@ -959,6 +960,7 @@ function defaultBaseUrlForVendor(vendor: string): string | null {
 	if (v === "gemini") return "https://generativelanguage.googleapis.com";
 	if (v === "qwen") return "https://dashscope.aliyuncs.com";
 	if (v === "anthropic") return "https://api.anthropic.com/v1";
+	if (v === "apimart") return "https://api.apimart.ai";
 	if (v === "veo") return "https://api.grsai.com";
 	return null;
 }
@@ -1633,7 +1635,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 		});
 	}
 
-	export async function runVeoVideoTask(
+export async function runVeoVideoTask(
 		c: AppContext,
 		userId: string,
 		req: TaskRequestDto,
@@ -1684,15 +1686,19 @@ function parseComflyProgress(value: unknown): number | undefined {
 
 		const ctx = await resolveVendorContext(c, userId, "veo");
 		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-		const channelVendor: "grsai" | "comfly" | null =
+		const isApimartBase =
+			isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
+		const channelVendor: "grsai" | "comfly" | "apimart" | null =
 			ctx.viaProxyVendor === "comfly"
 				? "comfly"
-				: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
-					? "grsai"
-					: null;
+				: isApimartBase
+					? "apimart"
+					: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+						? "grsai"
+						: null;
 		const apiKey = ctx.apiKey.trim();
 		if (!apiKey) {
-			throw new AppError("未配置 Veo API Key", {
+			throw new AppError(isApimartBase ? "未配置 apimart API Key" : "未配置 Veo API Key", {
 				status: 400,
 				code: "veo_api_key_missing",
 			});
@@ -1732,6 +1738,159 @@ function parseComflyProgress(value: unknown): number | undefined {
 			? extras.lastFrameUrl.trim()
 			: undefined;
 
+		if (isApimartBase) {
+			emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+			const durationSeconds = (() => {
+				const raw =
+					typeof extras.durationSeconds === "number"
+						? extras.durationSeconds
+						: typeof extras.duration === "number"
+							? extras.duration
+							: null;
+				return typeof raw === "number" && Number.isFinite(raw) && raw > 0
+					? raw
+					: undefined;
+			})();
+
+			const imageUrls = (() => {
+				const urls: string[] = [];
+				const pushAll = (value: any) => {
+					const arr = Array.isArray(value) ? value : [value];
+					for (const item of arr) {
+						if (typeof item === "string" && item.trim()) urls.push(item.trim());
+					}
+				};
+				pushAll((extras as any).image_urls);
+				pushAll((extras as any).imageUrls);
+				pushAll((extras as any).urls);
+				pushAll((extras as any).referenceImages);
+				pushAll((extras as any).reference_images);
+				if (firstFrameUrl) urls.push(firstFrameUrl);
+				if (lastFrameUrl) urls.push(lastFrameUrl);
+				return Array.from(new Set(urls)).slice(0, 14);
+			})();
+
+			const body: Record<string, any> = {
+				model,
+				prompt: req.prompt,
+				aspect_ratio: aspectRatio,
+				...(typeof durationSeconds === "number"
+					? { duration: durationSeconds }
+					: {}),
+				...(typeof extras.private === "boolean" ? { private: extras.private } : {}),
+				...(typeof extras.watermark === "boolean"
+					? { watermark: extras.watermark }
+					: {}),
+				...(typeof extras.thumbnail === "boolean"
+					? { thumbnail: extras.thumbnail }
+					: {}),
+				...(imageUrls.length ? { image_urls: imageUrls } : {}),
+			};
+
+			const data = await callJsonApi(
+				c,
+				`${normalizeApimartBaseUrl(baseUrl)}/v1/videos/generations`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${apiKey}`,
+					},
+					body: JSON.stringify(body),
+				},
+				{ provider: "apimart" },
+			);
+
+			if (typeof data?.code === "number" && data.code !== 200) {
+				throw new AppError(
+					(data?.error?.message ||
+						data?.message ||
+						`apimart 视频生成失败: code ${data.code}`) as string,
+					{
+						status: 502,
+						code: "apimart_request_failed",
+						details: { upstreamData: data ?? null, requestBody: body },
+					},
+				);
+			}
+
+			const first = Array.isArray(data?.data) ? data.data[0] : null;
+			const taskId =
+				(typeof first?.task_id === "string" && first.task_id.trim()) ||
+				(typeof first?.taskId === "string" && first.taskId.trim()) ||
+				null;
+			if (!taskId) {
+				throw new AppError("apimart 未返回 task_id", {
+					status: 502,
+					code: "apimart_task_id_missing",
+					details: { upstreamData: data ?? null, requestBody: body },
+				});
+			}
+
+			emitProgress(userId, progressCtx, {
+				status: "queued",
+				progress: 10,
+				taskId,
+				raw: data ?? null,
+			});
+
+			{
+				const nowIso = new Date().toISOString();
+				try {
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{ kind: "video", taskId: taskId.trim(), vendor: "apimart:veo" },
+						nowIso,
+					);
+				} catch (err: any) {
+					console.warn(
+						"[vendor-task-refs] upsert apimart veo ref failed",
+						err?.message || err,
+					);
+				}
+			}
+
+			const vendorForLog = `apimart-${model}`;
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "queued",
+				assets: [],
+				raw: {
+					provider: "apimart",
+					model,
+					taskId,
+					status: "queued",
+					request: body,
+					response: data ?? null,
+				},
+			});
+			await bindReservationToTaskId(c, userId, reservation, taskId);
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: "veo",
+				taskKind: req.kind,
+				result,
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind: req.kind,
+				result,
+			});
+			if (channelVendor) {
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: channelVendor,
+					taskKind: req.kind,
+					result,
+				});
+			}
+			return result;
+		}
+
 		if (ctx.viaProxyVendor === "comfly") {
 			const images = (() => {
 				if (firstFrameUrl) {
@@ -1753,6 +1912,22 @@ function parseComflyProgress(value: unknown): number | undefined {
 				},
 				progressCtx,
 			);
+			{
+				const nowIso = new Date().toISOString();
+				try {
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{ kind: "video", taskId: result.id, vendor: "comfly:veo" },
+						nowIso,
+					);
+				} catch (err: any) {
+					console.warn(
+						"[vendor-task-refs] upsert comfly veo ref failed",
+						err?.message || err,
+					);
+				}
+			}
 			await bindReservationToTaskId(c, userId, reservation, result.id);
 			await recordVendorCallFromTaskResult(c, {
 				userId,
@@ -1866,8 +2041,25 @@ function parseComflyProgress(value: unknown): number | undefined {
 			model,
 			taskId,
 			response: payload,
-		},
-	});
+			},
+		});
+		{
+			const nowIso = new Date().toISOString();
+			const vendorForRef = channelVendor ? `${channelVendor}:veo` : "direct:veo";
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{ kind: "video", taskId: taskId.trim(), vendor: vendorForRef },
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert veo ref failed",
+					err?.message || err,
+				);
+			}
+		}
 		await bindReservationToTaskId(c, userId, reservation, taskId);
 		await recordVendorCallFromTaskResult(c, {
 			userId,
@@ -1900,6 +2092,31 @@ export async function fetchVeoTaskResult(
 			code: "task_id_required",
 		});
 	}
+	{
+		const refForTask = await (async () => {
+			try {
+				return await getVendorTaskRefByTaskId(c.env.DB, userId, "video", taskId);
+			} catch {
+				return null;
+			}
+		})();
+		const raw = typeof refForTask?.vendor === "string" ? refForTask.vendor.trim() : "";
+		const hint = extractChannelVendor(raw);
+		if (hint) {
+			try {
+				c.set("proxyVendorHint", hint);
+			} catch {
+				// ignore
+			}
+		}
+		if (raw.toLowerCase().startsWith("direct")) {
+			try {
+				c.set("proxyDisabled", true);
+			} catch {
+				// ignore
+			}
+		}
+	}
 	const ctx = await resolveVendorContext(c, userId, "veo");
 	if (ctx.viaProxyVendor === "comfly") {
 		const result = await fetchComflyVideoTaskResult(
@@ -1924,14 +2141,175 @@ export async function fetchVeoTaskResult(
 		return result;
 	}
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.grsai.com";
-	const channelVendor: "grsai" | "comfly" | null =
-		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai" ? "grsai" : null;
+	const isApimartBase = isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
+	const channelVendor: "grsai" | "comfly" | "apimart" | null = isApimartBase
+		? "apimart"
+		: isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai"
+			? "grsai"
+			: null;
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
-		throw new AppError("未配置 Veo API Key", {
+		throw new AppError(isApimartBase ? "未配置 apimart API Key" : "未配置 Veo API Key", {
 			status: 400,
 			code: "veo_api_key_missing",
 		});
+	}
+
+	if (isApimartBase) {
+		const wrapper = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/tasks/${encodeURIComponent(taskId.trim())}?language=zh`,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${apiKey}` },
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof wrapper?.code === "number" && wrapper.code !== 200) {
+			throw new AppError(
+				(wrapper?.error?.message ||
+					wrapper?.message ||
+					`apimart 任务查询失败: code ${wrapper.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_result_failed",
+					details: { upstreamData: wrapper ?? null },
+				},
+			);
+		}
+
+		const payload =
+			wrapper && typeof wrapper === "object" && wrapper.data
+				? wrapper.data
+				: wrapper ?? {};
+		let status = normalizeApimartTaskStatus(payload?.status);
+		const progress = clampProgress(
+			typeof payload?.progress === "number" ? payload.progress : undefined,
+		);
+
+		const urls = extractApimartMediaUrls(payload, "videos");
+		const thumbnailUrl = extractApimartThumbnailUrl(payload);
+		if (status === "succeeded" && urls.length === 0) {
+			status = "running";
+		}
+
+		if (status === "succeeded" && urls.length > 0) {
+			const asset = TaskAssetSchema.parse({
+				type: "video",
+				url: urls[0]!,
+				thumbnailUrl: thumbnailUrl,
+			});
+
+			let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+			try {
+				hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets: [asset],
+					meta: {
+						taskKind: "text_to_video",
+						prompt: null,
+						vendor: "veo",
+						taskId: taskId ?? null,
+					},
+				});
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后重试";
+				const result = TaskResultSchema.parse({
+					id: taskId,
+					kind: "text_to_video",
+					status: "running",
+					assets: [],
+					raw: {
+						provider: "apimart",
+						response: payload ?? null,
+						progress,
+						hosting: { status: "pending", message },
+					},
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: "veo",
+					taskKind: "text_to_video",
+					result,
+				});
+				if (channelVendor) {
+					await recordVendorCallFromTaskResult(c, {
+						userId,
+						vendor: channelVendor,
+						taskKind: "text_to_video",
+						result,
+					});
+				}
+				return result;
+			}
+
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "succeeded",
+				assets: hostedAssets,
+				raw: {
+					provider: "apimart",
+					response: payload,
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: "veo",
+				taskKind: "text_to_video",
+				result,
+			});
+			if (channelVendor) {
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: channelVendor,
+					taskKind: "text_to_video",
+					result,
+				});
+			}
+			return result;
+		}
+
+		const failureReasonRaw =
+			(typeof payload?.error?.message === "string" &&
+				payload.error.message.trim()) ||
+			(typeof wrapper?.error?.message === "string" &&
+				wrapper.error.message.trim()) ||
+			null;
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status,
+			assets: [],
+			raw: {
+				provider: "apimart",
+				response: payload,
+				progress,
+				failureReason: failureReasonRaw,
+				wrapper: wrapper ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "veo",
+			taskKind: "text_to_video",
+			result,
+		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
+		return result;
 	}
 
 	let res: Response;
@@ -2148,6 +2526,352 @@ export async function fetchVeoTaskResult(
 			progress,
 		},
 	});
+}
+
+// ---------- APIMART ----------
+
+export async function runApimartVideoTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const extras = (req.extras || {}) as Record<string, any>;
+	const model = (() => {
+		const raw = typeof extras.modelKey === "string" ? extras.modelKey.trim() : "";
+		if (!raw) return null;
+		return raw.startsWith("models/") ? raw.slice(7) : raw;
+	})();
+	if (!model) {
+		throw new AppError("apimart 需要通过 extras.modelKey 指定模型", {
+			status: 400,
+			code: "apimart_model_key_missing",
+		});
+	}
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const progressCtx = extractProgressContext(req, "apimart");
+
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "apimart",
+		modelKey: model,
+	});
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+	try {
+		const ctx = await resolveVendorContext(c, userId, "apimart");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.apimart.ai";
+		const apiKey = ctx.apiKey.trim();
+		if (!apiKey) {
+			throw new AppError("未配置 apimart API Key", {
+				status: 400,
+				code: "apimart_api_key_missing",
+			});
+		}
+
+		const aspectRatio =
+			typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()
+				? extras.aspectRatio.trim()
+				: "16:9";
+		const durationSeconds = (() => {
+			const raw =
+				typeof extras.durationSeconds === "number"
+					? extras.durationSeconds
+					: typeof extras.duration === "number"
+						? extras.duration
+						: null;
+			return typeof raw === "number" && Number.isFinite(raw) && raw > 0
+				? raw
+				: undefined;
+		})();
+
+		const firstFrameUrl =
+			typeof extras.firstFrameUrl === "string" && extras.firstFrameUrl.trim()
+				? extras.firstFrameUrl.trim()
+				: undefined;
+		const lastFrameUrl =
+			typeof extras.lastFrameUrl === "string" && extras.lastFrameUrl.trim()
+				? extras.lastFrameUrl.trim()
+				: undefined;
+
+		const imageUrls = (() => {
+			const urls: string[] = [];
+			const pushAll = (value: any) => {
+				const arr = Array.isArray(value) ? value : [value];
+				for (const item of arr) {
+					if (typeof item === "string" && item.trim()) urls.push(item.trim());
+				}
+			};
+			pushAll((extras as any).image_urls);
+			pushAll((extras as any).imageUrls);
+			pushAll((extras as any).urls);
+			pushAll((extras as any).referenceImages);
+			pushAll((extras as any).reference_images);
+			if (firstFrameUrl) urls.push(firstFrameUrl);
+			if (lastFrameUrl) urls.push(lastFrameUrl);
+			return Array.from(new Set(urls)).slice(0, 14);
+		})();
+
+		const body: Record<string, any> = {
+			model,
+			prompt: req.prompt,
+			aspect_ratio: aspectRatio,
+			...(typeof durationSeconds === "number" ? { duration: durationSeconds } : {}),
+			...(typeof extras.private === "boolean" ? { private: extras.private } : {}),
+			...(typeof extras.watermark === "boolean" ? { watermark: extras.watermark } : {}),
+			...(typeof extras.thumbnail === "boolean" ? { thumbnail: extras.thumbnail } : {}),
+			...(imageUrls.length ? { image_urls: imageUrls } : {}),
+		};
+
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		const data = await callJsonApi(
+			c,
+			`${normalizeApimartBaseUrl(baseUrl)}/v1/videos/generations`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "apimart" },
+		);
+
+		if (typeof data?.code === "number" && data.code !== 200) {
+			throw new AppError(
+				(data?.error?.message ||
+					data?.message ||
+					`apimart 视频生成失败: code ${data.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_request_failed",
+					details: { upstreamData: data ?? null, requestBody: body },
+				},
+			);
+		}
+
+		const first = Array.isArray(data?.data) ? data.data[0] : null;
+		const taskId =
+			(typeof first?.task_id === "string" && first.task_id.trim()) ||
+			(typeof first?.taskId === "string" && first.taskId.trim()) ||
+			null;
+		if (!taskId) {
+			throw new AppError("apimart 未返回 task_id", {
+				status: 502,
+				code: "apimart_task_id_missing",
+				details: { upstreamData: data ?? null, requestBody: body },
+			});
+		}
+
+		emitProgress(userId, progressCtx, {
+			status: "queued",
+			progress: 10,
+			taskId,
+			raw: data ?? null,
+		});
+
+		{
+			const nowIso = new Date().toISOString();
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{ kind: "video", taskId: taskId.trim(), vendor: "apimart" },
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert apimart ref failed",
+					err?.message || err,
+				);
+			}
+		}
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "queued",
+			assets: [],
+			raw: {
+				provider: "apimart",
+				model,
+				taskId,
+				status: "queued",
+				request: body,
+				response: data ?? null,
+			},
+		});
+		await bindReservationToTaskId(c, userId, reservation, taskId);
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "apimart",
+			taskKind: req.kind,
+			result,
+		});
+		return result;
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
+}
+
+export async function fetchApimartTaskResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+	promptFromClient?: string | null,
+) {
+	if (!taskId || !taskId.trim()) {
+		throw new AppError("taskId is required", {
+			status: 400,
+			code: "task_id_required",
+		});
+	}
+
+	const ctx = await resolveVendorContext(c, userId, "apimart");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.apimart.ai";
+	const apiKey = ctx.apiKey.trim();
+	if (!apiKey) {
+		throw new AppError("未配置 apimart API Key", {
+			status: 400,
+			code: "apimart_api_key_missing",
+		});
+	}
+
+	const wrapper = await callJsonApi(
+		c,
+		`${normalizeApimartBaseUrl(baseUrl)}/v1/tasks/${encodeURIComponent(taskId.trim())}?language=zh`,
+		{
+			method: "GET",
+			headers: { Authorization: `Bearer ${apiKey}` },
+		},
+		{ provider: "apimart" },
+	);
+
+	if (typeof wrapper?.code === "number" && wrapper.code !== 200) {
+		throw new AppError(
+			(wrapper?.error?.message ||
+				wrapper?.message ||
+				`apimart 任务查询失败: code ${wrapper.code}`) as string,
+			{
+				status: 502,
+				code: "apimart_result_failed",
+				details: { upstreamData: wrapper ?? null },
+			},
+		);
+	}
+
+	const payload =
+		wrapper && typeof wrapper === "object" && wrapper.data ? wrapper.data : wrapper ?? {};
+	let status = normalizeApimartTaskStatus(payload?.status);
+	const progress = clampProgress(
+		typeof payload?.progress === "number" ? payload.progress : undefined,
+	);
+
+	const urls = extractApimartMediaUrls(payload, "videos");
+	const thumbnailUrl = extractApimartThumbnailUrl(payload);
+	if (status === "succeeded" && urls.length === 0) {
+		status = "running";
+	}
+
+	if (status === "succeeded" && urls.length > 0) {
+		const asset = TaskAssetSchema.parse({
+			type: "video",
+			url: urls[0]!,
+			thumbnailUrl: thumbnailUrl,
+		});
+
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt:
+						typeof promptFromClient === "string" && promptFromClient.trim()
+							? promptFromClient.trim()
+							: null,
+					vendor: "apimart",
+					taskId: taskId ?? null,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "apimart",
+					response: payload ?? null,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: "apimart",
+				taskKind: "text_to_video",
+				result,
+			});
+			return result;
+		}
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "apimart",
+				response: payload,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: "apimart",
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
+	}
+
+	const failureReasonRaw =
+		(typeof payload?.error?.message === "string" && payload.error.message.trim()) ||
+		(typeof wrapper?.error?.message === "string" && wrapper.error.message.trim()) ||
+		null;
+
+	const result = TaskResultSchema.parse({
+		id: taskId,
+		kind: "text_to_video",
+		status,
+		assets: [],
+		raw: {
+			provider: "apimart",
+			response: payload,
+			progress,
+			failureReason: failureReasonRaw,
+			wrapper: wrapper ?? null,
+		},
+	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: "apimart",
+		taskKind: "text_to_video",
+		result,
+	});
+	return result;
 }
 
 // ---------- Sora2API ----------
