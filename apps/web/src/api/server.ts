@@ -1236,11 +1236,20 @@ export type ModelCatalogVendorDto = {
   key: string
   name: string
   enabled: boolean
+  hasApiKey?: boolean
   baseUrlHint?: string | null
   authType?: ModelCatalogVendorAuthType
   authHeader?: string | null
   authQueryParam?: string | null
   meta?: any
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelCatalogVendorApiKeyStatusDto = {
+  vendorKey: string
+  hasApiKey: boolean
+  enabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -1341,6 +1350,30 @@ export async function deleteModelCatalogVendor(key: string): Promise<void> {
     const msg = body?.message || body?.error || `delete model catalog vendor failed: ${r.status}`
     throw new Error(msg)
   }
+}
+
+export async function upsertModelCatalogVendorApiKey(vendorKey: string, payload: { apiKey: string; enabled?: boolean }): Promise<ModelCatalogVendorApiKeyStatusDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/vendors/${encodeURIComponent(vendorKey)}/api-key`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `upsert model catalog vendor api key failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function clearModelCatalogVendorApiKey(vendorKey: string): Promise<ModelCatalogVendorApiKeyStatusDto> {
+  const r = await apiFetch(`${API_BASE}/model-catalog/vendors/${encodeURIComponent(vendorKey)}/api-key`, withAuth({ method: 'DELETE' }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `clear model catalog vendor api key failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
 }
 
 export async function listModelCatalogModels(params?: { vendorKey?: string; kind?: BillingModelKind; enabled?: boolean }): Promise<ModelCatalogModelDto[]> {

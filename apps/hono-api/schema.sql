@@ -424,6 +424,16 @@ CREATE TABLE IF NOT EXISTS model_catalog_vendors (
 	updated_at TEXT NOT NULL
 );
 
+-- System-level vendor API keys (admin-managed, not exported/imported)
+CREATE TABLE IF NOT EXISTS model_catalog_vendor_api_keys (
+	vendor_key TEXT PRIMARY KEY,
+	api_key TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+);
+
 CREATE TABLE IF NOT EXISTS model_catalog_models (
 	model_key TEXT PRIMARY KEY,
 	vendor_key TEXT NOT NULL,

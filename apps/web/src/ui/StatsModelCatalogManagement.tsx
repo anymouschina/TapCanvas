@@ -1,7 +1,7 @@
 import React from 'react'
 import { ActionIcon, Alert, Badge, Button, Divider, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
-import { IconCheck, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
-import { deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
+import { IconCheck, IconKey, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { clearModelCatalogVendorApiKey, deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, upsertModelCatalogVendorApiKey, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
 import { toast } from './toast'
 
 type JsonParseResult = { ok: true; value: any } | { ok: false; error: string }
@@ -84,6 +84,14 @@ function formatEnabled(enabled: boolean): JSX.Element {
   return (
     <Badge className="stats-model-catalog-enabled-badge" size="xs" variant="light" color={enabled ? 'green' : 'gray'}>
       {enabled ? '启用' : '禁用'}
+    </Badge>
+  )
+}
+
+function formatApiKeyStatus(hasApiKey?: boolean): JSX.Element {
+  return (
+    <Badge className="stats-model-catalog-apikey-badge" size="xs" variant="light" color={hasApiKey ? 'green' : 'gray'}>
+      {hasApiKey ? 'Key 已配置' : 'Key 未配置'}
     </Badge>
   )
 }
@@ -206,6 +214,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const [vendorEditAuthHeader, setVendorEditAuthHeader] = React.useState('')
   const [vendorEditAuthQueryParam, setVendorEditAuthQueryParam] = React.useState('')
   const [vendorEditMeta, setVendorEditMeta] = React.useState('')
+  const [vendorEditAdvanced, setVendorEditAdvanced] = React.useState(false)
 
   const openCreateVendor = React.useCallback(() => {
     setVendorEditIsNew(true)
@@ -217,6 +226,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     setVendorEditAuthHeader('')
     setVendorEditAuthQueryParam('')
     setVendorEditMeta('')
+    setVendorEditAdvanced(false)
     setVendorEditOpen(true)
   }, [])
 
@@ -230,6 +240,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     setVendorEditAuthHeader((vendor.authHeader || '').trim())
     setVendorEditAuthQueryParam((vendor.authQueryParam || '').trim())
     setVendorEditMeta(prettyJson(vendor.meta))
+    setVendorEditAdvanced(false)
     setVendorEditOpen(true)
   }, [])
 
@@ -286,6 +297,54 @@ export default function StatsModelCatalogManagement({ className }: { className?:
       toast(err?.message || '删除厂商失败', 'error')
     }
   }, [reloadAll])
+
+  // ---- Vendor API key modal ----
+  const [vendorApiKeyOpen, setVendorApiKeyOpen] = React.useState(false)
+  const [vendorApiKeySubmitting, setVendorApiKeySubmitting] = React.useState(false)
+  const [vendorApiKeyVendor, setVendorApiKeyVendor] = React.useState<ModelCatalogVendorDto | null>(null)
+  const [vendorApiKeyValue, setVendorApiKeyValue] = React.useState('')
+
+  const openVendorApiKey = React.useCallback((vendor: ModelCatalogVendorDto) => {
+    setVendorApiKeyVendor(vendor)
+    setVendorApiKeyValue('')
+    setVendorApiKeyOpen(true)
+  }, [])
+
+  const submitVendorApiKey = React.useCallback(async () => {
+    if (!vendorApiKeyVendor) return
+    const apiKey = vendorApiKeyValue.trim()
+    if (!apiKey) {
+      toast('请填写 API Key', 'error')
+      return
+    }
+    if (vendorApiKeySubmitting) return
+    setVendorApiKeySubmitting(true)
+    try {
+      await upsertModelCatalogVendorApiKey(vendorApiKeyVendor.key, { apiKey })
+      toast('已保存 API Key（不会回显）', 'success')
+      setVendorApiKeyOpen(false)
+      await reloadAll()
+    } catch (err: any) {
+      console.error('save vendor api key failed', err)
+      toast(err?.message || '保存 API Key 失败', 'error')
+    } finally {
+      setVendorApiKeySubmitting(false)
+    }
+  }, [reloadAll, vendorApiKeySubmitting, vendorApiKeyValue, vendorApiKeyVendor])
+
+  const clearVendorApiKey = React.useCallback(async () => {
+    if (!vendorApiKeyVendor) return
+    if (!window.confirm(`确定清除厂商「${vendorApiKeyVendor.name}（${vendorApiKeyVendor.key}）」的 API Key？\n\n清除后，该厂商将无法使用系统级全局 Key 进行调用。`)) return
+    try {
+      await clearModelCatalogVendorApiKey(vendorApiKeyVendor.key)
+      toast('已清除 API Key', 'success')
+      setVendorApiKeyOpen(false)
+      await reloadAll()
+    } catch (err: any) {
+      console.error('clear vendor api key failed', err)
+      toast(err?.message || '清除 API Key 失败', 'error')
+    }
+  }, [reloadAll, vendorApiKeyVendor])
 
   // ---- Model modal ----
   const [modelEditOpen, setModelEditOpen] = React.useState(false)
@@ -600,15 +659,16 @@ export default function StatsModelCatalogManagement({ className }: { className?:
               <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 140 }}>Key</Table.Th>
               <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 180 }}>名称</Table.Th>
               <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 90 }}>状态</Table.Th>
+              <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 110 }}>API Key</Table.Th>
               <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 160 }}>鉴权</Table.Th>
               <Table.Th className="stats-model-catalog-vendors-table-head-cell">BaseUrl Hint</Table.Th>
-              <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 110 }}>操作</Table.Th>
+              <Table.Th className="stats-model-catalog-vendors-table-head-cell" style={{ width: 160 }}>操作</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody className="stats-model-catalog-vendors-table-body">
             {loading && !vendors.length ? (
               <Table.Tr className="stats-model-catalog-vendors-table-row-loading">
-                <Table.Td className="stats-model-catalog-vendors-table-cell" colSpan={6}>
+                <Table.Td className="stats-model-catalog-vendors-table-cell" colSpan={7}>
                   <Group className="stats-model-catalog-loading" gap="xs" align="center">
                     <Loader className="stats-model-catalog-loading-icon" size="sm" />
                     <Text className="stats-model-catalog-loading-text" size="sm" c="dimmed">加载中…</Text>
@@ -617,7 +677,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
               </Table.Tr>
             ) : !vendors.length ? (
               <Table.Tr className="stats-model-catalog-vendors-table-row-empty">
-                <Table.Td className="stats-model-catalog-vendors-table-cell" colSpan={6}>
+                <Table.Td className="stats-model-catalog-vendors-table-cell" colSpan={7}>
                   <Text className="stats-model-catalog-empty" size="sm" c="dimmed">暂无厂商</Text>
                 </Table.Td>
               </Table.Tr>
@@ -634,6 +694,9 @@ export default function StatsModelCatalogManagement({ className }: { className?:
                     {formatEnabled(!!v.enabled)}
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-vendors-table-cell">
+                    {formatApiKeyStatus(Boolean(v.hasApiKey))}
+                  </Table.Td>
+                  <Table.Td className="stats-model-catalog-vendors-table-cell">
                     <Text className="stats-model-catalog-vendor-auth" size="sm" c="dimmed">{String(v.authType || 'bearer')}</Text>
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-vendors-table-cell">
@@ -641,6 +704,11 @@ export default function StatsModelCatalogManagement({ className }: { className?:
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-vendors-table-cell">
                     <Group className="stats-model-catalog-vendor-row-actions" gap={6} justify="flex-end" wrap="nowrap">
+                      <Tooltip className="stats-model-catalog-vendor-apikey-tooltip" label="设置系统级全局 API Key（不回显）" withArrow>
+                        <ActionIcon className="stats-model-catalog-vendor-apikey" size="sm" variant="light" aria-label="vendor-api-key" onClick={() => openVendorApiKey(v)}>
+                          <IconKey className="stats-model-catalog-vendor-apikey-icon" size={14} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Button className="stats-model-catalog-vendor-edit" size="xs" variant="light" onClick={() => openEditVendor(v)}>编辑</Button>
                       <ActionIcon className="stats-model-catalog-vendor-delete" size="sm" variant="light" color="red" aria-label="delete-vendor" onClick={() => void handleDeleteVendor(v)}>
                         <IconTrash className="stats-model-catalog-vendor-delete-icon" size={14} />
@@ -782,6 +850,36 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         </Table>
       </div>
 
+      <Modal className="stats-model-catalog-vendor-api-key-modal" opened={vendorApiKeyOpen} onClose={() => setVendorApiKeyOpen(false)} title={vendorApiKeyVendor ? `设置 API Key：${vendorApiKeyVendor.name}（${vendorApiKeyVendor.key}）` : '设置 API Key'} size="md" radius="lg" centered>
+        <Stack className="stats-model-catalog-vendor-api-key-form" gap="sm">
+          <Alert className="stats-model-catalog-vendor-api-key-alert" variant="light" color="blue" title="系统级全局 Key">
+            <Text className="stats-model-catalog-vendor-api-key-alert-text" size="sm" c="dimmed">
+              仅用于服务商侧统一调用；保存后不会回显，也不会出现在导入/导出 JSON 中。
+            </Text>
+          </Alert>
+          <TextInput
+            className="stats-model-catalog-vendor-api-key-input"
+            label="API Key"
+            placeholder="粘贴厂商 API Key（保存后不回显）"
+            value={vendorApiKeyValue}
+            onChange={(e) => setVendorApiKeyValue(e.currentTarget.value)}
+            type="password"
+            autoComplete="off"
+          />
+          <Group className="stats-model-catalog-vendor-api-key-actions" justify="space-between" gap={8} wrap="wrap">
+            <Button className="stats-model-catalog-vendor-api-key-clear" variant="light" color="red" onClick={() => void clearVendorApiKey()} disabled={!vendorApiKeyVendor?.hasApiKey}>
+              清除
+            </Button>
+            <Group className="stats-model-catalog-vendor-api-key-actions-right" gap={8} wrap="nowrap">
+              <Button className="stats-model-catalog-vendor-api-key-cancel" variant="subtle" onClick={() => setVendorApiKeyOpen(false)}>取消</Button>
+              <Button className="stats-model-catalog-vendor-api-key-save" onClick={() => void submitVendorApiKey()} loading={vendorApiKeySubmitting}>
+                保存
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Modal className="stats-model-catalog-vendor-modal" opened={vendorEditOpen} onClose={() => setVendorEditOpen(false)} title={vendorEditIsNew ? '新增厂商' : '编辑厂商'} size="md" radius="lg" centered>
         <Stack className="stats-model-catalog-vendor-form" gap="sm">
           <TextInput className="stats-model-catalog-vendor-form-key" label="Key（唯一）" placeholder="例如 openai / gemini / minimax" value={vendorEditKey} onChange={(e) => setVendorEditKey(e.currentTarget.value)} disabled={!vendorEditIsNew} />
@@ -789,11 +887,16 @@ export default function StatsModelCatalogManagement({ className }: { className?:
           <Switch className="stats-model-catalog-vendor-form-enabled" checked={vendorEditEnabled} onChange={(e) => setVendorEditEnabled(e.currentTarget.checked)} label="启用" />
           <Select className="stats-model-catalog-vendor-form-auth" label="鉴权方式（提示用）" data={AUTH_TYPE_OPTIONS} value={vendorEditAuthType} onChange={(v) => setVendorEditAuthType((v as any) || 'bearer')} />
           <TextInput className="stats-model-catalog-vendor-form-baseurl" label="BaseUrl Hint（可选）" placeholder="例如 https://api.openai.com" value={vendorEditBaseUrlHint} onChange={(e) => setVendorEditBaseUrlHint(e.currentTarget.value)} />
-          <Group className="stats-model-catalog-vendor-form-auth-extra" gap="sm" wrap="wrap" align="flex-end">
-            <TextInput className="stats-model-catalog-vendor-form-auth-header" label="Auth Header（可选）" placeholder="例如 X-API-Key" value={vendorEditAuthHeader} onChange={(e) => setVendorEditAuthHeader(e.currentTarget.value)} w={220} />
-            <TextInput className="stats-model-catalog-vendor-form-auth-query" label="Auth Query Param（可选）" placeholder="例如 api_key" value={vendorEditAuthQueryParam} onChange={(e) => setVendorEditAuthQueryParam(e.currentTarget.value)} w={220} />
-          </Group>
-          <Textarea className="stats-model-catalog-vendor-form-meta" label="meta（JSON，可选）" value={vendorEditMeta} onChange={(e) => setVendorEditMeta(e.currentTarget.value)} minRows={4} autosize />
+          <Switch className="stats-model-catalog-vendor-form-advanced-toggle" checked={vendorEditAdvanced} onChange={(e) => setVendorEditAdvanced(e.currentTarget.checked)} label="显示高级设置" />
+          {vendorEditAdvanced ? (
+            <Stack className="stats-model-catalog-vendor-form-advanced" gap="sm">
+              <Group className="stats-model-catalog-vendor-form-auth-extra" gap="sm" wrap="wrap" align="flex-end">
+                <TextInput className="stats-model-catalog-vendor-form-auth-header" label="Auth Header（可选）" placeholder="例如 X-API-Key" value={vendorEditAuthHeader} onChange={(e) => setVendorEditAuthHeader(e.currentTarget.value)} w={220} />
+                <TextInput className="stats-model-catalog-vendor-form-auth-query" label="Auth Query Param（可选）" placeholder="例如 api_key" value={vendorEditAuthQueryParam} onChange={(e) => setVendorEditAuthQueryParam(e.currentTarget.value)} w={220} />
+              </Group>
+              <Textarea className="stats-model-catalog-vendor-form-meta" label="meta（JSON，可选）" value={vendorEditMeta} onChange={(e) => setVendorEditMeta(e.currentTarget.value)} minRows={4} autosize />
+            </Stack>
+          ) : null}
           <Group className="stats-model-catalog-vendor-form-actions" justify="flex-end" gap={8}>
             <Button className="stats-model-catalog-vendor-form-cancel" variant="subtle" onClick={() => setVendorEditOpen(false)}>取消</Button>
             <Button className="stats-model-catalog-vendor-form-save" onClick={() => void submitVendor()} loading={vendorEditSubmitting}>

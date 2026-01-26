@@ -16,6 +16,7 @@ export const ModelCatalogVendorSchema = z.object({
 	key: z.string(),
 	name: z.string(),
 	enabled: z.boolean(),
+	hasApiKey: z.boolean().optional(),
 	baseUrlHint: z.string().nullable().optional(),
 	authType: ModelCatalogVendorAuthTypeSchema.optional(),
 	authHeader: z.string().nullable().optional(),
@@ -37,6 +38,23 @@ export const UpsertModelCatalogVendorSchema = z.object({
 	authQueryParam: z.string().nullable().optional(),
 	meta: z.unknown().optional(),
 });
+
+export const UpsertModelCatalogVendorApiKeySchema = z.object({
+	apiKey: z.string().min(1),
+	enabled: z.boolean().optional(),
+});
+
+export const ModelCatalogVendorApiKeyStatusSchema = z.object({
+	vendorKey: z.string(),
+	hasApiKey: z.boolean(),
+	enabled: z.boolean(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export type ModelCatalogVendorApiKeyStatusDto = z.infer<
+	typeof ModelCatalogVendorApiKeyStatusSchema
+>;
 
 export const BillingModelKindSchema = z.enum(["text", "image", "video"]);
 

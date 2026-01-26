@@ -16,6 +16,7 @@ import {
 import { emitTaskProgress } from "./task.progress";
 import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
+import { ensureModelCatalogSchema } from "../model-catalog/model-catalog.repo";
 import {
 	getVendorTaskRefByTaskId,
 	upsertVendorTaskRef,
@@ -744,13 +745,31 @@ export async function resolveVendorContext(
 			}
 		}
 
-		// 2.3 对于 sora2api/grsai，只有当用户没有任何 Token/Proxy 配置时才允许使用 Env 级别兜底
+		// 2.3 System-level vendor API key（admin 全局配置，优先于 env/shared token）
+		if (!apiKey && !userConfigured) {
+			const sys = await resolveSystemVendorApiKeyContext(c, v);
+			if (sys && sys.enabled && sys.vendorEnabled) {
+				let baseUrl =
+					normalizeBaseUrl(sys.baseUrlHint || "") ||
+					(v === "sora2api" || v === "grsai" ? envSora2Base : "") ||
+					normalizeBaseUrl(defaultBaseUrlForVendor(v) || "");
+				if (!baseUrl) {
+					throw new AppError(`No base URL configured for vendor ${v}`, {
+						status: 400,
+						code: "base_url_missing",
+					});
+				}
+				return { baseUrl, apiKey: sys.apiKey };
+			}
+		}
+
+		// 2.4 对于 sora2api/grsai，只有当用户没有任何 Token/Proxy 配置时才允许使用 Env 级别兜底
 		if (!apiKey && envSora2ApiKey && !userConfigured) {
 			apiKey = envSora2ApiKey;
 			preferEnvSora2Base = true;
 		}
 
-		// 2.4 仍未拿到，则从任意用户的共享 Token 中为该 vendor 选择一个（全局共享池）
+		// 2.5 仍未拿到，则从任意用户的共享 Token 中为该 vendor 选择一个（全局共享池）
 		if (!apiKey && !userConfigured) {
 			const shared = await findSharedTokenForVendor(c, v);
 			if (shared && typeof shared.token.secret_token === "string") {
@@ -768,12 +787,12 @@ export async function resolveVendorContext(
 		}
 	}
 
-	// 2.5 若用户自己没有 Provider，但通过共享 Token 找到了 Provider，则使用该 Provider
+	// 2.6 若用户自己没有 Provider，但通过共享 Token 找到了 Provider，则使用该 Provider
 	if (!provider && sharedTokenProvider) {
 		provider = sharedTokenProvider;
 	}
 
-	// 2.6 provider 仍不存在时，对于 sora2api/grsai 允许完全依赖 Env 级别配置；其他 vendor 报错
+	// 2.7 provider 仍不存在时，对于 sora2api/grsai 允许完全依赖 Env 级别配置；其他 vendor 报错
 	if (!provider) {
 		if ((v === "sora2api" || v === "grsai") && envSora2ApiKey && !userConfigured) {
 			const baseUrl = normalizeBaseUrl(resolveEnvSora2Base());
@@ -792,7 +811,7 @@ export async function resolveVendorContext(
 		});
 	}
 
-	// 2.7 解析 baseUrl：优先 Provider.base_url，其次 shared_base_url，全局默认
+	// 2.8 解析 baseUrl：优先 Provider.base_url，其次 shared_base_url，其次系统级 vendor base_url_hint / 默认值
 	let baseUrl = normalizeBaseUrl(
 		preferEnvSora2Base
 			? ""
@@ -805,6 +824,12 @@ export async function resolveVendorContext(
 		} else if (v === "sora2api" || v === "grsai") {
 			baseUrl = envSora2Base;
 		}
+	}
+
+	if (!baseUrl) {
+		const hint = await resolveSystemVendorBaseUrlHint(c, v);
+		baseUrl =
+			normalizeBaseUrl(hint || "") || normalizeBaseUrl(defaultBaseUrlForVendor(v) || "");
 	}
 
 	// Dev-friendly override: when SORA2API_BASE_URL points to localhost,
@@ -926,6 +951,86 @@ function requiresApiKeyForVendor(vendor: string): boolean {
 		v === "grsai" ||
 		v === "minimax"
 	);
+}
+
+function defaultBaseUrlForVendor(vendor: string): string | null {
+	const v = normalizeVendorKey(vendor);
+	if (v === "openai") return "https://api.openai.com";
+	if (v === "gemini") return "https://generativelanguage.googleapis.com";
+	if (v === "qwen") return "https://dashscope.aliyuncs.com";
+	if (v === "anthropic") return "https://api.anthropic.com/v1";
+	if (v === "veo") return "https://api.grsai.com";
+	return null;
+}
+
+type SystemVendorApiKeyContext = {
+	vendorKey: string;
+	apiKey: string;
+	enabled: boolean;
+	vendorEnabled: boolean;
+	baseUrlHint: string | null;
+};
+
+async function resolveSystemVendorApiKeyContext(
+	c: AppContext,
+	vendorKey: string,
+): Promise<SystemVendorApiKeyContext | null> {
+	try {
+		await ensureModelCatalogSchema(c.env.DB);
+		const row = await c.env.DB.prepare(
+			`SELECT
+         k.vendor_key AS vendor_key,
+         k.api_key AS api_key,
+         k.enabled AS key_enabled,
+         v.enabled AS vendor_enabled,
+         v.base_url_hint AS base_url_hint
+       FROM model_catalog_vendor_api_keys k
+       JOIN model_catalog_vendors v ON v.key = k.vendor_key
+       WHERE k.vendor_key = ?
+       LIMIT 1`,
+		)
+			.bind(vendorKey)
+			.first<any>();
+		if (!row) return null;
+		const apiKey = typeof row.api_key === "string" ? row.api_key.trim() : "";
+		if (!apiKey) return null;
+		const enabled = Number(row.key_enabled ?? 1) !== 0;
+		const vendorEnabled = Number(row.vendor_enabled ?? 1) !== 0;
+		const baseUrlHint =
+			typeof row.base_url_hint === "string" && row.base_url_hint.trim()
+				? row.base_url_hint.trim()
+				: null;
+		return {
+			vendorKey,
+			apiKey,
+			enabled,
+			vendorEnabled,
+			baseUrlHint,
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function resolveSystemVendorBaseUrlHint(
+	c: AppContext,
+	vendorKey: string,
+): Promise<string | null> {
+	try {
+		await ensureModelCatalogSchema(c.env.DB);
+		const row = await c.env.DB.prepare(
+			`SELECT base_url_hint, enabled FROM model_catalog_vendors WHERE key = ? LIMIT 1`,
+		)
+			.bind(vendorKey)
+			.first<any>();
+		if (!row) return null;
+		if (Number(row.enabled ?? 1) === 0) return null;
+		const hint =
+			typeof row.base_url_hint === "string" ? row.base_url_hint.trim() : "";
+		return hint ? hint : null;
+	} catch {
+		return null;
+	}
 }
 
 // ---------- VEO ----------

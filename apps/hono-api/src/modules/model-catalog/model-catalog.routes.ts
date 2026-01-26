@@ -3,9 +3,11 @@ import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import {
 	ModelCatalogImportPackageSchema,
+	ModelCatalogVendorApiKeyStatusSchema,
 	ModelCatalogMappingSchema,
 	ModelCatalogModelSchema,
 	ModelCatalogVendorSchema,
+	UpsertModelCatalogVendorApiKeySchema,
 	UpsertModelCatalogMappingSchema,
 	UpsertModelCatalogModelSchema,
 	UpsertModelCatalogVendorSchema,
@@ -14,10 +16,12 @@ import {
 	deleteModelCatalogMapping,
 	deleteModelCatalogModel,
 	deleteModelCatalogVendor,
+	clearModelCatalogVendorApiKey,
 	importModelCatalogPackage,
 	listModelCatalogMappings,
 	listModelCatalogModels,
 	listModelCatalogVendors,
+	upsertModelCatalogVendorApiKey,
 	upsertModelCatalogMapping,
 	upsertModelCatalogModel,
 	upsertModelCatalogVendor,
@@ -49,6 +53,37 @@ modelCatalogRouter.delete("/vendors/:key", async (c) => {
 	const key = c.req.param("key");
 	await deleteModelCatalogVendor(c, key);
 	return c.body(null, 204);
+});
+
+modelCatalogRouter.post("/vendors/:key/api-key", async (c) => {
+	const vendorKey = c.req.param("key");
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = UpsertModelCatalogVendorApiKeySchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+	const status = await upsertModelCatalogVendorApiKey(c, {
+		vendorKey,
+		...parsed.data,
+	});
+	return c.json(ModelCatalogVendorApiKeyStatusSchema.parse(status));
+});
+
+modelCatalogRouter.delete("/vendors/:key/api-key", async (c) => {
+	const vendorKey = c.req.param("key");
+	const status = await clearModelCatalogVendorApiKey(c, vendorKey);
+	return c.json(
+		ModelCatalogVendorApiKeyStatusSchema.parse({
+			vendorKey: status.vendorKey || vendorKey,
+			hasApiKey: false,
+			enabled: false,
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+		}),
+	);
 });
 
 modelCatalogRouter.get("/models", async (c) => {
@@ -135,4 +170,3 @@ modelCatalogRouter.post("/import", async (c) => {
 	const result = await importModelCatalogPackage(c, parsed.data);
 	return c.json(result);
 });
-

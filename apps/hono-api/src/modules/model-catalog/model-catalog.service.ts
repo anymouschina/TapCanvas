@@ -16,11 +16,15 @@ import {
 import {
 	deleteCatalogMappingRow,
 	deleteCatalogModelRow,
+	deleteCatalogVendorApiKeyRow,
 	deleteCatalogVendorRow,
+	getCatalogVendorApiKeyByVendorKey,
 	getCatalogVendorByKey,
 	listCatalogMappings,
 	listCatalogModels,
+	listCatalogVendorApiKeys,
 	listCatalogVendors,
+	upsertCatalogVendorApiKeyRow,
 	upsertCatalogMappingRow,
 	upsertCatalogModelRow,
 	upsertCatalogVendorRow,
@@ -62,6 +66,12 @@ function mapVendor(row: any): ModelCatalogVendorDto {
 		key: row.key,
 		name: row.name,
 		enabled: Number(row.enabled ?? 1) !== 0,
+		hasApiKey:
+			typeof row.hasApiKey === "boolean"
+				? row.hasApiKey
+				: typeof row.has_api_key === "number"
+					? row.has_api_key !== 0
+					: undefined,
 		baseUrlHint: row.base_url_hint ?? null,
 		authType,
 		authHeader: row.auth_header ?? null,
@@ -104,7 +114,24 @@ export async function listModelCatalogVendors(
 ): Promise<ModelCatalogVendorDto[]> {
 	requireAdmin(c);
 	const rows = await listCatalogVendors(c.env.DB);
-	return rows.map(mapVendor);
+	let keyRows: Array<{ vendor_key: string; enabled: number }> = [];
+	try {
+		keyRows = await listCatalogVendorApiKeys(c.env.DB);
+	} catch {
+		keyRows = [];
+	}
+	const enabledKeySet = new Set(
+		(keyRows || [])
+			.filter((r: any) => (r?.enabled ?? 1) !== 0 && typeof r?.vendor_key === "string")
+			.map((r: any) => String(r.vendor_key).trim().toLowerCase())
+			.filter(Boolean),
+	);
+	return rows.map((r) =>
+		mapVendor({
+			...r,
+			hasApiKey: enabledKeySet.has(String(r.key || "").trim().toLowerCase()),
+		}),
+	);
 }
 
 export async function upsertModelCatalogVendor(
@@ -159,6 +186,7 @@ export async function deleteModelCatalogVendor(
 	const k = normalizeKey(key);
 	if (!k) return;
 	try {
+		await deleteCatalogVendorApiKeyRow(c.env.DB, k);
 		await deleteCatalogVendorRow(c.env.DB, k);
 	} catch (err: any) {
 		throw new AppError("delete vendor failed", {
@@ -416,4 +444,68 @@ export async function importModelCatalogPackage(
 	}
 
 	return ModelCatalogImportResultSchema.parse(result);
+}
+
+export async function upsertModelCatalogVendorApiKey(
+	c: AppContext,
+	input: { vendorKey: string; apiKey: string; enabled?: boolean },
+) {
+	requireAdmin(c);
+	const nowIso = new Date().toISOString();
+	const vendorKey = normalizeKey(input.vendorKey);
+	const apiKey = String(input.apiKey || "").trim();
+	if (!vendorKey) {
+		throw new AppError("vendorKey is required", {
+			status: 400,
+			code: "invalid_request",
+		});
+	}
+	if (!apiKey) {
+		throw new AppError("apiKey is required", {
+			status: 400,
+			code: "invalid_request",
+		});
+	}
+	const vendor = await getCatalogVendorByKey(c.env.DB, vendorKey);
+	if (!vendor) {
+		throw new AppError("vendor not found", {
+			status: 404,
+			code: "vendor_not_found",
+		});
+	}
+	const row = await upsertCatalogVendorApiKeyRow(
+		c.env.DB,
+		{
+			vendorKey,
+			apiKey,
+			enabled: typeof input.enabled === "boolean" ? input.enabled : true,
+		},
+		nowIso,
+	);
+	return {
+		vendorKey,
+		hasApiKey: true,
+		enabled: Number(row.enabled ?? 1) !== 0,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	};
+}
+
+export async function clearModelCatalogVendorApiKey(
+	c: AppContext,
+	vendorKey: string,
+) {
+	requireAdmin(c);
+	const key = normalizeKey(vendorKey);
+	if (!key) return { vendorKey: key, hasApiKey: false };
+	try {
+		const existing = await getCatalogVendorApiKeyByVendorKey(c.env.DB, key);
+		if (!existing) {
+			return { vendorKey: key, hasApiKey: false };
+		}
+		await deleteCatalogVendorApiKeyRow(c.env.DB, key);
+		return { vendorKey: key, hasApiKey: false };
+	} catch {
+		return { vendorKey: key, hasApiKey: false };
+	}
 }

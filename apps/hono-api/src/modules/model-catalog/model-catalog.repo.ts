@@ -14,6 +14,14 @@ export type ModelCatalogVendorRow = {
 	updated_at: string;
 };
 
+export type ModelCatalogVendorApiKeyRow = {
+	vendor_key: string;
+	api_key: string;
+	enabled: number;
+	created_at: string;
+	updated_at: string;
+};
+
 export type ModelCatalogModelRow = {
 	model_key: string;
 	vendor_key: string;
@@ -55,6 +63,18 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
       meta TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    )`,
+	);
+
+	await execute(
+		db,
+		`CREATE TABLE IF NOT EXISTS model_catalog_vendor_api_keys (
+      vendor_key TEXT PRIMARY KEY,
+      api_key TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
     )`,
 	);
 
@@ -117,6 +137,64 @@ export async function listCatalogVendors(
 	return queryAll<ModelCatalogVendorRow>(
 		db,
 		`SELECT * FROM model_catalog_vendors ORDER BY key ASC`,
+	);
+}
+
+export async function listCatalogVendorApiKeys(
+	db: D1Database,
+): Promise<ModelCatalogVendorApiKeyRow[]> {
+	await ensureModelCatalogSchema(db);
+	return queryAll<ModelCatalogVendorApiKeyRow>(
+		db,
+		`SELECT * FROM model_catalog_vendor_api_keys ORDER BY vendor_key ASC`,
+	);
+}
+
+export async function getCatalogVendorApiKeyByVendorKey(
+	db: D1Database,
+	vendorKey: string,
+): Promise<ModelCatalogVendorApiKeyRow | null> {
+	await ensureModelCatalogSchema(db);
+	return queryOne<ModelCatalogVendorApiKeyRow>(
+		db,
+		`SELECT * FROM model_catalog_vendor_api_keys WHERE vendor_key = ? LIMIT 1`,
+		[vendorKey],
+	);
+}
+
+export async function upsertCatalogVendorApiKeyRow(
+	db: D1Database,
+	input: { vendorKey: string; apiKey: string; enabled: boolean },
+	nowIso: string,
+): Promise<ModelCatalogVendorApiKeyRow> {
+	await ensureModelCatalogSchema(db);
+
+	await execute(
+		db,
+		`INSERT INTO model_catalog_vendor_api_keys
+       (vendor_key, api_key, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(vendor_key) DO UPDATE SET
+         api_key = excluded.api_key,
+         enabled = excluded.enabled,
+         updated_at = excluded.updated_at`,
+		[input.vendorKey, input.apiKey, input.enabled ? 1 : 0, nowIso, nowIso],
+	);
+
+	const row = await getCatalogVendorApiKeyByVendorKey(db, input.vendorKey);
+	if (!row) throw new Error("vendor api key upsert failed");
+	return row;
+}
+
+export async function deleteCatalogVendorApiKeyRow(
+	db: D1Database,
+	vendorKey: string,
+): Promise<void> {
+	await ensureModelCatalogSchema(db);
+	await execute(
+		db,
+		`DELETE FROM model_catalog_vendor_api_keys WHERE vendor_key = ?`,
+		[vendorKey],
 	);
 }
 
@@ -413,4 +491,3 @@ export async function deleteCatalogMappingRow(
 	await ensureModelCatalogSchema(db);
 	await execute(db, `DELETE FROM model_catalog_mappings WHERE id = ?`, [id]);
 }
-
