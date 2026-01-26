@@ -275,7 +275,7 @@ fetch('${publicChatUrl}', {
           <div className="stats-system-card-header-left">
             <Title className="stats-system-title" order={3}>系统管理</Title>
             <Text className="stats-system-subtitle" size="sm" c="dimmed">
-              渠道（grsai/comfly）配置、外站 API Key、生成任务日志（后台管理风格）。
+              渠道（grsai/comfly/yunwu/apimart）配置、外站 API Key、生成任务日志（后台管理风格）。
             </Text>
           </div>
           <Group className="stats-system-card-header-actions" gap={6}>

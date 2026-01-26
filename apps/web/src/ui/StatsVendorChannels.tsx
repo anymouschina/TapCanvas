@@ -4,6 +4,7 @@ import { IconRefresh } from '@tabler/icons-react'
 import { APIMART_PROXY_DEFAULT_HOST, APIMART_PROXY_VENDOR } from '../constants/apimart'
 import { COMFLY_PROXY_DEFAULT_HOST, COMFLY_PROXY_VENDOR } from '../constants/comfly'
 import { GRSAI_PROXY_VENDOR } from '../constants/grsai'
+import { YUNWU_PROXY_DEFAULT_HOST, YUNWU_PROXY_VENDOR } from '../constants/yunwu'
 import { getProxyConfig, upsertProxyConfig, type ProxyConfigDto } from '../api/server'
 import { toast } from './toast'
 
@@ -13,6 +14,8 @@ const TARGET_OPTIONS = [
   { value: 'gemini', label: 'Nano Banana 图片（gemini）' },
   { value: 'minimax', label: 'Hailuo / MiniMax（minimax）' },
 ]
+
+const YUNWU_TARGET_OPTIONS = TARGET_OPTIONS.filter((opt) => opt.value === 'sora2api')
 
 function normalizeVendorList(input: unknown): string[] {
   const arr = Array.isArray(input) ? input : []
@@ -59,6 +62,14 @@ export default function StatsVendorChannels({ className }: { className?: string 
   const [comflyApiKeyTouched, setComflyApiKeyTouched] = React.useState(false)
   const [comflySaving, setComflySaving] = React.useState(false)
 
+  const [yunwuCfg, setYunwuCfg] = React.useState<ProxyConfigDto | null>(null)
+  const [yunwuHost, setYunwuHost] = React.useState(YUNWU_PROXY_DEFAULT_HOST)
+  const [yunwuEnabled, setYunwuEnabled] = React.useState(false)
+  const [yunwuEnabledVendors, setYunwuEnabledVendors] = React.useState<string[]>(['sora2api'])
+  const [yunwuApiKey, setYunwuApiKey] = React.useState('')
+  const [yunwuApiKeyTouched, setYunwuApiKeyTouched] = React.useState(false)
+  const [yunwuSaving, setYunwuSaving] = React.useState(false)
+
   const [apimartCfg, setApimartCfg] = React.useState<ProxyConfigDto | null>(null)
   const [apimartHost, setApimartHost] = React.useState(APIMART_PROXY_DEFAULT_HOST)
   const [apimartEnabled, setApimartEnabled] = React.useState(false)
@@ -67,7 +78,7 @@ export default function StatsVendorChannels({ className }: { className?: string 
   const [apimartApiKeyTouched, setApimartApiKeyTouched] = React.useState(false)
   const [apimartSaving, setApimartSaving] = React.useState(false)
 
-  const syncFromCfg = React.useCallback((vendor: 'grsai' | 'comfly' | 'apimart', cfg: ProxyConfigDto | null) => {
+  const syncFromCfg = React.useCallback((vendor: 'grsai' | 'comfly' | 'yunwu' | 'apimart', cfg: ProxyConfigDto | null) => {
     if (vendor === 'grsai') {
       setGrsaiCfg(cfg)
       setGrsaiHost((cfg?.baseUrl || '').trim() || 'https://api.grsai.com')
@@ -86,6 +97,15 @@ export default function StatsVendorChannels({ className }: { className?: string 
       setComflyApiKeyTouched(false)
       return
     }
+    if (vendor === 'yunwu') {
+      setYunwuCfg(cfg)
+      setYunwuHost((cfg?.baseUrl || '').trim() || YUNWU_PROXY_DEFAULT_HOST)
+      setYunwuEnabled(!!cfg?.enabled)
+      setYunwuEnabledVendors(normalizeVendorList(cfg?.enabledVendors))
+      setYunwuApiKey('')
+      setYunwuApiKeyTouched(false)
+      return
+    }
     setApimartCfg(cfg)
     setApimartHost((cfg?.baseUrl || '').trim() || APIMART_PROXY_DEFAULT_HOST)
     setApimartEnabled(!!cfg?.enabled)
@@ -99,9 +119,10 @@ export default function StatsVendorChannels({ className }: { className?: string 
     loadingRef.current = true
     setLoading(true)
     try {
-      const [grsai, comfly, apimart] = await Promise.allSettled([
+      const [grsai, comfly, yunwu, apimart] = await Promise.allSettled([
         getProxyConfig(GRSAI_PROXY_VENDOR),
         getProxyConfig(COMFLY_PROXY_VENDOR),
+        getProxyConfig(YUNWU_PROXY_VENDOR),
         getProxyConfig(APIMART_PROXY_VENDOR),
       ])
       if (grsai.status === 'fulfilled') {
@@ -115,6 +136,12 @@ export default function StatsVendorChannels({ className }: { className?: string 
       } else {
         console.warn('load comfly proxy failed', comfly.reason)
         syncFromCfg('comfly', null)
+      }
+      if (yunwu.status === 'fulfilled') {
+        syncFromCfg('yunwu', yunwu.value)
+      } else {
+        console.warn('load yunwu proxy failed', yunwu.reason)
+        syncFromCfg('yunwu', null)
       }
       if (apimart.status === 'fulfilled') {
         syncFromCfg('apimart', apimart.value)
@@ -190,6 +217,35 @@ export default function StatsVendorChannels({ className }: { className?: string 
     }
   }
 
+  const saveYunwu = async () => {
+    if (yunwuSaving) return
+    const baseUrl = yunwuHost.trim()
+    if (!baseUrl) {
+      toast('请填写 yunwu Host', 'error')
+      return
+    }
+    const enabledVendors = normalizeVendorList(yunwuEnabledVendors)
+    setYunwuSaving(true)
+    try {
+      const payload = buildProxyPayload({
+        name: 'yunwu',
+        baseUrl,
+        enabled: yunwuEnabled,
+        enabledVendors,
+        apiKey: yunwuApiKey.trim(),
+        apiKeyTouched: yunwuApiKeyTouched,
+      })
+      const saved = await upsertProxyConfig(YUNWU_PROXY_VENDOR, payload)
+      syncFromCfg('yunwu', saved)
+      toast('已保存 yunwu 配置', 'success')
+    } catch (err: any) {
+      console.error('save yunwu proxy failed', err)
+      toast(err?.message || '保存 yunwu 配置失败', 'error')
+    } finally {
+      setYunwuSaving(false)
+    }
+  }
+
   const saveApimart = async () => {
     if (apimartSaving) return
     const baseUrl = apimartHost.trim()
@@ -225,7 +281,7 @@ export default function StatsVendorChannels({ className }: { className?: string 
         <div className="stats-vendor-channels-header-left">
           <Title className="stats-vendor-channels-title" order={5}>三方渠道配置</Title>
           <Text className="stats-vendor-channels-subtitle" size="xs" c="dimmed">
-            管理 grsai/comfly/apimart 的 Host 与 API Key；外站调用会按成功率优先选择可用渠道。
+            管理 grsai/comfly/yunwu/apimart 的 Host 与 API Key；外站调用会按成功率优先选择可用渠道。
           </Text>
         </div>
         <Tooltip className="stats-vendor-channels-reload-tooltip" label="刷新渠道配置" withArrow>
@@ -419,6 +475,66 @@ export default function StatsVendorChannels({ className }: { className?: string 
             setComflyApiKey(e.currentTarget.value)
           }}
           placeholder={comflyCfg?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 comfly 提供的 API Key'}
+        />
+      </Stack>
+
+      <Divider className="stats-vendor-channels-divider" label="yunwu" labelPosition="left" />
+      <Stack className="stats-vendor-channels-yunwu" gap="xs">
+        <Group className="stats-vendor-channels-row" gap="sm" align="flex-start" wrap="wrap">
+          <TextInput
+            className="stats-vendor-channels-host"
+            label="Host"
+            value={yunwuHost}
+            onChange={(e) => setYunwuHost(e.currentTarget.value)}
+            placeholder={YUNWU_PROXY_DEFAULT_HOST}
+            w={360}
+          />
+          <Switch
+            className="stats-vendor-channels-enabled"
+            checked={yunwuEnabled}
+            onChange={(e) => setYunwuEnabled(e.currentTarget.checked)}
+            label="启用"
+            mt={26}
+          />
+          <Group className="stats-vendor-channels-badges" gap={6} mt={26}>
+            {yunwuCfg?.hasApiKey ? (
+              <Badge className="stats-vendor-channels-badge" size="xs" color="green" variant="light">已配置 Key</Badge>
+            ) : (
+              <Badge className="stats-vendor-channels-badge" size="xs" color="red" variant="light">未配置 Key</Badge>
+            )}
+          </Group>
+          <Button
+            className="stats-vendor-channels-save"
+            size="sm"
+            variant="light"
+            mt={22}
+            loading={yunwuSaving}
+            onClick={() => void saveYunwu()}
+            leftSection={yunwuSaving ? <Loader className="stats-vendor-channels-save-loader" size="xs" /> : undefined}
+          >
+            保存
+          </Button>
+        </Group>
+        <MultiSelect
+          className="stats-vendor-channels-vendors"
+          label="代理能力（enabledVendors）"
+          data={YUNWU_TARGET_OPTIONS}
+          value={yunwuEnabledVendors}
+          onChange={setYunwuEnabledVendors}
+          searchable
+          clearable
+          placeholder="当前仅支持 Sora2 视频（sora2api）"
+        />
+        <TextInput
+          className="stats-vendor-channels-api-key"
+          label="API Key"
+          type="password"
+          value={yunwuApiKey}
+          onChange={(e) => {
+            setYunwuApiKeyTouched(true)
+            setYunwuApiKey(e.currentTarget.value)
+          }}
+          placeholder={yunwuCfg?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 yunwu 提供的 API Key'}
         />
       </Stack>
     </Stack>

@@ -311,7 +311,7 @@ function normalizeVendorKey(vendor: string): string {
 
 function extractChannelVendor(
 	vendorKey: string,
-): "grsai" | "comfly" | "apimart" | null {
+): "grsai" | "comfly" | "apimart" | "yunwu" | null {
 	const v = normalizeVendorKey(vendorKey);
 	if (!v) return null;
 	if (v === "apimart" || v.startsWith("apimart-") || v.startsWith("apimart:")) {
@@ -322,6 +322,9 @@ function extractChannelVendor(
 	}
 	if (v === "grsai" || v.startsWith("grsai-") || v.startsWith("grsai:")) {
 		return "grsai";
+	}
+	if (v === "yunwu" || v.startsWith("yunwu-") || v.startsWith("yunwu:")) {
+		return "yunwu";
 	}
 	return null;
 }
@@ -336,6 +339,16 @@ function isGrsaiBaseUrl(url: string): boolean {
 function isApimartBaseUrl(url: string): boolean {
 	const val = (url || "").toLowerCase();
 	return val.includes("apimart.ai");
+}
+
+function isYunwuBaseUrl(url: string): boolean {
+	const val = (url || "").toLowerCase();
+	return val.includes("yunwu.ai");
+}
+
+function normalizeYunwuBaseUrl(url: string): string {
+	const normalized = normalizeBaseUrl(url);
+	return normalized.replace(/\/v1$/i, "");
 }
 
 function normalizeApimartBaseUrl(url: string): string {
@@ -1848,13 +1861,19 @@ export async function runSora2ApiVideoTask(
 		normalizeBaseUrl(ctx.baseUrl) || "http://localhost:8000";
 	const isApimartBase =
 		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
+	const isYunwuBase =
+		isYunwuBaseUrl(baseUrl) || ctx.viaProxyVendor === "yunwu";
 	const isGrsaiBase =
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const isComflyProxy = ctx.viaProxyVendor === "comfly";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError(
-			isApimartBase ? "未配置 apimart API Key" : "未配置 sora2api API Key",
+			isApimartBase
+				? "未配置 apimart API Key"
+				: isYunwuBase
+					? "未配置 yunwu API Key"
+					: "未配置 sora2api API Key",
 			{
 				status: 400,
 				code: "sora2api_api_key_missing",
@@ -1885,7 +1904,7 @@ export async function runSora2ApiVideoTask(
 			: "";
 	const model = isComflyProxy
 		? modelKeyRaw || "sora-2"
-		: isGrsaiBase
+		: isGrsaiBase || isYunwuBase
 			? modelKeyRaw || "sora-2"
 			: normalizeSora2ApiModelKey(modelKeyRaw || undefined, orientation, durationSeconds);
 	const aspectRatio = orientation === "portrait" ? "9:16" : "16:9";
@@ -1967,6 +1986,159 @@ export async function runSora2ApiVideoTask(
 				result,
 			});
 		}
+		return result;
+	}
+
+	if (isYunwuBase) {
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		const imageUrls = (() => {
+			const urls: string[] = [];
+			const add = (value: any) => {
+				if (typeof value === "string" && value.trim()) {
+					urls.push(value.trim());
+				}
+			};
+			if (Array.isArray((extras as any).images)) (extras as any).images.forEach(add);
+			if (Array.isArray((extras as any).image_urls))
+				(extras as any).image_urls.forEach(add);
+			if (Array.isArray((extras as any).imageUrls))
+				(extras as any).imageUrls.forEach(add);
+			if (Array.isArray((extras as any).urls)) (extras as any).urls.forEach(add);
+			add((extras as any).url);
+			add((extras as any).firstFrameUrl);
+			if (referenceUrl) add(referenceUrl);
+			return Array.from(new Set(urls)).slice(0, 8);
+		})();
+
+		const sizeForYunwu = (() => {
+			const raw = typeof extras.size === "string" ? extras.size.trim() : "";
+			const lowered = raw.toLowerCase();
+			if (lowered === "small" || lowered === "large") return lowered;
+			const compact =
+				typeof raw === "string" && /^\d+\s*x\s*\d+$/i.test(raw)
+					? raw.replace(/\s+/g, "")
+					: "";
+			if (compact) {
+				const [wStr, hStr] = compact.split("x");
+				const w = Number(wStr);
+				const h = Number(hStr);
+				if (Number.isFinite(w) && Number.isFinite(h)) {
+					return Math.max(w, h) <= 1280 ? "small" : "large";
+				}
+			}
+			return "small";
+		})();
+
+		const durationForYunwu = (() => {
+			const n =
+				typeof durationSeconds === "number" && Number.isFinite(durationSeconds)
+					? durationSeconds
+					: 10;
+			if (n <= 10) return 10;
+			if (n <= 15) return 15;
+			return 15;
+		})();
+
+		const watermark =
+			typeof extras.watermark === "boolean" ? extras.watermark : true;
+		const isPrivate =
+			typeof extras.private === "boolean"
+				? extras.private
+				: typeof extras.isPrivate === "boolean"
+					? extras.isPrivate
+					: false;
+
+		const body: Record<string, any> = {
+			images: imageUrls,
+			model,
+			orientation,
+			prompt: req.prompt,
+			size: sizeForYunwu,
+			duration: durationForYunwu,
+			watermark,
+			private: isPrivate,
+		};
+
+		const data = await callJsonApi(
+			c,
+			`${normalizeYunwuBaseUrl(baseUrl)}/v1/video/create`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "yunwu" },
+		);
+
+		const createdTaskId =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			(typeof data?.task_id === "string" && data.task_id.trim()) ||
+			(typeof data?.taskId === "string" && data.taskId.trim()) ||
+			null;
+		if (!createdTaskId) {
+			throw new AppError("yunwu 未返回任务 ID", {
+				status: 502,
+				code: "yunwu_task_id_missing",
+				details: { upstreamData: data ?? null, requestBody: body },
+			});
+		}
+
+		{
+			const nowIso = new Date().toISOString();
+			const vendorForRef = `yunwu-${model || "sora-2"}`;
+			try {
+				await upsertVendorTaskRef(
+					c.env.DB,
+					userId,
+					{
+						kind: "video",
+						taskId: createdTaskId,
+						vendor: vendorForRef,
+					},
+					nowIso,
+				);
+			} catch (err: any) {
+				console.warn(
+					"[vendor-task-refs] upsert yunwu video ref failed",
+					err?.message || err,
+				);
+			}
+		}
+
+		const status = normalizeYunwuVideoTaskStatus(data?.status);
+		emitProgress(userId, progressCtx, {
+			status,
+			progress: status === "queued" ? 5 : 10,
+			taskId: createdTaskId,
+			raw: data ?? null,
+		});
+
+		const vendorForLog = `yunwu-${model || "sora-2"}`;
+		const result = TaskResultSchema.parse({
+			id: createdTaskId,
+			kind: "text_to_video",
+			status,
+			assets: [],
+			raw: {
+				provider: "yunwu",
+				model,
+				taskId: createdTaskId,
+				status,
+				request: body,
+				response: data ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind: "text_to_video",
+			result,
+		});
 		return result;
 	}
 
@@ -2412,15 +2584,121 @@ export async function fetchSora2ApiTaskResult(
 		isGrsaiBaseUrl(baseUrl) || ctx.viaProxyVendor === "grsai";
 	const isApimartBase =
 		isApimartBaseUrl(baseUrl) || ctx.viaProxyVendor === "apimart";
+	const isYunwuBase =
+		isYunwuBaseUrl(baseUrl) || ctx.viaProxyVendor === "yunwu";
 	const apiKey = ctx.apiKey.trim();
 	if (!apiKey) {
 		throw new AppError(
-			isApimartBase ? "未配置 apimart API Key" : "未配置 sora2api API Key",
+			isApimartBase
+				? "未配置 apimart API Key"
+				: isYunwuBase
+					? "未配置 yunwu API Key"
+					: "未配置 sora2api API Key",
 			{
 				status: 400,
 				code: "sora2api_api_key_missing",
 			},
 		);
+	}
+
+	if (isYunwuBase) {
+		const payload = await callJsonApi(
+			c,
+			`${normalizeYunwuBaseUrl(baseUrl)}/v1/video/query?id=${encodeURIComponent(
+				taskId.trim(),
+			)}`,
+			{
+				method: "GET",
+				headers: {
+					Accept: "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+			},
+			{ provider: "yunwu" },
+		);
+
+		let status = normalizeYunwuVideoTaskStatus(payload?.status);
+		const videoUrlRaw =
+			(typeof payload?.video_url === "string" && payload.video_url.trim()) ||
+			(typeof payload?.videoUrl === "string" && payload.videoUrl.trim()) ||
+			null;
+		const videoUrl = videoUrlRaw ? videoUrlRaw.trim() : null;
+		if (status === "succeeded" && !videoUrl) {
+			status = "running";
+		}
+
+		if (status === "succeeded" && videoUrl) {
+			const asset = TaskAssetSchema.parse({
+				type: "video",
+				url: videoUrl,
+				thumbnailUrl: null,
+			});
+
+			const promptForAsset = (() => {
+				const client =
+					typeof promptFromClient === "string" && promptFromClient.trim()
+						? promptFromClient.trim()
+						: null;
+				const enhanced =
+					typeof payload?.enhanced_prompt === "string" &&
+					payload.enhanced_prompt.trim()
+						? payload.enhanced_prompt.trim()
+						: null;
+				return enhanced || client;
+			})();
+
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt: promptForAsset,
+					vendor: vendorForLog,
+					modelKey:
+						typeof payload?.model === "string"
+							? payload.model
+							: undefined,
+					taskId: taskId ?? null,
+				},
+			});
+
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "succeeded",
+				assets: hostedAssets,
+				raw: {
+					provider: "yunwu",
+					response: payload ?? null,
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind: "text_to_video",
+				result,
+			});
+			return result;
+		}
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status,
+			assets: [],
+			raw: {
+				provider: "yunwu",
+				response: payload ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind: "text_to_video",
+			result,
+		});
+		return result;
 	}
 
 	if (isApimartBase) {
@@ -2895,6 +3173,41 @@ function normalizeApimartTaskStatus(value: unknown): TaskStatus {
 	if (normalized === "processing") return "running";
 	if (normalized === "completed") return "succeeded";
 	if (normalized === "failed" || normalized === "cancelled") return "failed";
+	return "running";
+}
+
+function normalizeYunwuVideoTaskStatus(value: unknown): TaskStatus {
+	if (typeof value !== "string") return "running";
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) return "running";
+	if (normalized === "pending" || normalized === "submitted" || normalized === "queued") {
+		return "queued";
+	}
+	if (
+		normalized === "processing" ||
+		normalized === "running" ||
+		normalized === "in_progress" ||
+		normalized === "in-progress"
+	) {
+		return "running";
+	}
+	if (
+		normalized === "success" ||
+		normalized === "succeeded" ||
+		normalized === "completed" ||
+		normalized === "done"
+	) {
+		return "succeeded";
+	}
+	if (
+		normalized === "failed" ||
+		normalized === "failure" ||
+		normalized === "error" ||
+		normalized === "cancelled" ||
+		normalized === "canceled"
+	) {
+		return "failed";
+	}
 	return "running";
 }
 

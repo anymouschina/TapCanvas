@@ -32,6 +32,7 @@ import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from '../config/models'
 import { GRSAI_PROXY_UPDATED_EVENT, GRSAI_PROXY_VENDOR } from '../constants/grsai'
 import { APIMART_PROXY_DEFAULT_HOST, APIMART_PROXY_UPDATED_EVENT, APIMART_PROXY_VENDOR } from '../constants/apimart'
 import { COMFLY_PROXY_DEFAULT_HOST, COMFLY_PROXY_UPDATED_EVENT, COMFLY_PROXY_VENDOR } from '../constants/comfly'
+import { YUNWU_PROXY_DEFAULT_HOST, YUNWU_PROXY_UPDATED_EVENT, YUNWU_PROXY_VENDOR } from '../constants/yunwu'
 const PROFILE_KIND_LABELS: Record<ProfileKind, string> = {
   chat: '文本',
   prompt_refine: '指令优化',
@@ -72,6 +73,10 @@ const COMFLY_PROXY_TARGET_OPTIONS = [
 const APIMART_PROXY_TARGET_OPTIONS = [
   { value: 'sora', label: 'Sora2 视频' },
   { value: 'gemini', label: 'Nano Banana 图片' },
+]
+
+const YUNWU_PROXY_TARGET_OPTIONS = [
+  { value: 'sora', label: 'Sora2 视频' },
 ]
 
 type PredefinedModel = { value: string; label: string; kind: ProfileKind }
@@ -506,6 +511,15 @@ export default function ModelPanel(): JSX.Element | null {
   const [comflyProxyApiKey, setComflyProxyApiKey] = React.useState('')
   const [comflyProxyApiKeyTouched, setComflyProxyApiKeyTouched] = React.useState(false)
   const [comflyProxySaving, setComflyProxySaving] = React.useState(false)
+  const [yunwuProxyConfig, setYunwuProxyConfig] = React.useState<ProxyConfigDto | null>(null)
+  const [yunwuProxyLoading, setYunwuProxyLoading] = React.useState(false)
+  const [yunwuProxyModalOpen, setYunwuProxyModalOpen] = React.useState(false)
+  const [yunwuProxyHost, setYunwuProxyHost] = React.useState('')
+  const [yunwuProxyEnabled, setYunwuProxyEnabled] = React.useState(false)
+  const [yunwuProxyEnabledVendors, setYunwuProxyEnabledVendors] = React.useState<string[]>([])
+  const [yunwuProxyApiKey, setYunwuProxyApiKey] = React.useState('')
+  const [yunwuProxyApiKeyTouched, setYunwuProxyApiKeyTouched] = React.useState(false)
+  const [yunwuProxySaving, setYunwuProxySaving] = React.useState(false)
   const [apimartProxyConfig, setApimartProxyConfig] = React.useState<ProxyConfigDto | null>(null)
   const [apimartProxyLoading, setApimartProxyLoading] = React.useState(false)
   const [apimartProxyModalOpen, setApimartProxyModalOpen] = React.useState(false)
@@ -1174,6 +1188,19 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     setComflyProxyApiKeyTouched(false)
   }, [])
 
+  const syncYunwuProxyForm = React.useCallback((cfg: ProxyConfigDto | null) => {
+    const resolvedHost = (cfg?.baseUrl || '').trim() || YUNWU_PROXY_DEFAULT_HOST
+    setYunwuProxyHost(resolvedHost)
+    setYunwuProxyEnabled(!!cfg?.enabled)
+    const enabledVendors =
+      Array.isArray(cfg?.enabledVendors) && cfg.enabledVendors.length > 0
+        ? cfg.enabledVendors
+        : ['sora']
+    setYunwuProxyEnabledVendors(enabledVendors)
+    setYunwuProxyApiKey('')
+    setYunwuProxyApiKeyTouched(false)
+  }, [])
+
   const syncApimartProxyForm = React.useCallback((cfg: ProxyConfigDto | null) => {
     const resolvedHost = (cfg?.baseUrl || '').trim() || APIMART_PROXY_DEFAULT_HOST
     setApimartProxyHost(resolvedHost)
@@ -1209,6 +1236,19 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     }
   }, [syncComflyProxyForm])
 
+  const refreshYunwuProxyConfig = React.useCallback(async () => {
+    setYunwuProxyLoading(true)
+    try {
+      const cfg = await getProxyConfig(YUNWU_PROXY_VENDOR)
+      setYunwuProxyConfig(cfg)
+      syncYunwuProxyForm(cfg)
+    } catch (error: any) {
+      console.error('Failed to load yunwu proxy config', error)
+    } finally {
+      setYunwuProxyLoading(false)
+    }
+  }, [syncYunwuProxyForm])
+
   const refreshApimartProxyConfig = React.useCallback(async () => {
     setApimartProxyLoading(true)
     try {
@@ -1231,6 +1271,11 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     if (!mounted) return
     refreshComflyProxyConfig().catch(() => {})
   }, [mounted, refreshComflyProxyConfig])
+
+  React.useEffect(() => {
+    if (!mounted) return
+    refreshYunwuProxyConfig().catch(() => {})
+  }, [mounted, refreshYunwuProxyConfig])
 
   React.useEffect(() => {
     if (!mounted) return
@@ -1270,6 +1315,11 @@ const handleShareAllAnthropicTokens = (sharedFlag: boolean) => bulkShareTokens(a
     return found ? found.label : v
   })
 
+  const yunwuProxyVendorLabels = (yunwuProxyConfig?.enabledVendors || []).map((v) => {
+    const found = YUNWU_PROXY_TARGET_OPTIONS.find((opt) => opt.value === v)
+    return found ? found.label : v
+  })
+
   const apimartProxyVendorLabels = (apimartProxyConfig?.enabledVendors || []).map((v) => {
     const found = APIMART_PROXY_TARGET_OPTIONS.find((opt) => opt.value === v)
     return found ? found.label : v
@@ -1293,6 +1343,15 @@ const handleOpenComflyProxyModal = () => {
   setComflyProxyModalOpen(true)
 }
 
+const handleOpenYunwuProxyModal = () => {
+  if (!yunwuProxyConfig && !yunwuProxyLoading) {
+    refreshYunwuProxyConfig().catch(() => {})
+  } else {
+    syncYunwuProxyForm(yunwuProxyConfig)
+  }
+  setYunwuProxyModalOpen(true)
+}
+
 const handleOpenApimartProxyModal = () => {
   if (!apimartProxyConfig && !apimartProxyLoading) {
     refreshApimartProxyConfig().catch(() => {})
@@ -1310,6 +1369,11 @@ const handleCloseProxyModal = () => {
 const handleCloseComflyProxyModal = () => {
     setComflyProxyModalOpen(false)
     syncComflyProxyForm(comflyProxyConfig)
+  }
+
+const handleCloseYunwuProxyModal = () => {
+    setYunwuProxyModalOpen(false)
+    syncYunwuProxyForm(yunwuProxyConfig)
   }
 
 const handleCloseApimartProxyModal = () => {
@@ -1382,6 +1446,40 @@ const handleCloseApimartProxyModal = () => {
       notifications.show({ color: 'red', title: '保存失败', message: error?.message || '未知错误' })
     } finally {
       setComflyProxySaving(false)
+    }
+  }
+
+  const handleSaveYunwuProxyConfig = async () => {
+    const trimmedHost = yunwuProxyHost.trim()
+    if (yunwuProxyEnabled && !trimmedHost) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请填写代理 Host 地址' })
+      return
+    }
+    if (yunwuProxyEnabled && yunwuProxyEnabledVendors.length === 0) {
+      notifications.show({ color: 'red', title: '保存失败', message: '请选择至少一个需要走代理的厂商' })
+      return
+    }
+    setYunwuProxySaving(true)
+    try {
+      const payload: any = {
+        baseUrl: trimmedHost,
+        enabled: yunwuProxyEnabled,
+        enabledVendors: yunwuProxyEnabled ? yunwuProxyEnabledVendors : [],
+        name: YUNWU_PROXY_VENDOR,
+      }
+      if (yunwuProxyApiKeyTouched) {
+        payload.apiKey = yunwuProxyApiKey.trim()
+      }
+      const saved = await upsertProxyConfig(YUNWU_PROXY_VENDOR, payload)
+      setYunwuProxyConfig(saved)
+      window.dispatchEvent(new CustomEvent(YUNWU_PROXY_UPDATED_EVENT, { detail: saved }))
+      syncYunwuProxyForm(saved)
+      setYunwuProxyModalOpen(false)
+      notifications.show({ color: 'teal', title: '已保存', message: '代理服务配置已更新' })
+    } catch (error: any) {
+      notifications.show({ color: 'red', title: '保存失败', message: error?.message || '未知错误' })
+    } finally {
+      setYunwuProxySaving(false)
     }
   }
 
@@ -1608,6 +1706,41 @@ const handleCloseApimartProxyModal = () => {
                         )}
                       </div>
                       <Button className="tc-model-panel__section-action" size="xs" variant="light" onClick={handleOpenComflyProxyModal}>
+                        配置
+                      </Button>
+                    </Group>
+                  </Paper>
+                  <Paper className="tc-model-panel__section" withBorder radius="md" p="sm">
+                    <Group className="tc-model-panel__section-header" justify="space-between" align="flex-start">
+                      <div className="tc-model-panel__section-text">
+                        <Group className="tc-model-panel__section-title-row" gap={6} mb={4} align="center">
+                          <Title className="tc-model-panel__section-title" order={6}>代理服务 (yunwu)</Title>
+                          {yunwuProxyLoading && <Badge className="tc-model-panel__badge" size="xs" color="gray">加载中</Badge>}
+                          {yunwuProxyConfig?.enabled && !yunwuProxyLoading && (
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape">已启用</Badge>
+                          )}
+                        </Group>
+                        <Text className="tc-model-panel__section-desc" size="xs" c="dimmed">
+                          使用 yunwu API Key 接入 Sora2 视频统一接口（/v1/video/create、/v1/video/query）。
+                        </Text>
+                        {yunwuProxyConfig?.enabled && yunwuProxyVendorLabels.length > 0 ? (
+                          <Group className="tc-model-panel__section-meta" gap={6} mt={6} wrap="wrap">
+                            <Badge className="tc-model-panel__badge" size="xs" color="grape" variant="light">
+                              厂商：{yunwuProxyVendorLabels.join('、')}
+                            </Badge>
+                            {yunwuProxyConfig.baseUrl && (
+                              <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed">
+                                Host: {yunwuProxyConfig.baseUrl}
+                              </Text>
+                            )}
+                          </Group>
+                        ) : (
+                          <Text className="tc-model-panel__section-meta-text" size="xs" c="dimmed" mt={6}>
+                            当前未启用代理服务
+                          </Text>
+                        )}
+                      </div>
+                      <Button className="tc-model-panel__section-action" size="xs" variant="light" onClick={handleOpenYunwuProxyModal}>
                         配置
                       </Button>
                     </Group>
@@ -3052,6 +3185,67 @@ const handleCloseApimartProxyModal = () => {
                     取消
                   </Button>
                   <Button className="tc-model-panel__modal-action" onClick={handleSaveComflyProxyConfig} loading={comflyProxySaving}>
+                    保存
+                  </Button>
+                </Group>
+              </Stack>
+            </Modal>
+            <Modal
+              className="tc-model-panel__modal"
+              opened={yunwuProxyModalOpen}
+              onClose={handleCloseYunwuProxyModal}
+              title="代理服务（yunwu）"
+              centered
+              size="lg"
+            >
+              <Stack className="tc-model-panel__modal-stack" gap="sm">
+                <Text className="tc-model-panel__modal-desc" size="sm" c="dimmed">
+                  配置 yunwu API Key 和 Host，用 yunwu 的 Sora2 统一接口接入视频生成。
+                </Text>
+                <TextInput
+                  className="tc-model-panel__input"
+                  label="代理 Host"
+                  placeholder={`例如：${YUNWU_PROXY_DEFAULT_HOST}`}
+                  value={yunwuProxyHost}
+                  onChange={(e) => setYunwuProxyHost(e.currentTarget.value)}
+                  required
+                />
+                <TextInput
+                  className="tc-model-panel__input"
+                  label="yunwu API Key"
+                  placeholder={yunwuProxyConfig?.hasApiKey ? '留空则不修改已保存的 Key' : '粘贴 yunwu 提供的 API Key'}
+                  type="password"
+                  value={yunwuProxyApiKey}
+                  onChange={(e) => {
+                    setYunwuProxyApiKey(e.currentTarget.value)
+                    setYunwuProxyApiKeyTouched(true)
+                  }}
+                />
+                <Switch
+                  className="tc-model-panel__toggle"
+                  label="启用代理服务"
+                  checked={yunwuProxyEnabled}
+                  onChange={(event) => setYunwuProxyEnabled(event.currentTarget.checked)}
+                />
+                <Checkbox.Group
+                  className="tc-model-panel__checkbox-group"
+                  label="选择需要走代理的厂商"
+                  description="至少勾选一个厂商，未勾选的厂商仍走官方接口"
+                  value={yunwuProxyEnabledVendors}
+                  onChange={setYunwuProxyEnabledVendors}
+                  disabled={!yunwuProxyEnabled}
+                >
+                  <Stack className="tc-model-panel__checkbox-list" gap={4} pt={4}>
+                    {YUNWU_PROXY_TARGET_OPTIONS.map((opt) => (
+                      <Checkbox className="tc-model-panel__checkbox" key={opt.value} value={opt.value} label={opt.label} disabled={!yunwuProxyEnabled} />
+                    ))}
+                  </Stack>
+                </Checkbox.Group>
+                <Group className="tc-model-panel__modal-actions" justify="flex-end" mt="sm">
+                  <Button className="tc-model-panel__modal-action" variant="default" onClick={handleCloseYunwuProxyModal}>
+                    取消
+                  </Button>
+                  <Button className="tc-model-panel__modal-action" onClick={handleSaveYunwuProxyConfig} loading={yunwuProxySaving}>
                     保存
                   </Button>
                 </Group>
