@@ -681,7 +681,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Group className="stats-model-catalog-import-panels" gap="sm" align="flex-start" wrap="wrap">
           <div className="stats-model-catalog-import-prompt" style={{ flex: '1 1 380px', minWidth: 320 }}>
             <Group className="stats-model-catalog-import-prompt-header" justify="space-between" align="center" wrap="nowrap" gap="xs">
-              <Text className="stats-model-catalog-import-prompt-title" size="xs" fw={700}>激活提示词（文档 -> 可导入 JSON）</Text>
+	              <Text className="stats-model-catalog-import-prompt-title" size="xs" fw={700}>激活提示词（文档 -&gt; 可导入 JSON）</Text>
               <CopyButton value={DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH} timeout={1200}>
                 {({ copied, copy }) => (
                   <Tooltip className="stats-model-catalog-import-prompt-copy-tooltip" label={copied ? '已复制' : '复制'} withArrow>
