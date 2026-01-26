@@ -32,6 +32,21 @@ function stripOrientationSegments(modelKey: string): string {
 	return key;
 }
 
+function canonicalizeSoraFamily(modelKey: string): string {
+	const key = (modelKey || "").trim();
+	if (!key) return "";
+
+	// Sora image: orientation is an input parameter, not a different model.
+	if (key === "sora-image" || key.startsWith("sora-image-")) return "sora-image";
+
+	// Sora video: model quality (pro) and duration/orientation are parameters.
+	// Keep billing configuration as a single "Sora 2" entry.
+	if (key === "sora-2" || key.startsWith("sora-2-")) return "sora-2";
+	if (key === "sora-video" || key.startsWith("sora-video-")) return "sora-2";
+
+	return key;
+}
+
 function item(input: Omit<BillingModelCatalogItem, "modelKey"> & { modelKey: string }) {
 	return {
 		...input,
@@ -94,5 +109,5 @@ export const BILLING_MODEL_CATALOG: BillingModelCatalogItem[] = [
 
 export function normalizeBillingModelKey(modelKey: string | null | undefined): string {
 	const base = stripModelsPrefix(typeof modelKey === "string" ? modelKey : "");
-	return stripOrientationSegments(base);
+	return canonicalizeSoraFamily(stripOrientationSegments(base));
 }
