@@ -26,8 +26,10 @@ import {
 	ensureVendorCallLogsSchema,
 } from "./vendor-call-logs.repo";
 import {
-	chargeTeamCreditsOnSuccess,
+	bindTeamCreditsReservationToTaskId,
 	requireSufficientTeamCredits,
+	releaseTeamCreditsOnFailure,
+	settleTeamCreditsOnSuccess,
 } from "../team/team.service";
 import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 
@@ -47,6 +49,51 @@ type ProgressContext = {
 	taskKind: TaskRequestDto["kind"];
 	vendor: string;
 };
+
+type TeamCreditsReservation = Awaited<
+	ReturnType<typeof requireSufficientTeamCredits>
+>;
+
+async function releaseReservationOnThrow(
+	c: AppContext,
+	userId: string,
+	reservation: TeamCreditsReservation,
+	err: unknown,
+): Promise<never> {
+	if (reservation) {
+		try {
+			await releaseTeamCreditsOnFailure(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind: reservation.taskKind,
+				vendor: reservation.vendor,
+				modelKey: reservation.modelKey ?? null,
+			});
+		} catch {
+			// ignore
+		}
+	}
+	throw err;
+}
+
+async function bindReservationToTaskId(
+	c: AppContext,
+	userId: string,
+	reservation: TeamCreditsReservation,
+	taskId: string,
+): Promise<void> {
+	if (!reservation) return;
+	const toTaskId = (taskId || "").trim();
+	if (!toTaskId) return;
+	try {
+		await bindTeamCreditsReservationToTaskId(c, userId, {
+			teamId: reservation.teamId,
+			reservationTaskId: reservation.reservationTaskId,
+			taskId: toTaskId,
+		});
+	} catch {
+		// ignore
+	}
+}
 
 function pickApiVendorForTask(
 	result: TaskResult,
@@ -242,15 +289,14 @@ async function recordVendorCallFromTaskResult(
 			});
 		}
 
-		// Team credits: charge on successful image/video generations (best-effort, idempotent).
-		if (input.result.status === "succeeded") {
-			const resolvedTaskKind =
-				typeof input.taskKind === "string" && input.taskKind.trim()
-					? input.taskKind.trim()
-					: typeof (input.result as any)?.kind === "string" &&
-							(input.result as any).kind.trim()
-						? (input.result as any).kind.trim()
-						: "";
+		const resolvedTaskKind =
+			typeof input.taskKind === "string" && input.taskKind.trim()
+				? input.taskKind.trim()
+				: typeof (input.result as any)?.kind === "string" &&
+						(input.result as any).kind.trim()
+					? (input.result as any).kind.trim()
+					: "";
+		if (resolvedTaskKind) {
 			const resolvedModelKey = (() => {
 				const raw: any = input.result?.raw as any;
 				const candidates = [
@@ -270,11 +316,20 @@ async function recordVendorCallFromTaskResult(
 				taskKind: resolvedTaskKind,
 				modelKey: resolvedModelKey || undefined,
 			});
-			if (amount > 0 && resolvedTaskKind) {
-				await chargeTeamCreditsOnSuccess(c, input.userId, {
+
+			// Team credits: reserved at submit time; settle/release when task ends.
+			if (input.result.status === "succeeded") {
+				await settleTeamCreditsOnSuccess(c, input.userId, {
 					taskId,
 					taskKind: resolvedTaskKind,
 					amount,
+					vendor: vendorKey,
+					modelKey: resolvedModelKey,
+				});
+			} else if (input.result.status === "failed") {
+				await releaseTeamCreditsOnFailure(c, input.userId, {
+					taskId,
+					taskKind: resolvedTaskKind,
 					vendor: vendorKey,
 					modelKey: resolvedModelKey,
 				});
@@ -1403,27 +1458,55 @@ function parseComflyProgress(value: unknown): number | undefined {
 		TaskAssetSchema.parse({ type: "video", url, thumbnailUrl: null }),
 	);
 
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets,
-			meta: {
-				taskKind: kind,
-				prompt:
-					typeof (data as any)?.prompt === "string"
-						? (data as any).prompt
-						: null,
-				vendor: metaVendor,
-				modelKey:
-					typeof (data as any)?.model === "string"
-						? (data as any).model
-						: undefined,
-				taskId:
-				(typeof (data as any)?.task_id === "string" &&
-					(data as any).task_id) ||
-				taskId,
-		},
-	});
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets,
+				meta: {
+					taskKind: kind,
+					prompt:
+						typeof (data as any)?.prompt === "string"
+							? (data as any).prompt
+							: null,
+					vendor: metaVendor,
+					modelKey:
+						typeof (data as any)?.model === "string"
+							? (data as any).model
+							: undefined,
+					taskId:
+						(typeof (data as any)?.task_id === "string" &&
+							(data as any).task_id) ||
+						taskId,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			return TaskResultSchema.parse({
+				id:
+					(typeof (data as any)?.task_id === "string" &&
+						(data as any).task_id) ||
+					taskId,
+				kind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "comfly",
+					vendor: metaVendor,
+					model:
+						typeof (data as any)?.model === "string"
+							? (data as any).model
+							: undefined,
+					response: data ?? null,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+		}
 
 		return TaskResultSchema.parse({
 			id:
@@ -1460,29 +1543,38 @@ function parseComflyProgress(value: unknown): number | undefined {
 			taskKind: req.kind,
 			modelKey: model,
 		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "veo",
-			modelKey: model,
-		});
-
 		const progressCtx = extractProgressContext(req, "veo");
-		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
 		// New: Veo models can be served via sora2api's OpenAI-compatible chat endpoint (model ids are veo_*)
 		if (/^veo_/i.test(model)) {
-			const result = await runSora2ApiChatCompletionsVideoTask(c, userId, req, {
-				model,
-				progressVendor: "veo",
-			});
-			await recordVendorCallFromTaskResult(c, {
-				userId,
-				vendor: "veo",
+			const reservation = await requireSufficientTeamCredits(c, userId, {
+				required,
 				taskKind: req.kind,
-				result,
+				vendor: "veo",
+				modelKey: model,
 			});
-			return result;
+			emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+			try {
+				const result = await runSora2ApiChatCompletionsVideoTask(
+					c,
+					userId,
+					req,
+					{
+						model,
+						progressVendor: "veo",
+					},
+				);
+				await bindReservationToTaskId(c, userId, reservation, result.id);
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: "veo",
+					taskKind: req.kind,
+					result,
+				});
+				return result;
+			} catch (err) {
+				return await releaseReservationOnThrow(c, userId, reservation, err);
+			}
 		}
 
 		const ctx = await resolveVendorContext(c, userId, "veo");
@@ -1501,6 +1593,15 @@ function parseComflyProgress(value: unknown): number | undefined {
 			});
 		}
 
+		const reservation = await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "veo",
+			modelKey: model,
+		});
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+		try {
 		const aspectRatio =
 			typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()
 				? extras.aspectRatio.trim()
@@ -1547,6 +1648,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 				},
 				progressCtx,
 			);
+			await bindReservationToTaskId(c, userId, reservation, result.id);
 			await recordVendorCallFromTaskResult(c, {
 				userId,
 				vendor: "veo",
@@ -1661,6 +1763,7 @@ function parseComflyProgress(value: unknown): number | undefined {
 			response: payload,
 		},
 	});
+		await bindReservationToTaskId(c, userId, reservation, taskId);
 		await recordVendorCallFromTaskResult(c, {
 			userId,
 			vendor: "veo",
@@ -1676,6 +1779,9 @@ function parseComflyProgress(value: unknown): number | undefined {
 			});
 		}
 		return result;
+		} catch (err) {
+			return await releaseReservationOnThrow(c, userId, reservation, err);
+		}
 }
 
 export async function fetchVeoTaskResult(
@@ -1783,29 +1889,34 @@ export async function fetchVeoTaskResult(
 	if (status === "failed") {
 		const errMsg =
 			payload.failure_reason || payload.error || "Veo 视频任务失败";
-		await recordVendorCallFinal(c, {
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "failed",
+			assets: [],
+			raw: {
+				provider: "veo",
+				model: typeof payload.model === "string" ? payload.model : undefined,
+				response: payload,
+				progress,
+				message: errMsg,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
 			userId,
 			vendor: "veo",
-			taskId,
 			taskKind: "text_to_video",
-			status: "failed",
-			errorMessage: errMsg,
+			result,
 		});
 		if (channelVendor) {
-			await recordVendorCallFinal(c, {
+			await recordVendorCallFromTaskResult(c, {
 				userId,
 				vendor: channelVendor,
-				taskId,
 				taskKind: "text_to_video",
-				status: "failed",
-				errorMessage: errMsg,
+				result,
 			});
 		}
-		throw new AppError(errMsg, {
-			status: 502,
-			code: "veo_result_failed",
-			details: { upstreamData: payload },
-		});
+		return result;
 	}
 
 	if (status === "succeeded") {
@@ -1835,24 +1946,61 @@ export async function fetchVeoTaskResult(
 				payload.thumbnailUrl || payload.thumbnail_url || null,
 		});
 
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets: [asset],
-			meta: {
-				taskKind: "text_to_video",
-				prompt:
-					typeof payload.prompt === "string"
-						? payload.prompt
-						: null,
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt:
+						typeof payload.prompt === "string"
+							? payload.prompt
+							: null,
+					vendor: "veo",
+					modelKey:
+						typeof payload.model === "string"
+							? payload.model
+							: undefined,
+					taskId: (payload.id || taskId) ?? null,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: payload.id || taskId,
+				kind: "text_to_video",
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "veo",
+					model:
+						typeof payload.model === "string" ? payload.model : undefined,
+					response: payload,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
 				vendor: "veo",
-				modelKey:
-					typeof payload.model === "string"
-						? payload.model
-						: undefined,
-				taskId: (payload.id || taskId) ?? null,
-			},
-		});
+				taskKind: "text_to_video",
+				result,
+			});
+			if (channelVendor) {
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: channelVendor,
+					taskKind: "text_to_video",
+					result,
+				});
+			}
+			return result;
+		}
 
 		const result = TaskResultSchema.parse({
 			id: payload.id || taskId,
@@ -1987,7 +2135,7 @@ export async function runSora2ApiVideoTask(
 		taskKind: req.kind,
 		modelKey: billingModelKey,
 	});
-	await requireSufficientTeamCredits(c, userId, {
+	const reservation = await requireSufficientTeamCredits(c, userId, {
 		required,
 		taskKind: req.kind,
 		vendor: "sora2api",
@@ -1995,6 +2143,7 @@ export async function runSora2ApiVideoTask(
 	});
 
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+	try {
 	const aspectRatio = orientation === "portrait" ? "9:16" : "16:9";
 	const webHook =
 		typeof extras.webHook === "string" && extras.webHook.trim()
@@ -2044,6 +2193,7 @@ export async function runSora2ApiVideoTask(
 			},
 			progressCtx,
 		);
+		await bindReservationToTaskId(c, userId, reservation, result.id);
 		{
 			const nowIso = new Date().toISOString();
 			const vendorForRef = `comfly-${model || "sora-2"}`;
@@ -2221,6 +2371,7 @@ export async function runSora2ApiVideoTask(
 				response: data ?? null,
 			},
 		});
+		await bindReservationToTaskId(c, userId, reservation, createdTaskId);
 		await recordVendorCallFromTaskResult(c, {
 			userId,
 			vendor: vendorForLog,
@@ -2346,6 +2497,7 @@ export async function runSora2ApiVideoTask(
 				response: data ?? null,
 			},
 		});
+		await bindReservationToTaskId(c, userId, reservation, createdTaskId);
 		await recordVendorCallFromTaskResult(c, {
 			userId,
 			vendor: vendorForLog,
@@ -2601,6 +2753,7 @@ export async function runSora2ApiVideoTask(
 			response: createdPayload,
 		},
 	});
+	await bindReservationToTaskId(c, userId, reservation, createdTaskId);
 	await recordVendorCallFromTaskResult(c, {
 		userId,
 		vendor: vendorForLog,
@@ -2608,6 +2761,9 @@ export async function runSora2ApiVideoTask(
 		result,
 	});
 	return result;
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 export async function fetchSora2ApiTaskResult(
@@ -2735,21 +2891,47 @@ export async function fetchSora2ApiTaskResult(
 				return enhanced || client;
 			})();
 
-			const hostedAssets = await hostTaskAssetsInWorker({
-				c,
-				userId,
-				assets: [asset],
-				meta: {
-					taskKind: "text_to_video",
-					prompt: promptForAsset,
+			let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+			try {
+				hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets: [asset],
+					meta: {
+						taskKind: "text_to_video",
+						prompt: promptForAsset,
+						vendor: vendorForLog,
+						modelKey:
+							typeof payload?.model === "string"
+								? payload.model
+								: undefined,
+						taskId: taskId ?? null,
+					},
+				});
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后重试";
+				const result = TaskResultSchema.parse({
+					id: taskId,
+					kind: "text_to_video",
+					status: "running",
+					assets: [],
+					raw: {
+						provider: "yunwu",
+						response: payload ?? null,
+						hosting: { status: "pending", message },
+					},
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
 					vendor: vendorForLog,
-					modelKey:
-						typeof payload?.model === "string"
-							? payload.model
-							: undefined,
-					taskId: taskId ?? null,
-				},
-			});
+					taskKind: "text_to_video",
+					result,
+				});
+				return result;
+			}
 
 			const result = TaskResultSchema.parse({
 				id: taskId,
@@ -2835,21 +3017,49 @@ export async function fetchSora2ApiTaskResult(
 				thumbnailUrl: thumbnailUrl,
 			});
 
-			const hostedAssets = await hostTaskAssetsInWorker({
-				c,
-				userId,
-				assets: [asset],
-				meta: {
-					taskKind: "text_to_video",
-					prompt:
-						typeof promptFromClient === "string" &&
-						promptFromClient.trim()
-							? promptFromClient.trim()
-							: null,
+			let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+			try {
+				hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets: [asset],
+					meta: {
+						taskKind: "text_to_video",
+						prompt:
+							typeof promptFromClient === "string" &&
+							promptFromClient.trim()
+								? promptFromClient.trim()
+								: null,
+						vendor: vendorForLog,
+						taskId: taskId ?? null,
+					},
+				});
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后重试";
+				const result = TaskResultSchema.parse({
+					id: taskId,
+					kind: "text_to_video",
+					status: "running",
+					assets: [],
+					raw: {
+						provider: "apimart",
+						vendor: vendorForLog,
+						response: payload ?? null,
+						progress,
+						hosting: { status: "pending", message },
+					},
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
 					vendor: vendorForLog,
-					taskId: taskId ?? null,
-				},
-			});
+					taskKind: "text_to_video",
+					result,
+				});
+				return result;
+			}
 
 			const result = TaskResultSchema.parse({
 				id: taskId,
@@ -3156,21 +3366,48 @@ export async function fetchSora2ApiTaskResult(
 		if (assetPayload) {
 			const asset = TaskAssetSchema.parse(assetPayload);
 
-			const hostedAssets = await hostTaskAssetsInWorker({
-				c,
-				userId,
-				assets: [asset],
-				meta: {
+			let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+			try {
+				hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets: [asset],
+					meta: {
+						taskKind: "text_to_video",
+						prompt: promptForAsset,
+						vendor: "sora2api",
+						modelKey:
+							typeof payload.model === "string"
+								? payload.model
+								: undefined,
+						taskId: taskId ?? null,
+					},
+				});
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后重试";
+				const result = TaskResultSchema.parse({
+					id: taskId,
+					kind: "text_to_video",
+					status: "running",
+					assets: [],
+					raw: {
+						provider: "sora2api",
+						response: mergedPayload,
+						progress,
+						hosting: { status: "pending", message },
+					},
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: vendorForLog,
 					taskKind: "text_to_video",
-					prompt: promptForAsset,
-					vendor: "sora2api",
-					modelKey:
-						typeof payload.model === "string"
-							? payload.model
-							: undefined,
-					taskId: taskId ?? null,
-				},
-			});
+					result,
+				});
+				return result;
+			}
 
 			const result = TaskResultSchema.parse({
 				id: taskId,
@@ -3492,18 +3729,48 @@ export async function fetchGrsaiDrawTaskResult(
 				(typeof options?.promptFromClient === "string" &&
 					options.promptFromClient.trim()) ||
 				null;
-			const hostedAssets = await hostTaskAssetsInWorker({
-				c,
-				userId,
-				assets,
-				meta: {
-					taskKind,
-					prompt: promptForAsset,
+			try {
+				const hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets,
+					meta: {
+						taskKind,
+						prompt: promptForAsset,
+						vendor: vendorForLog,
+						taskId: taskId ?? null,
+					},
+				});
+				assets = hostedAssets;
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后重试";
+				const result = TaskResultSchema.parse({
+					id: taskId,
+					kind: taskKind,
+					status: "running",
+					assets: [],
+					raw: {
+						provider: "apimart",
+						vendor: vendorForLog,
+						upstreamTaskId,
+						response: payload,
+						progress,
+						failureReason: failureReasonRaw,
+						wrapper: wrapper ?? null,
+						hosting: { status: "pending", message },
+					},
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
 					vendor: vendorForLog,
-					taskId: taskId ?? null,
-				},
-			});
-			assets = hostedAssets;
+					taskKind,
+					result,
+				});
+				return result;
+			}
 		}
 
 		const result = TaskResultSchema.parse({
@@ -3620,18 +3887,48 @@ export async function fetchGrsaiDrawTaskResult(
 				options.promptFromClient.trim()) ||
 			(typeof payload?.prompt === "string" && payload.prompt.trim()) ||
 			null;
-	const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets,
-			meta: {
-				taskKind,
-				prompt: promptForAsset,
+		try {
+			const hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets,
+				meta: {
+					taskKind,
+					prompt: promptForAsset,
+					vendor: vendorForLog,
+					taskId: taskId ?? null,
+				},
+			});
+			assets = hostedAssets;
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: taskKind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "grsai",
+					vendor: vendorForLog,
+					upstreamTaskId,
+					response: payload,
+					progress,
+					failureReason: failureReasonRaw,
+					wrapper: data ?? null,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
 				vendor: vendorForLog,
-				taskId: taskId ?? null,
-			},
-		});
-		assets = hostedAssets;
+				taskKind,
+				result,
+			});
+			return result;
+		}
 	}
 
 	const result = TaskResultSchema.parse({
@@ -3761,16 +4058,7 @@ export async function fetchGrsaiDrawTaskResult(
 			taskKind: req.kind,
 			modelKey: model,
 		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "minimax",
-			modelKey: model,
-		});
-
 		const progressCtx = extractProgressContext(req, "minimax");
-		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
-		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
 
 		const ctx = await resolveVendorContext(c, userId, "minimax");
 		const baseUrl = normalizeBaseUrl(ctx.baseUrl);
@@ -3863,6 +4151,16 @@ export async function fetchGrsaiDrawTaskResult(
 			}
 		})();
 
+		const reservation = await requireSufficientTeamCredits(c, userId, {
+			required,
+			taskKind: req.kind,
+			vendor: "minimax",
+			modelKey: model,
+		});
+		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+		emitProgress(userId, progressCtx, { status: "running", progress: 5 });
+
+		try {
 		const promptOptimizer =
 			typeof (extras as any).promptOptimizer === "boolean"
 				? (extras as any).promptOptimizer
@@ -3968,6 +4266,7 @@ export async function fetchGrsaiDrawTaskResult(
 			response: data ?? null,
 		},
 	});
+	await bindReservationToTaskId(c, userId, reservation, taskId);
 	await recordVendorCallFromTaskResult(c, {
 		userId,
 		vendor: "minimax",
@@ -3983,6 +4282,9 @@ export async function fetchGrsaiDrawTaskResult(
 		});
 	}
 	return result;
+		} catch (err) {
+			return await releaseReservationOnThrow(c, userId, reservation, err);
+		}
 }
 
 function normalizeMiniMaxStatus(value: unknown): TaskStatus {
@@ -4220,24 +4522,63 @@ export async function fetchMiniMaxTaskResult(
 			url: videoUrlFromPayload,
 			thumbnailUrl: null,
 		});
-		const hostedAssets = await hostTaskAssetsInWorker({
-			c,
-			userId,
-			assets: [asset],
-			meta: {
-				taskKind: "text_to_video",
-				prompt:
-					typeof payload?.prompt === "string" && payload.prompt.trim()
-						? payload.prompt.trim()
-						: null,
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind: "text_to_video",
+					prompt:
+						typeof payload?.prompt === "string" && payload.prompt.trim()
+							? payload.prompt.trim()
+							: null,
+					vendor: "minimax",
+					modelKey:
+						typeof payload?.model === "string" && payload.model.trim()
+							? payload.model.trim()
+							: undefined,
+					taskId,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: taskId,
+				kind: "text_to_video",
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "minimax",
+					model:
+						typeof payload?.model === "string" && payload.model.trim()
+							? payload.model.trim()
+							: undefined,
+					response: payload,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
 				vendor: "minimax",
-				modelKey:
-					typeof payload?.model === "string" && payload.model.trim()
-						? payload.model.trim()
-						: undefined,
-				taskId,
-			},
-		});
+				taskKind: "text_to_video",
+				result,
+			});
+			if (channelVendor) {
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: channelVendor,
+					taskKind: "text_to_video",
+					result,
+				});
+			}
+			return result;
+		}
 
 		const result = TaskResultSchema.parse({
 			id: taskId,
@@ -4344,24 +4685,63 @@ export async function fetchMiniMaxTaskResult(
 		url: videoUrl,
 		thumbnailUrl: null,
 	});
-	const hostedAssets = await hostTaskAssetsInWorker({
-		c,
-		userId,
-		assets: [asset],
-		meta: {
-			taskKind: "text_to_video",
-			prompt:
-				typeof payload?.prompt === "string" && payload.prompt.trim()
-					? payload.prompt.trim()
-					: null,
+	let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+	try {
+		hostedAssets = await hostTaskAssetsInWorker({
+			c,
+			userId,
+			assets: [asset],
+			meta: {
+				taskKind: "text_to_video",
+				prompt:
+					typeof payload?.prompt === "string" && payload.prompt.trim()
+						? payload.prompt.trim()
+						: null,
+				vendor: "minimax",
+				modelKey:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
+				taskId,
+			},
+		});
+	} catch (err: any) {
+		const message =
+			typeof err?.message === "string" && err.message.trim()
+				? err.message.trim()
+				: "OSS 托管失败，稍后重试";
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: "text_to_video",
+			status: "running",
+			assets: [],
+			raw: {
+				provider: "minimax",
+				model:
+					typeof payload?.model === "string" && payload.model.trim()
+						? payload.model.trim()
+						: undefined,
+				response: payload,
+				progress,
+				hosting: { status: "pending", message },
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
 			vendor: "minimax",
-			modelKey:
-				typeof payload?.model === "string" && payload.model.trim()
-					? payload.model.trim()
-					: undefined,
-			taskId,
-		},
-	});
+			taskKind: "text_to_video",
+			result,
+		});
+		if (channelVendor) {
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: channelVendor,
+				taskKind: "text_to_video",
+				result,
+			});
+		}
+		return result;
+	}
 
 	const result = TaskResultSchema.parse({
 		id: taskId,
@@ -4941,30 +5321,31 @@ async function runOpenAiTextTask(
 		taskKind: req.kind,
 		modelKey: model,
 	});
-	await requireSufficientTeamCredits(c, userId, {
+	const reservation = await requireSufficientTeamCredits(c, userId, {
 		required,
 		taskKind: req.kind,
 		vendor: "openai",
 		modelKey: model,
 	});
 
-	const extras = (req.extras || {}) as Record<string, any>;
+	try {
+		const extras = (req.extras || {}) as Record<string, any>;
 
-	const systemPrompt =
-		req.kind === "prompt_refine"
-			? pickSystemPrompt(
-					req,
-					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
-				)
-			: pickSystemPrompt(req, "请用中文回答。");
+		const systemPrompt =
+			req.kind === "prompt_refine"
+				? pickSystemPrompt(
+						req,
+						"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
+					)
+				: pickSystemPrompt(req, "请用中文回答。");
 
-	const temperature = normalizeTemperature(extras.temperature, 0.7);
+		const temperature = normalizeTemperature(extras.temperature, 0.7);
 
-	const messages: OpenAIChatMessageForTask[] = [];
-	if (systemPrompt) {
-		messages.push({ role: "system", content: systemPrompt });
-	}
-	messages.push({ role: "user", content: req.prompt });
+		const messages: OpenAIChatMessageForTask[] = [];
+		if (systemPrompt) {
+			messages.push({ role: "system", content: systemPrompt });
+		}
+		messages.push({ role: "user", content: req.prompt });
 
 		const input = convertMessagesToResponsesInput(messages);
 		const body = {
@@ -4990,12 +5371,14 @@ async function runOpenAiTextTask(
 			(typeof parsed?.id === "string" && parsed.id.trim()) ||
 			`openai-${Date.now().toString(36)}`;
 
-	return TaskResultSchema.parse({
-		id,
-		kind: req.kind,
-		status: "succeeded",
-		assets: [],
-		raw: {
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status: "succeeded",
+			assets: [],
+			raw: {
 				provider: "openai",
 				model,
 				response: parsed,
@@ -5003,6 +5386,9 @@ async function runOpenAiTextTask(
 				text,
 			},
 		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- OpenAI image_to_prompt ----
@@ -5046,32 +5432,33 @@ async function runOpenAiImageToPromptTask(
 		taskKind: req.kind,
 		modelKey: model,
 	});
-	await requireSufficientTeamCredits(c, userId, {
+	const reservation = await requireSufficientTeamCredits(c, userId, {
 		required,
 		taskKind: req.kind,
 		vendor: "openai",
 		modelKey: model,
 	});
 
-	const userPrompt =
-		req.prompt?.trim() ||
-		"Describe this image in rich detail and output a single, well-structured English prompt that can be used to recreate it. Do not add any explanations, headings, markdown formatting, or non-English text.";
+	try {
+		const userPrompt =
+			req.prompt?.trim() ||
+			"Describe this image in rich detail and output a single, well-structured English prompt that can be used to recreate it. Do not add any explanations, headings, markdown formatting, or non-English text.";
 
-	const systemPrompt = pickSystemPrompt(
-		req,
-		"You are an expert prompt engineer. When a user provides an image, you must return a single detailed English prompt that can be used to recreate it. Describe subjects, environment, composition, camera, lighting, and style cues. Do not add explanations, headings, markdown, or any non-English text; output only the final English prompt.",
-	);
+		const systemPrompt = pickSystemPrompt(
+			req,
+			"You are an expert prompt engineer. When a user provides an image, you must return a single detailed English prompt that can be used to recreate it. Describe subjects, environment, composition, camera, lighting, and style cues. Do not add explanations, headings, markdown, or any non-English text; output only the final English prompt.",
+		);
 
-	const parts: any[] = [];
-	if (systemPrompt) {
-		parts.push({ type: "text", text: systemPrompt });
-	}
-	parts.push({ type: "text", text: userPrompt });
-	const imageSource = imageData || imageUrl!;
-	parts.push({
-		type: "image_url",
-		image_url: { url: imageSource },
-	});
+		const parts: any[] = [];
+		if (systemPrompt) {
+			parts.push({ type: "text", text: systemPrompt });
+		}
+		parts.push({ type: "text", text: userPrompt });
+		const imageSource = imageData || imageUrl!;
+		parts.push({
+			type: "image_url",
+			image_url: { url: imageSource },
+		});
 
 		const messages: OpenAIChatMessageForTask[] = [
 			{
@@ -5106,11 +5493,13 @@ async function runOpenAiImageToPromptTask(
 			(typeof parsed?.id === "string" && parsed.id.trim()) ||
 			`openai-img-${Date.now().toString(36)}`;
 
-	return TaskResultSchema.parse({
-		id,
-		kind: "image_to_prompt",
-		status: "succeeded",
-		assets: [],
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: "image_to_prompt",
+			status: "succeeded",
+			assets: [],
 			raw: {
 				provider: "openai",
 				model,
@@ -5119,7 +5508,10 @@ async function runOpenAiImageToPromptTask(
 				text,
 				imageSource,
 			},
-	});
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- Gemini / Banana 文案 ----
@@ -5147,38 +5539,37 @@ async function runGeminiTextTask(
 		? modelKey
 		: `models/${modelKey}`;
 	const modelId = model.startsWith("models/") ? model.slice(7) : model;
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind: req.kind,
-			modelKey: modelId,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "gemini",
-			modelKey: modelId,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: modelId,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "gemini",
+		modelKey: modelId,
+	});
 
-	const systemPrompt =
-		req.kind === "prompt_refine"
-			? pickSystemPrompt(
-					req,
-					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
-				)
-			: pickSystemPrompt(req, "请用中文回答。");
+	try {
+		const systemPrompt =
+			req.kind === "prompt_refine"
+				? pickSystemPrompt(
+						req,
+						"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
+					)
+				: pickSystemPrompt(req, "请用中文回答。");
 
-	const contents: any[] = [];
-	if (systemPrompt) {
+		const contents: any[] = [];
+		if (systemPrompt) {
+			contents.push({
+				role: "user",
+				parts: [{ text: systemPrompt }],
+			});
+		}
 		contents.push({
 			role: "user",
-			parts: [{ text: systemPrompt }],
+			parts: [{ text: req.prompt }],
 		});
-	}
-	contents.push({
-		role: "user",
-		parts: [{ text: req.prompt }],
-	});
 
 	const endpointBase = `${base.replace(/\/+$/, "")}/v1beta/${model}:generateContent`;
 	const url =
@@ -5222,19 +5613,24 @@ async function runGeminiTextTask(
 		return raw.toLowerCase().startsWith("gemini-") ? raw : `gemini-${raw}`;
 	})();
 
-	return TaskResultSchema.parse({
-		id,
-		kind: req.kind,
-		status: "succeeded",
-		assets: [],
-		raw: {
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status: "succeeded",
+			assets: [],
+			raw: {
 			provider: "gemini",
 			vendor: vendorForLog,
 			model: modelId,
 			response: data,
 			text,
-		},
-	});
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- Gemini / Banana 图像（text_to_image / image_edit） ----
@@ -5456,19 +5852,18 @@ async function runGeminiBananaImageTask(
 			code: "banana_model_not_supported",
 		});
 	}
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind: req.kind,
-			modelKey: normalizedModel,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "gemini",
-			modelKey: normalizedModel,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: normalizedModel,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "gemini",
+		modelKey: normalizedModel,
+	});
 
+	try {
 	const endpoint = isApimartBase
 		? `${normalizeApimartBaseUrl(baseUrl)}/v1/images/generations`
 		: `${baseUrl}/v1/draw/nano-banana`;
@@ -5636,7 +6031,7 @@ async function runGeminiBananaImageTask(
 				TaskAssetSchema.parse({ type: "image", url, thumbnailUrl: null }),
 			);
 
-			return TaskResultSchema.parse({
+			const result = TaskResultSchema.parse({
 				id: localTaskId,
 				kind: req.kind,
 				status: assets.length ? "succeeded" : "failed",
@@ -5649,6 +6044,8 @@ async function runGeminiBananaImageTask(
 					response: data ?? null,
 				},
 			});
+			await bindReservationToTaskId(c, userId, reservation, localTaskId);
+			return result;
 		}
 
 	if (isApimartBase) {
@@ -5754,7 +6151,7 @@ async function runGeminiBananaImageTask(
 			}
 		}
 
-		return TaskResultSchema.parse({
+		const result = TaskResultSchema.parse({
 			id: localTaskId,
 			kind: req.kind,
 			status: "queued",
@@ -5769,6 +6166,8 @@ async function runGeminiBananaImageTask(
 				response: data ?? null,
 			},
 		});
+		await bindReservationToTaskId(c, userId, reservation, localTaskId);
+		return result;
 	}
 
 	const coerceTaskId = (value: any): string | null => {
@@ -6086,7 +6485,7 @@ async function runGeminiBananaImageTask(
 			String((payload as any).message).trim()) ||
 		(waitingUpstreamTaskId ? "等待上游返回任务 ID" : null);
 
-	return TaskResultSchema.parse({
+	const result = TaskResultSchema.parse({
 		id: localTaskId,
 		kind: req.kind,
 		status: creationStatus,
@@ -6108,6 +6507,11 @@ async function runGeminiBananaImageTask(
 			raw: normalized.raw ?? data,
 		},
 	});
+	await bindReservationToTaskId(c, userId, reservation, localTaskId);
+	return result;
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- Qwen 文生图（简化版） ----
@@ -6131,21 +6535,20 @@ async function runQwenTextToImageTask(
 
 	const model =
 		pickModelKey(req, { modelKey: undefined }) || "qwen-image-plus";
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind: req.kind,
-			modelKey: model,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "qwen",
-			modelKey: model,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "qwen",
+		modelKey: model,
+	});
 
-	const width = req.width || 1328;
-	const height = req.height || 1328;
+	try {
+		const width = req.width || 1328;
+		const height = req.height || 1328;
 
 	const body = {
 		model,
@@ -6208,17 +6611,22 @@ async function runQwenTextToImageTask(
 	const status: "succeeded" | "failed" =
 		assets.length > 0 ? "succeeded" : "failed";
 
-	return TaskResultSchema.parse({
-		id,
-		kind: "text_to_image",
-		status,
-		assets,
-		raw: {
-			provider: "qwen",
-			model,
-			response: data,
-		},
-	});
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: "text_to_image",
+			status,
+			assets,
+			raw: {
+				provider: "qwen",
+				model,
+				response: data,
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- Sora2API 图像（text_to_image / image_edit） ----
@@ -6283,19 +6691,18 @@ async function runQwenTextToImageTask(
 		return "gemini-2.5-flash-image-" + (isPortrait ? "portrait" : "landscape");
 	})();
 	const model = normalizeSora2ApiImageModelKey(modelKeyRaw || defaultGeminiModelKey);
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind: req.kind,
-			modelKey: model,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "sora2api",
-			modelKey: model,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "sora2api",
+		modelKey: model,
+	});
 
+	try {
 	const promptParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
 		{ type: "text", text: req.prompt },
 	];
@@ -6441,6 +6848,7 @@ async function runQwenTextToImageTask(
 		raw: { response: payload },
 	});
 
+		await bindReservationToTaskId(c, userId, reservation, id);
 		return TaskResultSchema.parse({
 			id,
 			kind: req.kind,
@@ -6454,6 +6862,9 @@ async function runQwenTextToImageTask(
 				rawBody: rawText,
 			},
 		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 	}
 
 	async function runSora2ApiChatCompletionsVideoTask(
@@ -6689,42 +7100,41 @@ async function runAnthropicTextTask(
 	const model =
 		pickModelKey(req, { modelKey: undefined }) ||
 		"claude-3.5-sonnet-latest";
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind: req.kind,
-			modelKey: model,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind: req.kind,
-			vendor: "anthropic",
-			modelKey: model,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "anthropic",
+		modelKey: model,
+	});
 
-	const systemPrompt =
-		req.kind === "prompt_refine"
-			? pickSystemPrompt(
-					req,
-					"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
-				)
-			: pickSystemPrompt(req, "请用中文回答。");
+	try {
+		const systemPrompt =
+			req.kind === "prompt_refine"
+				? pickSystemPrompt(
+						req,
+						"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
+					)
+				: pickSystemPrompt(req, "请用中文回答。");
 
-	const messages = [
-		{
-			role: "user",
-			content: req.prompt,
-		},
-	];
+		const messages = [
+			{
+				role: "user",
+				content: req.prompt,
+			},
+		];
 
-	const body: any = {
-		model,
-		max_tokens: 4096,
-		messages,
-	};
-	if (systemPrompt) {
-		body.system = systemPrompt;
-	}
+		const body: any = {
+			model,
+			max_tokens: 4096,
+			messages,
+		};
+		if (systemPrompt) {
+			body.system = systemPrompt;
+		}
 
 	const url = /\/v\d+\/messages$/i.test(base)
 		? base
@@ -6759,18 +7169,23 @@ async function runAnthropicTextTask(
 		(typeof data?.id === "string" && data.id.trim()) ||
 		`anth-${Date.now().toString(36)}`;
 
-	return TaskResultSchema.parse({
-		id,
-		kind: req.kind,
-		status: "succeeded",
-		assets: [],
-		raw: {
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status: "succeeded",
+			assets: [],
+			raw: {
 			provider: "anthropic",
 			model,
 			response: data,
 			text: text || "Anthropic 调用成功",
-		},
-	});
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 export async function runGenericTaskForVendor(
@@ -6924,29 +7339,52 @@ export async function runGenericTaskForVendor(
 				? (req.extras as any).persistAssets
 				: true;
 
-		if (persistAssets && result.assets && result.assets.length > 0) {
+		if (result.status === "succeeded" && result.assets && result.assets.length > 0) {
 			// 将生成结果写入 assets（默认托管到 OSS/R2 并替换 URL；ASSET_HOSTING_DISABLED=1 时保持源 URL）
-			const hostedAssets = await hostTaskAssetsInWorker({
-				c,
-				userId,
-				assets: result.assets,
-				meta: {
-					taskKind: req.kind,
-					prompt: req.prompt,
-					vendor: apiVendor,
-					modelKey:
-						(typeof (req.extras as any)?.modelKey === "string" &&
-							(req.extras as any).modelKey) ||
-						undefined,
-					taskId:
-						(typeof result.id === "string" && result.id.trim()) ||
-						null,
-				},
-			});
-			result = TaskResultSchema.parse({
-				...result,
-				assets: hostedAssets,
-			});
+			try {
+				const hostedAssets = await hostTaskAssetsInWorker({
+					c,
+					userId,
+					assets: result.assets,
+					meta: {
+						taskKind: req.kind,
+						prompt: req.prompt,
+						vendor: apiVendor,
+						modelKey:
+							(typeof (req.extras as any)?.modelKey === "string" &&
+								(req.extras as any).modelKey) ||
+							undefined,
+						taskId:
+							(typeof result.id === "string" && result.id.trim()) ||
+							null,
+					},
+				});
+				result = TaskResultSchema.parse({
+					...result,
+					assets: hostedAssets,
+				});
+			} catch (err: any) {
+				// Hosting failed: do not charge; keep reserved and allow clients to retry polling.
+				const message =
+					typeof err?.message === "string" && err.message.trim()
+						? err.message.trim()
+						: "OSS 托管失败，稍后自动重试";
+				result = TaskResultSchema.parse({
+					...result,
+					status: "running",
+					raw: {
+						...(result.raw as any),
+						hosting: { status: "pending", message },
+						persistAssets,
+					},
+				});
+				emitProgress(userId, progressCtx, {
+					status: "running",
+					progress: 95,
+					message: `托管中：${message}`,
+					taskId: result.id,
+				});
+			}
 		}
 
 		// 统一发出完成事件，便于前端通过 /tasks/stream 或 /tasks/pending 聚合观察

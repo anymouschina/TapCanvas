@@ -7,6 +7,8 @@ export const TeamSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	credits: z.number(),
+	creditsFrozen: z.number(),
+	creditsAvailable: z.number(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
@@ -79,7 +81,7 @@ export const TopUpTeamCreditsRequestSchema = z.object({
 export const TeamCreditLedgerEntrySchema = z.object({
 	id: z.string(),
 	teamId: z.string(),
-	entryType: z.enum(["topup", "deduct"]),
+	entryType: z.enum(["topup", "reserve", "deduct", "release"]),
 	amount: z.number(),
 	taskId: z.string().nullable(),
 	taskKind: z.string().nullable(),
@@ -88,4 +90,3 @@ export const TeamCreditLedgerEntrySchema = z.object({
 	createdAt: z.string(),
 });
 export type TeamCreditLedgerEntryDto = z.infer<typeof TeamCreditLedgerEntrySchema>;
-

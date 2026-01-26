@@ -1018,6 +1018,8 @@ export type TeamDto = {
   id: string
   name: string
   credits: number
+  creditsFrozen: number
+  creditsAvailable: number
   createdAt: string
   updatedAt: string
 }
@@ -1052,7 +1054,7 @@ export type TeamInviteDto = {
 export type TeamCreditLedgerEntryDto = {
   id: string
   teamId: string
-  entryType: 'topup' | 'deduct'
+  entryType: 'topup' | 'reserve' | 'deduct' | 'release'
   amount: number
   taskId: string | null
   taskKind: string | null

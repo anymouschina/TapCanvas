@@ -13,10 +13,13 @@ import {
 } from "./sora.saved-characters.repo";
 import { upsertVendorTaskRef } from "../task/vendor-task-refs.repo";
 import {
-	chargeTeamCreditsOnSuccess,
+	bindTeamCreditsReservationToTaskId,
 	requireSufficientTeamCredits,
+	releaseTeamCreditsOnFailure,
+	settleTeamCreditsOnSuccess,
 } from "../team/team.service";
 import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
+import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -346,18 +349,16 @@ export async function createSoraVideoTask(
 		if (raw) return raw;
 		return "sora-2";
 	})();
-	{
-		const required = await resolveTeamCreditsCostForTask(c, {
-			taskKind,
-			modelKey: model,
-		});
-		await requireSufficientTeamCredits(c, userId, {
-			required,
-			taskKind,
-			vendor: "sora2api",
-			modelKey: model,
-		});
-	}
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind,
+		vendor: "sora2api",
+		modelKey: model,
+	});
 
 	// 新接口：Sora2API /v1/video/sora-video（不再走 /backend/nf/create）
 	const vendor: "sora2api" | "grsai" = "sora2api";
@@ -405,13 +406,48 @@ export async function createSoraVideoTask(
 
 	const endpoints = ["/v1/video/sora-video"];
 
-	const result = await callSora2ApiWithFallbacks(
-		c,
-		userId,
-		endpoints,
-		body,
-		vendor,
-	);
+	let result: Awaited<ReturnType<typeof callSora2ApiWithFallbacks>>;
+	try {
+		result = await callSora2ApiWithFallbacks(c, userId, endpoints, body, vendor);
+	} catch (err) {
+		if (reservation) {
+			await releaseTeamCreditsOnFailure(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind,
+				vendor: "sora2api",
+				modelKey: model,
+			});
+		}
+		throw err;
+	}
+
+	if (reservation) {
+		await bindTeamCreditsReservationToTaskId(c, userId, {
+			teamId: reservation.teamId,
+			reservationTaskId: reservation.reservationTaskId,
+			taskId: result.id,
+		});
+	}
+	{
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "video",
+					taskId: result.id,
+					vendor,
+				},
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert sora video ref failed",
+				err?.message || err,
+			);
+		}
+	}
 
 	return {
 		id: result.id,
@@ -706,6 +742,20 @@ export async function getSoraVideoDraftByTask(
 				raw: matched,
 			};
 
+			const draftStatus =
+				typeof draft.status === "string" ? draft.status.trim().toLowerCase() : "";
+			if (
+				draftStatus === "failed" ||
+				draftStatus === "canceled" ||
+				draftStatus === "cancelled"
+			) {
+				await releaseTeamCreditsOnFailure(c, userId, {
+					taskId: input.taskId,
+					taskKind: "text_to_video",
+					vendor: "sora",
+				});
+			}
+
 			// Update history when video becomes available
 			const videoUrl =
 				draft.videoUrl && typeof draft.videoUrl === "string"
@@ -733,27 +783,6 @@ export async function getSoraVideoDraftByTask(
 				(matched as any).id ||
 				null;
 
-			const nowIso = new Date().toISOString();
-			await c.env.DB.prepare(
-				`UPDATE video_generation_histories
-         SET status = ?, video_url = ?, thumbnail_url = ?,
-             duration = ?, width = ?, height = ?, generation_id = ?, updated_at = ?
-         WHERE user_id = ? AND task_id = ?`,
-			)
-				.bind(
-					"success",
-					videoUrl,
-					thumb,
-					duration,
-					width,
-					height,
-					generationId,
-					nowIso,
-					userId,
-					input.taskId,
-				)
-				.run();
-
 			if (videoUrl) {
 				const modelRow = await c.env.DB.prepare(
 					`SELECT model FROM video_generation_histories
@@ -766,16 +795,106 @@ export async function getSoraVideoDraftByTask(
 					typeof modelRow?.model === "string" && modelRow.model.trim()
 						? modelRow.model.trim()
 						: null;
+
+				let hostedAssets: any[];
+				try {
+					hostedAssets = await hostTaskAssetsInWorker({
+						c,
+						userId,
+						assets: [
+							{
+								type: "video",
+								url: videoUrl,
+								thumbnailUrl: thumb,
+							},
+						],
+						meta: {
+							taskKind: "text_to_video",
+							prompt:
+								typeof draft.prompt === "string" ? draft.prompt : null,
+							vendor: "sora",
+							modelKey,
+							taskId: input.taskId,
+						},
+					});
+				} catch (err: any) {
+					const message =
+						typeof err?.message === "string" && err.message.trim()
+							? err.message.trim()
+							: "OSS 托管失败，稍后重试";
+					return SoraVideoDraftResponseSchema.parse({
+						...draft,
+						videoUrl: null,
+						thumbnailUrl: null,
+						raw: {
+							...(draft.raw ?? null),
+							hosting: { status: "pending", message },
+						},
+					});
+				}
+
+				const hostedVideoUrl =
+					hostedAssets &&
+					hostedAssets[0] &&
+					typeof hostedAssets[0].url === "string"
+						? hostedAssets[0].url
+						: null;
+				const hostedThumbUrl =
+					hostedAssets &&
+					hostedAssets[0] &&
+					typeof hostedAssets[0].thumbnailUrl === "string"
+						? hostedAssets[0].thumbnailUrl
+						: null;
+
+				if (!hostedVideoUrl) {
+					return SoraVideoDraftResponseSchema.parse({
+						...draft,
+						videoUrl: null,
+						thumbnailUrl: null,
+						raw: {
+							...(draft.raw ?? null),
+							hosting: { status: "pending", message: "OSS 托管中" },
+						},
+					});
+				}
+
+				const nowIso = new Date().toISOString();
+				await c.env.DB.prepare(
+					`UPDATE video_generation_histories
+           SET status = ?, video_url = ?, thumbnail_url = ?,
+               duration = ?, width = ?, height = ?, generation_id = ?, updated_at = ?
+           WHERE user_id = ? AND task_id = ?`,
+				)
+					.bind(
+						"success",
+						hostedVideoUrl,
+						hostedThumbUrl,
+						duration,
+						width,
+						height,
+						generationId,
+						nowIso,
+						userId,
+						input.taskId,
+					)
+					.run();
+
 				const amount = await resolveTeamCreditsCostForTask(c, {
 					taskKind: "text_to_video",
 					modelKey: modelKey || undefined,
 				});
-				await chargeTeamCreditsOnSuccess(c, userId, {
+				await settleTeamCreditsOnSuccess(c, userId, {
 					taskId: input.taskId,
 					taskKind: "text_to_video",
 					amount,
 					vendor: "sora",
 					modelKey,
+				});
+
+				return SoraVideoDraftResponseSchema.parse({
+					...draft,
+					videoUrl: hostedVideoUrl,
+					thumbnailUrl: hostedThumbUrl,
 				});
 			}
 

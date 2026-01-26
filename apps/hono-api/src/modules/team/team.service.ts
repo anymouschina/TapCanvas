@@ -7,17 +7,22 @@ import {
 	createTeamInvite,
 	findUserIdByLogin,
 	getTeamById,
-	getTeamCredits,
 	getTeamInviteByCode,
 	getTeamMembershipByUserId,
+	getTeamCreditsOverview,
+	getTeamReservedCreditsForTask,
 	listTeamCreditLedger,
 	listTeamInvites,
 	listTeamMembers,
 	listTeamsWithCounts,
 	markInviteAccepted,
+	rebindTeamCreditLedgerTaskId,
 	revokeInvite,
 	topUpTeamCredits,
-	tryChargeTeamCreditsOnce,
+	tryIncreaseReservedTeamCreditsForTask,
+	tryDeductTeamCreditsOnce,
+	tryReleaseTeamCreditsOnce,
+	tryReserveTeamCreditsOnce,
 } from "./team.repo";
 
 function isLocalDevRequest(c: any): boolean {
@@ -362,14 +367,69 @@ export async function requireSufficientTeamCredits(
 		vendor?: string;
 		modelKey?: string | null;
 	},
-): Promise<void> {
+): Promise<
+	| {
+			teamId: string;
+			reservationTaskId: string;
+			amount: number;
+			taskKind: string;
+			vendor?: string;
+			modelKey?: string | null;
+	  }
+	| null
+> {
 	const membership = await getTeamMembershipByUserId(c.env.DB, userId);
-	if (!membership) return;
+	if (!membership) return null;
 	const required = Math.max(0, Math.floor(input.required));
-	if (required <= 0) return;
+	if (required <= 0) return null;
 
-	const credits = await getTeamCredits(c.env.DB, membership.team_id);
-	const available = typeof credits === "number" && Number.isFinite(credits) ? credits : 0;
+	const isAssetTask = (() => {
+		const k = (input.taskKind || "").trim();
+		return (
+			k === "text_to_image" ||
+			k === "image_edit" ||
+			k === "text_to_video" ||
+			k === "image_to_video"
+		);
+	})();
+
+	// Strong constraint: charged asset generations must be hostable to OSS/R2.
+	// In local dev, allow bypassing via ASSET_HOSTING_DISABLED=1.
+	if (isAssetTask && !isLocalDevRequest(c)) {
+		const hostingDisabledFlag = String(
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			((c.env as any).ASSET_HOSTING_DISABLED ?? ""),
+		)
+			.trim()
+			.toLowerCase();
+		const hostingDisabled =
+			hostingDisabledFlag === "1" ||
+			hostingDisabledFlag === "true" ||
+			hostingDisabledFlag === "yes" ||
+			hostingDisabledFlag === "on";
+		const hasBucket = !!(c.env as any).R2_ASSETS;
+		const publicBase =
+			typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
+				? String((c.env as any).R2_PUBLIC_BASE_URL).trim()
+				: "";
+		if (hostingDisabled || !hasBucket || !publicBase) {
+			throw new AppError("扣积分任务要求开启 OSS 托管（请检查 R2 配置）", {
+				status: 503,
+				code: "asset_hosting_required",
+				details: {
+					ASSET_HOSTING_DISABLED: (c.env as any).ASSET_HOSTING_DISABLED,
+					R2_ASSETS: hasBucket ? "bound" : "missing",
+					R2_PUBLIC_BASE_URL: publicBase ? "configured" : "missing",
+				},
+			});
+		}
+	}
+
+	const overview = await getTeamCreditsOverview(c.env.DB, membership.team_id);
+	const available =
+		typeof overview?.available === "number" && Number.isFinite(overview.available)
+			? Math.max(0, Math.trunc(overview.available))
+			: 0;
 
 	if (available < required) {
 		throw new AppError("团队积分不足，无法调用三方生成，请先充值", {
@@ -385,26 +445,102 @@ export async function requireSufficientTeamCredits(
 				vendor: input.vendor,
 				required,
 				available,
+				credits: overview?.credits ?? available,
+				creditsFrozen: overview?.creditsFrozen ?? 0,
 			},
+		});
+	}
+
+	const note = (() => {
+		const parts: string[] = [];
+		if (typeof input.vendor === "string" && input.vendor.trim()) {
+			parts.push(`vendor:${input.vendor.trim()}`);
+		}
+		if (typeof input.modelKey === "string" && input.modelKey.trim()) {
+			parts.push(`model:${input.modelKey.trim()}`);
+		}
+		return parts.length ? parts.join(" ") : null;
+	})();
+
+	const reservationTaskId = crypto.randomUUID();
+	const nowIso = new Date().toISOString();
+	const reserveRes = await tryReserveTeamCreditsOnce(c.env.DB, {
+		teamId: membership.team_id,
+		amount: required,
+		taskId: reservationTaskId,
+		taskKind: input.taskKind,
+		actorUserId: userId,
+		note,
+		nowIso,
+	});
+	if (!reserveRes.reserved) {
+		const latest = await getTeamCreditsOverview(c.env.DB, membership.team_id);
+		throw new AppError("团队积分不足，无法调用三方生成，请先充值", {
+			status: 402,
+			code: "team_insufficient_credits",
+			details: {
+				teamId: membership.team_id,
+				taskKind: input.taskKind,
+				required,
+				available: latest?.available ?? available,
+				credits: latest?.credits ?? overview?.credits ?? available,
+				creditsFrozen: latest?.creditsFrozen ?? overview?.creditsFrozen ?? 0,
+			},
+		});
+	}
+
+	return {
+		teamId: membership.team_id,
+		reservationTaskId,
+		amount: required,
+		taskKind: input.taskKind,
+		vendor: input.vendor,
+		modelKey: input.modelKey ?? null,
+	};
+}
+
+export async function bindTeamCreditsReservationToTaskId(
+	c: AppContext,
+	userId: string,
+	input: {
+		teamId: string;
+		reservationTaskId: string;
+		taskId: string;
+	},
+): Promise<void> {
+	const taskId = (input.taskId || "").trim();
+	const reservationTaskId = (input.reservationTaskId || "").trim();
+	if (!taskId || !reservationTaskId) return;
+	if (taskId === reservationTaskId) return;
+
+	const res = await rebindTeamCreditLedgerTaskId(c.env.DB, {
+		teamId: input.teamId,
+		entryType: "reserve",
+		fromTaskId: reservationTaskId,
+		toTaskId: taskId,
+	});
+	if (!res.ok) {
+		// Best-effort only: do not break task delivery.
+		console.warn("[team-credits] bind reserve task_id failed", {
+			teamId: input.teamId,
+			fromTaskId: reservationTaskId,
+			toTaskId: taskId,
 		});
 	}
 }
 
-export async function chargeTeamCreditsOnSuccess(
+export async function releaseTeamCreditsOnFailure(
 	c: AppContext,
 	userId: string,
 	input: {
 		taskId: string;
 		taskKind: string;
-		amount: number;
 		vendor?: string;
 		modelKey?: string | null;
 	},
 ): Promise<void> {
 	const membership = await getTeamMembershipByUserId(c.env.DB, userId);
 	if (!membership) return;
-	const amount = Math.max(0, Math.floor(input.amount));
-	if (amount <= 0) return;
 	const taskId = (input.taskId || "").trim();
 	if (!taskId) return;
 
@@ -419,9 +555,15 @@ export async function chargeTeamCreditsOnSuccess(
 			}
 			return parts.length ? parts.join(" ") : null;
 		})();
-		await tryChargeTeamCreditsOnce(c.env.DB, {
+		const reserved = await getTeamReservedCreditsForTask(c.env.DB, {
 			teamId: membership.team_id,
-			amount,
+			taskId,
+		});
+		if (!reserved || reserved <= 0) return;
+
+		await tryReleaseTeamCreditsOnce(c.env.DB, {
+			teamId: membership.team_id,
+			amount: reserved,
 			taskId,
 			taskKind: input.taskKind,
 			actorUserId: userId,
@@ -430,6 +572,124 @@ export async function chargeTeamCreditsOnSuccess(
 		});
 	} catch (err) {
 		// Best-effort only: do not break task delivery.
-		console.warn("[team-credits] charge failed", err);
+		console.warn("[team-credits] release failed", err);
+	}
+}
+
+export async function settleTeamCreditsOnSuccess(
+	c: AppContext,
+	userId: string,
+	input: {
+		taskId: string;
+		taskKind: string;
+		amount: number;
+		vendor?: string;
+		modelKey?: string | null;
+	},
+): Promise<void> {
+	const membership = await getTeamMembershipByUserId(c.env.DB, userId);
+	if (!membership) return;
+	const taskId = (input.taskId || "").trim();
+	if (!taskId) return;
+	const amount = Math.max(0, Math.floor(input.amount));
+
+	try {
+		const note = (() => {
+			const parts: string[] = [];
+			if (typeof input.vendor === "string" && input.vendor.trim()) {
+				parts.push(`vendor:${input.vendor.trim()}`);
+			}
+			if (typeof input.modelKey === "string" && input.modelKey.trim()) {
+				parts.push(`model:${input.modelKey.trim()}`);
+			}
+			return parts.length ? parts.join(" ") : null;
+		})();
+
+		const teamId = membership.team_id;
+		const reserved = await getTeamReservedCreditsForTask(c.env.DB, {
+			teamId,
+			taskId,
+		});
+
+		// Backward-compatible: if no reserve exists (legacy tasks), do not block delivery.
+		if (!reserved || reserved <= 0) {
+			return;
+		}
+
+		const actual = Math.max(0, amount);
+		let reservedAmount = reserved;
+		let chargeAmount = actual;
+
+		if (chargeAmount > reservedAmount) {
+			const delta = chargeAmount - reservedAmount;
+			const nowIso = new Date().toISOString();
+			const increased = await tryIncreaseReservedTeamCreditsForTask(c.env.DB, {
+				teamId,
+				taskId,
+				expectedReserved: reservedAmount,
+				delta,
+				nowIso,
+			});
+			if (increased.increased) {
+				reservedAmount += delta;
+			} else {
+				const reread = await getTeamReservedCreditsForTask(c.env.DB, {
+					teamId,
+					taskId,
+				});
+				if (typeof reread === "number" && reread > reservedAmount) {
+					reservedAmount = reread;
+				}
+				if (chargeAmount > reservedAmount) {
+					console.warn("[team-credits] reserved < actual; charge capped", {
+						teamId,
+						taskId,
+						reserved: reservedAmount,
+						actual,
+					});
+					chargeAmount = reservedAmount;
+				}
+			}
+		}
+
+		if (chargeAmount === 0) {
+			await tryReleaseTeamCreditsOnce(c.env.DB, {
+				teamId,
+				amount: reservedAmount,
+				taskId,
+				taskKind: input.taskKind,
+				actorUserId: userId,
+				note,
+				nowIso: new Date().toISOString(),
+			});
+			return;
+		}
+
+		const deductRes = await tryDeductTeamCreditsOnce(c.env.DB, {
+			teamId,
+			amount: chargeAmount,
+			taskId,
+			taskKind: input.taskKind,
+			actorUserId: userId,
+			note,
+			nowIso: new Date().toISOString(),
+		});
+		if (!deductRes.deducted) return;
+
+		const releaseAmount = Math.max(0, reservedAmount - chargeAmount);
+		if (releaseAmount > 0) {
+			await tryReleaseTeamCreditsOnce(c.env.DB, {
+				teamId,
+				amount: releaseAmount,
+				taskId,
+				taskKind: input.taskKind,
+				actorUserId: userId,
+				note,
+				nowIso: new Date().toISOString(),
+			});
+		}
+	} catch (err) {
+		// Best-effort only: do not break task delivery.
+		console.warn("[team-credits] settle failed", err);
 	}
 }

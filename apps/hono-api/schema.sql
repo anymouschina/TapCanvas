@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS teams (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
 	credits INTEGER NOT NULL DEFAULT 0,
+	credits_frozen INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
@@ -71,7 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_team_invites_team_status ON team_invites(team_id,
 CREATE TABLE IF NOT EXISTS team_credit_ledger (
 	id TEXT PRIMARY KEY,
 	team_id TEXT NOT NULL,
-	entry_type TEXT NOT NULL, -- topup | deduct
+	entry_type TEXT NOT NULL, -- topup | reserve | deduct | release
 	amount INTEGER NOT NULL,
 	task_id TEXT,
 	task_kind TEXT,

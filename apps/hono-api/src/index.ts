@@ -18,7 +18,7 @@ import { apiKeyRouter, publicApiRouter } from "./modules/apiKey/apiKey.routes";
 import { teamRouter } from "./modules/team/team.routes";
 import { billingRouter } from "./modules/billing/billing.routes";
 import type { AppEnv } from "./types";
-import type { MessageBatch } from "@cloudflare/workers-types";
+import type { ExecutionContext, MessageBatch, ScheduledEvent } from "@cloudflare/workers-types";
 import { handleWorkflowNodeJob, type WorkflowNodeJob } from "./modules/execution/execution.queue";
 import { ExecutionDO } from "./modules/execution/execution.do";
 import { registerDemoTasksOpenApi } from "./openapi/demoTasks.openapi";
@@ -27,6 +27,7 @@ import {
 	renderCopyableDocsHtml,
 	renderEndpointExplorerHtml,
 } from "./openapi/docs.zh";
+import { runCreditTaskFinalizer } from "./modules/task/task.credit-finalizer";
 
 // Start a Hono app
 const app = new OpenAPIHono<AppEnv>({
@@ -256,6 +257,33 @@ export default {
 				console.warn("[workflow-queue] job failed", err);
 				msg.retry();
 			}
+		}
+	},
+	scheduled: async (_event: ScheduledEvent, env: any, ctx: ExecutionContext) => {
+		const disabledFlag = String(env?.TASK_CREDIT_FINALIZER_DISABLED ?? "")
+			.trim()
+			.toLowerCase();
+		const disabled =
+			disabledFlag === "1" ||
+			disabledFlag === "true" ||
+			disabledFlag === "yes" ||
+			disabledFlag === "on";
+		if (disabled) return;
+
+		const work = async () => {
+			const limit = Number(env?.TASK_CREDIT_FINALIZER_LIMIT);
+			const orphanReleaseMs = Number(env?.TASK_CREDIT_FINALIZER_ORPHAN_RELEASE_MS);
+			const result = await runCreditTaskFinalizer(env as any, {
+				...(Number.isFinite(limit) ? { limit } : {}),
+				...(Number.isFinite(orphanReleaseMs) ? { orphanReleaseMs } : {}),
+			});
+			console.log("[credit-finalizer] done", result);
+		};
+
+		try {
+			ctx.waitUntil(work());
+		} catch {
+			await work();
 		}
 	},
 };

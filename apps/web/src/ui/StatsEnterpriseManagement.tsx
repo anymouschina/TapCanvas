@@ -1,13 +1,32 @@
 import React from 'react'
 import { ActionIcon, Badge, Button, CopyButton, Divider, Group, Loader, Modal, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Tooltip, Title } from '@mantine/core'
 import { IconCheck, IconCopy, IconPlus, IconRefresh, IconSettings } from '@tabler/icons-react'
-import { addTeamMember, createTeam, createTeamInvite, listTeamInvites, listTeamMembers, listTeams, topUpTeamCredits, type TeamInviteDto, type TeamListItemDto, type TeamMemberDto, type TeamRole } from '../api/server'
+import { addTeamMember, createTeam, createTeamInvite, listTeamCreditLedger, listTeamInvites, listTeamMembers, listTeams, topUpTeamCredits, type TeamCreditLedgerEntryDto, type TeamInviteDto, type TeamListItemDto, type TeamMemberDto, type TeamRole } from '../api/server'
 import { toast } from './toast'
 import StatsPlanManagement from './StatsPlanManagement'
 
 function formatCredits(value: number): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '0'
   return String(Math.round(value))
+}
+
+function formatTime(value: string): string {
+  const t = Date.parse(value)
+  if (!Number.isFinite(t)) return value
+  return new Date(t).toLocaleString()
+}
+
+function describeLedgerEntryType(entryType: TeamCreditLedgerEntryDto['entryType']): { label: string; color: string } {
+  if (entryType === 'topup') return { label: '充值', color: 'green' }
+  if (entryType === 'reserve') return { label: '冻结', color: 'yellow' }
+  if (entryType === 'release') return { label: '解冻', color: 'blue' }
+  return { label: '扣减', color: 'red' }
+}
+
+function formatLedgerAmount(entry: TeamCreditLedgerEntryDto): string {
+  const amount = formatCredits(entry.amount)
+  if (entry.entryType === 'topup' || entry.entryType === 'release') return `+${amount}`
+  return `-${amount}`
 }
 
 export default function StatsEnterpriseManagement({ className }: { className?: string }): JSX.Element {
@@ -28,6 +47,9 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
 
   const [invites, setInvites] = React.useState<TeamInviteDto[]>([])
   const [invitesLoading, setInvitesLoading] = React.useState(false)
+
+  const [ledger, setLedger] = React.useState<TeamCreditLedgerEntryDto[]>([])
+  const [ledgerLoading, setLedgerLoading] = React.useState(false)
 
   const [addLogin, setAddLogin] = React.useState('')
   const [addRole, setAddRole] = React.useState<TeamRole>('member')
@@ -56,13 +78,15 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
     }
   }, [])
 
-  const reloadMembersAndInvites = React.useCallback(async (teamId: string) => {
+  const reloadManageData = React.useCallback(async (teamId: string) => {
     setMembersLoading(true)
     setInvitesLoading(true)
+    setLedgerLoading(true)
     try {
-      const [m, i] = await Promise.allSettled([
+      const [m, i, l] = await Promise.allSettled([
         listTeamMembers(teamId),
         listTeamInvites(teamId),
+        listTeamCreditLedger(teamId),
       ])
 
       if (m.status === 'fulfilled') {
@@ -78,9 +102,17 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
         setInvites([])
         toast((i.reason as any)?.message || '加载邀请码失败', 'error')
       }
+
+      if (l.status === 'fulfilled') {
+        setLedger(Array.isArray(l.value) ? l.value : [])
+      } else {
+        setLedger([])
+        toast((l.reason as any)?.message || '加载积分流水失败', 'error')
+      }
     } finally {
       setMembersLoading(false)
       setInvitesLoading(false)
+      setLedgerLoading(false)
     }
   }, [])
 
@@ -91,8 +123,8 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
   const openManage = React.useCallback((team: TeamListItemDto) => {
     setManageTeam(team)
     setManageOpen(true)
-    void reloadMembersAndInvites(team.id)
-  }, [reloadMembersAndInvites])
+    void reloadManageData(team.id)
+  }, [reloadManageData])
 
   const submitCreate = React.useCallback(async () => {
     const name = createName.trim()
@@ -130,7 +162,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
       toast('成员已加入团队', 'success')
       setAddLogin('')
       setAddRole('member')
-      await reloadMembersAndInvites(teamId)
+      await reloadManageData(teamId)
       await reloadTeams()
     } catch (err: any) {
       console.error('add team member failed', err)
@@ -155,7 +187,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
       setTopupNote('')
       setTopupAmount(100)
       await reloadTeams()
-      await reloadMembersAndInvites(teamId)
+      await reloadManageData(teamId)
     } catch (err: any) {
       console.error('top up failed', err)
       toast(err?.message || '充值失败', 'error')
@@ -185,7 +217,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
       setInviteLogin('')
       setInviteEmail('')
       setInviteExpiresDays(7)
-      await reloadMembersAndInvites(teamId)
+      await reloadManageData(teamId)
     } catch (err: any) {
       console.error('create invite failed', err)
       toast(err?.message || '生成邀请码失败', 'error')
@@ -202,7 +234,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
           <div className="stats-enterprise-card-header-left">
             <Title className="stats-enterprise-title" order={3}>企业管理</Title>
             <Text className="stats-enterprise-subtitle" size="sm" c="dimmed">
-              创建团队、邀请成员、为团队充值积分；团队成员在图片/视频生成成功后扣减积分，积分不足将无法发起生成。
+              创建团队、邀请成员、为团队充值积分；扣积分任务会先冻结额度，资源托管到 OSS 后再扣减，失败会自动解冻。
             </Text>
           </div>
           <Group className="stats-enterprise-card-header-actions" gap={6}>
@@ -279,9 +311,23 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
                     <Text className="stats-enterprise-team-name" size="sm" fw={600}>{t.name}</Text>
                   </Table.Td>
                   <Table.Td className="stats-enterprise-table-cell">
-                    <Badge className="stats-enterprise-team-credits" variant="light" color={t.credits > 0 ? 'grape' : 'gray'}>
-                      {formatCredits(t.credits)}
-                    </Badge>
+                    <Group className="stats-enterprise-team-credits" gap={6} wrap="wrap">
+                      <Badge
+                        className="stats-enterprise-team-credits-available"
+                        variant="light"
+                        color={t.creditsAvailable > 0 ? 'grape' : 'gray'}
+                      >
+                        可用 {formatCredits(t.creditsAvailable)}
+                      </Badge>
+                      {t.creditsFrozen > 0 ? (
+                        <Badge className="stats-enterprise-team-credits-frozen" variant="light" color="yellow">
+                          冻结 {formatCredits(t.creditsFrozen)}
+                        </Badge>
+                      ) : null}
+                      <Badge className="stats-enterprise-team-credits-total" variant="light" color="gray">
+                        总 {formatCredits(t.credits)}
+                      </Badge>
+                    </Group>
                   </Table.Td>
                   <Table.Td className="stats-enterprise-table-cell">
                     <Text className="stats-enterprise-team-members" size="sm">{t.memberCount}</Text>
@@ -328,8 +374,12 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
               <Group className="stats-enterprise-manage-meta" gap="xs" wrap="wrap">
                 <Badge className="stats-enterprise-manage-meta-badge" variant="light" color="gray">ID</Badge>
                 <Text className="stats-enterprise-manage-meta-id" size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>{manageTeam.id}</Text>
-                <Badge className="stats-enterprise-manage-meta-badge" variant="light" color="grape">积分</Badge>
-                <Text className="stats-enterprise-manage-meta-credits" size="sm" fw={600}>{formatCredits(manageTeam.credits)}</Text>
+                <Badge className="stats-enterprise-manage-meta-badge" variant="light" color="grape">可用</Badge>
+                <Text className="stats-enterprise-manage-meta-credits-available" size="sm" fw={600}>{formatCredits(manageTeam.creditsAvailable)}</Text>
+                <Badge className="stats-enterprise-manage-meta-badge" variant="light" color="yellow">冻结</Badge>
+                <Text className="stats-enterprise-manage-meta-credits-frozen" size="sm" fw={600}>{formatCredits(manageTeam.creditsFrozen)}</Text>
+                <Badge className="stats-enterprise-manage-meta-badge" variant="light" color="gray">总额</Badge>
+                <Text className="stats-enterprise-manage-meta-credits-total" size="sm" fw={600}>{formatCredits(manageTeam.credits)}</Text>
               </Group>
 
               <Divider className="stats-enterprise-manage-divider" label="充值积分（仅管理员）" labelPosition="left" />
@@ -359,6 +409,84 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
                   充值
                 </Button>
               </Group>
+
+              <Divider className="stats-enterprise-manage-divider" label="积分流水（最近 200 条）" labelPosition="left" />
+              <Stack className="stats-enterprise-ledger" gap="xs">
+                {ledgerLoading && !ledger.length ? (
+                  <Group className="stats-enterprise-ledger-loading" gap="xs" align="center">
+                    <Loader className="stats-enterprise-ledger-loading-icon" size="sm" />
+                    <Text className="stats-enterprise-ledger-loading-text" size="sm" c="dimmed">加载中…</Text>
+                  </Group>
+                ) : !ledger.length ? (
+                  <Text className="stats-enterprise-ledger-empty" size="sm" c="dimmed">暂无流水</Text>
+                ) : (
+                  <Table className="stats-enterprise-ledger-table" striped highlightOnHover withTableBorder withColumnBorders>
+                    <Table.Thead className="stats-enterprise-ledger-table-head">
+                      <Table.Tr className="stats-enterprise-ledger-table-head-row">
+                        <Table.Th className="stats-enterprise-ledger-table-head-cell">时间</Table.Th>
+                        <Table.Th className="stats-enterprise-ledger-table-head-cell">类型</Table.Th>
+                        <Table.Th className="stats-enterprise-ledger-table-head-cell">数量</Table.Th>
+                        <Table.Th className="stats-enterprise-ledger-table-head-cell">任务</Table.Th>
+                        <Table.Th className="stats-enterprise-ledger-table-head-cell">备注</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody className="stats-enterprise-ledger-table-body">
+                      {ledger.map((it) => {
+                        const typeMeta = describeLedgerEntryType(it.entryType)
+                        return (
+                          <Table.Tr className="stats-enterprise-ledger-table-row" key={it.id}>
+                            <Table.Td className="stats-enterprise-ledger-table-cell">
+                              <Text className="stats-enterprise-ledger-created-at" size="xs" c="dimmed">
+                                {formatTime(it.createdAt)}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td className="stats-enterprise-ledger-table-cell">
+                              <Badge className="stats-enterprise-ledger-entry-type" variant="light" color={typeMeta.color}>
+                                {typeMeta.label}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td className="stats-enterprise-ledger-table-cell">
+                              <Text
+                                className="stats-enterprise-ledger-amount"
+                                size="sm"
+                                fw={600}
+                                c={it.entryType === 'topup' || it.entryType === 'release' ? 'green' : it.entryType === 'deduct' ? 'red' : 'yellow'}
+                              >
+                                {formatLedgerAmount(it)}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td className="stats-enterprise-ledger-table-cell">
+                              {it.taskId ? (
+                                <Group className="stats-enterprise-ledger-task" gap={6} wrap="nowrap">
+                                  <Text className="stats-enterprise-ledger-task-id" size="xs" c="dimmed">
+                                    {it.taskId.slice(0, 10)}…
+                                  </Text>
+                                  <CopyButton value={it.taskId} timeout={1200}>
+                                    {({ copied, copy }) => (
+                                      <Tooltip className="stats-enterprise-ledger-task-copy-tooltip" label={copied ? '已复制' : '复制'} withArrow>
+                                        <ActionIcon className="stats-enterprise-ledger-task-copy" variant="subtle" onClick={copy} aria-label="copy-task-id">
+                                          {copied ? <IconCheck className="stats-enterprise-ledger-task-copy-icon" size={14} /> : <IconCopy className="stats-enterprise-ledger-task-copy-icon" size={14} />}
+                                        </ActionIcon>
+                                      </Tooltip>
+                                    )}
+                                  </CopyButton>
+                                </Group>
+                              ) : (
+                                <Text className="stats-enterprise-ledger-task-empty" size="xs" c="dimmed">—</Text>
+                              )}
+                            </Table.Td>
+                            <Table.Td className="stats-enterprise-ledger-table-cell">
+                              <Text className="stats-enterprise-ledger-note" size="xs" c="dimmed" style={{ wordBreak: 'break-word' }}>
+                                {it.note || '—'}
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        )
+                      })}
+                    </Table.Tbody>
+                  </Table>
+                )}
+              </Stack>
 
               <Divider className="stats-enterprise-manage-divider" label="邀请/添加成员" labelPosition="left" />
               <Group className="stats-enterprise-add-member" gap="sm" align="flex-end" wrap="wrap">

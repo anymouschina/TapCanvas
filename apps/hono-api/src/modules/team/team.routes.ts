@@ -37,12 +37,17 @@ teamRouter.get("/me", async (c) => {
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const res = await getMyTeam(c, userId);
 	if (!res) return c.json({ team: null }, 200);
+	const credits = Number(res.team.credits ?? 0) || 0;
+	const creditsFrozen = Number((res.team as any).credits_frozen ?? 0) || 0;
+	const creditsAvailable = Math.max(0, credits - creditsFrozen);
 	return c.json(
 		TeamMembershipSchema.parse({
 			team: TeamSchema.parse({
 				id: res.team.id,
 				name: res.team.name,
-				credits: Number(res.team.credits ?? 0) || 0,
+				credits,
+				creditsFrozen,
+				creditsAvailable,
 				createdAt: res.team.created_at,
 				updatedAt: res.team.updated_at,
 			}),
@@ -58,14 +63,20 @@ teamRouter.get("/", async (c) => {
 	const admin = isAdminRequest(c);
 
 	const items = rows.map((r: any) =>
-		TeamListItemSchema.parse({
-			id: r.id,
-			name: r.name,
-			credits: Number(r.credits ?? 0) || 0,
-			memberCount: admin ? Number(r.member_count ?? 0) || 0 : 0,
-			createdAt: r.created_at,
-			updatedAt: r.updated_at,
-		}),
+		(() => {
+			const credits = Number(r.credits ?? 0) || 0;
+			const creditsFrozen = Number(r.credits_frozen ?? 0) || 0;
+			return TeamListItemSchema.parse({
+				id: r.id,
+				name: r.name,
+				credits,
+				creditsFrozen,
+				creditsAvailable: Math.max(0, credits - creditsFrozen),
+				memberCount: admin ? Number(r.member_count ?? 0) || 0 : 0,
+				createdAt: r.created_at,
+				updatedAt: r.updated_at,
+			});
+		})(),
 	);
 	return c.json(items);
 });
@@ -200,11 +211,15 @@ teamRouter.post("/:teamId/topup", async (c) => {
 		);
 	}
 	const row = await topUpCreditsForTeam(c, userId, teamId, parsed.data);
+	const credits = Number(row.credits ?? 0) || 0;
+	const creditsFrozen = Number((row as any).credits_frozen ?? 0) || 0;
 	return c.json(
 		TeamSchema.parse({
 			id: row.id,
 			name: row.name,
-			credits: Number(row.credits ?? 0) || 0,
+			credits,
+			creditsFrozen,
+			creditsAvailable: Math.max(0, credits - creditsFrozen),
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 		}),
@@ -232,4 +247,3 @@ teamRouter.get("/:teamId/ledger", async (c) => {
 		),
 	);
 });
-
