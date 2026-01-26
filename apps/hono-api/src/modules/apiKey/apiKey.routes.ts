@@ -31,7 +31,7 @@ import {
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
 } from "../task/task.service";
-import { getCatalogModelByKey } from "../model-catalog/model-catalog.repo";
+import { ensureModelCatalogSchema, getCatalogModelByKey } from "../model-catalog/model-catalog.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
@@ -233,7 +233,7 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 function pickAutoVendorsForKind(kind: string, extras?: Record<string, any> | null): string[] {
 	const k = (kind || "").trim();
 	if (k === "text_to_image" || k === "image_edit") {
-		// Prefer Banana (gemini) first; fallback to sora2api then qwen.
+		// Candidate list (filtered by enabled system vendors at runtime).
 		return ["gemini", "sora2api", "qwen"];
 	}
 	if (k === "text_to_video") {
@@ -266,6 +266,62 @@ function normalizeDispatchVendor(vendor: string): string {
 	if (last === "hailuo") return "minimax";
 	if (last === "google") return "gemini";
 	return last;
+}
+
+async function listEnabledSystemVendors(c: any): Promise<Set<string>> {
+	try {
+		await ensureModelCatalogSchema(c.env.DB);
+
+		const vendorsRes = await c.env.DB.prepare(
+			`SELECT key, enabled, auth_type FROM model_catalog_vendors`,
+		).all();
+
+		const keysRes = await c.env.DB.prepare(
+			`SELECT vendor_key, enabled, length(api_key) AS api_key_len FROM model_catalog_vendor_api_keys`,
+		).all();
+
+		const enabledKeyVendors = new Set<string>();
+		for (const row of (keysRes as any).results || []) {
+			const vendorKey =
+				typeof row?.vendor_key === "string" ? row.vendor_key.trim() : "";
+			if (!vendorKey) continue;
+			if (Number(row?.enabled ?? 1) === 0) continue;
+			const len = Number(row?.api_key_len ?? 0) || 0;
+			if (len <= 0) continue;
+			enabledKeyVendors.add(vendorKey);
+		}
+
+		const enabledVendors = new Set<string>();
+		for (const row of (vendorsRes as any).results || []) {
+			const vendorKey = typeof row?.key === "string" ? row.key.trim() : "";
+			if (!vendorKey) continue;
+			if (Number(row?.enabled ?? 1) === 0) continue;
+
+			const authType =
+				typeof row?.auth_type === "string" ? row.auth_type.trim() : "";
+			if (authType === "none" || enabledKeyVendors.has(vendorKey)) {
+				enabledVendors.add(vendorKey);
+			}
+		}
+
+		return enabledVendors;
+	} catch {
+		return new Set();
+	}
+}
+
+function filterVendorsByEnabledSystemConfig(
+	candidates: string[],
+	enabledSystemVendors: Set<string>,
+): string[] {
+	const output: string[] = [];
+	for (const candidate of candidates) {
+		const v = normalizeDispatchVendor(candidate);
+		if (!v) continue;
+		if (!enabledSystemVendors.has(v)) continue;
+		if (!output.includes(candidate)) output.push(candidate);
+	}
+	return output;
 }
 
 function resolveCatalogKindForTaskKind(
@@ -325,10 +381,15 @@ async function runPublicTaskWithFallback(
 	if (request?.kind) c.set("routingTaskKind", request.kind);
 
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
-	let vendorCandidates =
+	const enabledSystemVendors = await listEnabledSystemVendors(c);
+	const rawCandidates =
 		vendorRaw && vendorRaw !== "auto"
 			? [vendorRaw]
 			: pickAutoVendorsForKind(request.kind, extras);
+	let vendorCandidates = filterVendorsByEnabledSystemConfig(
+		rawCandidates,
+		enabledSystemVendors,
+	);
 
 	if (!vendorRaw || vendorRaw === "auto") {
 		const preferred = await resolvePreferredVendorFromModelCatalog(
@@ -336,7 +397,7 @@ async function runPublicTaskWithFallback(
 			request.kind,
 			extras,
 		);
-		if (preferred) {
+		if (preferred && enabledSystemVendors.has(preferred)) {
 			vendorCandidates = [
 				preferred,
 				...vendorCandidates.filter(
@@ -347,11 +408,21 @@ async function runPublicTaskWithFallback(
 	}
 
 	if (!vendorCandidates.length) {
-		return Promise.reject(
-			Object.assign(new Error("unsupported task kind"), {
-				code: "unsupported_task_kind",
+		if (!rawCandidates.length) {
+			return Promise.reject(
+				Object.assign(new Error("unsupported task kind"), {
+					code: "unsupported_task_kind",
+					details: { kind: request?.kind },
+				}),
+			);
+		}
+		throw new AppError(
+			"没有可用的全局厂商配置（请在 /stats -> 模型管理（系统级）启用并配置 API Key）",
+			{
+				status: 400,
+				code: "no_enabled_vendor",
 				details: { kind: request?.kind },
-			}),
+			},
 		);
 	}
 

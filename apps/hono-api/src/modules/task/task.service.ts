@@ -8061,68 +8061,21 @@ export async function runGenericTaskForVendor(
 					},
 				);
 			}
-			} else if (v === "gemini") {
-				if (req.kind === "text_to_image" || req.kind === "image_edit") {
-					try {
+				} else if (v === "gemini") {
+					if (req.kind === "text_to_image" || req.kind === "image_edit") {
 						result = await runGeminiBananaImageTask(c, userId, req);
-					} catch (err: any) {
-						// Fallback: when Gemini/Banana isn't configured, try sora2api OpenAI-compatible gateway.
-						const code =
-							typeof err?.code === "string"
-								? err.code
-								: typeof err?.details?.code === "string"
-									? err.details.code
-									: null;
-						if (
-							code === "api_key_missing" ||
-							code === "banana_api_key_missing" ||
-							code === "provider_not_configured" ||
-							code === "base_url_missing" ||
-							code === "key_missing"
-						) {
-							const reqForSora2Api = (() => {
-								const extras = (req.extras || {}) as Record<string, any>;
-								const mk = typeof extras.modelKey === "string" ? extras.modelKey.trim() : "";
-								if (/^nano-banana/i.test(mk)) {
-									const isPortrait = (() => {
-										if (typeof req.width === "number" && typeof req.height === "number") return req.height > req.width;
-										const ar = typeof extras.aspectRatio === "string" ? extras.aspectRatio.toLowerCase().trim() : "";
-										if (ar.includes("portrait")) return true;
-										if (ar.includes("landscape")) return false;
-										const ratio = ar.match(/(\d+(?:\.\d+)?)\s*[:x\/\*]\s*(\d+(?:\.\d+)?)/);
-										if (ratio) {
-											const w = Number(ratio[1]);
-											const h = Number(ratio[2]);
-											if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return h > w;
-										}
-										return false;
-									})();
-									const family = /^nano-banana-pro/i.test(mk) ? "gemini-3.0-pro-image" : "gemini-2.5-flash-image";
-									const mappedModelKey = family + "-" + (isPortrait ? "portrait" : "landscape");
-									return { ...req, extras: { ...extras, modelKey: mappedModelKey } };
-								}
-								return req;
-							})();
-							result = await runSora2ApiImageTask(c, userId, reqForSora2Api, "gemini");
-						} else {
-							throw err;
-						}
+					} else if (req.kind === "chat" || req.kind === "prompt_refine") {
+						result = await runGeminiTextTask(c, userId, req);
+					} else {
+						throw new AppError(
+							"Gemini 目前仅在 Worker 中支持文案任务与 Banana 图像任务",
+							{
+								status: 400,
+								code: "unsupported_task_kind",
+							},
+						);
 					}
-				} else if (
-					req.kind === "chat" ||
-					req.kind === "prompt_refine"
-				) {
-				result = await runGeminiTextTask(c, userId, req);
-			} else {
-				throw new AppError(
-					"Gemini 目前仅在 Worker 中支持文案任务与 Banana 图像任务",
-					{
-						status: 400,
-						code: "unsupported_task_kind",
-					},
-				);
-			}
-		} else if (v === "qwen") {
+				} else if (v === "qwen") {
 			if (req.kind === "text_to_image") {
 				result = await runQwenTextToImageTask(c, userId, req);
 			} else {
