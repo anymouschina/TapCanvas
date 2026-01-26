@@ -185,7 +185,7 @@ type DemoTask = {
   "vendor": "auto",
   "prompt": "一张电影感海报…",
   "kind": "text_to_image",
-  "extras": { "modelKey": "nano-banana-pro" }
+  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "1:1" }
 }
 \`\`\`
 
@@ -199,9 +199,35 @@ type DemoTask = {
 - \`prompt: string\`（必填）
 - \`negativePrompt?: string\`（可选；不同厂商可能忽略）
 - \`seed?: number\`（可选；不同厂商可能忽略）
-- \`width?: number\` / \`height?: number\`（可选；\`qwen\` 会使用，其他厂商可能仅用于推断横竖构图）
+- \`width?: number\` / \`height?: number\`（可选；像素。\`qwen\` 会严格使用（默认 \`1328×1328\`）；其他厂商可能忽略或仅用于推断横竖构图）
 - \`steps?: number\` / \`cfgScale?: number\`（可选；不同厂商可能忽略）
-- \`extras?: object\`（可选；透传给模型/网关，常用字段：\`modelKey\` / \`aspectRatio\` / \`referenceImages\`）
+- \`extras?: object\`（可选；透传给模型/网关，常用字段：\`modelKey\` / \`aspectRatio\` / \`referenceImages\` / \`resolution\` / \`imageResolution\`）
+
+尺寸/分辨率示例：
+
+- 严格像素宽高（推荐：显式指定 \`vendor=qwen\`）：
+
+\`\`\`json
+{
+  "vendor": "qwen",
+  "kind": "text_to_image",
+  "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
+  "width": 1328,
+  "height": 1328,
+  "extras": { "modelKey": "qwen-image-plus" }
+}
+\`\`\`
+
+- 仅控制构图比例（\`vendor=auto\` 常用；不同通道支持不一）：
+
+\`\`\`json
+{
+  "vendor": "auto",
+  "kind": "text_to_image",
+  "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
+  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "16:9" }
+}
+\`\`\`
 
 ### 4) 生成视频
 

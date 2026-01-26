@@ -38,7 +38,7 @@ function templateFor(kind: DebugEndpointKind): unknown {
     return {
       vendor: 'auto',
       prompt: '一个赛博风格的透明玻璃徽章，中文“TapCanvas”，高细节，干净背景',
-      extras: { modelKey: 'nano-banana-pro' },
+      extras: { modelKey: 'nano-banana-pro', aspectRatio: '1:1' },
     }
   }
   if (kind === 'video') {

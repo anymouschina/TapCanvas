@@ -43,7 +43,7 @@
   "vendor": "auto",
   "prompt": "一张电影感海报…",
   "kind": "text_to_image",
-  "extras": { "modelKey": "nano-banana-pro" }
+  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "1:1" }
 }
 ```
 
@@ -57,12 +57,40 @@
 - `prompt: string`（必填）
 - `negativePrompt?: string`（可选；不同厂商可能忽略）
 - `seed?: number`（可选；不同厂商可能忽略）
-- `width?: number` / `height?: number`（可选；`qwen` 会使用，其他厂商可能仅用于推断横竖构图）
+- `width?: number` / `height?: number`（可选；像素。`qwen` 会严格使用（默认 `1328×1328`）；`vendor=auto` 时其他厂商可能忽略或仅用于推断横竖构图）
 - `steps?: number` / `cfgScale?: number`（可选；不同厂商可能忽略）
 - `extras?: object`（可选；透传给模型/网关，常用字段：）
   - `extras.modelKey?: string`（模型选择）
   - `extras.aspectRatio?: string`（建议值：`16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `4:5` / `5:4` / `21:9`，或 `auto`）
+  - `extras.resolution?: string`（分辨率；部分通道支持，例如 `1024x1024` / `1536x1024`；不支持时会被忽略）
+  - `extras.imageResolution?: string`（`resolution` 的别名；部分通道兼容）
   - `extras.referenceImages?: string[]`（参考图/首图；可为 `https://...` 或 `data:image/*;base64,...`）
+
+尺寸/分辨率示例：
+
+- 严格像素宽高（推荐：显式指定 `vendor=qwen`）：
+
+```json
+{
+  "vendor": "qwen",
+  "kind": "text_to_image",
+  "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
+  "width": 1328,
+  "height": 1328,
+  "extras": { "modelKey": "qwen-image-plus" }
+}
+```
+
+- 仅控制构图比例（`vendor=auto` 常用；不同通道支持不一）：
+
+```json
+{
+  "vendor": "auto",
+  "kind": "text_to_image",
+  "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
+  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "16:9" }
+}
+```
 
 ### 3.2 生成视频
 

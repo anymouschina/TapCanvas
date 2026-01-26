@@ -466,7 +466,7 @@ const PublicDrawOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "绘图 /public/draw",
 	description:
-		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（会自动 vendor 回退）。",
+		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（会自动 vendor 回退）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
 	request: {
 		body: {
 			required: true,
@@ -477,7 +477,7 @@ const PublicDrawOpenApiRoute = createRoute({
 						vendor: "auto",
 						kind: "text_to_image",
 						prompt: "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
-						extras: { modelKey: "nano-banana-pro" },
+						extras: { modelKey: "nano-banana-pro", aspectRatio: "1:1" },
 					},
 				},
 			},
