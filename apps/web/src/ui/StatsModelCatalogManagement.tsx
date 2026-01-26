@@ -1,10 +1,72 @@
 import React from 'react'
-import { ActionIcon, Alert, Badge, Button, Divider, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
-import { IconCheck, IconKey, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { ActionIcon, Alert, Badge, Button, CopyButton, Divider, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
+import { IconCheck, IconCopy, IconKey, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { clearModelCatalogVendorApiKey, deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, upsertModelCatalogVendorApiKey, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
 import { toast } from './toast'
 
 type JsonParseResult = { ok: true; value: any } | { ok: false; error: string }
+
+const DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH = `你是「TapCanvas 模型管理（系统级）」配置生成器。
+我会提供第三方厂商接口文档（可能是 Markdown / 链接 / 请求示例 / 响应示例）。
+你的任务：把文档内容转换为一段“可直接导入”的 JSON，用于 /stats -> 模型管理（系统级）-> 一键导入。
+
+硬性要求（必须遵守）：
+1) 只输出一段 JSON（不要 Markdown、不要解释、不要代码块围栏）。
+2) JSON 不得包含任何密钥/凭证字段与值：apiKey/secret/token/password/authKey/Authorization/Bearer 等都不允许出现；唯一允许出现的 “key” 仅限 vendor.key（厂商标识）与 modelKey（模型标识）。
+3) JSON 必须符合以下导入结构（字段齐全、类型正确）：
+{
+  "version": "v1",
+  "exportedAt": "ISO8601(可选)",
+  "vendors": [
+    {
+      "vendor": {
+        "key": "vendorKey(小写)",
+        "name": "厂商显示名",
+        "enabled": true,
+        "baseUrlHint": "https://api.example.com(可选)",
+        "authType": "bearer|x-api-key|query|none(可选)"
+      },
+      "models": [
+        { "modelKey": "xxx", "labelZh": "中文名", "kind": "text|image|video", "enabled": true }
+      ],
+      "mappings": [
+        {
+          "taskKind": "chat|prompt_refine|text_to_image|image_edit|image_to_prompt|text_to_video|image_to_video",
+          "name": "默认映射",
+          "enabled": true,
+          "requestMapping": {},
+          "responseMapping": {}
+        }
+      ]
+    }
+  ]
+}
+
+生成规则：
+- vendor.key：选择最稳定的厂商标识（全小写、短、无空格），例如 openai/gemini/minimax/sora2api/apimart。
+- baseUrlHint：如果文档明确了 Host/BaseUrl，则填入（仅到 host 级别即可）。
+- authType：从文档判断鉴权方式：
+  - bearer：Authorization: Bearer <...>
+  - x-api-key：X-API-Key: <...> 或 x-api-key: <...>
+  - query：?api_key=... 或 ?key=...
+  - none：无需鉴权
+- models：能列多少列多少；kind 按能力选择 text/image/video。
+- mappings：至少提供 1 个映射；requestMapping/responseMapping 允许是空对象 {}，但不要编造字段名。
+  - 推荐 requestMapping 最小结构：
+    {
+      "endpoint": { "method": "POST", "path": "/v1/xxx" },
+      "input": { "model": "extras.modelKey", "prompt": "prompt", "extras": "extras" }
+    }
+  - 推荐 responseMapping 最小结构：
+    {
+      "taskId": "data.task_id|data[0].task_id|id",
+      "status": "status",
+      "assets": { "type": "image|video", "urls": "data.result.videos[*].url[*]" },
+      "errorMessage": "error.message|data.error.message"
+    }
+
+如果文档缺少字段：宁可留空对象 {}，也不要猜测。
+现在开始：根据我接下来粘贴的“接口文档内容”，输出最终可导入 JSON。`
 
 function safeParseJson(input: string): JsonParseResult {
   const raw = String(input || '').trim()
@@ -615,14 +677,45 @@ export default function StatsModelCatalogManagement({ className }: { className?:
             导入
           </Button>
         </Group>
-        <Textarea
-          className="stats-model-catalog-import-text"
-          value={importText}
-          onChange={(e) => setImportText(e.currentTarget.value)}
-          placeholder="粘贴导入 JSON（支持 vendors/models/mappings）"
-          minRows={8}
-          autosize
-        />
+
+        <Group className="stats-model-catalog-import-panels" gap="sm" align="flex-start" wrap="wrap">
+          <div className="stats-model-catalog-import-prompt" style={{ flex: '1 1 380px', minWidth: 320 }}>
+            <Group className="stats-model-catalog-import-prompt-header" justify="space-between" align="center" wrap="nowrap" gap="xs">
+              <Text className="stats-model-catalog-import-prompt-title" size="xs" fw={700}>激活提示词（文档 -> 可导入 JSON）</Text>
+              <CopyButton value={DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH} timeout={1200}>
+                {({ copied, copy }) => (
+                  <Tooltip className="stats-model-catalog-import-prompt-copy-tooltip" label={copied ? '已复制' : '复制'} withArrow>
+                    <ActionIcon className="stats-model-catalog-import-prompt-copy" variant="light" size="sm" onClick={copy} aria-label="copy-doc-to-model-catalog-prompt">
+                      {copied ? <IconCheck className="stats-model-catalog-import-prompt-copy-icon" size={14} /> : <IconCopy className="stats-model-catalog-import-prompt-copy-icon" size={14} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            </Group>
+            <Text className="stats-model-catalog-import-prompt-desc" size="xs" c="dimmed">
+              把接口文档粘贴给任意大模型 + 这段提示词，即可生成可导入 JSON（不包含任何密钥）。
+            </Text>
+            <Textarea
+              className="stats-model-catalog-import-prompt-text"
+              value={DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH}
+              readOnly
+              autosize
+              minRows={12}
+            />
+          </div>
+          <div className="stats-model-catalog-import-json" style={{ flex: '2 1 520px', minWidth: 320 }}>
+            <Textarea
+              className="stats-model-catalog-import-text"
+              label="导入 JSON"
+              value={importText}
+              onChange={(e) => setImportText(e.currentTarget.value)}
+              placeholder="粘贴导入 JSON（支持 vendors/models/mappings）"
+              minRows={12}
+              autosize
+            />
+          </div>
+        </Group>
+
         {lastImportResult && (
           <Alert className="stats-model-catalog-import-result" color={lastImportResult.errors?.length ? 'yellow' : 'green'} variant="light" title="最近一次导入结果">
             <Text className="stats-model-catalog-import-result-summary" size="sm">
