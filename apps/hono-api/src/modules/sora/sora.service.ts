@@ -12,6 +12,10 @@ import {
 	upsertSavedSoraCharacter,
 } from "./sora.saved-characters.repo";
 import { upsertVendorTaskRef } from "../task/vendor-task-refs.repo";
+import {
+	chargeTeamCreditsOnSuccess,
+	requireSufficientTeamCredits,
+} from "../team/team.service";
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
@@ -332,6 +336,16 @@ export async function createSoraVideoTask(
 		model?: string | null;
 	},
 ) {
+	const taskKind =
+		typeof input.imageUrl === "string" && input.imageUrl.trim()
+			? "image_to_video"
+			: "text_to_video";
+	await requireSufficientTeamCredits(c, userId, {
+		required: 10,
+		taskKind,
+		vendor: "sora2api",
+	});
+
 	// 新接口：Sora2API /v1/video/sora-video（不再走 /backend/nf/create）
 	const vendor: "sora2api" | "grsai" = "sora2api";
 	const ctxVendor = await resolveVendorContext(c, userId, vendor);
@@ -732,6 +746,15 @@ export async function getSoraVideoDraftByTask(
 					input.taskId,
 				)
 				.run();
+
+			if (videoUrl) {
+				await chargeTeamCreditsOnSuccess(c, userId, {
+					taskId: input.taskId,
+					taskKind: "text_to_video",
+					amount: 10,
+					vendor: "sora",
+				});
+			}
 
 			return SoraVideoDraftResponseSchema.parse(draft);
 		} catch {

@@ -1011,6 +1011,169 @@ export async function deleteApiKey(id: string): Promise<void> {
   if (!r.ok) throw new Error(`delete api key failed: ${r.status}`)
 }
 
+// Team / enterprise management
+export type TeamRole = 'owner' | 'admin' | 'member'
+
+export type TeamDto = {
+  id: string
+  name: string
+  credits: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type TeamListItemDto = TeamDto & {
+  memberCount: number
+}
+
+export type TeamMemberDto = {
+  userId: string
+  login: string
+  name: string | null
+  avatarUrl: string | null
+  email: string | null
+  role: TeamRole
+  createdAt: string
+  updatedAt: string
+}
+
+export type TeamInviteDto = {
+  id: string
+  teamId: string
+  code: string
+  email: string | null
+  login: string | null
+  status: 'pending' | 'accepted' | 'revoked' | 'expired'
+  expiresAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type TeamCreditLedgerEntryDto = {
+  id: string
+  teamId: string
+  entryType: 'topup' | 'deduct'
+  amount: number
+  taskId: string | null
+  taskKind: string | null
+  actorUserId: string | null
+  note: string | null
+  createdAt: string
+}
+
+export async function listTeams(): Promise<TeamListItemDto[]> {
+  const r = await apiFetch(`${API_BASE}/teams`, withAuth())
+  if (!r.ok) throw new Error(`list teams failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getMyTeam(): Promise<{ team: TeamDto; role: TeamRole } | null> {
+  const r = await apiFetch(`${API_BASE}/teams/me`, withAuth())
+  if (!r.ok) {
+    if (r.status === 404) return null
+    throw new Error(`get my team failed: ${r.status}`)
+  }
+  const body = await r.json().catch(() => null as any)
+  if (!body || !body.team) return null
+  return body
+}
+
+export async function createTeam(payload: { name: string; ownerLogin?: string; ownerUserId?: string }): Promise<{ id: string }> {
+  const r = await apiFetch(`${API_BASE}/teams`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `create team failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function listTeamMembers(teamId: string): Promise<TeamMemberDto[]> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/members`, withAuth())
+  if (!r.ok) throw new Error(`list team members failed: ${r.status}`)
+  return r.json()
+}
+
+export async function addTeamMember(
+  teamId: string,
+  payload: { login?: string; userId?: string; role?: TeamRole },
+): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/members`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `add team member failed: ${r.status}`
+    throw new Error(msg)
+  }
+}
+
+export async function topUpTeamCredits(
+  teamId: string,
+  payload: { amount: number; note?: string },
+): Promise<TeamDto> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/topup`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `top up team credits failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function listTeamInvites(teamId: string): Promise<TeamInviteDto[]> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/invites`, withAuth())
+  if (!r.ok) throw new Error(`list team invites failed: ${r.status}`)
+  return r.json()
+}
+
+export async function createTeamInvite(
+  teamId: string,
+  payload: { email?: string; login?: string; expiresInDays?: number },
+): Promise<TeamInviteDto> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/invites`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `create team invite failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function acceptTeamInvite(payload: { code: string }): Promise<{ teamId: string }> {
+  const r = await apiFetch(`${API_BASE}/teams/invites/accept`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `accept team invite failed: ${r.status}`
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function listTeamCreditLedger(teamId: string): Promise<TeamCreditLedgerEntryDto[]> {
+  const r = await apiFetch(`${API_BASE}/teams/${encodeURIComponent(teamId)}/ledger`, withAuth())
+  if (!r.ok) throw new Error(`list team ledger failed: ${r.status}`)
+  return r.json()
+}
+
 export async function listTaskLogs(params?: {
   limit?: number
   before?: string | null

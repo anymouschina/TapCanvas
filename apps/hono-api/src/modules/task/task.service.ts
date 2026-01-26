@@ -25,6 +25,10 @@ import {
 	upsertVendorCallLogStarted,
 	ensureVendorCallLogsSchema,
 } from "./vendor-call-logs.repo";
+import {
+	chargeTeamCreditsOnSuccess,
+	requireSufficientTeamCredits,
+} from "../team/team.service";
 
 type VendorContext = {
 	baseUrl: string;
@@ -42,6 +46,13 @@ type ProgressContext = {
 	taskKind: TaskRequestDto["kind"];
 	vendor: string;
 };
+
+function teamCreditsCostForTaskKind(kind: string | null | undefined): number {
+	const k = (kind || "").trim();
+	if (k === "text_to_image" || k === "image_edit") return 1;
+	if (k === "text_to_video" || k === "image_to_video") return 10;
+	return 0;
+}
 
 function pickApiVendorForTask(
 	result: TaskResult,
@@ -235,6 +246,26 @@ async function recordVendorCallFromTaskResult(
 				errorMessage,
 				durationMs: input.durationMs ?? null,
 			});
+		}
+
+		// Team credits: charge on successful image/video generations (best-effort, idempotent).
+		if (input.result.status === "succeeded") {
+			const resolvedTaskKind =
+				typeof input.taskKind === "string" && input.taskKind.trim()
+					? input.taskKind.trim()
+					: typeof (input.result as any)?.kind === "string" &&
+							(input.result as any).kind.trim()
+						? (input.result as any).kind.trim()
+						: "";
+			const amount = teamCreditsCostForTaskKind(resolvedTaskKind);
+			if (amount > 0 && resolvedTaskKind) {
+				await chargeTeamCreditsOnSuccess(c, input.userId, {
+					taskId,
+					taskKind: resolvedTaskKind,
+					amount,
+					vendor: vendorKey,
+				});
+			}
 		}
 	}
 }
@@ -1389,6 +1420,12 @@ function parseComflyProgress(value: unknown): number | undefined {
 		userId: string,
 		req: TaskRequestDto,
 	): Promise<TaskResult> {
+		await requireSufficientTeamCredits(c, userId, {
+			required: teamCreditsCostForTaskKind(req.kind),
+			taskKind: req.kind,
+			vendor: "veo",
+		});
+
 		const progressCtx = extractProgressContext(req, "veo");
 		emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
@@ -1853,6 +1890,12 @@ export async function runSora2ApiVideoTask(
 	userId: string,
 	req: TaskRequestDto,
 ): Promise<TaskResult> {
+	await requireSufficientTeamCredits(c, userId, {
+		required: teamCreditsCostForTaskKind(req.kind),
+		taskKind: req.kind,
+		vendor: "sora2api",
+	});
+
 	const progressCtx = extractProgressContext(req, "sora2api");
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 
@@ -3665,6 +3708,12 @@ export async function fetchGrsaiDrawTaskResult(
 		userId: string,
 		req: TaskRequestDto,
 	): Promise<TaskResult> {
+	await requireSufficientTeamCredits(c, userId, {
+		required: teamCreditsCostForTaskKind(req.kind),
+		taskKind: req.kind,
+		vendor: "minimax",
+	});
+
 	const progressCtx = extractProgressContext(req, "minimax");
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
 	emitProgress(userId, progressCtx, { status: "running", progress: 5 });
@@ -6581,6 +6630,13 @@ export async function runGenericTaskForVendor(
 	const v = normalizeVendorKey(vendor);
 	const progressCtx = extractProgressContext(req, v);
 	const startedAtMs = Date.now();
+
+	// Team credits: block payable generations when insufficient.
+	await requireSufficientTeamCredits(c, userId, {
+		required: teamCreditsCostForTaskKind(req.kind),
+		taskKind: req.kind,
+		vendor: v,
+	});
 
 	// 所有厂商统一：/tasks 视为“创建任务”，立即发出 queued/running 事件
 	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });

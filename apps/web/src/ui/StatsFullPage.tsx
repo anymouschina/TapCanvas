@@ -7,6 +7,7 @@ import { getDailyActiveUsers, getStats, getVendorApiCallStats, type VendorApiCal
 import { ToastHost, toast } from './toast'
 import { $ } from '../canvas/i18n'
 import StatsSystemManagement from './StatsSystemManagement'
+import StatsEnterpriseManagement from './StatsEnterpriseManagement'
 
 function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   if (!values.length) return null
@@ -48,7 +49,7 @@ export default function StatsFullPage(): JSX.Element {
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
-  const [section, setSection] = React.useState<'overview' | 'system'>('overview')
+  const [section, setSection] = React.useState<'overview' | 'system' | 'enterprise'>('overview')
 
   const [loading, setLoading] = React.useState(false)
   const [stats, setStats] = React.useState<{ onlineUsers: number; totalUsers: number; newUsersToday: number } | null>(null)
@@ -181,6 +182,7 @@ export default function StatsFullPage(): JSX.Element {
               data={[
                 { value: 'overview', label: '概览' },
                 { value: 'system', label: '系统管理' },
+                { value: 'enterprise', label: '企业管理' },
               ]}
             />
           </Stack>
@@ -189,6 +191,10 @@ export default function StatsFullPage(): JSX.Element {
         {section === 'system' ? (
           <Stack className="stats-page-system" gap="md" pb="xl">
             <StatsSystemManagement className="stats-page-system-management" />
+          </Stack>
+        ) : section === 'enterprise' ? (
+          <Stack className="stats-page-enterprise" gap="md" pb="xl">
+            <StatsEnterpriseManagement className="stats-page-enterprise-management" />
           </Stack>
         ) : loading && !stats ? (
           <Center className="stats-page-loading" mih={260}>
