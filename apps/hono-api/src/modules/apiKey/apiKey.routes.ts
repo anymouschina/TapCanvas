@@ -235,7 +235,7 @@ function pickAutoVendorsForKind(kind: string, extras?: Record<string, any> | nul
 	const k = (kind || "").trim();
 	if (k === "text_to_image" || k === "image_edit") {
 		// Candidate list (filtered by enabled system vendors at runtime).
-		return ["gemini", "sora2api", "qwen"];
+		return ["gemini", "apimart", "sora2api", "qwen"];
 	}
 	if (k === "text_to_video") {
 		const candidates: string[] = ["veo", "sora2api"];
@@ -429,6 +429,7 @@ async function runPublicTaskWithFallback(
 	}
 
 	let lastErr: any = null;
+	let lastFailed: { vendor: string; result: any } | null = null;
 	for (const vendorCandidate of vendorCandidates) {
 		const v = normalizeDispatchVendor(vendorCandidate);
 		try {
@@ -519,6 +520,13 @@ async function runPublicTaskWithFallback(
 				result = await runGenericTaskForVendor(c, userId, v, request);
 			}
 
+			// For public endpoints, a failed TaskResult should trigger vendor fallback
+			// (e.g. missing token / upstream transient issues).
+			if (result?.status === "failed") {
+				lastFailed = { vendor: v, result };
+				continue;
+			}
+
 			return { vendor: v, result };
 		} catch (err: any) {
 			lastErr = err;
@@ -526,6 +534,7 @@ async function runPublicTaskWithFallback(
 		}
 	}
 
+	if (lastFailed) return lastFailed;
 	throw lastErr || new Error("run public task failed");
 }
 
