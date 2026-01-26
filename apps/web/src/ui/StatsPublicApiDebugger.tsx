@@ -72,6 +72,20 @@ function prettyJson(text: string): string {
   }
 }
 
+function extractErrorHint(text: string): string {
+  const raw = String(text || '').trim()
+  if (!raw) return ''
+  try {
+    const parsed: any = JSON.parse(raw)
+    const msg = typeof parsed?.message === 'string' ? parsed.message : typeof parsed?.error === 'string' ? parsed.error : ''
+    const code = typeof parsed?.code === 'string' ? parsed.code : ''
+    const joined = [msg, code ? `(${code})` : ''].filter(Boolean).join(' ')
+    return joined || raw.slice(0, 200)
+  } catch {
+    return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw
+  }
+}
+
 export default function StatsPublicApiDebugger({
   className,
   endpoints,
@@ -157,7 +171,10 @@ export default function StatsPublicApiDebugger({
       const tookMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt)
       setResponseMeta({ status: res.status, ok: res.ok, tookMs })
       setResponseText(prettyJson(text))
-      if (!res.ok) toast(`请求失败：${res.status}`, 'error')
+      if (!res.ok) {
+        const hint = extractErrorHint(text)
+        toast(`请求失败：${res.status}${hint ? ` - ${hint}` : ''}`, 'error')
+      }
     } catch (err: any) {
       const tookMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt)
       setResponseMeta({ status: 0, ok: false, tookMs })

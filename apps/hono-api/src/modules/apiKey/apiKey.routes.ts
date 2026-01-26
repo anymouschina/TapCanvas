@@ -1,9 +1,10 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { Hono } from "hono";
-import { AppError } from "../../middleware/error";
+import { AppError, errorMiddleware } from "../../middleware/error";
 import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { apiKeyAuthMiddleware } from "./apiKey.middleware";
+import { isHttpDebugLogEnabled } from "../../httpDebugLog";
 import {
 	ApiKeySchema,
 	CreateApiKeyRequestSchema,
@@ -133,6 +134,8 @@ apiKeyRouter.delete("/:id", async (c) => {
 
 // ---- Public (API key + Origin allowlist) ----
 
+// Ensure public endpoints always return structured JSON errors (instead of a plain 500).
+publicApiRouter.use("*", errorMiddleware);
 publicApiRouter.use("*", apiKeyAuthMiddleware);
 
 const PublicChatOpenApiRoute = createRoute({
@@ -377,22 +380,50 @@ async function runPublicTaskWithFallback(
 ): Promise<{ vendor: string; result: any }> {
 	const request = input.request;
 	const extras = (request?.extras || {}) as Record<string, any>;
+	const debug = isHttpDebugLogEnabled(c);
+	const debugLog = (event: string, payload: Record<string, unknown>) => {
+		if (!debug) return;
+		try {
+			console.log(
+				JSON.stringify({
+					ts: new Date().toISOString(),
+					type: "public_task_debug",
+					event,
+					...payload,
+				}),
+			);
+		} catch {
+			// best-effort only
+		}
+	};
 
 	// Hint proxy selector: prefer higher-success channels for this task kind.
 	if (request?.kind) c.set("routingTaskKind", request.kind);
 
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
 	const enabledSystemVendors = await listEnabledSystemVendors(c);
-	const rawCandidates =
-		vendorRaw && vendorRaw !== "auto"
-			? [vendorRaw]
-			: pickAutoVendorsForKind(request.kind, extras);
-	let vendorCandidates = filterVendorsByEnabledSystemConfig(
-		rawCandidates,
-		enabledSystemVendors,
-	);
+	const isAutoVendor = vendorRaw === "auto";
+	const rawCandidates = isAutoVendor ? pickAutoVendorsForKind(request.kind, extras) : [vendorRaw];
+	// NOTE:
+	// - vendor=auto: only use system-enabled vendors (admin-configured global allowlist)
+	// - vendor=explicit: allow user-level proxy/provider configs to work (even if not in system allowlist)
+	let vendorCandidates = isAutoVendor
+		? filterVendorsByEnabledSystemConfig(rawCandidates, enabledSystemVendors)
+		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));
 
-	if (!vendorRaw || vendorRaw === "auto") {
+	debugLog("vendor_candidates_resolved", {
+		taskKind: request?.kind ?? null,
+		vendorRaw: vendorRaw || null,
+		rawCandidates,
+		vendorCandidates,
+		systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+		modelKey:
+			typeof extras?.modelKey === "string" && extras.modelKey.trim()
+				? extras.modelKey.trim()
+				: null,
+	});
+
+	if (isAutoVendor) {
 		const preferred = await resolvePreferredVendorFromModelCatalog(
 			c,
 			request.kind,
@@ -529,6 +560,23 @@ async function runPublicTaskWithFallback(
 
 			return { vendor: v, result };
 		} catch (err: any) {
+			debugLog("vendor_candidate_failed", {
+				taskKind: request?.kind ?? null,
+				vendorCandidate,
+				dispatchVendor: v || null,
+				error: {
+					name: typeof err?.name === "string" ? err.name : undefined,
+					message: typeof err?.message === "string" ? err.message : String(err),
+					status:
+						typeof err?.status === "number"
+							? err.status
+							: Number.isFinite(Number(err?.status))
+								? Number(err.status)
+								: undefined,
+					code: typeof err?.code === "string" ? err.code : undefined,
+					details: err?.details ?? undefined,
+				},
+			});
 			lastErr = err;
 			continue;
 		}
