@@ -5906,6 +5906,14 @@ function buildOpenAIChatCompletionsUrlForTask(baseUrl?: string | null): string {
 	return `${raw}${hasVersionSegment ? "" : "/v1"}/chat/completions`;
 }
 
+function buildOpenAIImagesGenerationsUrlForTask(baseUrl?: string | null): string {
+	const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+	if (!raw) return "https://api.openai.com/v1/images/generations";
+	if (/\/images\/generations$/i.test(raw)) return raw;
+	const hasVersionSegment = /\/v\d+(?:beta)?(\/|$)/i.test(raw);
+	return `${raw}${hasVersionSegment ? "" : "/v1"}/images/generations`;
+}
+
 function normalizeMessageContentForResponses(
 	content: string | OpenAIContentPartForTask[],
 ): OpenAIContentPartForTask[] {
@@ -6433,9 +6441,10 @@ async function resolveModelCatalogVendorAuthForTask(
 	}
 }
 
-async function resolveDefaultTextModelKeyFromCatalogForVendor(
+async function resolveDefaultModelKeyFromCatalogForVendor(
 	c: AppContext,
 	vendorKey: string,
+	kind: "text" | "image" | "video",
 ): Promise<string | null> {
 	const vk = normalizeVendorKey(vendorKey);
 	if (!vk) return null;
@@ -6444,11 +6453,11 @@ async function resolveDefaultTextModelKeyFromCatalogForVendor(
 		const row = await c.env.DB.prepare(
 			`SELECT model_key
        FROM model_catalog_models
-       WHERE vendor_key = ? AND kind = 'text' AND enabled = 1
+       WHERE vendor_key = ? AND kind = ? AND enabled = 1
        ORDER BY updated_at DESC, created_at DESC, model_key ASC
        LIMIT 1`,
 		)
-			.bind(vk)
+			.bind(vk, kind)
 			.first<any>();
 		const modelKey =
 			typeof row?.model_key === "string" && row.model_key.trim()
@@ -6485,7 +6494,8 @@ async function runOpenAiCompatibleTextTaskForVendor(
 
 	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
 	const modelKeyRaw =
-		explicitModelKey || (await resolveDefaultTextModelKeyFromCatalogForVendor(c, v));
+		explicitModelKey ||
+		(await resolveDefaultModelKeyFromCatalogForVendor(c, v, "text"));
 	const model = modelKeyRaw?.startsWith("models/") ? modelKeyRaw.slice(7) : modelKeyRaw;
 	if (!model) {
 		throw new AppError(
@@ -6583,6 +6593,297 @@ async function runOpenAiCompatibleTextTaskForVendor(
 				model,
 				response: data,
 				text: text || "调用成功",
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
+}
+
+async function runOpenAiCompatibleImageTaskForVendor(
+	c: AppContext,
+	userId: string,
+	vendorKey: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const v = normalizeVendorKey(vendorKey);
+	const ctx = await resolveVendorContext(c, userId, v);
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = (ctx.apiKey || "").trim();
+	if (!baseUrl) {
+		throw new AppError(`No base URL configured for vendor ${v}`, {
+			status: 400,
+			code: "base_url_missing",
+		});
+	}
+	if (!apiKey) {
+		throw new AppError(`No API key configured for vendor ${v}`, {
+			status: 400,
+			code: "api_key_missing",
+		});
+	}
+
+	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
+	const modelKeyRaw =
+		explicitModelKey ||
+		(await resolveDefaultModelKeyFromCatalogForVendor(c, v, "image"));
+	const model = modelKeyRaw?.startsWith("models/") ? modelKeyRaw.slice(7) : modelKeyRaw;
+	if (!model) {
+		throw new AppError(
+			"未配置可用的模型（请在 /stats -> 模型管理（系统级）为该厂商添加并启用 image 模型，或在请求里传 extras.modelKey）",
+			{
+				status: 400,
+				code: "model_not_configured",
+				details: { vendor: v, taskKind: req.kind },
+			},
+		);
+	}
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: v,
+		modelKey: model,
+	});
+
+	try {
+		const auth = await resolveModelCatalogVendorAuthForTask(c, v);
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			Accept: "application/json",
+		};
+
+		let url = buildOpenAIImagesGenerationsUrlForTask(baseUrl);
+		if (auth?.authType === "none") {
+			// no-op
+		} else if (auth?.authType === "query") {
+			const param = auth.authQueryParam || "api_key";
+			const u = new URL(url);
+			u.searchParams.set(param, apiKey);
+			url = u.toString();
+		} else if (auth?.authType === "x-api-key") {
+			const header = auth.authHeader || "X-API-Key";
+			headers[header] = apiKey;
+		} else {
+			const header = auth?.authHeader || "Authorization";
+			headers[header] = `Bearer ${apiKey}`;
+		}
+
+		const body: Record<string, any> = {
+			model,
+			prompt: req.prompt,
+		};
+		if (typeof req.width === "number" && typeof req.height === "number") {
+			const w = Math.max(1, Math.round(req.width));
+			const h = Math.max(1, Math.round(req.height));
+			body.size = `${w}x${h}`;
+		}
+
+		const data = await callJsonApi(
+			c,
+			url,
+			{
+				method: "POST",
+				headers,
+				body: JSON.stringify(body),
+			},
+			{ provider: v },
+		);
+
+		const urls = extractBananaImageUrls(data);
+		const assets = urls.map((u) =>
+			TaskAssetSchema.parse({ type: "image", url: u, thumbnailUrl: null }),
+		);
+		const id =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			(typeof data?.task_id === "string" && data.task_id.trim()) ||
+			(typeof data?.taskId === "string" && data.taskId.trim()) ||
+			`${v}-img-${Date.now().toString(36)}`;
+		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status,
+			assets,
+			raw: {
+				provider: "openai_compat",
+				vendor: v,
+				model,
+				response: data,
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
+}
+
+async function runOpenAiCompatibleVideoTaskForVendor(
+	c: AppContext,
+	userId: string,
+	vendorKey: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const v = normalizeVendorKey(vendorKey);
+	const ctx = await resolveVendorContext(c, userId, v);
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = (ctx.apiKey || "").trim();
+	if (!baseUrl) {
+		throw new AppError(`No base URL configured for vendor ${v}`, {
+			status: 400,
+			code: "base_url_missing",
+		});
+	}
+	if (!apiKey) {
+		throw new AppError(`No API key configured for vendor ${v}`, {
+			status: 400,
+			code: "api_key_missing",
+		});
+	}
+
+	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
+	const modelKeyRaw =
+		explicitModelKey ||
+		(await resolveDefaultModelKeyFromCatalogForVendor(c, v, "video"));
+	const model = modelKeyRaw?.startsWith("models/") ? modelKeyRaw.slice(7) : modelKeyRaw;
+	if (!model) {
+		throw new AppError(
+			"未配置可用的模型（请在 /stats -> 模型管理（系统级）为该厂商添加并启用 video 模型，或在请求里传 extras.modelKey）",
+			{
+				status: 400,
+				code: "model_not_configured",
+				details: { vendor: v, taskKind: req.kind },
+			},
+		);
+	}
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: v,
+		modelKey: model,
+	});
+
+	try {
+		const messages: OpenAIChatMessageForTask[] = [{ role: "user", content: req.prompt }];
+
+		const auth = await resolveModelCatalogVendorAuthForTask(c, v);
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			Accept: "application/json",
+		};
+
+		let url = buildOpenAIChatCompletionsUrlForTask(baseUrl);
+		if (auth?.authType === "none") {
+			// no-op
+		} else if (auth?.authType === "query") {
+			const param = auth.authQueryParam || "api_key";
+			const u = new URL(url);
+			u.searchParams.set(param, apiKey);
+			url = u.toString();
+		} else if (auth?.authType === "x-api-key") {
+			const header = auth.authHeader || "X-API-Key";
+			headers[header] = apiKey;
+		} else {
+			const header = auth?.authHeader || "Authorization";
+			headers[header] = `Bearer ${apiKey}`;
+		}
+
+		const body: any = {
+			model,
+			messages,
+			stream: false,
+		};
+
+		const data = await callJsonApi(
+			c,
+			url,
+			{
+				method: "POST",
+				headers,
+				body: JSON.stringify(body),
+			},
+			{ provider: v },
+		);
+
+		const urls = (() => {
+			const collected = new Set<string>();
+
+			const appendFromText = (value: any) => {
+				if (!value) return;
+				if (typeof value === "string") {
+					extractHtmlVideoUrlsFromText(value).forEach((u) => collected.add(u));
+					extractMarkdownLinkUrlsFromText(value)
+						.filter(looksLikeVideoUrl)
+						.forEach((u) => collected.add(u));
+					return;
+				}
+				if (Array.isArray(value)) {
+					value.forEach((part) => {
+						if (!part) return;
+						if (typeof part === "string") {
+							extractHtmlVideoUrlsFromText(part).forEach((u) => collected.add(u));
+							extractMarkdownLinkUrlsFromText(part)
+								.filter(looksLikeVideoUrl)
+								.forEach((u) => collected.add(u));
+							return;
+						}
+						if (typeof part === "object" && typeof (part as any).text === "string") {
+							const text = (part as any).text;
+							extractHtmlVideoUrlsFromText(text).forEach((u) => collected.add(u));
+							extractMarkdownLinkUrlsFromText(text)
+								.filter(looksLikeVideoUrl)
+								.forEach((u) => collected.add(u));
+						}
+					});
+				}
+			};
+
+			appendFromText((data as any)?.content);
+			if (Array.isArray((data as any)?.choices)) {
+				for (const choice of (data as any).choices) {
+					appendFromText(choice?.message?.content);
+					appendFromText(choice?.delta?.content);
+					appendFromText(choice?.content);
+				}
+			}
+			appendFromText(extractTextFromOpenAIResponseForTask(data));
+
+			return Array.from(collected);
+		})();
+
+		const assets = urls.map((u) =>
+			TaskAssetSchema.parse({ type: "video", url: u, thumbnailUrl: null }),
+		);
+		const id =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			(typeof (data as any)?.task_id === "string" && (data as any).task_id.trim()) ||
+			(typeof (data as any)?.taskId === "string" && (data as any).taskId.trim()) ||
+			`${v}-vid-${Date.now().toString(36)}`;
+		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: "text_to_video",
+			status,
+			assets,
+			raw: {
+				provider: "openai_compat",
+				vendor: v,
+				model,
+				response: data,
 			},
 		});
 	} catch (err) {
@@ -8525,21 +8826,21 @@ export async function runGenericTaskForVendor(
 					},
 				);
 			}
-				} else if (v === "gemini") {
-					if (req.kind === "text_to_image" || req.kind === "image_edit") {
-						result = await runGeminiBananaImageTask(c, userId, req);
-					} else if (req.kind === "chat" || req.kind === "prompt_refine") {
-						result = await runGeminiTextTask(c, userId, req);
-					} else {
-						throw new AppError(
-							"Gemini 目前仅在 Worker 中支持文案任务与 Banana 图像任务",
-							{
-								status: 400,
-								code: "unsupported_task_kind",
-							},
-						);
-					}
-				} else if (v === "qwen") {
+		} else if (v === "gemini") {
+			if (req.kind === "text_to_image" || req.kind === "image_edit") {
+				result = await runGeminiBananaImageTask(c, userId, req);
+			} else if (req.kind === "chat" || req.kind === "prompt_refine") {
+				result = await runGeminiTextTask(c, userId, req);
+			} else {
+				throw new AppError(
+					"Gemini 目前仅在 Worker 中支持文案任务与 Banana 图像任务",
+					{
+						status: 400,
+						code: "unsupported_task_kind",
+					},
+				);
+			}
+		} else if (v === "qwen") {
 			if (req.kind === "text_to_image") {
 				result = await runQwenTextToImageTask(c, userId, req);
 			} else {
@@ -8591,6 +8892,10 @@ export async function runGenericTaskForVendor(
 					});
 				}
 				result = await runOpenAiCompatibleTextTaskForVendor(c, userId, v, req);
+			} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
+				result = await runOpenAiCompatibleImageTaskForVendor(c, userId, v, req);
+			} else if (req.kind === "text_to_video" || req.kind === "image_to_video") {
+				result = await runOpenAiCompatibleVideoTaskForVendor(c, userId, v, req);
 			} else {
 				throw new AppError(`Unsupported vendor: ${vendor}`, {
 					status: 400,

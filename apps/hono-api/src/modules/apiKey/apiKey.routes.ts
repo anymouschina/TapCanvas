@@ -39,6 +39,7 @@ import {
 	listCatalogModelsByModelKey,
 } from "../model-catalog/model-catalog.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
+import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
 export const publicApiRouter = new OpenAPIHono<AppEnv>({
@@ -469,6 +470,86 @@ function resolveCatalogKindForTaskKind(
 	return null;
 }
 
+async function rankVendorsByRecentPerformance(
+	c: any,
+	userId: string,
+	taskKind: string | null | undefined,
+	vendorCandidates: string[],
+): Promise<string[]> {
+	if (!vendorCandidates.length) return [];
+	const deduped = Array.from(
+		new Set(vendorCandidates.map((v) => normalizeDispatchVendor(v)).filter(Boolean)),
+	);
+	if (deduped.length <= 1) return deduped;
+
+	const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+	const taskKindFilter = typeof taskKind === "string" && taskKind.trim() ? taskKind.trim() : null;
+
+	try {
+		await ensureVendorCallLogsSchema(c.env.DB);
+	} catch {
+		return deduped;
+	}
+
+	const scoreVendor = async (vendor: string) => {
+		const v = normalizeDispatchVendor(vendor);
+		if (!v) return { vendor, rate: 0.5, total: 0, avgMs: Number.POSITIVE_INFINITY };
+		try {
+			const where: string[] = [
+				"user_id = ?",
+				"vendor = ?",
+				"status IN ('succeeded','failed')",
+				"finished_at IS NOT NULL",
+				"finished_at >= ?",
+			];
+			const bindings: unknown[] = [userId, v, sinceIso];
+			if (taskKindFilter) {
+				where.push("task_kind = ?");
+				bindings.push(taskKindFilter);
+			}
+			const row = await c.env.DB.prepare(
+				`
+          SELECT
+            COUNT(1) AS total,
+            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS success,
+            AVG(CASE WHEN status = 'succeeded' THEN duration_ms ELSE NULL END) AS avg_ms
+          FROM vendor_api_call_logs
+          WHERE ${where.join(" AND ")}
+        `,
+			)
+				.bind(...bindings)
+				.first<any>();
+
+			const total = Number(row?.total ?? 0) || 0;
+			const success = Number(row?.success ?? 0) || 0;
+			const rate = (success + 1) / (total + 2); // Laplace smoothing
+			const avgRaw = Number(row?.avg_ms);
+			const avgMs = Number.isFinite(avgRaw) && avgRaw >= 0 ? avgRaw : Number.POSITIVE_INFINITY;
+			return { vendor: v, rate, total, avgMs };
+		} catch {
+			return { vendor: v, rate: 0.5, total: 0, avgMs: Number.POSITIVE_INFINITY };
+		}
+	};
+
+	const scored = await Promise.all(deduped.map((v) => scoreVendor(v)));
+	const enriched = scored.map((s) => ({
+		...s,
+		// Prefer faster expected time-to-success (avgMs / successRate), then more reliable.
+		expectedMs:
+			s.avgMs === Number.POSITIVE_INFINITY
+				? Number.POSITIVE_INFINITY
+				: s.avgMs / Math.max(0.001, s.rate),
+	}));
+	const sorted = enriched.sort((a, b) => {
+		if (a.expectedMs !== b.expectedMs) return a.expectedMs - b.expectedMs;
+		if (b.rate !== a.rate) return b.rate - a.rate;
+		if (a.avgMs !== b.avgMs) return a.avgMs - b.avgMs;
+		if (b.total !== a.total) return b.total - a.total;
+		return a.vendor.localeCompare(b.vendor);
+	});
+	return sorted.map((s) => s.vendor);
+}
+
 async function resolvePreferredVendorFromModelCatalog(
 	c: any,
 	taskKind: string | null | undefined,
@@ -557,8 +638,16 @@ async function runPublicTaskWithFallback(
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
 	const enabledSystemVendors = await listEnabledSystemVendors(c);
 	const isAutoVendor = vendorRaw === "auto";
+
+	const modelAliasRaw =
+		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+			? extras.modelAlias.trim()
+			: "";
+
 	const rawCandidates = isAutoVendor
-		? pickAutoVendorsForKind(request.kind, enabledSystemVendors, extras)
+		? modelAliasRaw
+			? Array.from(enabledSystemVendors.values()).sort((a, b) => a.localeCompare(b))
+			: pickAutoVendorsForKind(request.kind, enabledSystemVendors, extras)
 		: [vendorRaw];
 	// NOTE:
 	// - vendor=auto: only use system-enabled vendors (admin-configured global allowlist)
@@ -567,10 +656,6 @@ async function runPublicTaskWithFallback(
 		? rawCandidates
 		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));
 
-	const modelAliasRaw =
-		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
-			? extras.modelAlias.trim()
-			: "";
 	const modelKeyByVendorFromAlias = (async (): Promise<Map<string, string> | null> => {
 		if (!modelAliasRaw) return null;
 		const expectedKind = resolveCatalogKindForTaskKind(request?.kind ?? null);
@@ -643,21 +728,32 @@ async function runPublicTaskWithFallback(
 				: null,
 	});
 
+	let preferredVendor: string | null = null;
 	if (isAutoVendor && !modelAliasRaw) {
-		const preferred = await resolvePreferredVendorFromModelCatalog(
+		preferredVendor = await resolvePreferredVendorFromModelCatalog(
 			c,
 			request.kind,
 			extras,
 			vendorCandidates,
 		);
-		if (preferred && enabledSystemVendors.has(preferred)) {
-			vendorCandidates = [
-				preferred,
-				...vendorCandidates.filter(
-					(v) => normalizeDispatchVendor(v) !== normalizeDispatchVendor(preferred),
-				),
-			];
-		}
+	}
+
+	if (isAutoVendor && vendorCandidates.length > 1) {
+		vendorCandidates = await rankVendorsByRecentPerformance(
+			c,
+			userId,
+			request?.kind ?? null,
+			vendorCandidates,
+		);
+	}
+
+	if (preferredVendor && enabledSystemVendors.has(preferredVendor)) {
+		vendorCandidates = [
+			preferredVendor,
+			...vendorCandidates.filter(
+				(v) => normalizeDispatchVendor(v) !== normalizeDispatchVendor(preferredVendor),
+			),
+		];
 	}
 
 	if (!vendorCandidates.length) {
