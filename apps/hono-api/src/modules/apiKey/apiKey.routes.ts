@@ -227,7 +227,7 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 	};
 
 	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
-		vendor: input.vendor ?? "openai",
+		vendor: input.vendor ?? "auto",
 		request,
 	});
 	const raw: any = result?.raw as any;
@@ -243,27 +243,77 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 	);
 });
 
-function pickAutoVendorsForKind(kind: string, extras?: Record<string, any> | null): string[] {
+function isPublicTaskKindSupported(kind: string): boolean {
 	const k = (kind || "").trim();
+	return (
+		k === "text_to_image" ||
+		k === "image_edit" ||
+		k === "text_to_video" ||
+		k === "chat" ||
+		k === "prompt_refine" ||
+		k === "image_to_prompt"
+	);
+}
+
+function pickAutoVendorsForKind(
+	kind: string,
+	enabledSystemVendors: Set<string>,
+	extras?: Record<string, any> | null,
+): string[] {
+	const k = (kind || "").trim();
+	const enabled = enabledSystemVendors || new Set<string>();
+	const output: string[] = [];
+
+	const addIfEnabled = (vendor: string) => {
+		const v = normalizeDispatchVendor(vendor);
+		if (!v) return;
+		if (!enabled.has(v)) return;
+		if (!output.includes(v)) output.push(v);
+	};
+
+	const addEnabledTextVendors = () => {
+		// Exclude known non-text protocols/channels to avoid predictable failures.
+		const nonText = new Set([
+			"apimart",
+			"veo",
+			"sora2api",
+			"qwen",
+			"minimax",
+			"grsai",
+			"comfly",
+			"yunwu",
+		]);
+		const rest = Array.from(enabled.values())
+			.map((v) => normalizeDispatchVendor(v))
+			.filter((v): v is string => !!v)
+			.filter((v) => !output.includes(v))
+			.filter((v) => !nonText.has(v))
+			.sort((a, b) => a.localeCompare(b));
+		for (const v of rest) output.push(v);
+	};
+
 	if (k === "text_to_image" || k === "image_edit") {
-		// Candidate list (filtered by enabled system vendors at runtime).
-		return ["gemini", "apimart", "sora2api", "qwen"];
+		["gemini", "apimart", "sora2api", "qwen"].forEach(addIfEnabled);
+		return output;
 	}
 	if (k === "text_to_video") {
-		const candidates: string[] = ["veo", "sora2api"];
+		["veo", "sora2api", "apimart"].forEach(addIfEnabled);
 		const hasMiniMaxFirstFrame =
 			typeof extras?.first_frame_image === "string" ||
 			typeof extras?.firstFrameImage === "string" ||
 			typeof extras?.firstFrameUrl === "string" ||
 			typeof extras?.url === "string";
-		if (hasMiniMaxFirstFrame) candidates.push("minimax");
-		return candidates;
+		if (hasMiniMaxFirstFrame) addIfEnabled("minimax");
+		return output;
 	}
 	if (k === "chat" || k === "prompt_refine") {
-		return ["openai", "gemini", "anthropic"];
+		["openai", "gemini", "anthropic"].forEach(addIfEnabled);
+		addEnabledTextVendors();
+		return output;
 	}
 	if (k === "image_to_prompt") {
-		return ["openai", "gemini"];
+		["openai", "gemini"].forEach(addIfEnabled);
+		return output;
 	}
 	// Not supported for now (public API can evolve later).
 	return [];
@@ -507,12 +557,14 @@ async function runPublicTaskWithFallback(
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
 	const enabledSystemVendors = await listEnabledSystemVendors(c);
 	const isAutoVendor = vendorRaw === "auto";
-	const rawCandidates = isAutoVendor ? pickAutoVendorsForKind(request.kind, extras) : [vendorRaw];
+	const rawCandidates = isAutoVendor
+		? pickAutoVendorsForKind(request.kind, enabledSystemVendors, extras)
+		: [vendorRaw];
 	// NOTE:
 	// - vendor=auto: only use system-enabled vendors (admin-configured global allowlist)
 	// - vendor=explicit: allow user-level proxy/provider configs to work (even if not in system allowlist)
 	let vendorCandidates = isAutoVendor
-		? filterVendorsByEnabledSystemConfig(rawCandidates, enabledSystemVendors)
+		? rawCandidates
 		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));
 
 	const modelAliasRaw =
@@ -609,7 +661,7 @@ async function runPublicTaskWithFallback(
 	}
 
 	if (!vendorCandidates.length) {
-		if (!rawCandidates.length) {
+		if (isAutoVendor && !isPublicTaskKindSupported(request?.kind)) {
 			return Promise.reject(
 				Object.assign(new Error("unsupported task kind"), {
 					status: 400,
@@ -617,6 +669,22 @@ async function runPublicTaskWithFallback(
 					details: { kind: request?.kind },
 				}),
 			);
+		}
+		if (!isAutoVendor && !rawCandidates.length) {
+			return Promise.reject(
+				Object.assign(new Error("unsupported task kind"), {
+					status: 400,
+					code: "unsupported_task_kind",
+					details: { kind: request?.kind },
+				}),
+			);
+		}
+		if (!isAutoVendor) {
+			throw new AppError("无效的 vendor 参数", {
+				status: 400,
+				code: "invalid_vendor",
+				details: { vendor: vendorRaw || null },
+			});
 		}
 		throw new AppError(
 			"没有可用的全局厂商配置（请在 /stats -> 模型管理（系统级）启用并配置 API Key）",

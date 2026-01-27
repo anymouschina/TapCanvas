@@ -89,7 +89,7 @@ export type PublicFetchTaskResultResponseDto = z.infer<
 export const PublicDrawRequestSchema = z.object({
 	vendor: z.string().optional().openapi({
 		description:
-			"指定厂商/通道；可填 auto/gemini/apimart/sora2api/qwen 等（默认 auto，自动回退）。",
+			"指定厂商 key（默认 auto）；vendor=auto 会从 /model-catalog/vendors 中 enabled 且已配置 API Key（或 authType=none）的厂商里自动回退。",
 		example: "auto",
 	}),
 	kind: z.enum(["text_to_image", "image_edit"]).optional().openapi({

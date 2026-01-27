@@ -787,6 +787,22 @@ export async function resolveVendorContext(
 		}
 	}
 
+	// 2.3b System-level vendor API key（admin 全局配置；支持动态 vendor key）
+	// For vendors outside the hard-coded list, allow running purely based on model-catalog vendor config.
+	if (!requiresApiKeyForVendor(v) && !userConfigured) {
+		const sys = await resolveSystemVendorApiKeyContext(c, v);
+		if (sys && sys.enabled && sys.vendorEnabled) {
+			const baseUrl = normalizeBaseUrl(sys.baseUrlHint || "");
+			if (!baseUrl) {
+				throw new AppError(`No base URL configured for vendor ${v}`, {
+					status: 400,
+					code: "base_url_missing",
+				});
+			}
+			return { baseUrl, apiKey: sys.apiKey };
+		}
+	}
+
 	// 2.6 若用户自己没有 Provider，但通过共享 Token 找到了 Provider，则使用该 Provider
 	if (!provider && sharedTokenProvider) {
 		provider = sharedTokenProvider;
@@ -5881,6 +5897,15 @@ function buildOpenAIResponsesUrlForTask(baseUrl?: string | null): string {
 	return `${normalized}${hasVersion ? "" : "/v1"}/responses`;
 }
 
+function buildOpenAIChatCompletionsUrlForTask(baseUrl?: string | null): string {
+	const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+	if (!raw) return "https://api.openai.com/v1/chat/completions";
+	if (/\/chat\/completions$/i.test(raw)) return raw;
+	// If base already contains a version segment (e.g. /v1 or /v1/openai), do not append another /v1.
+	const hasVersionSegment = /\/v\d+(?:beta)?(\/|$)/i.test(raw);
+	return `${raw}${hasVersionSegment ? "" : "/v1"}/chat/completions`;
+}
+
 function normalizeMessageContentForResponses(
 	content: string | OpenAIContentPartForTask[],
 ): OpenAIContentPartForTask[] {
@@ -6363,6 +6388,206 @@ async function callOpenAIResponsesForTask(
 	}
 
 	return { parsed, rawBody: rawText };
+}
+
+type ModelCatalogVendorAuthForTask = {
+	authType: "none" | "bearer" | "x-api-key" | "query";
+	authHeader: string | null;
+	authQueryParam: string | null;
+};
+
+async function resolveModelCatalogVendorAuthForTask(
+	c: AppContext,
+	vendorKey: string,
+): Promise<ModelCatalogVendorAuthForTask | null> {
+	const vk = normalizeVendorKey(vendorKey);
+	if (!vk) return null;
+	try {
+		await ensureModelCatalogSchema(c.env.DB);
+		const row = await c.env.DB.prepare(
+			`SELECT auth_type, auth_header, auth_query_param FROM model_catalog_vendors WHERE key = ? LIMIT 1`,
+		)
+			.bind(vk)
+			.first<any>();
+		if (!row) return null;
+		const authTypeRaw =
+			typeof row?.auth_type === "string" ? row.auth_type.trim().toLowerCase() : "";
+		const authType =
+			authTypeRaw === "none" ||
+			authTypeRaw === "bearer" ||
+			authTypeRaw === "x-api-key" ||
+			authTypeRaw === "query"
+				? (authTypeRaw as ModelCatalogVendorAuthForTask["authType"])
+				: "bearer";
+		const authHeader =
+			typeof row?.auth_header === "string" && row.auth_header.trim()
+				? row.auth_header.trim()
+				: null;
+		const authQueryParam =
+			typeof row?.auth_query_param === "string" && row.auth_query_param.trim()
+				? row.auth_query_param.trim()
+				: null;
+		return { authType, authHeader, authQueryParam };
+	} catch {
+		return null;
+	}
+}
+
+async function resolveDefaultTextModelKeyFromCatalogForVendor(
+	c: AppContext,
+	vendorKey: string,
+): Promise<string | null> {
+	const vk = normalizeVendorKey(vendorKey);
+	if (!vk) return null;
+	try {
+		await ensureModelCatalogSchema(c.env.DB);
+		const row = await c.env.DB.prepare(
+			`SELECT model_key
+       FROM model_catalog_models
+       WHERE vendor_key = ? AND kind = 'text' AND enabled = 1
+       ORDER BY updated_at DESC, created_at DESC, model_key ASC
+       LIMIT 1`,
+		)
+			.bind(vk)
+			.first<any>();
+		const modelKey =
+			typeof row?.model_key === "string" && row.model_key.trim()
+				? row.model_key.trim()
+				: null;
+		return modelKey;
+	} catch {
+		return null;
+	}
+}
+
+async function runOpenAiCompatibleTextTaskForVendor(
+	c: AppContext,
+	userId: string,
+	vendorKey: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const v = normalizeVendorKey(vendorKey);
+	const ctx = await resolveVendorContext(c, userId, v);
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = (ctx.apiKey || "").trim();
+	if (!baseUrl) {
+		throw new AppError(`No base URL configured for vendor ${v}`, {
+			status: 400,
+			code: "base_url_missing",
+		});
+	}
+	if (!apiKey) {
+		throw new AppError(`No API key configured for vendor ${v}`, {
+			status: 400,
+			code: "api_key_missing",
+		});
+	}
+
+	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
+	const modelKeyRaw =
+		explicitModelKey || (await resolveDefaultTextModelKeyFromCatalogForVendor(c, v));
+	const model = modelKeyRaw?.startsWith("models/") ? modelKeyRaw.slice(7) : modelKeyRaw;
+	if (!model) {
+		throw new AppError(
+			"未配置可用的模型（请在 /stats -> 模型管理（系统级）为该厂商添加并启用 text 模型，或在请求里传 extras.modelKey）",
+			{
+				status: 400,
+				code: "model_not_configured",
+				details: { vendor: v, taskKind: req.kind },
+			},
+		);
+	}
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: v,
+		modelKey: model,
+	});
+
+	try {
+		const systemPrompt =
+			req.kind === "prompt_refine"
+				? pickSystemPrompt(
+						req,
+						"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
+					)
+				: pickSystemPrompt(req, "请用中文回答。");
+
+		const extras = (req.extras || {}) as Record<string, any>;
+		const temperature = normalizeTemperature(extras.temperature, 0.7);
+
+		const messages: OpenAIChatMessageForTask[] = [];
+		if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+		messages.push({ role: "user", content: req.prompt });
+
+		let url = buildOpenAIChatCompletionsUrlForTask(baseUrl);
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			Accept: "application/json",
+		};
+
+		const auth = await resolveModelCatalogVendorAuthForTask(c, v);
+		if (auth?.authType === "none") {
+			// no-op
+		} else if (auth?.authType === "query") {
+			const param = auth.authQueryParam || "api_key";
+			const u = new URL(url);
+			u.searchParams.set(param, apiKey);
+			url = u.toString();
+		} else if (auth?.authType === "x-api-key") {
+			const header = auth.authHeader || "X-API-Key";
+			headers[header] = apiKey;
+		} else {
+			const header = auth?.authHeader || "Authorization";
+			headers[header] = `Bearer ${apiKey}`;
+		}
+
+		const body = {
+			model,
+			messages,
+			stream: false,
+			temperature,
+		};
+
+		const data = await callJsonApi(
+			c,
+			url,
+			{
+				method: "POST",
+				headers,
+				body: JSON.stringify(body),
+			},
+			{ provider: v },
+		);
+
+		const text = extractTextFromOpenAIResponseForTask(data);
+		const id =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			`${v}-${Date.now().toString(36)}`;
+
+		await bindReservationToTaskId(c, userId, reservation, id);
+
+		return TaskResultSchema.parse({
+			id,
+			kind: req.kind,
+			status: "succeeded",
+			assets: [],
+			raw: {
+				provider: "openai_compat",
+				vendor: v,
+				model,
+				response: data,
+				text: text || "调用成功",
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 // ---- OpenAI text (chat / prompt_refine) ----
@@ -8348,10 +8573,30 @@ export async function runGenericTaskForVendor(
 				);
 			}
 		} else {
-			throw new AppError(`Unsupported vendor: ${vendor}`, {
-				status: 400,
-				code: "unsupported_vendor",
-			});
+			if (req.kind === "chat" || req.kind === "prompt_refine") {
+				const nonTextVendors = new Set([
+					"apimart",
+					"veo",
+					"sora2api",
+					"qwen",
+					"minimax",
+					"grsai",
+					"comfly",
+					"yunwu",
+				]);
+				if (nonTextVendors.has(v)) {
+					throw new AppError(`Unsupported vendor: ${vendor}`, {
+						status: 400,
+						code: "unsupported_vendor",
+					});
+				}
+				result = await runOpenAiCompatibleTextTaskForVendor(c, userId, v, req);
+			} else {
+				throw new AppError(`Unsupported vendor: ${vendor}`, {
+					status: 400,
+					code: "unsupported_vendor",
+				});
+			}
 		}
 
 		const apiVendor = pickApiVendorForTask(result, v);
