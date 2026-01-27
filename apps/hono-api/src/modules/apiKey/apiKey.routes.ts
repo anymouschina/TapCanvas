@@ -28,12 +28,16 @@ import {
 	fetchVeoTaskResult,
 	runApimartImageTask,
 	runApimartVideoTask,
-	runGenericTaskForVendor,
 	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
+	runGenericTaskForVendor,
 } from "../task/task.service";
-import { ensureModelCatalogSchema, listCatalogModelsByModelKey } from "../model-catalog/model-catalog.repo";
+import {
+	ensureModelCatalogSchema,
+	listCatalogModelsByModelAlias,
+	listCatalogModelsByModelKey,
+} from "../model-catalog/model-catalog.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
@@ -200,17 +204,19 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 
 	const input = c.req.valid("json");
 
-	const vendor = (input.vendor || "openai").trim().toLowerCase();
 	const prompt = input.prompt;
 	const systemPrompt =
 		(typeof input.systemPrompt === "string" && input.systemPrompt.trim()) ||
 		"请用中文回答。";
 
-	const req = {
+	const request = {
 		kind: "chat" as const,
 		prompt,
 		extras: {
 			systemPrompt,
+			...(typeof input.modelAlias === "string" && input.modelAlias.trim()
+				? { modelAlias: input.modelAlias.trim() }
+				: {}),
 			...(typeof input.modelKey === "string" && input.modelKey.trim()
 				? { modelKey: input.modelKey.trim() }
 				: {}),
@@ -220,7 +226,10 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 		},
 	};
 
-	const result = await runGenericTaskForVendor(c, userId, vendor, req);
+	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
+		vendor: input.vendor ?? "openai",
+		request,
+	});
 	const raw: any = result?.raw as any;
 	const text = typeof raw?.text === "string" ? raw.text : "";
 
@@ -506,19 +515,83 @@ async function runPublicTaskWithFallback(
 		? filterVendorsByEnabledSystemConfig(rawCandidates, enabledSystemVendors)
 		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));
 
+	const modelAliasRaw =
+		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+			? extras.modelAlias.trim()
+			: "";
+	const modelKeyByVendorFromAlias = (async (): Promise<Map<string, string> | null> => {
+		if (!modelAliasRaw) return null;
+		const expectedKind = resolveCatalogKindForTaskKind(request?.kind ?? null);
+		try {
+			const rows = await listCatalogModelsByModelAlias(c.env.DB, modelAliasRaw);
+			const map = new Map<string, string>();
+			for (const row of rows) {
+				if (!row) continue;
+				if (Number((row as any).enabled ?? 1) === 0) continue;
+				const kindRaw =
+					typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
+				if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
+				const vendorKeyRaw =
+					typeof (row as any).vendor_key === "string"
+						? (row as any).vendor_key.trim()
+						: "";
+				const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
+				if (!vendorKey) continue;
+				const modelKey =
+					typeof (row as any).model_key === "string"
+						? (row as any).model_key.trim()
+						: "";
+				if (!modelKey) continue;
+				if (!map.has(vendorKey)) map.set(vendorKey, modelKey);
+			}
+			return map;
+		} catch {
+			return new Map();
+		}
+	})();
+
+	const aliasMap = await modelKeyByVendorFromAlias;
+	if (modelAliasRaw) {
+		const supported =
+			aliasMap && aliasMap.size
+				? vendorCandidates.filter((candidate) => {
+						const v = normalizeDispatchVendor(candidate);
+						return !!v && aliasMap.has(v);
+					})
+				: [];
+
+		if (!supported.length) {
+			throw new AppError("未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）", {
+				status: 400,
+				code: "model_alias_not_found",
+				details: {
+					taskKind: request?.kind ?? null,
+					vendorRaw: vendorRaw || null,
+					rawCandidates,
+					systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+					modelAlias: modelAliasRaw,
+				},
+			});
+		}
+
+		// Enforce alias selection: only try vendors that have the alias mapped.
+		vendorCandidates = supported;
+	}
+
 	debugLog("vendor_candidates_resolved", {
 		taskKind: request?.kind ?? null,
 		vendorRaw: vendorRaw || null,
 		rawCandidates,
 		vendorCandidates,
 		systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+		modelAlias: modelAliasRaw || null,
 		modelKey:
 			typeof extras?.modelKey === "string" && extras.modelKey.trim()
 				? extras.modelKey.trim()
 				: null,
 	});
 
-	if (isAutoVendor) {
+	if (isAutoVendor && !modelAliasRaw) {
 		const preferred = await resolvePreferredVendorFromModelCatalog(
 			c,
 			request.kind,
@@ -569,10 +642,38 @@ async function runPublicTaskWithFallback(
 	for (const vendorCandidate of vendorCandidates) {
 		const v = normalizeDispatchVendor(vendorCandidate);
 		try {
+			const requestForVendor = (() => {
+				if (!modelAliasRaw) {
+					// Ensure local-only fields don't leak upstream.
+					const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
+					delete (cleanExtras as any).modelAlias;
+					return { ...request, extras: cleanExtras };
+				}
+
+				const mappedModelKey = aliasMap?.get(v || "");
+				if (!mappedModelKey) {
+					// vendorCandidates should already be filtered, but keep a defensive fallback.
+					throw new AppError("未找到别名对应的模型 Key", {
+						status: 400,
+						code: "model_alias_not_found",
+						details: {
+							taskKind: request?.kind ?? null,
+							vendor: v || null,
+							modelAlias: modelAliasRaw,
+						},
+					});
+				}
+
+				const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
+				delete (cleanExtras as any).modelAlias;
+				cleanExtras.modelKey = mappedModelKey;
+				return { ...request, extras: cleanExtras };
+			})();
+
 			let result: any;
 			if (v === "apimart") {
-				if (request.kind === "text_to_video") {
-					result = await runApimartVideoTask(c, userId, request);
+				if (requestForVendor.kind === "text_to_video") {
+					result = await runApimartVideoTask(c, userId, requestForVendor);
 					const nowIso = new Date().toISOString();
 					await upsertVendorTaskRef(
 						c.env.DB,
@@ -581,10 +682,10 @@ async function runPublicTaskWithFallback(
 						nowIso,
 					);
 				} else if (
-					request.kind === "text_to_image" ||
-					request.kind === "image_edit"
+					requestForVendor.kind === "text_to_image" ||
+					requestForVendor.kind === "image_edit"
 				) {
-					result = await runApimartImageTask(c, userId, request);
+					result = await runApimartImageTask(c, userId, requestForVendor);
 					const nowIso = new Date().toISOString();
 					await upsertVendorTaskRef(
 						c.env.DB,
@@ -600,14 +701,14 @@ async function runPublicTaskWithFallback(
 					});
 				}
 			} else if (v === "veo") {
-				if (request.kind !== "text_to_video") {
+				if (requestForVendor.kind !== "text_to_video") {
 					throw Object.assign(new Error("invalid task kind"), {
 						status: 400,
 						code: "invalid_task_kind",
-						details: { vendor: "veo", kind: request.kind },
+						details: { vendor: "veo", kind: requestForVendor.kind },
 					});
 				}
-				result = await runVeoVideoTask(c, userId, request);
+				result = await runVeoVideoTask(c, userId, requestForVendor);
 				// Ensure public polling can infer vendor for this task.
 				const nowIso = new Date().toISOString();
 				const rawProvider =
@@ -629,14 +730,14 @@ async function runPublicTaskWithFallback(
 					nowIso,
 				);
 			} else if (v === "minimax") {
-				if (request.kind !== "text_to_video") {
+				if (requestForVendor.kind !== "text_to_video") {
 					throw Object.assign(new Error("invalid task kind"), {
 						status: 400,
 						code: "invalid_task_kind",
-						details: { vendor: "minimax", kind: request.kind },
+						details: { vendor: "minimax", kind: requestForVendor.kind },
 					});
 				}
-				result = await runMiniMaxVideoTask(c, userId, request);
+				result = await runMiniMaxVideoTask(c, userId, requestForVendor);
 				const nowIso = new Date().toISOString();
 				await upsertVendorTaskRef(
 					c.env.DB,
@@ -645,15 +746,15 @@ async function runPublicTaskWithFallback(
 					nowIso,
 				);
 			} else if (v === "sora2api") {
-				if (request.kind !== "text_to_video") {
+				if (requestForVendor.kind !== "text_to_video") {
 					// sora2api image tasks are handled by generic runner
-					result = await runGenericTaskForVendor(c, userId, v, request);
+					result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
 				} else {
-					result = await runSora2ApiVideoTask(c, userId, request);
+					result = await runSora2ApiVideoTask(c, userId, requestForVendor);
 				}
 				// sora2api runner persists vendor refs internally when needed.
 			} else {
-				result = await runGenericTaskForVendor(c, userId, v, request);
+				result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
 			}
 
 			// For public endpoints, a failed TaskResult should trigger vendor fallback
@@ -710,7 +811,7 @@ const PublicRunTaskOpenApiRoute = createRoute({
 						request: {
 							kind: "text_to_video",
 							prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
-							extras: { modelKey: "veo3.1-fast", durationSeconds: 10 },
+							extras: { modelAlias: "veo3.1-fast", durationSeconds: 10 },
 						},
 					},
 				},
@@ -811,7 +912,7 @@ const PublicDrawOpenApiRoute = createRoute({
 						vendor: "auto",
 						kind: "text_to_image",
 						prompt: "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
-						extras: { modelKey: "nano-banana-pro", aspectRatio: "1:1" },
+						extras: { modelAlias: "nano-banana-pro", aspectRatio: "1:1" },
 					},
 				},
 			},
@@ -898,7 +999,7 @@ const PublicVideoOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "生成视频 /public/video",
 	description:
-		"便捷视频接口：创建 text_to_video 任务（会自动 vendor 回退；可通过 extras.modelKey 指定模型）。",
+		"便捷视频接口：创建 text_to_video 任务（会自动 vendor 回退；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
 	request: {
 		body: {
 			required: true,
@@ -909,7 +1010,7 @@ const PublicVideoOpenApiRoute = createRoute({
 						vendor: "auto",
 						prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
 						durationSeconds: 10,
-						extras: { modelKey: "veo3.1-fast" },
+						extras: { modelAlias: "veo3.1-fast" },
 					},
 				},
 			},

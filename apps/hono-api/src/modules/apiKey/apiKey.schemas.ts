@@ -35,6 +35,7 @@ export const PublicChatRequestSchema = z.object({
 	vendor: z.string().optional(),
 	prompt: z.string().min(1),
 	modelKey: z.string().optional(),
+	modelAlias: z.string().optional(),
 	systemPrompt: z.string().optional(),
 	temperature: z.number().min(0).max(2).optional(),
 });
@@ -127,9 +128,9 @@ export const PublicDrawRequestSchema = z.object({
 	}),
 	extras: z.record(z.any()).optional().openapi({
 		description:
-			"额外参数透传（常用：modelKey/aspectRatio/referenceImages/resolution）。不同厂商/通道支持不一致。",
+			"额外参数透传（常用：modelAlias/modelKey/aspectRatio/referenceImages/resolution）。不同厂商/通道支持不一致。",
 		example: {
-			modelKey: "nano-banana-pro",
+			modelAlias: "nano-banana-pro",
 			aspectRatio: "1:1",
 		},
 	}),

@@ -63,6 +63,7 @@ export type BillingModelKind = z.infer<typeof BillingModelKindSchema>;
 export const ModelCatalogModelSchema = z.object({
 	modelKey: z.string(),
 	vendorKey: z.string(),
+	modelAlias: z.string().nullable().optional(),
 	labelZh: z.string(),
 	kind: BillingModelKindSchema,
 	enabled: z.boolean(),
@@ -76,6 +77,7 @@ export type ModelCatalogModelDto = z.infer<typeof ModelCatalogModelSchema>;
 export const UpsertModelCatalogModelSchema = z.object({
 	modelKey: z.string().min(1),
 	vendorKey: z.string().min(1),
+	modelAlias: z.string().nullable().optional(),
 	labelZh: z.string().min(1),
 	kind: BillingModelKindSchema,
 	enabled: z.boolean().optional(),

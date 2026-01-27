@@ -43,13 +43,14 @@
   "vendor": "auto",
   "prompt": "一张电影感海报…",
   "kind": "text_to_image",
-  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "1:1" }
+  "extras": { "modelAlias": "nano-banana-pro", "aspectRatio": "1:1" }
 }
 ```
 
 说明：
 - `vendor=auto` 会在可用厂商中自动回退（按任务类型）。
-- `extras.modelKey` 可用于选择模型（例如 Nano Banana 系列）。
+- `extras.modelAlias` 用于选择模型（Public 统一别名；推荐）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
+- 兼容：仍支持 `extras.modelKey`（厂商内 modelKey），但不建议对外暴露。
 
 请求体（完整字段，按需填写）：
 - `vendor?: string`（默认 `auto`；绘图自动回退顺序：`gemini` → `sora2api` → `qwen`）
@@ -60,7 +61,8 @@
 - `width?: number` / `height?: number`（可选；像素。`qwen` 会严格使用（默认 `1328×1328`）；`vendor=auto` 时其他厂商可能忽略或仅用于推断横竖构图）
 - `steps?: number` / `cfgScale?: number`（可选；不同厂商可能忽略）
 - `extras?: object`（可选；透传给模型/网关，常用字段：）
-  - `extras.modelKey?: string`（模型选择）
+  - `extras.modelAlias?: string`（模型别名选择；推荐）
+  - `extras.modelKey?: string`（模型 Key（厂商内）；兼容）
   - `extras.aspectRatio?: string`（建议值：`16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `4:5` / `5:4` / `21:9`，或 `auto`）
   - `extras.resolution?: string`（分辨率；部分通道支持，例如 `1024x1024` / `1536x1024`；不支持时会被忽略）
   - `extras.imageResolution?: string`（`resolution` 的别名；部分通道兼容）
@@ -77,7 +79,7 @@
   "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
   "width": 1328,
   "height": 1328,
-  "extras": { "modelKey": "qwen-image-plus" }
+  "extras": { "modelAlias": "qwen-image-plus" }
 }
 ```
 
@@ -88,7 +90,7 @@
   "vendor": "auto",
   "kind": "text_to_image",
   "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
-  "extras": { "modelKey": "nano-banana-pro", "aspectRatio": "16:9" }
+  "extras": { "modelAlias": "nano-banana-pro", "aspectRatio": "16:9" }
 }
 ```
 
@@ -103,7 +105,7 @@
   "vendor": "auto",
   "prompt": "雨夜霓虹街头，一只白猫缓慢走过…",
   "durationSeconds": 10,
-  "extras": { "modelKey": "veo3.1-fast" }
+  "extras": { "modelAlias": "veo3.1-fast" }
 }
 ```
 
@@ -116,7 +118,8 @@
 - `prompt: string`（必填）
 - `durationSeconds?: number`（可选；会写入 `extras.durationSeconds`；不同厂商会做归一化/截断）
 - `extras?: object`（可选；透传给模型/网关，常用字段：）
-  - `extras.modelKey?: string`（模型选择）
+  - `extras.modelAlias?: string`（模型别名选择；推荐）
+  - `extras.modelKey?: string`（模型 Key（厂商内）；兼容）
   - `extras.durationSeconds?: number`（等价于顶层 `durationSeconds`）
   - `extras.firstFrameUrl?: string` / `extras.firstFrameImage?: string` / `extras.first_frame_image?: string` / `extras.url?: string`（首帧；MiniMax 必填）
   - `extras.lastFrameUrl?: string`（尾帧；Veo 可选）

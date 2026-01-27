@@ -38,7 +38,7 @@ function templateFor(kind: DebugEndpointKind): unknown {
     return {
       vendor: 'auto',
       prompt: '一个赛博风格的透明玻璃徽章，中文“TapCanvas”，高细节，干净背景',
-      extras: { modelKey: 'nano-banana-pro', aspectRatio: '1:1' },
+      extras: { modelAlias: 'nano-banana-pro', aspectRatio: '1:1' },
     }
   }
   if (kind === 'video') {
@@ -46,7 +46,7 @@ function templateFor(kind: DebugEndpointKind): unknown {
       vendor: 'auto',
       prompt: '一只白猫在雨夜霓虹街头慢慢走过，电影感镜头，稳定光影',
       durationSeconds: 10,
-      extras: { modelKey: 'veo3.1-fast' },
+      extras: { modelAlias: 'veo3.1-fast' },
     }
   }
   if (kind === 'taskResult') {

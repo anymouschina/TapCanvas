@@ -105,7 +105,7 @@ fetch('${publicDrawUrl}', {
   body: JSON.stringify({
     vendor: 'auto',
     prompt: '一个赛博风格的透明玻璃徽章，中文“TapCanvas”，高细节，干净背景',
-    extras: { modelKey: 'nano-banana-pro', aspectRatio: '1:1' }
+    extras: { modelAlias: 'nano-banana-pro', aspectRatio: '1:1' }
   }),
 }).then(r => r.json())
 
@@ -120,7 +120,7 @@ fetch('${publicVideoUrl}', {
     vendor: 'auto',
     prompt: '一只白猫在雨夜霓虹街头慢慢走过，电影感镜头，稳定光影',
     durationSeconds: 10,
-    extras: { modelKey: 'veo3.1-fast' }
+    extras: { modelAlias: 'veo3.1-fast' }
   }),
 }).then(r => r.json())
 

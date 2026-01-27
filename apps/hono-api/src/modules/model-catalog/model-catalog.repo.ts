@@ -25,6 +25,7 @@ export type ModelCatalogVendorApiKeyRow = {
 export type ModelCatalogModelRow = {
 	model_key: string;
 	vendor_key: string;
+	model_alias: string | null;
 	label_zh: string;
 	kind: string;
 	enabled: number;
@@ -54,6 +55,7 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
 		`CREATE TABLE IF NOT EXISTS model_catalog_models (
       model_key TEXT NOT NULL,
       vendor_key TEXT NOT NULL,
+      model_alias TEXT,
       label_zh TEXT NOT NULL,
       kind TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -73,6 +75,20 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
 		tableInfo = [];
 	}
 
+	const hasModelAliasColumn = tableInfo.some(
+		(c) => String(c?.name || "").toLowerCase() === "model_alias",
+	);
+	if (!hasModelAliasColumn) {
+		try {
+			await execute(
+				db,
+				`ALTER TABLE model_catalog_models ADD COLUMN model_alias TEXT`,
+			);
+		} catch {
+			// ignore (best-effort for old schemas / concurrent migrations)
+		}
+	}
+
 	const vendorPk =
 		tableInfo.find((c) => String(c?.name || "").toLowerCase() === "vendor_key")
 			?.pk ?? 0;
@@ -86,6 +102,15 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
 
 	// Migrate legacy schema -> composite PK on (vendor_key, model_key).
 	try {
+		const copySql = hasModelAliasColumn
+			? `INSERT INTO model_catalog_models
+       (vendor_key, model_key, model_alias, label_zh, kind, enabled, meta, created_at, updated_at)
+       SELECT vendor_key, model_key, model_alias, label_zh, kind, enabled, meta, created_at, updated_at
+       FROM model_catalog_models_legacy`
+			: `INSERT INTO model_catalog_models
+       (vendor_key, model_key, model_alias, label_zh, kind, enabled, meta, created_at, updated_at)
+       SELECT vendor_key, model_key, NULL AS model_alias, label_zh, kind, enabled, meta, created_at, updated_at
+       FROM model_catalog_models_legacy`;
 		// D1/DO SQLite disallow `BEGIN/SAVEPOINT` SQL; use the JS batch API for atomicity.
 		await db.batch([
 			db.prepare(
@@ -99,6 +124,7 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
 				`CREATE TABLE model_catalog_models (
         model_key TEXT NOT NULL,
         vendor_key TEXT NOT NULL,
+        model_alias TEXT,
         label_zh TEXT NOT NULL,
         kind TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -109,12 +135,7 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
         FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
       )`,
 			),
-			db.prepare(
-				`INSERT INTO model_catalog_models
-       (vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at)
-       SELECT vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at
-       FROM model_catalog_models_legacy`,
-			),
+			db.prepare(copySql),
 			db.prepare(`DROP TABLE model_catalog_models_legacy`),
 		]);
 	} catch (err) {
@@ -158,6 +179,7 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
 		`CREATE TABLE IF NOT EXISTS model_catalog_models (
       model_key TEXT NOT NULL,
       vendor_key TEXT NOT NULL,
+      model_alias TEXT,
       label_zh TEXT NOT NULL,
       kind TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -403,6 +425,42 @@ export async function listCatalogModelsByModelKey(
 	);
 }
 
+export async function listCatalogModelsByModelAlias(
+	db: D1Database,
+	modelAlias: string,
+): Promise<ModelCatalogModelRow[]> {
+	await ensureModelCatalogSchema(db);
+	const alias = String(modelAlias || "").trim();
+	if (!alias) return [];
+	return queryAll<ModelCatalogModelRow>(
+		db,
+		`SELECT *
+     FROM model_catalog_models
+     WHERE lower(model_alias) = lower(?)
+     ORDER BY vendor_key ASC, model_key ASC`,
+		[alias],
+	);
+}
+
+export async function getCatalogModelByVendorKindAndAlias(
+	db: D1Database,
+	input: { vendorKey: string; kind: string; modelAlias: string },
+): Promise<ModelCatalogModelRow | null> {
+	await ensureModelCatalogSchema(db);
+	const vk = String(input.vendorKey || "").trim().toLowerCase();
+	const kind = String(input.kind || "").trim();
+	const alias = String(input.modelAlias || "").trim();
+	if (!vk || !kind || !alias) return null;
+	return queryOne<ModelCatalogModelRow>(
+		db,
+		`SELECT *
+     FROM model_catalog_models
+     WHERE vendor_key = ? AND kind = ? AND lower(model_alias) = lower(?)
+     LIMIT 1`,
+		[vk, kind, alias],
+	);
+}
+
 export async function getCatalogModelByVendorAndKey(
 	db: D1Database,
 	input: { vendorKey: string; modelKey: string },
@@ -423,6 +481,7 @@ export async function upsertCatalogModelRow(
 	input: {
 		modelKey: string;
 		vendorKey: string;
+		modelAlias?: string | null;
 		labelZh: string;
 		kind: string;
 		enabled: boolean;
@@ -435,9 +494,10 @@ export async function upsertCatalogModelRow(
 	await execute(
 		db,
 		`INSERT INTO model_catalog_models
-       (model_key, vendor_key, label_zh, kind, enabled, meta, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (model_key, vendor_key, model_alias, label_zh, kind, enabled, meta, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(vendor_key, model_key) DO UPDATE SET
+         model_alias = excluded.model_alias,
          label_zh = excluded.label_zh,
          kind = excluded.kind,
          enabled = excluded.enabled,
@@ -446,6 +506,7 @@ export async function upsertCatalogModelRow(
 		[
 			input.modelKey,
 			input.vendorKey,
+			input.modelAlias ?? null,
 			input.labelZh,
 			input.kind,
 			input.enabled ? 1 : 0,

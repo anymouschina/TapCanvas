@@ -437,6 +437,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_vendor_api_keys (
 CREATE TABLE IF NOT EXISTS model_catalog_models (
 	model_key TEXT NOT NULL,
 	vendor_key TEXT NOT NULL,
+	model_alias TEXT,
 	label_zh TEXT NOT NULL,
 	kind TEXT NOT NULL, -- text | image | video
 	enabled INTEGER NOT NULL DEFAULT 1,

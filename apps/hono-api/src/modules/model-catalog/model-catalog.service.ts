@@ -19,6 +19,7 @@ import {
 	deleteCatalogVendorApiKeyRow,
 	deleteCatalogVendorCascade,
 	listCatalogModelsByModelKey,
+	getCatalogModelByVendorKindAndAlias,
 	getCatalogVendorApiKeyByVendorKey,
 	getCatalogVendorByKey,
 	listCatalogMappings,
@@ -87,6 +88,7 @@ function mapModel(row: any): ModelCatalogModelDto {
 	return ModelCatalogModelSchema.parse({
 		modelKey: row.model_key,
 		vendorKey: row.vendor_key,
+		modelAlias: normalizeOptionalString(row.model_alias ?? null),
 		labelZh: row.label_zh,
 		kind: row.kind,
 		enabled: Number(row.enabled ?? 1) !== 0,
@@ -215,6 +217,7 @@ export async function upsertModelCatalogModel(
 	input: {
 		modelKey: string;
 		vendorKey: string;
+		modelAlias?: string | null;
 		labelZh: string;
 		kind: string;
 		enabled?: boolean;
@@ -225,6 +228,7 @@ export async function upsertModelCatalogModel(
 	const nowIso = new Date().toISOString();
 	const modelKey = String(input.modelKey || "").trim();
 	const vendorKey = normalizeKey(input.vendorKey);
+	const modelAlias = normalizeOptionalString(input.modelAlias ?? null);
 	const labelZh = String(input.labelZh || "").trim();
 	const kind = String(input.kind || "").trim();
 	const enabled = typeof input.enabled === "boolean" ? input.enabled : true;
@@ -238,11 +242,31 @@ export async function upsertModelCatalogModel(
 		});
 	}
 
+	if (modelAlias) {
+		const existing = await getCatalogModelByVendorKindAndAlias(c.env.DB, {
+			vendorKey,
+			kind,
+			modelAlias,
+		});
+		const existingKey =
+			typeof (existing as any)?.model_key === "string"
+				? (existing as any).model_key.trim()
+				: "";
+		if (existing && existingKey && existingKey !== modelKey) {
+			throw new AppError("modelAlias already exists for this vendor/kind", {
+				status: 400,
+				code: "model_alias_conflict",
+				details: { vendorKey, kind, modelAlias, modelKey, existingModelKey: existingKey },
+			});
+		}
+	}
+
 	const row = await upsertCatalogModelRow(
 		c.env.DB,
 		{
 			modelKey,
 			vendorKey,
+			modelAlias,
 			labelZh,
 			kind,
 			enabled,
@@ -375,6 +399,7 @@ export async function exportModelCatalogPackage(
 		const bundleModels = (modelsByVendor[vendorKey] || []).map((m) => ({
 			modelKey: String(m.model_key || "").trim(),
 			vendorKey,
+			modelAlias: normalizeOptionalString((m as any).model_alias ?? null),
 			labelZh: String(m.label_zh || "").trim(),
 			kind: String(m.kind || "").trim(),
 			enabled: Number(m.enabled ?? 1) !== 0,
@@ -548,6 +573,7 @@ export async function importModelCatalogPackage(
 						{
 							modelKey: String(m.modelKey || "").trim(),
 							vendorKey: modelVendorKey,
+							modelAlias: normalizeOptionalString((m as any).modelAlias ?? null),
 							labelZh: String(m.labelZh || "").trim(),
 							kind: String(m.kind || "").trim(),
 							enabled: typeof m.enabled === "boolean" ? m.enabled : true,

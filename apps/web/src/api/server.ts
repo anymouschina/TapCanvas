@@ -1257,6 +1257,7 @@ export type ModelCatalogVendorApiKeyStatusDto = {
 export type ModelCatalogModelDto = {
   modelKey: string
   vendorKey: string
+  modelAlias?: string | null
   labelZh: string
   kind: BillingModelKind
   enabled: boolean
@@ -1298,6 +1299,7 @@ export type ModelCatalogImportPackageDto = {
     models?: Array<{
       modelKey: string
       vendorKey?: string
+      modelAlias?: string | null
       labelZh: string
       kind: BillingModelKind
       enabled?: boolean
@@ -1405,6 +1407,7 @@ export async function listModelCatalogModels(params?: { vendorKey?: string; kind
 export async function upsertModelCatalogModel(payload: {
   modelKey: string
   vendorKey: string
+  modelAlias?: string | null
   labelZh: string
   kind: BillingModelKind
   enabled?: boolean

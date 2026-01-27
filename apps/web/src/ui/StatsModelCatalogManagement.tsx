@@ -12,7 +12,7 @@ const DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH = `你是「TapCanvas 模型管�
 
 硬性要求（必须遵守）：
 1) 只输出一段 JSON（不要 Markdown、不要解释、不要代码块围栏）。
-2) JSON 不得包含任何密钥/凭证字段与值：apiKey/secret/token/password/authKey/Authorization/Bearer 等都不允许出现；唯一允许出现的 “key” 仅限 vendor.key（厂商标识）与 modelKey（模型标识）。
+2) JSON 不得包含任何密钥/凭证字段与值：apiKey/secret/token/password/authKey/Authorization/Bearer 等都不允许出现；唯一允许出现的 “key/alias” 仅限 vendor.key（厂商标识）、modelKey（模型标识）与 modelAlias（public 别名）。
 3) JSON 必须符合以下导入结构（字段齐全、类型正确）：
 {
   "version": "v1",
@@ -27,7 +27,7 @@ const DOC_TO_MODEL_CATALOG_ACTIVATION_PROMPT_ZH = `你是「TapCanvas 模型管�
         "authType": "bearer|x-api-key|query|none(可选)"
       },
       "models": [
-        { "modelKey": "xxx", "labelZh": "中文名", "kind": "text|image|video", "enabled": true }
+        { "modelKey": "xxx", "modelAlias": "public-xxx(可选)", "labelZh": "中文名", "kind": "text|image|video", "enabled": true }
       ],
       "mappings": [
         {
@@ -504,6 +504,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const [modelEditSubmitting, setModelEditSubmitting] = React.useState(false)
   const [modelEditIsNew, setModelEditIsNew] = React.useState(true)
   const [modelEditModelKey, setModelEditModelKey] = React.useState('')
+  const [modelEditModelAlias, setModelEditModelAlias] = React.useState('')
   const [modelEditVendorKey, setModelEditVendorKey] = React.useState<string>('')
   const [modelEditLabelZh, setModelEditLabelZh] = React.useState('')
   const [modelEditKind, setModelEditKind] = React.useState<BillingModelKind>('text')
@@ -520,6 +521,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const openCreateModel = React.useCallback(() => {
     setModelEditIsNew(true)
     setModelEditModelKey('')
+    setModelEditModelAlias('')
     setModelEditVendorKey(vendorOnlyData[0]?.value || '')
     setModelEditLabelZh('')
     setModelEditKind('text')
@@ -531,6 +533,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const openEditModel = React.useCallback((model: ModelCatalogModelDto) => {
     setModelEditIsNew(false)
     setModelEditModelKey(model.modelKey)
+    setModelEditModelAlias((model.modelAlias || '').trim())
     setModelEditVendorKey(model.vendorKey)
     setModelEditLabelZh(model.labelZh || '')
     setModelEditKind(model.kind)
@@ -541,6 +544,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
 
   const submitModel = React.useCallback(async () => {
     const modelKey = modelEditModelKey.trim()
+    const modelAlias = modelEditModelAlias.trim()
     const vendorKey = modelEditVendorKey.trim()
     const labelZh = modelEditLabelZh.trim()
     if (!vendorKey) {
@@ -568,6 +572,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
       await upsertModelCatalogModel({
         modelKey,
         vendorKey,
+        modelAlias: modelAlias || null,
         labelZh,
         kind: modelEditKind,
         enabled: modelEditEnabled,
@@ -582,7 +587,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     } finally {
       setModelEditSubmitting(false)
     }
-  }, [modelEditEnabled, modelEditKind, modelEditLabelZh, modelEditMeta, modelEditModelKey, modelEditSubmitting, modelEditVendorKey, reloadAll])
+  }, [modelEditEnabled, modelEditKind, modelEditLabelZh, modelEditMeta, modelEditModelAlias, modelEditModelKey, modelEditSubmitting, modelEditVendorKey, reloadAll])
 
   const handleDeleteModel = React.useCallback(async (model: ModelCatalogModelDto) => {
     if (!window.confirm(`确定删除模型「${model.labelZh}（${model.modelKey}）」？`)) return
@@ -1073,6 +1078,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
           <Table.Thead className="stats-model-catalog-models-table-head">
             <Table.Tr className="stats-model-catalog-models-table-head-row">
               <Table.Th className="stats-model-catalog-models-table-head-cell" style={{ width: 260 }}>模型 Key</Table.Th>
+              <Table.Th className="stats-model-catalog-models-table-head-cell" style={{ width: 220 }}>别名（Public）</Table.Th>
               <Table.Th className="stats-model-catalog-models-table-head-cell" style={{ width: 220 }}>名称</Table.Th>
               <Table.Th className="stats-model-catalog-models-table-head-cell" style={{ width: 140 }}>厂商</Table.Th>
               <Table.Th className="stats-model-catalog-models-table-head-cell" style={{ width: 90 }}>类型</Table.Th>
@@ -1083,7 +1089,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
           <Table.Tbody className="stats-model-catalog-models-table-body">
             {!filteredModels.length ? (
               <Table.Tr className="stats-model-catalog-models-table-row-empty">
-                <Table.Td className="stats-model-catalog-models-table-cell" colSpan={6}>
+                <Table.Td className="stats-model-catalog-models-table-cell" colSpan={7}>
                   <Text className="stats-model-catalog-empty" size="sm" c="dimmed">暂无模型</Text>
                 </Table.Td>
               </Table.Tr>
@@ -1092,6 +1098,9 @@ export default function StatsModelCatalogManagement({ className }: { className?:
                 <Table.Tr className="stats-model-catalog-models-table-row" key={`${m.vendorKey}:${m.modelKey}`}>
                   <Table.Td className="stats-model-catalog-models-table-cell">
                     <Text className="stats-model-catalog-model-key" size="sm" fw={600}>{m.modelKey}</Text>
+                  </Table.Td>
+                  <Table.Td className="stats-model-catalog-models-table-cell">
+                    <Text className="stats-model-catalog-model-alias" size="sm" c="dimmed">{String((m.modelAlias || '').trim() || '—')}</Text>
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-models-table-cell">
                     <Text className="stats-model-catalog-model-label" size="sm">{m.labelZh}</Text>
@@ -1248,6 +1257,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Stack className="stats-model-catalog-model-form" gap="sm">
           <Select className="stats-model-catalog-model-form-vendor" label="厂商（与模型 Key 组合唯一）" data={vendorOnlyData} value={modelEditVendorKey} onChange={(v) => setModelEditVendorKey(v || '')} searchable disabled={!modelEditIsNew} />
           <TextInput className="stats-model-catalog-model-form-key" label="模型 Key（厂商内唯一）" placeholder="例如 gpt-4.1 / nano-banana-pro" value={modelEditModelKey} onChange={(e) => setModelEditModelKey(e.currentTarget.value)} disabled={!modelEditIsNew} />
+          <TextInput className="stats-model-catalog-model-form-alias" label="别名（Public 调用使用，可选）" placeholder="例如 video-fast / image-hd / default" value={modelEditModelAlias} onChange={(e) => setModelEditModelAlias(e.currentTarget.value)} />
           <TextInput className="stats-model-catalog-model-form-label" label="中文名称" placeholder="例如 GPT-4.1" value={modelEditLabelZh} onChange={(e) => setModelEditLabelZh(e.currentTarget.value)} />
           <Select className="stats-model-catalog-model-form-kind" label="类型" data={KIND_OPTIONS} value={modelEditKind} onChange={(v) => setModelEditKind((v as any) || 'text')} />
           <Switch className="stats-model-catalog-model-form-enabled" checked={modelEditEnabled} onChange={(e) => setModelEditEnabled(e.currentTarget.checked)} label="启用" />
