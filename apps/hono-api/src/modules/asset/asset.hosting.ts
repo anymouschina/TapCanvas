@@ -105,6 +105,125 @@ function stripUrlSearchAndHash(input: string): string {
 	}
 }
 
+type ParsedBase64DataUrl = {
+	mimeType: string;
+	base64: string;
+};
+
+function parseBase64DataUrl(input: string): ParsedBase64DataUrl | null {
+	const trimmed = (input || "").trim();
+	if (!trimmed) return null;
+	if (!/^data:/i.test(trimmed)) return null;
+	const idx = trimmed.indexOf(",");
+	if (idx === -1) return null;
+	const meta = trimmed.slice("data:".length, idx);
+	if (!/;base64/i.test(meta)) return null;
+	const mimeType = meta.split(";")[0]?.trim() || "application/octet-stream";
+	const base64 = trimmed.slice(idx + 1).trim();
+	if (!base64) return null;
+	return { mimeType, base64 };
+}
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+	const cleaned = (base64 || "").replace(/\s+/g, "");
+	if (!cleaned) return new Uint8Array(0);
+	if (typeof atob === "function") {
+		const binary = atob(cleaned);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i += 1) {
+			bytes[i] = binary.charCodeAt(i);
+		}
+		return bytes;
+	}
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const anyGlobal: any = globalThis as any;
+	if (anyGlobal?.Buffer) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		return new Uint8Array((anyGlobal.Buffer as any).from(cleaned, "base64"));
+	}
+	throw new Error("Base64 decode is not supported in current runtime");
+}
+
+function sniffMimeTypeFromBytes(bytes: Uint8Array, fallbackMimeType: string): string {
+	if (!bytes || bytes.byteLength === 0) return fallbackMimeType;
+	const b = bytes;
+
+	// JPEG: FF D8 FF
+	if (b.byteLength >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
+		return "image/jpeg";
+	}
+
+	// PNG: 89 50 4E 47 0D 0A 1A 0A
+	if (
+		b.byteLength >= 8 &&
+		b[0] === 0x89 &&
+		b[1] === 0x50 &&
+		b[2] === 0x4e &&
+		b[3] === 0x47 &&
+		b[4] === 0x0d &&
+		b[5] === 0x0a &&
+		b[6] === 0x1a &&
+		b[7] === 0x0a
+	) {
+		return "image/png";
+	}
+
+	// GIF: "GIF87a" / "GIF89a"
+	if (
+		b.byteLength >= 6 &&
+		b[0] === 0x47 &&
+		b[1] === 0x49 &&
+		b[2] === 0x46 &&
+		b[3] === 0x38 &&
+		(b[4] === 0x37 || b[4] === 0x39) &&
+		b[5] === 0x61
+	) {
+		return "image/gif";
+	}
+
+	// WebP: "RIFF" .... "WEBP"
+	if (
+		b.byteLength >= 12 &&
+		b[0] === 0x52 &&
+		b[1] === 0x49 &&
+		b[2] === 0x46 &&
+		b[3] === 0x46 &&
+		b[8] === 0x57 &&
+		b[9] === 0x45 &&
+		b[10] === 0x42 &&
+		b[11] === 0x50
+	) {
+		return "image/webp";
+	}
+
+	return fallbackMimeType;
+}
+
+async function trySha256Hex(bytes: Uint8Array): Promise<string | null> {
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const subtle = (crypto as any)?.subtle;
+		if (!subtle || typeof subtle.digest !== "function") return null;
+		const digest = await subtle.digest("SHA-256", bytes);
+		const out = Array.from(new Uint8Array(digest))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+		return out || null;
+	} catch {
+		return null;
+	}
+}
+
+async function buildInlineSourceKey(input: {
+	mimeType: string;
+	bytes: Uint8Array;
+}): Promise<string> {
+	const hash = await trySha256Hex(input.bytes);
+	const mime = (input.mimeType || "application/octet-stream").trim().toLowerCase();
+	if (hash) return `inline:${mime};sha256:${hash}`;
+	return `inline:${mime};uuid:${crypto.randomUUID()}`;
+}
+
 async function putToR2FromStream(options: {
 	bucket: R2Bucket;
 	key: string;
@@ -317,6 +436,33 @@ async function uploadToR2FromUrl(options: {
 	return { key, url };
 }
 
+async function uploadToR2FromInlineBytes(options: {
+	userId: string;
+	prefix?: string;
+	bucket: R2Bucket;
+	publicBase: string;
+	mimeType: string;
+	bytes: Uint8Array;
+}): Promise<{ key: string; url: string }> {
+	const publicBase = options.publicBase.trim().replace(/\/+$/, "");
+	const sniffed = sniffMimeTypeFromBytes(options.bytes, options.mimeType);
+	const contentType = (sniffed || "application/octet-stream")
+		.split(";")[0]
+		.trim();
+	const ext = detectExtension("", contentType);
+	const key = buildR2Key(options.userId, ext, options.prefix);
+
+	await options.bucket.put(key, options.bytes, {
+		httpMetadata: {
+			contentType,
+			cacheControl: "public, max-age=31536000, immutable",
+		},
+	});
+
+	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+	return { key, url };
+}
+
 function buildGeneratedAssetName(payload: {
 	type: "image" | "video";
 	prompt?: string | null;
@@ -416,116 +562,155 @@ export async function hostTaskAssetsInWorker(options: {
 		return /^\/?gen\//.test(trimmed);
 	};
 
-	for (const asset of assets) {
-		const parsed = TaskAssetSchema.safeParse(asset);
-		if (!parsed.success) continue;
-		let value = parsed.data;
+		for (const asset of assets) {
+			const parsed = TaskAssetSchema.safeParse(asset);
+			if (!parsed.success) continue;
+			let value = parsed.data;
 
-		const originalUrl = (value.url || "").trim();
-		if (!originalUrl) {
-			continue;
-		}
+			const originalUrl = (value.url || "").trim();
+			if (!originalUrl) {
+				continue;
+			}
 
-		let reusedExisting = false;
-		let didUpload = false;
-		let existingRowId: string | null = null;
-		let existingRowData: any = null;
+			const inlineData = parseBase64DataUrl(originalUrl);
+			const inlineBytes = inlineData ? decodeBase64ToBytes(inlineData.base64) : null;
+			const inlineMimeType =
+				inlineData && inlineBytes
+					? sniffMimeTypeFromBytes(inlineBytes, inlineData.mimeType)
+					: null;
+			const lookupSource = inlineData
+				? await buildInlineSourceKey({
+						mimeType: inlineMimeType || inlineData.mimeType,
+						bytes: inlineBytes!,
+					})
+				: originalUrl;
 
-		try {
-			const existing = await findGeneratedAssetBySourceUrl(
-				c.env.DB,
-				userId,
-				originalUrl,
-			);
-			if (existing && existing.data) {
-				existingRowId = existing.id;
-				let parsedData: any = null;
-				try {
-					parsedData = JSON.parse(existing.data);
-				} catch {
-					parsedData = null;
+			let reusedExisting = false;
+			let didUpload = false;
+			let existingRowId: string | null = null;
+			let existingRowData: any = null;
+
+			try {
+				const existing = await findGeneratedAssetBySourceUrl(
+					c.env.DB,
+					userId,
+					lookupSource,
+				);
+				if (existing && existing.data) {
+					existingRowId = existing.id;
+					let parsedData: any = null;
+					try {
+						parsedData = JSON.parse(existing.data);
+					} catch {
+						parsedData = null;
+					}
+					existingRowData = parsedData;
+					const existingUrl =
+						parsedData && typeof parsedData.url === "string"
+							? parsedData.url.trim()
+							: "";
+					const existingThumb =
+						parsedData && typeof parsedData.thumbnailUrl === "string"
+							? parsedData.thumbnailUrl
+							: value.thumbnailUrl ?? null;
+
+					if (existingUrl && isHostedUrl(existingUrl)) {
+						value = TaskAssetSchema.parse({
+							...value,
+							url: existingUrl,
+							thumbnailUrl: existingThumb,
+						});
+						reusedExisting = true;
+					}
 				}
-				existingRowData = parsedData;
-				const existingUrl =
-					parsedData && typeof parsedData.url === "string"
-						? parsedData.url.trim()
-						: "";
-				const existingThumb =
-					parsedData &&
-					typeof parsedData.thumbnailUrl === "string"
-						? parsedData.thumbnailUrl
-						: value.thumbnailUrl ?? null;
+			} catch (err: any) {
+				console.warn(
+					"[asset-hosting] findGeneratedAssetBySourceUrl failed",
+					err?.message || err,
+				);
+			}
 
-				if (existingUrl && isHostedUrl(existingUrl)) {
+			if (!reusedExisting) {
+				// data:*;base64,... 不符合我们的接口规范：必须上传到 OSS 后返回 URL（即便禁用了 hosting 也要处理）
+				if (inlineData && inlineBytes) {
+					const uploaded = await uploadToR2FromInlineBytes({
+						userId,
+						prefix: value.type === "video" ? "gen/videos" : "gen/images",
+						bucket: getBucketOrThrow(),
+						publicBase,
+						mimeType: inlineMimeType || inlineData.mimeType,
+						bytes: inlineBytes,
+					});
 					value = TaskAssetSchema.parse({
 						...value,
-						url: existingUrl,
-						thumbnailUrl: existingThumb,
+						url: uploaded.url,
 					});
-					reusedExisting = true;
+					didUpload = true;
+				} else if (!hostingDisabled && !isHostedUrl(originalUrl)) {
+					const uploaded = await uploadToR2FromUrl({
+						c,
+						userId,
+						sourceUrl: originalUrl,
+						prefix: value.type === "video" ? "gen/videos" : "gen/images",
+						bucket: getBucketOrThrow(),
+						publicBase,
+					});
+					value = TaskAssetSchema.parse({
+						...value,
+						url: uploaded.url,
+					});
+					didUpload = true;
 				}
 			}
-		} catch (err: any) {
-			console.warn(
-				"[asset-hosting] findGeneratedAssetBySourceUrl failed",
-				err?.message || err,
-			);
-		}
 
-		if (!reusedExisting) {
-			if (!hostingDisabled && !isHostedUrl(originalUrl)) {
-				const uploaded = await uploadToR2FromUrl({
-					c,
-					userId,
-					sourceUrl: originalUrl,
-					prefix:
-						value.type === "video"
-							? "gen/videos"
-							: "gen/images",
-					bucket: getBucketOrThrow(),
-					publicBase,
-				});
-				value = TaskAssetSchema.parse({
-					...value,
-					url: uploaded.url,
-				});
-				didUpload = true;
+			{
+				const thumbRaw =
+					typeof value.thumbnailUrl === "string" ? value.thumbnailUrl.trim() : "";
+				if (thumbRaw && thumbRaw !== value.url && !isHostedUrl(thumbRaw)) {
+					const inlineThumb = parseBase64DataUrl(thumbRaw);
+					if (inlineThumb) {
+						const thumbBytes = decodeBase64ToBytes(inlineThumb.base64);
+						const thumbMimeType = sniffMimeTypeFromBytes(
+							thumbBytes,
+							inlineThumb.mimeType,
+						);
+						const uploadedThumb = await uploadToR2FromInlineBytes({
+							userId,
+							prefix: "gen/thumbnails",
+							bucket: getBucketOrThrow(),
+							publicBase,
+							mimeType: thumbMimeType,
+							bytes: thumbBytes,
+						});
+						value = TaskAssetSchema.parse({
+							...value,
+							thumbnailUrl: uploadedThumb.url,
+						});
+					} else if (!hostingDisabled) {
+						const uploadedThumb = await uploadToR2FromUrl({
+							c,
+							userId,
+							sourceUrl: thumbRaw,
+							prefix: "gen/thumbnails",
+							bucket: getBucketOrThrow(),
+							publicBase,
+						});
+						value = TaskAssetSchema.parse({
+							...value,
+							thumbnailUrl: uploadedThumb.url,
+						});
+					}
+				}
 			}
-		}
 
-		if (!hostingDisabled) {
-			const thumbRaw =
-				typeof value.thumbnailUrl === "string"
-					? value.thumbnailUrl.trim()
-					: "";
-			if (
-				thumbRaw &&
-				thumbRaw !== value.url &&
-				!isHostedUrl(thumbRaw)
-			) {
-				const uploadedThumb = await uploadToR2FromUrl({
-					c,
-					userId,
-					sourceUrl: thumbRaw,
-					prefix: "gen/thumbnails",
-					bucket: getBucketOrThrow(),
-					publicBase,
-				});
-				value = TaskAssetSchema.parse({
-					...value,
-					thumbnailUrl: uploadedThumb.url,
-				});
-			}
-		}
+			hosted.push(value);
 
-		hosted.push(value);
-
-		if (!reusedExisting) {
-			if (existingRowId && !didUpload) {
-				// 已存在旧记录（可能是未托管 URL）；本次未成功上传时不重复写入
-			} else {
-				try {
-					if (existingRowId && didUpload) {
+			if (!reusedExisting) {
+				if (existingRowId && !didUpload) {
+					// 已存在旧记录（可能是未托管 URL）；本次未成功上传时不重复写入
+				} else {
+					try {
+						if (existingRowId && didUpload) {
 						const nowIso = new Date().toISOString();
 						const baseData =
 							existingRowData && typeof existingRowData === "object"
@@ -542,29 +727,29 @@ export async function hostTaskAssetsInWorker(options: {
 								url: value.url,
 								thumbnailUrl: value.thumbnailUrl ?? null,
 								vendor: meta?.vendor || null,
-								taskKind: meta?.taskKind || null,
-								prompt: meta?.prompt || null,
-								modelKey: meta?.modelKey ?? null,
-								taskId: meta?.taskId ?? null,
-								sourceUrl: originalUrl,
-							},
-							nowIso,
-						);
-					} else {
-						await persistGeneratedAsset(c, userId, {
-							type: value.type,
+									taskKind: meta?.taskKind || null,
+									prompt: meta?.prompt || null,
+									modelKey: meta?.modelKey ?? null,
+									taskId: meta?.taskId ?? null,
+									sourceUrl: lookupSource,
+								},
+								nowIso,
+							);
+						} else {
+							await persistGeneratedAsset(c, userId, {
+								type: value.type,
 							url: value.url,
 							thumbnailUrl: value.thumbnailUrl ?? null,
-							vendor: meta?.vendor,
-							taskKind: meta?.taskKind,
-							prompt: meta?.prompt,
-							modelKey: meta?.modelKey ?? null,
-							taskId: meta?.taskId ?? null,
-							sourceUrl: originalUrl,
-						});
-					}
-				} catch (err: any) {
-					console.warn(
+								vendor: meta?.vendor,
+								taskKind: meta?.taskKind,
+								prompt: meta?.prompt,
+								modelKey: meta?.modelKey ?? null,
+								taskId: meta?.taskId ?? null,
+								sourceUrl: lookupSource,
+							});
+						}
+					} catch (err: any) {
+						console.warn(
 						"[asset-hosting] persistGeneratedAsset failed",
 						err?.message || err,
 					);
