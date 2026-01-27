@@ -1423,8 +1423,10 @@ export async function upsertModelCatalogModel(payload: {
   return r.json()
 }
 
-export async function deleteModelCatalogModel(modelKey: string): Promise<void> {
-  const r = await apiFetch(`${API_BASE}/model-catalog/models/${encodeURIComponent(modelKey)}`, withAuth({ method: 'DELETE' }))
+export async function deleteModelCatalogModel(vendorKey: string, modelKey: string): Promise<void> {
+  const u = new URL(`${API_BASE}/model-catalog/models/${encodeURIComponent(modelKey)}`)
+  u.searchParams.set('vendorKey', vendorKey)
+  const r = await apiFetch(u.toString(), withAuth({ method: 'DELETE' }))
   if (!r.ok) {
     const body = await r.json().catch(() => null as any)
     const msg = body?.message || body?.error || `delete model catalog model failed: ${r.status}`

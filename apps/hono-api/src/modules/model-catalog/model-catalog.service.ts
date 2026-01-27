@@ -18,6 +18,7 @@ import {
 	deleteCatalogModelRow,
 	deleteCatalogVendorApiKeyRow,
 	deleteCatalogVendorRow,
+	listCatalogModelsByModelKey,
 	getCatalogVendorApiKeyByVendorKey,
 	getCatalogVendorByKey,
 	listCatalogMappings,
@@ -258,12 +259,39 @@ export async function upsertModelCatalogModel(
 
 export async function deleteModelCatalogModel(
 	c: AppContext,
-	modelKey: string,
+	input: { modelKey: string; vendorKey?: string | null },
 ): Promise<void> {
 	requireAdmin(c);
-	const mk = String(modelKey || "").trim();
+	const mk = String(input.modelKey || "").trim();
 	if (!mk) return;
-	await deleteCatalogModelRow(c.env.DB, mk);
+	const vendorKey = typeof input.vendorKey === "string" ? normalizeKey(input.vendorKey) : "";
+	if (vendorKey) {
+		await deleteCatalogModelRow(c.env.DB, { vendorKey, modelKey: mk });
+		return;
+	}
+
+	const candidates = await listCatalogModelsByModelKey(c.env.DB, mk);
+	if (!candidates.length) return;
+	if (candidates.length > 1) {
+		throw new AppError("vendorKey is required for non-unique modelKey", {
+			status: 400,
+			code: "vendor_required",
+			details: {
+				modelKey: mk,
+				vendors: candidates
+					.map((c: any) =>
+						typeof c?.vendor_key === "string" ? c.vendor_key.trim() : "",
+					)
+					.filter(Boolean),
+			},
+		});
+	}
+	const onlyVendorKey =
+		typeof candidates[0]?.vendor_key === "string"
+			? candidates[0].vendor_key.trim()
+			: "";
+	if (!onlyVendorKey) return;
+	await deleteCatalogModelRow(c.env.DB, { vendorKey: onlyVendorKey, modelKey: mk });
 }
 
 export async function listModelCatalogMappings(

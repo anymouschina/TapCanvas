@@ -33,7 +33,7 @@ import {
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
 } from "../task/task.service";
-import { ensureModelCatalogSchema, getCatalogModelByKey } from "../model-catalog/model-catalog.repo";
+import { ensureModelCatalogSchema, listCatalogModelsByModelKey } from "../model-catalog/model-catalog.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 
 export const apiKeyRouter = new Hono<AppEnv>();
@@ -414,6 +414,7 @@ async function resolvePreferredVendorFromModelCatalog(
 	c: any,
 	taskKind: string | null | undefined,
 	extras: Record<string, any>,
+	vendorCandidates: string[],
 ): Promise<string | null> {
 	const raw =
 		typeof extras?.modelKey === "string" && extras.modelKey.trim()
@@ -428,17 +429,37 @@ async function resolvePreferredVendorFromModelCatalog(
 
 	for (const modelKey of candidates) {
 		try {
-			const row = await getCatalogModelByKey(c.env.DB, modelKey);
-			if (!row) continue;
-			if (Number((row as any).enabled ?? 1) === 0) continue;
-			const kindRaw = typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
-			if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
-			const vendorKey =
-				typeof (row as any).vendor_key === "string" ? (row as any).vendor_key.trim() : "";
-			if (vendorKey) {
+			const rows = await listCatalogModelsByModelKey(c.env.DB, modelKey);
+			if (!rows.length) continue;
+
+			const eligibleVendorKeys = new Set<string>();
+			for (const row of rows) {
+				if (!row) continue;
+				if (Number((row as any).enabled ?? 1) === 0) continue;
+				const kindRaw =
+					typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
+				if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
+				const vendorKey =
+					typeof (row as any).vendor_key === "string"
+						? (row as any).vendor_key.trim()
+						: "";
 				const normalized = normalizeDispatchVendor(vendorKey);
-				if (normalized) return normalized;
+				if (normalized) eligibleVendorKeys.add(normalized);
 			}
+
+			if (!eligibleVendorKeys.size) continue;
+
+			for (const candidateVendor of vendorCandidates) {
+				const normalized = normalizeDispatchVendor(candidateVendor);
+				if (normalized && eligibleVendorKeys.has(normalized)) return normalized;
+			}
+
+			// Fall back to deterministic pick to preserve legacy behavior
+			// (modelKey may map to vendors outside the default candidate list).
+			const sorted = Array.from(eligibleVendorKeys.values()).sort((a, b) =>
+				a.localeCompare(b),
+			);
+			return sorted[0] || null;
 		} catch {
 			continue;
 		}
@@ -502,6 +523,7 @@ async function runPublicTaskWithFallback(
 			c,
 			request.kind,
 			extras,
+			vendorCandidates,
 		);
 		if (preferred && enabledSystemVendors.has(preferred)) {
 			vendorCandidates = [

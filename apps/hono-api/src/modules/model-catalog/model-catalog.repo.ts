@@ -47,6 +47,86 @@ export type ModelCatalogMappingRow = {
 
 let schemaEnsured = false;
 
+async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
+	// Create v2 schema for new installs.
+	await execute(
+		db,
+		`CREATE TABLE IF NOT EXISTS model_catalog_models (
+      model_key TEXT NOT NULL,
+      vendor_key TEXT NOT NULL,
+      label_zh TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      meta TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (vendor_key, model_key),
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+    )`,
+	);
+
+	// Detect legacy schema: model_key is PK, vendor_key is not.
+	let tableInfo: Array<{ name?: string; pk?: number }> = [];
+	try {
+		tableInfo = await queryAll(db, `PRAGMA table_info(model_catalog_models)`);
+	} catch {
+		tableInfo = [];
+	}
+
+	const vendorPk =
+		tableInfo.find((c) => String(c?.name || "").toLowerCase() === "vendor_key")
+			?.pk ?? 0;
+	const modelPk =
+		tableInfo.find((c) => String(c?.name || "").toLowerCase() === "model_key")
+			?.pk ?? 0;
+
+	const hasCompositePk = Number(vendorPk) > 0 && Number(modelPk) > 0;
+	const hasLegacyPk = Number(vendorPk) === 0 && Number(modelPk) > 0;
+	if (!hasLegacyPk || hasCompositePk) return;
+
+	// Migrate legacy schema -> composite PK on (vendor_key, model_key).
+	await execute(db, `BEGIN`);
+	try {
+		await execute(db, `DROP INDEX IF EXISTS idx_model_catalog_models_vendor_kind`);
+		await execute(db, `DROP INDEX IF EXISTS idx_model_catalog_models_enabled`);
+		await execute(
+			db,
+			`ALTER TABLE model_catalog_models RENAME TO model_catalog_models_legacy`,
+		);
+		await execute(
+			db,
+			`CREATE TABLE model_catalog_models (
+        model_key TEXT NOT NULL,
+        vendor_key TEXT NOT NULL,
+        label_zh TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        meta TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (vendor_key, model_key),
+        FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+      )`,
+		);
+		await execute(
+			db,
+			`INSERT INTO model_catalog_models
+       (vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at)
+       SELECT vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at
+       FROM model_catalog_models_legacy`,
+		);
+		await execute(db, `DROP TABLE model_catalog_models_legacy`);
+		await execute(db, `COMMIT`);
+	} catch (err) {
+		try {
+			await execute(db, `ROLLBACK`);
+		} catch {
+			// best-effort
+		}
+		throw err;
+	}
+}
+
 export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
 	if (schemaEnsured) return;
 
@@ -81,7 +161,7 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
 	await execute(
 		db,
 		`CREATE TABLE IF NOT EXISTS model_catalog_models (
-      model_key TEXT PRIMARY KEY,
+      model_key TEXT NOT NULL,
       vendor_key TEXT NOT NULL,
       label_zh TEXT NOT NULL,
       kind TEXT NOT NULL,
@@ -89,9 +169,12 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
       meta TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      PRIMARY KEY (vendor_key, model_key),
       FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
     )`,
 	);
+
+	await ensureModelCatalogModelsTable(db);
 
 	await execute(
 		db,
@@ -294,15 +377,32 @@ export async function listCatalogModels(
 	return queryAll<ModelCatalogModelRow>(db, sql, bindings);
 }
 
-export async function getCatalogModelByKey(
+export async function listCatalogModelsByModelKey(
 	db: D1Database,
 	modelKey: string,
+): Promise<ModelCatalogModelRow[]> {
+	await ensureModelCatalogSchema(db);
+	const mk = String(modelKey || "").trim();
+	if (!mk) return [];
+	return queryAll<ModelCatalogModelRow>(
+		db,
+		`SELECT * FROM model_catalog_models WHERE model_key = ? ORDER BY vendor_key ASC`,
+		[mk],
+	);
+}
+
+export async function getCatalogModelByVendorAndKey(
+	db: D1Database,
+	input: { vendorKey: string; modelKey: string },
 ): Promise<ModelCatalogModelRow | null> {
 	await ensureModelCatalogSchema(db);
+	const mk = String(input.modelKey || "").trim();
+	const vk = String(input.vendorKey || "").trim().toLowerCase();
+	if (!mk || !vk) return null;
 	return queryOne<ModelCatalogModelRow>(
 		db,
-		`SELECT * FROM model_catalog_models WHERE model_key = ? LIMIT 1`,
-		[modelKey],
+		`SELECT * FROM model_catalog_models WHERE vendor_key = ? AND model_key = ? LIMIT 1`,
+		[vk, mk],
 	);
 }
 
@@ -325,8 +425,7 @@ export async function upsertCatalogModelRow(
 		`INSERT INTO model_catalog_models
        (model_key, vendor_key, label_zh, kind, enabled, meta, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(model_key) DO UPDATE SET
-         vendor_key = excluded.vendor_key,
+       ON CONFLICT(vendor_key, model_key) DO UPDATE SET
          label_zh = excluded.label_zh,
          kind = excluded.kind,
          enabled = excluded.enabled,
@@ -344,19 +443,27 @@ export async function upsertCatalogModelRow(
 		],
 	);
 
-	const row = await getCatalogModelByKey(db, input.modelKey);
+	const row = await getCatalogModelByVendorAndKey(db, {
+		vendorKey: input.vendorKey,
+		modelKey: input.modelKey,
+	});
 	if (!row) throw new Error("model upsert failed");
 	return row;
 }
 
 export async function deleteCatalogModelRow(
 	db: D1Database,
-	modelKey: string,
+	input: { vendorKey: string; modelKey: string },
 ): Promise<void> {
 	await ensureModelCatalogSchema(db);
-	await execute(db, `DELETE FROM model_catalog_models WHERE model_key = ?`, [
-		modelKey,
-	]);
+	const mk = String(input.modelKey || "").trim();
+	const vk = String(input.vendorKey || "").trim().toLowerCase();
+	if (!mk || !vk) return;
+	await execute(
+		db,
+		`DELETE FROM model_catalog_models WHERE vendor_key = ? AND model_key = ?`,
+		[vk, mk],
+	);
 }
 
 export async function listCatalogMappings(

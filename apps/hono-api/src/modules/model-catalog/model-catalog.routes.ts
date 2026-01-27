@@ -125,7 +125,8 @@ modelCatalogRouter.post("/models", async (c) => {
 
 modelCatalogRouter.delete("/models/:modelKey", async (c) => {
 	const modelKey = c.req.param("modelKey");
-	await deleteModelCatalogModel(c, modelKey);
+	const vendorKey = c.req.query("vendorKey") || undefined;
+	await deleteModelCatalogModel(c, { modelKey, vendorKey });
 	return c.body(null, 204);
 });
 

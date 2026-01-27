@@ -587,7 +587,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const handleDeleteModel = React.useCallback(async (model: ModelCatalogModelDto) => {
     if (!window.confirm(`确定删除模型「${model.labelZh}（${model.modelKey}）」？`)) return
     try {
-      await deleteModelCatalogModel(model.modelKey)
+      await deleteModelCatalogModel(model.vendorKey, model.modelKey)
       toast('已删除模型', 'success')
       await reloadAll()
     } catch (err: any) {
@@ -1089,7 +1089,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
               </Table.Tr>
             ) : (
               filteredModels.map((m) => (
-                <Table.Tr className="stats-model-catalog-models-table-row" key={m.modelKey}>
+                <Table.Tr className="stats-model-catalog-models-table-row" key={`${m.vendorKey}:${m.modelKey}`}>
                   <Table.Td className="stats-model-catalog-models-table-cell">
                     <Text className="stats-model-catalog-model-key" size="sm" fw={600}>{m.modelKey}</Text>
                   </Table.Td>
@@ -1246,8 +1246,8 @@ export default function StatsModelCatalogManagement({ className }: { className?:
 
       <Modal className="stats-model-catalog-model-modal" opened={modelEditOpen} onClose={() => setModelEditOpen(false)} title={modelEditIsNew ? '新增模型' : '编辑模型'} size="md" radius="lg" centered>
         <Stack className="stats-model-catalog-model-form" gap="sm">
-          <Select className="stats-model-catalog-model-form-vendor" label="厂商" data={vendorOnlyData} value={modelEditVendorKey} onChange={(v) => setModelEditVendorKey(v || '')} searchable />
-          <TextInput className="stats-model-catalog-model-form-key" label="模型 Key（唯一）" placeholder="例如 gpt-4.1 / nano-banana-pro" value={modelEditModelKey} onChange={(e) => setModelEditModelKey(e.currentTarget.value)} disabled={!modelEditIsNew} />
+          <Select className="stats-model-catalog-model-form-vendor" label="厂商（与模型 Key 组合唯一）" data={vendorOnlyData} value={modelEditVendorKey} onChange={(v) => setModelEditVendorKey(v || '')} searchable disabled={!modelEditIsNew} />
+          <TextInput className="stats-model-catalog-model-form-key" label="模型 Key（厂商内唯一）" placeholder="例如 gpt-4.1 / nano-banana-pro" value={modelEditModelKey} onChange={(e) => setModelEditModelKey(e.currentTarget.value)} disabled={!modelEditIsNew} />
           <TextInput className="stats-model-catalog-model-form-label" label="中文名称" placeholder="例如 GPT-4.1" value={modelEditLabelZh} onChange={(e) => setModelEditLabelZh(e.currentTarget.value)} />
           <Select className="stats-model-catalog-model-form-kind" label="类型" data={KIND_OPTIONS} value={modelEditKind} onChange={(v) => setModelEditKind((v as any) || 'text')} />
           <Switch className="stats-model-catalog-model-form-enabled" checked={modelEditEnabled} onChange={(e) => setModelEditEnabled(e.currentTarget.checked)} label="启用" />

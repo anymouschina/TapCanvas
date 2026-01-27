@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_vendor_api_keys (
 );
 
 CREATE TABLE IF NOT EXISTS model_catalog_models (
-	model_key TEXT PRIMARY KEY,
+	model_key TEXT NOT NULL,
 	vendor_key TEXT NOT NULL,
 	label_zh TEXT NOT NULL,
 	kind TEXT NOT NULL, -- text | image | video
@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_models (
 	meta TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
+	PRIMARY KEY (vendor_key, model_key),
 	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
 );
 
