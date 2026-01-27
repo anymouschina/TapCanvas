@@ -17,7 +17,7 @@ import {
 	deleteCatalogMappingRow,
 	deleteCatalogModelRow,
 	deleteCatalogVendorApiKeyRow,
-	deleteCatalogVendorRow,
+	deleteCatalogVendorCascade,
 	listCatalogModelsByModelKey,
 	getCatalogVendorApiKeyByVendorKey,
 	getCatalogVendorByKey,
@@ -187,11 +187,10 @@ export async function deleteModelCatalogVendor(
 	const k = normalizeKey(key);
 	if (!k) return;
 	try {
-		await deleteCatalogVendorApiKeyRow(c.env.DB, k);
-		await deleteCatalogVendorRow(c.env.DB, k);
+		await deleteCatalogVendorCascade(c.env.DB, k);
 	} catch (err: any) {
 		throw new AppError("delete vendor failed", {
-			status: 400,
+			status: 500,
 			code: "delete_failed",
 			details: { message: err?.message ?? String(err) },
 		});

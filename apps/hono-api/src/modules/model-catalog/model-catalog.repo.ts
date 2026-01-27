@@ -345,6 +345,23 @@ export async function deleteCatalogVendorRow(
 	await execute(db, `DELETE FROM model_catalog_vendors WHERE key = ?`, [key]);
 }
 
+export async function deleteCatalogVendorCascade(
+	db: D1Database,
+	vendorKey: string,
+): Promise<void> {
+	await ensureModelCatalogSchema(db);
+	const vk = String(vendorKey || "").trim().toLowerCase();
+	if (!vk) return;
+
+	// D1/DO SQLite disallow `BEGIN/SAVEPOINT` SQL; use the JS batch API for atomicity.
+	await db.batch([
+		db.prepare(`DELETE FROM model_catalog_mappings WHERE vendor_key = ?`).bind(vk),
+		db.prepare(`DELETE FROM model_catalog_models WHERE vendor_key = ?`).bind(vk),
+		db.prepare(`DELETE FROM model_catalog_vendor_api_keys WHERE vendor_key = ?`).bind(vk),
+		db.prepare(`DELETE FROM model_catalog_vendors WHERE key = ?`).bind(vk),
+	]);
+}
+
 export async function listCatalogModels(
 	db: D1Database,
 	filter?: { vendorKey?: string; kind?: string; enabled?: boolean },
