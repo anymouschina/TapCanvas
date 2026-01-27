@@ -61,6 +61,8 @@ app.use(
 			"Accept",
 			"Range",
 			"X-API-Key",
+			"tenant-id",
+			"terminal",
 			"X-File-Name",
 			"X-File-Size",
 			"X-Tap-No-Retry",
