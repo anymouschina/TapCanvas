@@ -61,7 +61,7 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (vendor_key, model_key),
-      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
     )`,
 	);
 
@@ -106,7 +106,7 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (vendor_key, model_key),
-        FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+        FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
       )`,
 			),
 			db.prepare(
@@ -149,7 +149,7 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
     )`,
 	);
 
@@ -165,7 +165,7 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (vendor_key, model_key),
-      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
     )`,
 	);
 
@@ -194,7 +194,7 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
       response_mapping TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key),
+      FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE,
       UNIQUE (vendor_key, task_kind, name)
     )`,
 	);
@@ -478,6 +478,16 @@ export async function deleteCatalogModelRow(
 	);
 }
 
+export async function deleteCatalogModelsByVendorKey(
+	db: D1Database,
+	vendorKey: string,
+): Promise<void> {
+	await ensureModelCatalogSchema(db);
+	await execute(db, `DELETE FROM model_catalog_models WHERE vendor_key = ?`, [
+		vendorKey,
+	]);
+}
+
 export async function listCatalogMappings(
 	db: D1Database,
 	filter?: { vendorKey?: string; taskKind?: string; enabled?: boolean },
@@ -609,4 +619,14 @@ export async function deleteCatalogMappingRow(
 ): Promise<void> {
 	await ensureModelCatalogSchema(db);
 	await execute(db, `DELETE FROM model_catalog_mappings WHERE id = ?`, [id]);
+}
+
+export async function deleteCatalogMappingsByVendorKey(
+	db: D1Database,
+	vendorKey: string,
+): Promise<void> {
+	await ensureModelCatalogSchema(db);
+	await execute(db, `DELETE FROM model_catalog_mappings WHERE vendor_key = ?`, [
+		vendorKey,
+	]);
 }

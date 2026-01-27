@@ -431,7 +431,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_vendor_api_keys (
 	enabled INTEGER NOT NULL DEFAULT 1,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS model_catalog_models (
@@ -444,7 +444,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_models (
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (vendor_key, model_key),
-	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_model_catalog_models_vendor_kind ON model_catalog_models(vendor_key, kind);
@@ -460,7 +460,7 @@ CREATE TABLE IF NOT EXISTS model_catalog_mappings (
 	response_mapping TEXT, -- JSON
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key),
+	FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key) ON DELETE CASCADE,
 	UNIQUE (vendor_key, task_kind, name)
 );
 
