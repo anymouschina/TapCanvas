@@ -85,17 +85,18 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
 	if (!hasLegacyPk || hasCompositePk) return;
 
 	// Migrate legacy schema -> composite PK on (vendor_key, model_key).
-	await execute(db, `BEGIN`);
 	try {
-		await execute(db, `DROP INDEX IF EXISTS idx_model_catalog_models_vendor_kind`);
-		await execute(db, `DROP INDEX IF EXISTS idx_model_catalog_models_enabled`);
-		await execute(
-			db,
-			`ALTER TABLE model_catalog_models RENAME TO model_catalog_models_legacy`,
-		);
-		await execute(
-			db,
-			`CREATE TABLE model_catalog_models (
+		// D1/DO SQLite disallow `BEGIN/SAVEPOINT` SQL; use the JS batch API for atomicity.
+		await db.batch([
+			db.prepare(
+				`DROP INDEX IF EXISTS idx_model_catalog_models_vendor_kind`,
+			),
+			db.prepare(`DROP INDEX IF EXISTS idx_model_catalog_models_enabled`),
+			db.prepare(
+				`ALTER TABLE model_catalog_models RENAME TO model_catalog_models_legacy`,
+			),
+			db.prepare(
+				`CREATE TABLE model_catalog_models (
         model_key TEXT NOT NULL,
         vendor_key TEXT NOT NULL,
         label_zh TEXT NOT NULL,
@@ -107,22 +108,16 @@ async function ensureModelCatalogModelsTable(db: D1Database): Promise<void> {
         PRIMARY KEY (vendor_key, model_key),
         FOREIGN KEY (vendor_key) REFERENCES model_catalog_vendors(key)
       )`,
-		);
-		await execute(
-			db,
-			`INSERT INTO model_catalog_models
+			),
+			db.prepare(
+				`INSERT INTO model_catalog_models
        (vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at)
        SELECT vendor_key, model_key, label_zh, kind, enabled, meta, created_at, updated_at
        FROM model_catalog_models_legacy`,
-		);
-		await execute(db, `DROP TABLE model_catalog_models_legacy`);
-		await execute(db, `COMMIT`);
+			),
+			db.prepare(`DROP TABLE model_catalog_models_legacy`),
+		]);
 	} catch (err) {
-		try {
-			await execute(db, `ROLLBACK`);
-		} catch {
-			// best-effort
-		}
 		throw err;
 	}
 }
