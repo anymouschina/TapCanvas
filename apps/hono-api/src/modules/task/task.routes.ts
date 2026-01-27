@@ -13,6 +13,7 @@ import {
 } from "./task.schemas";
 import {
 	fetchApimartTaskResult,
+	fetchAsyncDataTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
@@ -458,6 +459,11 @@ taskRouter.post("/result", async (c) => {
 		});
 	} else if (resolved.kind === "image") {
 		result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
+			taskKind: (taskKind as any) ?? null,
+			promptFromClient: prompt,
+		});
+	} else if (dispatch === "asyncdata" || dispatch === "tuzi") {
+		result = await fetchAsyncDataTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});

@@ -4543,6 +4543,271 @@ export async function fetchSora2ApiTaskResult(
 	});
 }
 
+function normalizeAsyncDataTaskStatus(value: unknown): TaskStatus {
+	if (typeof value !== "string") return "running";
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) return "running";
+	if (
+		normalized === "completed" ||
+		normalized === "complete" ||
+		normalized === "succeeded" ||
+		normalized === "success" ||
+		normalized === "done"
+	) {
+		return "succeeded";
+	}
+	if (
+		normalized === "failed" ||
+		normalized === "failure" ||
+		normalized === "error" ||
+		normalized === "cancelled" ||
+		normalized === "canceled"
+	) {
+		return "failed";
+	}
+	if (normalized === "queued" || normalized === "pending" || normalized === "submitted") {
+		return "queued";
+	}
+	if (
+		normalized === "running" ||
+		normalized === "processing" ||
+		normalized === "generating" ||
+		normalized === "in_progress" ||
+		normalized === "in-progress"
+	) {
+		return "running";
+	}
+	return "running";
+}
+
+function looksLikeAsyncDataVideoUrl(url: string): boolean {
+	const trimmed = (url || "").trim();
+	if (!trimmed) return false;
+	if (looksLikeVideoUrl(trimmed)) return true;
+	const lower = trimmed.toLowerCase();
+	// OpenAI signed URLs may not have an explicit video extension.
+	if (lower.includes("videos.openai.com/")) return true;
+	return false;
+}
+
+export async function fetchAsyncDataTaskResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+	options?: { taskKind?: TaskRequestDto["kind"] | null; promptFromClient?: string | null },
+): Promise<TaskResult> {
+	if (!taskId || !taskId.trim()) {
+		throw new AppError("taskId is required", {
+			status: 400,
+			code: "task_id_required",
+		});
+	}
+
+	const taskKind: TaskRequestDto["kind"] =
+		typeof options?.taskKind === "string" && options.taskKind.trim()
+			? (options.taskKind as TaskRequestDto["kind"])
+			: "text_to_video";
+
+	const refForTask = await (async () => {
+		try {
+			return await getVendorTaskRefByTaskId(c.env.DB, userId, "video", taskId);
+		} catch {
+			return null;
+		}
+	})();
+
+	// Enforce per-user task ownership (asyncdata is a public endpoint).
+	if (!refForTask) {
+		throw new AppError("taskId is not found", {
+			status: 404,
+			code: "task_not_found",
+		});
+	}
+
+	const vendorRefRaw =
+		typeof refForTask?.vendor === "string" ? refForTask.vendor.trim() : "";
+	const vendorForLog = (() => {
+		if (!vendorRefRaw) return "asyncdata";
+		const head = vendorRefRaw.split(":")[0]?.trim() || "";
+		return head || vendorRefRaw;
+	})();
+
+	const pid = typeof refForTask?.pid === "string" ? refForTask.pid.trim() : "";
+	if (refForTask && !pid && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taskId.trim())) {
+		const result = TaskResultSchema.parse({
+			id: taskId.trim(),
+			kind: taskKind,
+			status: "running",
+			assets: [],
+			raw: {
+				provider: "asyncdata",
+				vendor: vendorForLog,
+				upstreamTaskId: null,
+				waitingUpstreamTaskId: true,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+		return result;
+	}
+
+	const upstreamTaskId = pid || taskId.trim();
+	const canonicalTaskId = upstreamTaskId;
+
+	const payload = await callJsonApi(
+		c,
+		`https://pro.asyncdata.net/source/${encodeURIComponent(upstreamTaskId)}`,
+		{
+			method: "GET",
+			headers: { Accept: "application/json" },
+		},
+		{ provider: "asyncdata" },
+	);
+
+	let status = normalizeAsyncDataTaskStatus(payload?.status);
+	const progress =
+		typeof payload?.progress === "number" && Number.isFinite(payload.progress)
+			? Math.max(0, Math.min(100, Math.round(payload.progress)))
+			: undefined;
+
+	const pickVideoUrl = (): string | null => {
+		const candidates = [
+			payload?.url,
+			payload?.draft_info?.downloadable_url,
+			payload?.draft_info?.download_urls?.no_watermark,
+			payload?.draft_info?.download_urls?.watermark,
+			payload?.draft_info?.url,
+		];
+		for (const v of candidates) {
+			if (typeof v === "string" && v.trim() && looksLikeAsyncDataVideoUrl(v)) {
+				return v.trim();
+			}
+		}
+		for (const v of candidates) {
+			if (typeof v === "string" && v.trim()) return v.trim();
+		}
+		return null;
+	};
+
+	const videoUrl = pickVideoUrl();
+	const thumbRaw =
+		(typeof payload?.thumbnail_url === "string" && payload.thumbnail_url.trim()) ||
+		(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()) ||
+		(typeof payload?.gif_url === "string" && payload.gif_url.trim()) ||
+		(typeof payload?.gifUrl === "string" && payload.gifUrl.trim()) ||
+		null;
+
+	if (status === "succeeded" && !videoUrl) {
+		status = "running";
+	}
+	if (status !== "succeeded" && videoUrl) {
+		// Some upstreams only populate URLs late; treat presence of a downloadable URL as success.
+		status = "succeeded";
+	}
+
+	if (status === "succeeded" && videoUrl) {
+		const asset = TaskAssetSchema.parse({
+			type: "video",
+			url: videoUrl,
+			thumbnailUrl: thumbRaw ? thumbRaw.trim() : null,
+		});
+
+		const promptForAsset =
+			typeof options?.promptFromClient === "string" && options.promptFromClient.trim()
+				? options.promptFromClient.trim()
+				: null;
+
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind,
+					prompt: promptForAsset,
+					vendor: vendorForLog,
+					taskId: canonicalTaskId,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: canonicalTaskId,
+				kind: taskKind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "asyncdata",
+					vendor: vendorForLog,
+					upstreamTaskId,
+					requestedTaskId: taskId.trim() !== canonicalTaskId ? taskId.trim() : null,
+					response: payload ?? null,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind,
+				result,
+			});
+			return result;
+		}
+
+		const result = TaskResultSchema.parse({
+			id: canonicalTaskId,
+			kind: taskKind,
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "asyncdata",
+				vendor: vendorForLog,
+				upstreamTaskId,
+				requestedTaskId: taskId.trim() !== canonicalTaskId ? taskId.trim() : null,
+				response: payload ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+		return result;
+	}
+
+	const result = TaskResultSchema.parse({
+		id: canonicalTaskId,
+		kind: taskKind,
+		status,
+		assets: [],
+		raw: {
+			provider: "asyncdata",
+			vendor: vendorForLog,
+			upstreamTaskId,
+			requestedTaskId: taskId.trim() !== canonicalTaskId ? taskId.trim() : null,
+			response: payload ?? null,
+			progress,
+		},
+	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: vendorForLog,
+		taskKind,
+		result,
+	});
+	return result;
+}
+
 function normalizeGrsaiDrawTaskStatus(value: unknown): TaskStatus {
 	if (typeof value !== "string") return "running";
 	const normalized = value.trim().toLowerCase();
@@ -6181,6 +6446,96 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 		return false;
 	}
 
+	type AsyncDataTaskRef = {
+		id: string;
+		webUrl: string | null;
+		sourceUrl: string | null;
+	};
+
+	function extractAsyncDataTaskRefFromText(text: string): AsyncDataTaskRef | null {
+		if (typeof text !== "string" || !text.trim()) return null;
+
+		const normalized = text.trim();
+		const uuid =
+			/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+		const refsById = new Map<string, { webUrl: string | null; sourceUrl: string | null }>();
+
+		const linkRegex =
+			/https?:\/\/[^\s)]+asyncdata\.net\/(web|source)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+		let match: RegExpExecArray | null;
+		// eslint-disable-next-line no-cond-assign
+		while ((match = linkRegex.exec(normalized)) !== null) {
+			const kind = (match[1] || "").toLowerCase();
+			const id = (match[2] || "").toLowerCase();
+			if (!id) continue;
+
+			const url = match[0].trim();
+			const current = refsById.get(id) || { webUrl: null, sourceUrl: null };
+			if (kind === "web") current.webUrl = current.webUrl || url;
+			if (kind === "source") current.sourceUrl = current.sourceUrl || url;
+			refsById.set(id, current);
+		}
+
+		if (refsById.size > 0) {
+			// Prefer IDs that have both web + source links.
+			for (const [id, ref] of refsById.entries()) {
+				if (ref.webUrl && ref.sourceUrl) {
+					return { id, webUrl: ref.webUrl, sourceUrl: ref.sourceUrl };
+				}
+			}
+			const first = refsById.entries().next().value as
+				| [string, { webUrl: string | null; sourceUrl: string | null }]
+				| undefined;
+			if (first) {
+				return { id: first[0], webUrl: first[1].webUrl, sourceUrl: first[1].sourceUrl };
+			}
+		}
+
+		// Fallback: "ID: <uuid>" pattern (with or without backticks).
+		{
+			const m =
+				normalized.match(
+					new RegExp(
+						`\\bID\\s*[:：]\\s*` +
+							"`?" +
+							`(${uuid.source})` +
+							"`?",
+						"i",
+					),
+				) || null;
+			const id = m?.[1] ? String(m[1]).toLowerCase() : "";
+			if (id) return { id, webUrl: null, sourceUrl: null };
+		}
+
+		// Last resort: if the text mentions asyncdata, try to grab any UUID.
+		if (/asyncdata/i.test(normalized)) {
+			const m = normalized.match(uuid);
+			const id = m?.[0] ? String(m[0]).toLowerCase() : "";
+			if (id) return { id, webUrl: null, sourceUrl: null };
+		}
+
+		return null;
+	}
+
+	function extractProgressPercentFromText(text: string): number | null {
+		if (typeof text !== "string" || !text.trim()) return null;
+
+		const idx = (() => {
+			const m = text.search(/(进度|progress)/i);
+			return m >= 0 ? m : -1;
+		})();
+		if (idx < 0) return null;
+
+		const slice = text.slice(idx, idx + 160);
+		const nums = slice.match(/\b\d{1,3}\b/g) || [];
+		const values = nums
+			.map((n) => Number.parseInt(n, 10))
+			.filter((n) => Number.isFinite(n) && n >= 0 && n <= 100);
+		if (!values.length) return null;
+		return Math.max(...values);
+	}
+
 	function arrayBufferToBase64(buf: ArrayBuffer): string {
 		const bytes = new Uint8Array(buf);
 		let binary = "";
@@ -6870,13 +7225,80 @@ async function runOpenAiCompatibleVideoTaskForVendor(
 			(typeof (data as any)?.task_id === "string" && (data as any).task_id.trim()) ||
 			(typeof (data as any)?.taskId === "string" && (data as any).taskId.trim()) ||
 			`${v}-vid-${Date.now().toString(36)}`;
+		if (!assets.length) {
+			const text = extractTextFromOpenAIResponseForTask(data) || "";
+			const asyncdata = extractAsyncDataTaskRefFromText(text);
+			if (asyncdata) {
+				const progress = extractProgressPercentFromText(text);
+				const status: "queued" | "running" =
+					typeof progress === "number" && progress > 0 ? "running" : "queued";
+
+				const nowIso = new Date().toISOString();
+				const vendorForRef = `${v}:asyncdata`;
+				const chatCompletionId = id;
+				const createdTaskId = asyncdata.id;
+				try {
+					// Primary: use asyncdata UUID as the taskId for polling; store a back-reference
+					// from chat.completion id -> asyncdata UUID for compatibility/debugging.
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{
+							kind: "video",
+							taskId: createdTaskId,
+							vendor: vendorForRef,
+						},
+						nowIso,
+					);
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{
+							kind: "video",
+							taskId: chatCompletionId,
+							vendor: vendorForRef,
+							pid: createdTaskId,
+						},
+						nowIso,
+					);
+				} catch (err: any) {
+					console.warn(
+						"[vendor-task-refs] upsert asyncdata video ref failed",
+						err?.message || err,
+					);
+				}
+
+				await bindReservationToTaskId(c, userId, reservation, createdTaskId);
+
+				return TaskResultSchema.parse({
+					id: createdTaskId,
+					kind: req.kind,
+					status,
+					assets: [],
+					raw: {
+						provider: "openai_compat",
+						vendor: v,
+						model,
+						chatCompletionId,
+						response: data,
+						asyncdata: {
+							id: createdTaskId,
+							webUrl: asyncdata.webUrl,
+							sourceUrl: asyncdata.sourceUrl,
+							progress,
+						},
+					},
+				});
+			}
+		}
+
 		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
 
 		await bindReservationToTaskId(c, userId, reservation, id);
 
 		return TaskResultSchema.parse({
 			id,
-			kind: "text_to_video",
+			kind: req.kind,
 			status,
 			assets,
 			raw: {

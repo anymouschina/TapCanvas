@@ -22,6 +22,7 @@ import {
 import { createApiKey, deleteApiKey, listApiKeys, updateApiKey } from "./apiKey.service";
 import {
 	fetchApimartTaskResult,
+	fetchAsyncDataTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
@@ -1485,6 +1486,11 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 		});
 	} else if (resolved.kind === "image") {
 		result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
+			taskKind: (taskKind as any) ?? null,
+			promptFromClient: prompt,
+		});
+	} else if (dispatch === "asyncdata" || dispatch === "tuzi") {
+		result = await fetchAsyncDataTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
