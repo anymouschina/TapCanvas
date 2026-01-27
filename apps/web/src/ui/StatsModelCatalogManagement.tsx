@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Alert, Badge, Button, CopyButton, Divider, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
-import { IconCheck, IconCopy, IconKey, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconDownload, IconKey, IconPlus, IconRefresh, IconTrash, IconUpload } from '@tabler/icons-react'
 import { clearModelCatalogVendorApiKey, deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, upsertModelCatalogVendorApiKey, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
 import { toast } from './toast'
 
@@ -84,6 +84,93 @@ function prettyJson(value: any): string {
     return JSON.stringify(value, null, 2)
   } catch {
     return ''
+  }
+}
+
+function buildSafeFileTimestamp(now: Date): string {
+  return now.toISOString().replace(/[:.]/g, '-')
+}
+
+function downloadTextAsFile(text: string, filename: string, mimeType: string): void {
+  const blob = new Blob([text], { type: mimeType })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
+}
+
+async function readFileAsText(file: File): Promise<string> {
+  if (typeof (file as any)?.text === 'function') {
+    return (file as any).text()
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsText(file)
+  })
+}
+
+function buildModelCatalogExportPackage(input: {
+  vendors: ModelCatalogVendorDto[]
+  models: ModelCatalogModelDto[]
+  mappings: ModelCatalogMappingDto[]
+  now: Date
+}): ModelCatalogImportPackageDto {
+  const { vendors, models, mappings, now } = input
+
+  const modelsByVendor = (models || []).reduce<Record<string, ModelCatalogModelDto[]>>((acc, m) => {
+    const key = String(m.vendorKey || '').trim()
+    if (!key) return acc
+    ;(acc[key] ||= []).push(m)
+    return acc
+  }, {})
+
+  const mappingsByVendor = (mappings || []).reduce<Record<string, ModelCatalogMappingDto[]>>((acc, mp) => {
+    const key = String(mp.vendorKey || '').trim()
+    if (!key) return acc
+    ;(acc[key] ||= []).push(mp)
+    return acc
+  }, {})
+
+  return {
+    version: 'v1',
+    exportedAt: now.toISOString(),
+    vendors: (vendors || []).map((v) => {
+      const vendorKey = String(v.key || '').trim()
+      const vendorPayload: ModelCatalogImportPackageDto['vendors'][number]['vendor'] = {
+        key: vendorKey,
+        name: String(v.name || '').trim(),
+        enabled: !!v.enabled,
+        baseUrlHint: v.baseUrlHint ?? null,
+        authType: (v.authType as any) || 'bearer',
+        authHeader: v.authHeader ?? null,
+        authQueryParam: v.authQueryParam ?? null,
+        ...(typeof v.meta === 'undefined' ? {} : { meta: v.meta }),
+      }
+
+      return {
+        vendor: vendorPayload,
+        models: (modelsByVendor[vendorKey] || []).map((m) => ({
+          modelKey: String(m.modelKey || '').trim(),
+          labelZh: String(m.labelZh || '').trim(),
+          kind: m.kind,
+          enabled: !!m.enabled,
+          ...(typeof m.meta === 'undefined' ? {} : { meta: m.meta }),
+        })),
+        mappings: (mappingsByVendor[vendorKey] || []).map((mp) => ({
+          taskKind: mp.taskKind,
+          name: String(mp.name || '').trim(),
+          enabled: !!mp.enabled,
+          ...(typeof mp.requestMapping === 'undefined' ? {} : { requestMapping: mp.requestMapping }),
+          ...(typeof mp.responseMapping === 'undefined' ? {} : { responseMapping: mp.responseMapping }),
+        })),
+      }
+    }),
   }
 }
 
@@ -198,6 +285,9 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const [importText, setImportText] = React.useState('')
   const [importSubmitting, setImportSubmitting] = React.useState(false)
   const [lastImportResult, setLastImportResult] = React.useState<ModelCatalogImportResultDto | null>(null)
+
+  const [exportSubmitting, setExportSubmitting] = React.useState(false)
+  const quickImportInputRef = React.useRef<HTMLInputElement | null>(null)
 
   const vendorSelectData = React.useMemo(() => {
     const base = vendors
@@ -610,25 +700,15 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     reader.readAsText(file)
   }, [])
 
-  const fillTemplate = React.useCallback(() => {
-    setImportText(JSON.stringify(IMPORT_TEMPLATE, null, 2))
-    toast('已填充导入模板（请按需修改）', 'success')
-  }, [])
-
-  const submitImport = React.useCallback(async () => {
+  const runImport = React.useCallback(async (pkg: unknown) => {
     if (importSubmitting) return
-    const parsed = safeParseJson(importText)
-    if (!parsed.ok) {
-      toast(`导入 JSON 无效：${parsed.error}`, 'error')
-      return
-    }
-    if (!parsed.value || typeof parsed.value !== 'object') {
+    if (!pkg || typeof pkg !== 'object') {
       toast('导入内容必须是 JSON 对象', 'error')
       return
     }
     setImportSubmitting(true)
     try {
-      const result = await importModelCatalogPackage(parsed.value as any)
+      const result = await importModelCatalogPackage(pkg as any)
       setLastImportResult(result)
       toast(`导入完成：vendors=${result.imported.vendors} models=${result.imported.models} mappings=${result.imported.mappings}`, 'success')
       await reloadAll()
@@ -638,7 +718,90 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     } finally {
       setImportSubmitting(false)
     }
-  }, [importSubmitting, importText, reloadAll])
+  }, [importSubmitting, reloadAll])
+
+  const handleQuickImportFile = React.useCallback(async (file: File | null) => {
+    if (!file) return
+    try {
+      const text = await readFileAsText(file)
+      setImportText(text || '')
+      const parsed = safeParseJson(text)
+      if (!parsed.ok) {
+        toast(`导入 JSON 无效：${parsed.error}`, 'error')
+        return
+      }
+      if (!parsed.value || typeof parsed.value !== 'object') {
+        toast('导入内容必须是 JSON 对象', 'error')
+        return
+      }
+
+      const vendorCount = Array.isArray((parsed.value as any).vendors) ? (parsed.value as any).vendors.length : null
+      const label = vendorCount === null ? '该' : `vendors=${vendorCount} 的`
+      const ok = window.confirm(`确定导入${label}配置？\n\n注意：\n- 会覆盖同 Key 的厂商/模型/映射配置\n- 不会导入任何 API Key（需在 PRD 手动配置）`)
+      if (!ok) return
+
+      await runImport(parsed.value)
+    } catch (err: any) {
+      console.error('quick import failed', err)
+      toast(err?.message || '读取/导入失败', 'error')
+    }
+  }, [runImport])
+
+  const triggerQuickImport = React.useCallback(() => {
+    quickImportInputRef.current?.click()
+  }, [])
+
+  const handleExport = React.useCallback(async () => {
+    if (exportSubmitting) return
+    setExportSubmitting(true)
+    try {
+      const [v, m, mp] = await Promise.all([
+        listModelCatalogVendors(),
+        listModelCatalogModels(),
+        listModelCatalogMappings(),
+      ])
+      if (!Array.isArray(v) || v.length === 0) {
+        toast('暂无厂商配置可导出', 'error')
+        return
+      }
+
+      const now = new Date()
+      const pkg = buildModelCatalogExportPackage({
+        vendors: Array.isArray(v) ? v : [],
+        models: Array.isArray(m) ? m : [],
+        mappings: Array.isArray(mp) ? mp : [],
+        now,
+      })
+
+      const jsonStr = JSON.stringify(pkg, null, 2)
+      const fileName = `tapcanvas-model-catalog-${buildSafeFileTimestamp(now)}.json`
+      downloadTextAsFile(jsonStr, fileName, 'application/json')
+      toast(`已导出配置（vendors=${pkg.vendors.length}，不含任何 API Key）`, 'success')
+    } catch (err: any) {
+      console.error('export model catalog failed', err)
+      toast(err?.message || '导出失败', 'error')
+    } finally {
+      setExportSubmitting(false)
+    }
+  }, [exportSubmitting])
+
+  const fillTemplate = React.useCallback(() => {
+    setImportText(JSON.stringify(IMPORT_TEMPLATE, null, 2))
+    toast('已填充导入模板（请按需修改）', 'success')
+  }, [])
+
+  const submitImport = React.useCallback(async () => {
+    const parsed = safeParseJson(importText)
+    if (!parsed.ok) {
+      toast(`导入 JSON 无效：${parsed.error}`, 'error')
+      return
+    }
+    if (!parsed.value || typeof parsed.value !== 'object') {
+      toast('导入内容必须是 JSON 对象', 'error')
+      return
+    }
+    await runImport(parsed.value)
+  }, [importText, runImport])
 
   return (
     <Stack className={rootClassName} gap="md">
@@ -741,6 +904,24 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Button className="stats-model-catalog-vendor-create" size="xs" variant="light" leftSection={<IconPlus className="stats-model-catalog-vendor-create-icon" size={14} />} onClick={openCreateVendor}>
           新增厂商
         </Button>
+        <Button className="stats-model-catalog-vendor-export" size="xs" variant="light" leftSection={<IconDownload className="stats-model-catalog-vendor-export-icon" size={14} />} onClick={() => void handleExport()} loading={exportSubmitting}>
+          导出配置
+        </Button>
+        <Button className="stats-model-catalog-vendor-import" size="xs" variant="light" leftSection={<IconUpload className="stats-model-catalog-vendor-import-icon" size={14} />} onClick={triggerQuickImport} loading={importSubmitting}>
+          导入配置
+        </Button>
+        <input
+          ref={quickImportInputRef}
+          className="stats-model-catalog-vendor-import-input"
+          type="file"
+          accept=".json,application/json"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.currentTarget.files?.[0] || null
+            e.currentTarget.value = ''
+            void handleQuickImportFile(file)
+          }}
+        />
         <Switch className="stats-model-catalog-enabled-only" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.currentTarget.checked)} label="仅看启用" />
         <Select className="stats-model-catalog-vendor-filter" value={vendorFilter} onChange={(v) => setVendorFilter(v || 'all')} data={vendorSelectData} searchable w={260} />
       </Group>
