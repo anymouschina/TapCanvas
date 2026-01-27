@@ -228,7 +228,7 @@ export async function upsertModelCatalogModel(
 	const nowIso = new Date().toISOString();
 	const modelKey = String(input.modelKey || "").trim();
 	const vendorKey = normalizeKey(input.vendorKey);
-	const modelAlias = normalizeOptionalString(input.modelAlias ?? null);
+	const modelAlias = normalizeOptionalString(input.modelAlias ?? null) || modelKey;
 	const labelZh = String(input.labelZh || "").trim();
 	const kind = String(input.kind || "").trim();
 	const enabled = typeof input.enabled === "boolean" ? input.enabled : true;
@@ -242,23 +242,21 @@ export async function upsertModelCatalogModel(
 		});
 	}
 
-	if (modelAlias) {
-		const existing = await getCatalogModelByVendorKindAndAlias(c.env.DB, {
-			vendorKey,
-			kind,
-			modelAlias,
+	const existing = await getCatalogModelByVendorKindAndAlias(c.env.DB, {
+		vendorKey,
+		kind,
+		modelAlias,
+	});
+	const existingKey =
+		typeof (existing as any)?.model_key === "string"
+			? (existing as any).model_key.trim()
+			: "";
+	if (existing && existingKey && existingKey !== modelKey) {
+		throw new AppError("modelAlias already exists for this vendor/kind", {
+			status: 400,
+			code: "model_alias_conflict",
+			details: { vendorKey, kind, modelAlias, modelKey, existingModelKey: existingKey },
 		});
-		const existingKey =
-			typeof (existing as any)?.model_key === "string"
-				? (existing as any).model_key.trim()
-				: "";
-		if (existing && existingKey && existingKey !== modelKey) {
-			throw new AppError("modelAlias already exists for this vendor/kind", {
-				status: 400,
-				code: "model_alias_conflict",
-				details: { vendorKey, kind, modelAlias, modelKey, existingModelKey: existingKey },
-			});
-		}
 	}
 
 	const row = await upsertCatalogModelRow(
@@ -568,12 +566,15 @@ export async function importModelCatalogPackage(
 							(m as any).vendorKey) ||
 							vendorKey,
 					);
+					const modelKey = String(m.modelKey || "").trim();
+					const modelAlias =
+						normalizeOptionalString((m as any).modelAlias ?? null) || modelKey;
 					await upsertCatalogModelRow(
 						c.env.DB,
 						{
-							modelKey: String(m.modelKey || "").trim(),
+							modelKey,
 							vendorKey: modelVendorKey,
-							modelAlias: normalizeOptionalString((m as any).modelAlias ?? null),
+							modelAlias,
 							labelZh: String(m.labelZh || "").trim(),
 							kind: String(m.kind || "").trim(),
 							enabled: typeof m.enabled === "boolean" ? m.enabled : true,

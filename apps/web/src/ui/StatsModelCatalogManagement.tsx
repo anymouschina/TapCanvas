@@ -505,6 +505,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const [modelEditIsNew, setModelEditIsNew] = React.useState(true)
   const [modelEditModelKey, setModelEditModelKey] = React.useState('')
   const [modelEditModelAlias, setModelEditModelAlias] = React.useState('')
+  const [modelEditModelAliasAuto, setModelEditModelAliasAuto] = React.useState(true)
   const [modelEditVendorKey, setModelEditVendorKey] = React.useState<string>('')
   const [modelEditLabelZh, setModelEditLabelZh] = React.useState('')
   const [modelEditKind, setModelEditKind] = React.useState<BillingModelKind>('text')
@@ -522,6 +523,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     setModelEditIsNew(true)
     setModelEditModelKey('')
     setModelEditModelAlias('')
+    setModelEditModelAliasAuto(true)
     setModelEditVendorKey(vendorOnlyData[0]?.value || '')
     setModelEditLabelZh('')
     setModelEditKind('text')
@@ -531,9 +533,12 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   }, [vendorOnlyData])
 
   const openEditModel = React.useCallback((model: ModelCatalogModelDto) => {
+    const modelKey = String(model.modelKey || '').trim()
+    const modelAlias = String((model.modelAlias || '')).trim()
     setModelEditIsNew(false)
-    setModelEditModelKey(model.modelKey)
-    setModelEditModelAlias((model.modelAlias || '').trim())
+    setModelEditModelKey(modelKey)
+    setModelEditModelAlias(modelAlias || modelKey)
+    setModelEditModelAliasAuto(false)
     setModelEditVendorKey(model.vendorKey)
     setModelEditLabelZh(model.labelZh || '')
     setModelEditKind(model.kind)
@@ -542,9 +547,17 @@ export default function StatsModelCatalogManagement({ className }: { className?:
     setModelEditOpen(true)
   }, [])
 
+  React.useEffect(() => {
+    if (!modelEditOpen) return
+    if (!modelEditIsNew) return
+    if (!modelEditModelAliasAuto) return
+    setModelEditModelAlias(modelEditModelKey)
+  }, [modelEditIsNew, modelEditModelAliasAuto, modelEditModelKey, modelEditOpen])
+
   const submitModel = React.useCallback(async () => {
     const modelKey = modelEditModelKey.trim()
-    const modelAlias = modelEditModelAlias.trim()
+    const modelAliasRaw = modelEditModelAlias.trim()
+    const modelAlias = modelAliasRaw || modelKey
     const vendorKey = modelEditVendorKey.trim()
     const labelZh = modelEditLabelZh.trim()
     if (!vendorKey) {
@@ -572,7 +585,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
       await upsertModelCatalogModel({
         modelKey,
         vendorKey,
-        modelAlias: modelAlias || null,
+        modelAlias,
         labelZh,
         kind: modelEditKind,
         enabled: modelEditEnabled,
@@ -1100,7 +1113,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
                     <Text className="stats-model-catalog-model-key" size="sm" fw={600}>{m.modelKey}</Text>
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-models-table-cell">
-                    <Text className="stats-model-catalog-model-alias" size="sm" c="dimmed">{String((m.modelAlias || '').trim() || '—')}</Text>
+                    <Text className="stats-model-catalog-model-alias" size="sm" c="dimmed">{String((m.modelAlias || '').trim() || String(m.modelKey || '').trim() || '—')}</Text>
                   </Table.Td>
                   <Table.Td className="stats-model-catalog-models-table-cell">
                     <Text className="stats-model-catalog-model-label" size="sm">{m.labelZh}</Text>
@@ -1257,7 +1270,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Stack className="stats-model-catalog-model-form" gap="sm">
           <Select className="stats-model-catalog-model-form-vendor" label="厂商（与模型 Key 组合唯一）" data={vendorOnlyData} value={modelEditVendorKey} onChange={(v) => setModelEditVendorKey(v || '')} searchable disabled={!modelEditIsNew} />
           <TextInput className="stats-model-catalog-model-form-key" label="模型 Key（厂商内唯一）" placeholder="例如 gpt-4.1 / nano-banana-pro" value={modelEditModelKey} onChange={(e) => setModelEditModelKey(e.currentTarget.value)} disabled={!modelEditIsNew} />
-          <TextInput className="stats-model-catalog-model-form-alias" label="别名（Public 调用使用，可选）" placeholder="例如 video-fast / image-hd / default" value={modelEditModelAlias} onChange={(e) => setModelEditModelAlias(e.currentTarget.value)} />
+          <TextInput className="stats-model-catalog-model-form-alias" label="别名（Public 调用使用；默认=模型 Key，可改）" placeholder="留空则自动使用模型 Key" value={modelEditModelAlias} onChange={(e) => { setModelEditModelAliasAuto(false); setModelEditModelAlias(e.currentTarget.value) }} />
           <TextInput className="stats-model-catalog-model-form-label" label="中文名称" placeholder="例如 GPT-4.1" value={modelEditLabelZh} onChange={(e) => setModelEditLabelZh(e.currentTarget.value)} />
           <Select className="stats-model-catalog-model-form-kind" label="类型" data={KIND_OPTIONS} value={modelEditKind} onChange={(v) => setModelEditKind((v as any) || 'text')} />
           <Switch className="stats-model-catalog-model-form-enabled" checked={modelEditEnabled} onChange={(e) => setModelEditEnabled(e.currentTarget.checked)} label="启用" />

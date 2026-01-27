@@ -196,7 +196,7 @@ type DemoTask = {
 
 说明：
 - \`vendor=auto\` 会在可用厂商中自动回退（按任务类型；绘图顺序：\`gemini\` → \`sora2api\` → \`qwen\`）。
-- \`extras.modelAlias\` 用于选择模型（Public 统一别名；推荐）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
+- \`extras.modelAlias\` 用于选择模型（Public 统一别名；推荐；默认=同 modelKey）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
 - 兼容：仍支持 \`extras.modelKey\`（厂商内 modelKey），但不建议对外暴露。
 
 请求体（完整字段，按需填写）：

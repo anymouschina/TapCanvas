@@ -193,6 +193,23 @@ export async function ensureModelCatalogSchema(db: D1Database): Promise<void> {
 
 	await ensureModelCatalogModelsTable(db);
 
+	// Default behavior: when model_alias is not set, treat it as model_key.
+	// This enables using `extras.modelAlias=<modelKey>` out of the box, while keeping manual overrides intact.
+	await execute(
+		db,
+		`UPDATE model_catalog_models AS m
+     SET model_alias = m.model_key
+     WHERE (m.model_alias IS NULL OR trim(m.model_alias) = '')
+       AND NOT EXISTS (
+         SELECT 1
+         FROM model_catalog_models AS other
+         WHERE other.vendor_key = m.vendor_key
+           AND other.kind = m.kind
+           AND lower(other.model_alias) = lower(m.model_key)
+           AND other.model_key <> m.model_key
+       )`,
+	);
+
 	await execute(
 		db,
 		`CREATE INDEX IF NOT EXISTS idx_model_catalog_models_vendor_kind
