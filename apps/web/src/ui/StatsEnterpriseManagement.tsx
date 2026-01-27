@@ -170,7 +170,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
     } finally {
       setAddSubmitting(false)
     }
-  }, [addLogin, addRole, manageTeam?.id, reloadMembersAndInvites, reloadTeams])
+  }, [addLogin, addRole, manageTeam?.id, reloadManageData, reloadTeams])
 
   const submitTopup = React.useCallback(async () => {
     const teamId = manageTeam?.id
@@ -194,7 +194,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
     } finally {
       setTopupSubmitting(false)
     }
-  }, [manageTeam?.id, reloadMembersAndInvites, reloadTeams, topupAmount, topupNote])
+  }, [manageTeam?.id, reloadManageData, reloadTeams, topupAmount, topupNote])
 
   const submitCreateInvite = React.useCallback(async () => {
     const teamId = manageTeam?.id
@@ -224,7 +224,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
     } finally {
       setInviteSubmitting(false)
     }
-  }, [inviteEmail, inviteExpiresDays, inviteLogin, manageTeam?.id, reloadMembersAndInvites])
+  }, [inviteEmail, inviteExpiresDays, inviteLogin, manageTeam?.id, reloadManageData])
 
   return (
     <Stack className={rootClassName} gap="md">
@@ -563,7 +563,7 @@ export default function StatsEnterpriseManagement({ className }: { className?: s
                       className="stats-enterprise-members-refresh"
                       size="xs"
                       variant="subtle"
-                      onClick={() => void reloadMembersAndInvites(manageTeam.id)}
+                      onClick={() => void reloadManageData(manageTeam.id)}
                       loading={membersLoading || invitesLoading}
                     >
                       刷新
