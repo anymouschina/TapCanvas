@@ -32,6 +32,18 @@ import {
 	getPendingTaskSnapshots,
 } from "./task.progress";
 import { listVendorCallLogsForUser } from "./vendor-call-logs.repo";
+import { getTaskResultByTaskId, upsertTaskResult } from "./task-result.repo";
+import { getVendorTaskRefByTaskId, upsertVendorTaskRef } from "./vendor-task-refs.repo";
+
+function normalizeDispatchVendor(vendor: string): string {
+	const raw = (vendor || "").trim().toLowerCase();
+	if (!raw) return "";
+	const parts = raw.split(":").map((p) => p.trim()).filter(Boolean);
+	const last = parts.length ? parts[parts.length - 1]! : raw;
+	if (last === "hailuo") return "minimax";
+	if (last === "google") return "gemini";
+	return last;
+}
 
 export const taskRouter = new Hono<AppEnv>();
 
@@ -122,6 +134,76 @@ taskRouter.post("/", async (c) => {
 		}
 	} else {
 		result = await runGenericTaskForVendor(c, userId, vendor, req);
+	}
+
+	// dmxapi: sync image response still needs to follow "taskId -> poll result" contract.
+	if (
+		vendor === "dmxapi" &&
+		(req.kind === "text_to_image" || req.kind === "image_edit") &&
+		result?.status === "succeeded" &&
+		Array.isArray((result as any)?.assets) &&
+		(result as any).assets.length > 0
+	) {
+		const nowIso = new Date().toISOString();
+		const storedTaskId = `task_${crypto.randomUUID()}`;
+		const upstreamTaskId =
+			typeof (result as any)?.id === "string"
+				? String((result as any).id).trim()
+				: String((result as any)?.id || "").trim();
+
+		try {
+			const finalResult = {
+				id: storedTaskId,
+				kind: (result as any).kind,
+				status: "succeeded",
+				assets: (result as any).assets,
+				raw: {
+					provider: "task_store",
+					vendor,
+					upstreamTaskId: upstreamTaskId || null,
+					storedAt: nowIso,
+				},
+			};
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId: storedTaskId,
+				vendor,
+				kind: String((result as any).kind),
+				status: "succeeded",
+				result: finalResult,
+				completedAt: nowIso,
+				nowIso,
+			});
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "image",
+					taskId: storedTaskId,
+					vendor,
+					pid: upstreamTaskId || null,
+				},
+				nowIso,
+			);
+
+			result = {
+				id: storedTaskId,
+				kind: (result as any).kind,
+				status: "queued",
+				assets: [],
+				raw: {
+					provider: "task_store",
+					vendor,
+					upstreamTaskId: upstreamTaskId || null,
+					storedResultReady: true,
+				},
+			};
+		} catch (err: any) {
+			console.warn(
+				"[task-store] persist dmxapi result failed",
+				err?.message || err,
+			);
+		}
 	}
 
 	return c.json(TaskResultSchema.parse(result));
@@ -268,6 +350,129 @@ taskRouter.get("/logs", async (c) => {
 			nextBefore,
 		}),
 	);
+});
+
+// POST /tasks/result - unified task polling endpoint (prefers stored results)
+taskRouter.post("/result", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = FetchTaskResultRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid request body", issues: parsed.error.issues },
+			400,
+		);
+	}
+
+	const taskId = parsed.data.taskId.trim();
+	const taskKind = parsed.data.taskKind ?? null;
+	const prompt = typeof parsed.data.prompt === "string" ? parsed.data.prompt : null;
+
+	// 1) Stored result fast-path (e.g. sync vendors like dmxapi)
+	try {
+		const stored = await getTaskResultByTaskId(c.env.DB, userId, taskId);
+		if (stored?.result) {
+			const payload = JSON.parse(stored.result);
+			return c.json(TaskResultSchema.parse(payload));
+		}
+	} catch {
+		// ignore and fall back to vendor polling
+	}
+
+	const resolveRefKind = (): "video" | "image" | null => {
+		if (taskKind === "text_to_video" || taskKind === "image_to_video") return "video";
+		if (taskKind === "text_to_image" || taskKind === "image_edit") return "image";
+		return null;
+	};
+
+	const resolved: {
+		vendor: string;
+		kind: "video" | "image" | null;
+	} = { vendor: "", kind: resolveRefKind() };
+
+	// 2) Infer vendor via vendor_task_refs (same strategy as public polling)
+	try {
+		const tryKinds: Array<"video" | "image"> = resolved.kind
+			? [resolved.kind]
+			: ["video", "image"];
+		for (const k of tryKinds) {
+			const ref = await getVendorTaskRefByTaskId(c.env.DB, userId, k, taskId);
+			if (ref?.vendor) {
+				resolved.vendor = ref.vendor;
+				resolved.kind = k;
+				break;
+			}
+		}
+	} catch {
+		// ignore
+	}
+
+	if (!resolved.vendor) {
+		return c.json(
+			{
+				error: "vendor is required (or the task vendor cannot be inferred)",
+				code: "vendor_required",
+			},
+			400,
+		);
+	}
+
+	// If the stored vendor encodes a proxy/channel (e.g. "comfly:veo"),
+	// force that proxy so polling hits the correct upstream.
+	{
+		const raw = resolved.vendor.trim().toLowerCase();
+		const head = raw.split(":")[0]?.trim() || "";
+		if (head === "direct") {
+			try {
+				c.set("proxyDisabled", true);
+			} catch {
+				// ignore
+			}
+		}
+		const hint =
+			head === "comfly" || raw.startsWith("comfly-")
+				? "comfly"
+				: head === "grsai" || raw.startsWith("grsai-")
+					? "grsai"
+					: null;
+		if (hint) {
+			try {
+				c.set("proxyVendorHint", hint);
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	// Hint proxy selector: prefer higher-success channels for this task kind.
+	if (taskKind) c.set("routingTaskKind", taskKind);
+
+	const vendorHead = resolved.vendor.trim().toLowerCase().split(":")[0]?.trim() || "";
+	const dispatch = normalizeDispatchVendor(resolved.vendor);
+	let result: any;
+
+	if (dispatch === "apimart") {
+		result = await fetchApimartTaskResult(c, userId, taskId, prompt, {
+			taskKind: (taskKind as any) ?? null,
+		});
+	} else if (resolved.kind === "image") {
+		result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
+			taskKind: (taskKind as any) ?? null,
+			promptFromClient: prompt,
+		});
+	} else if (vendorHead === "sora2api") {
+		result = await fetchSora2ApiTaskResult(c, userId, taskId, prompt);
+	} else if (dispatch === "veo") {
+		result = await fetchVeoTaskResult(c, userId, taskId);
+	} else if (dispatch === "minimax") {
+		result = await fetchMiniMaxTaskResult(c, userId, taskId);
+	} else {
+		// Default: sora2api/grsai-compatible video polling.
+		result = await fetchSora2ApiTaskResult(c, userId, taskId, prompt);
+	}
+
+	return c.json(TaskResultSchema.parse(result));
 });
 
 taskRouter.post("/veo/result", async (c) => {

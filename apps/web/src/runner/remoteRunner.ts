@@ -9,10 +9,10 @@ import {
   listModelProviders,
   listModelTokens,
   uploadServerAssetFile,
+  fetchTaskResult,
   fetchVeoTaskResult,
   fetchSora2ApiTaskResult,
   fetchMiniMaxTaskResult,
-  fetchGrsaiTaskResult,
 } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
@@ -1513,10 +1513,6 @@ export async function syncGrsaiImageNodeOnce(id: string, get: Getter) {
   const status = (data as any)?.status as NodeStatusValue | undefined
   if (status !== 'running' && status !== 'queued') return
 
-  const vendorRaw = ((data as any)?.imageModelVendor as string | undefined) || ((data as any)?.imageVendor as string | undefined) || ''
-  const vendor = vendorRaw.toLowerCase() === 'google' ? 'gemini' : vendorRaw.toLowerCase()
-  if (vendor !== 'gemini') return
-
   const taskId = (data as any)?.imageTaskId as string | undefined
   if (!taskId || !taskId.trim()) return
 
@@ -1524,7 +1520,7 @@ export async function syncGrsaiImageNodeOnce(id: string, get: Getter) {
 
   let snapshot: TaskResultDto
   try {
-    snapshot = await fetchGrsaiTaskResult(taskId.trim(), effectiveTaskKind, prompt)
+    snapshot = await fetchTaskResult(taskId.trim(), effectiveTaskKind, prompt)
   } catch (err: any) {
     const msg = err?.message || '查询图像任务进度失败'
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
@@ -3187,7 +3183,7 @@ async function runGenericTask(ctx: RunnerContext) {
 
           let snapshot: TaskResultDto
           try {
-            snapshot = await fetchGrsaiTaskResult(taskId, effectiveTaskKind, promptForModel)
+            snapshot = await fetchTaskResult(taskId, effectiveTaskKind, promptForModel)
           } catch (err: any) {
             const msg = err?.message || '查询图像任务进度失败'
             appendLog(id, `[${nowLabel()}] error: ${msg}`)

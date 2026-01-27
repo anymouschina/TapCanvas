@@ -323,6 +323,24 @@ CREATE INDEX IF NOT EXISTS idx_task_statuses_status ON task_statuses(status);
 CREATE INDEX IF NOT EXISTS idx_task_statuses_created_at ON task_statuses(created_at);
 CREATE INDEX IF NOT EXISTS idx_task_statuses_user_provider ON task_statuses(user_id, provider);
 
+-- Task results (stored final results for sync vendors / unified polling)
+CREATE TABLE IF NOT EXISTS task_results (
+	user_id TEXT NOT NULL,
+	task_id TEXT NOT NULL,
+	vendor TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	status TEXT NOT NULL,
+	result TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	PRIMARY KEY (user_id, task_id),
+	FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_results_user_updated_at ON task_results(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_task_results_user_status ON task_results(user_id, status);
+
 -- Video generation history (for Sora and other providers)
 CREATE TABLE IF NOT EXISTS video_generation_histories (
 	id TEXT PRIMARY KEY,

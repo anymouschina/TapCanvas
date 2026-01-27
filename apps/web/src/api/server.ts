@@ -2515,6 +2515,32 @@ export async function listPendingTasks(vendor?: string): Promise<TaskProgressSna
   return []
 }
 
+export async function fetchTaskResult(
+  taskId: string,
+  taskKind?: TaskKind,
+  prompt?: string | null,
+): Promise<TaskResultDto> {
+  const body: Record<string, any> = { taskId }
+  if (typeof prompt === 'string' && prompt.trim()) body.prompt = prompt
+  if (typeof taskKind === 'string' && taskKind.trim()) body.taskKind = taskKind
+  const r = await apiFetch(`${API_BASE}/tasks/result`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  if (!r.ok) {
+    let msg = `fetch task result failed: ${r.status}`
+    try {
+      const body = await r.json()
+      msg = body?.message || body?.error || msg
+    } catch {}
+    const err = new Error(msg) as any
+    err.status = r.status
+    throw err
+  }
+  return r.json()
+}
+
 export async function fetchVeoTaskResult(taskId: string): Promise<TaskResultDto> {
   const r = await apiFetch(`${API_BASE}/tasks/veo/result`, withAuth({
     method: 'POST',

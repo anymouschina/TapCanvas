@@ -38,6 +38,7 @@ import {
 	listCatalogModelsByModelAlias,
 	listCatalogModelsByModelKey,
 } from "../model-catalog/model-catalog.repo";
+import { getTaskResultByTaskId, upsertTaskResult } from "../task/task-result.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
 
@@ -928,6 +929,79 @@ async function runPublicTaskWithFallback(
 				continue;
 			}
 
+			// dmxapi: sync image response still needs to follow "taskId -> poll result" contract.
+			if (
+				v === "dmxapi" &&
+				(requestForVendor.kind === "text_to_image" ||
+					requestForVendor.kind === "image_edit") &&
+				result?.status === "succeeded" &&
+				Array.isArray(result?.assets) &&
+				result.assets.length > 0
+			) {
+				const nowIso = new Date().toISOString();
+				const storedTaskId = `task_${crypto.randomUUID()}`;
+				const upstreamTaskId =
+					typeof result?.id === "string"
+						? result.id.trim()
+						: String(result?.id || "").trim();
+
+				// Persist final result for /public/tasks/result and /tasks/result.
+				try {
+					const finalResult = {
+						id: storedTaskId,
+						kind: result.kind,
+						status: "succeeded",
+						assets: result.assets,
+						raw: {
+							provider: "task_store",
+							vendor: v,
+							upstreamTaskId: upstreamTaskId || null,
+							storedAt: nowIso,
+						},
+					};
+					await upsertTaskResult(c.env.DB, {
+						userId,
+						taskId: storedTaskId,
+						vendor: v,
+						kind: String(result.kind),
+						status: "succeeded",
+						result: finalResult,
+						completedAt: nowIso,
+						nowIso,
+					});
+					await upsertVendorTaskRef(
+						c.env.DB,
+						userId,
+						{
+							kind: "image",
+							taskId: storedTaskId,
+							vendor: v,
+							pid: upstreamTaskId || null,
+						},
+						nowIso,
+					);
+
+					// Return "queued" so callers can poll by taskId for a unified flow.
+					result = {
+						id: storedTaskId,
+						kind: result.kind,
+						status: "queued",
+						assets: [],
+						raw: {
+							provider: "task_store",
+							vendor: v,
+							upstreamTaskId: upstreamTaskId || null,
+							storedResultReady: true,
+						},
+					};
+				} catch (err: any) {
+					console.warn(
+						"[task-store] persist dmxapi result failed",
+						err?.message || err,
+					);
+				}
+			}
+
 			return { vendor: v, result };
 		} catch (err: any) {
 			debugLog("vendor_candidate_failed", {
@@ -1314,6 +1388,24 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 	const input = c.req.valid("json");
 
 	const taskId = input.taskId.trim();
+
+	// 1) Stored result fast-path (e.g. sync vendors like dmxapi)
+	try {
+		const stored = await getTaskResultByTaskId(c.env.DB, userId, taskId);
+		if (stored?.result) {
+			const payload = JSON.parse(stored.result);
+			return c.json(
+				PublicFetchTaskResultResponseSchema.parse({
+					vendor: stored.vendor,
+					result: payload,
+				}),
+				200,
+			);
+		}
+	} catch {
+		// ignore and fall back to vendor polling
+	}
+
 	const vendorInput = (input.vendor || "").trim();
 	const taskKind = input.taskKind ?? null;
 	const prompt = typeof input.prompt === "string" ? input.prompt : null;
