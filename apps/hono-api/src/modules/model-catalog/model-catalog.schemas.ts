@@ -110,6 +110,7 @@ export const UpsertModelCatalogMappingSchema = z.object({
 
 export const ModelCatalogImportVendorSchema = z.object({
 	vendor: UpsertModelCatalogVendorSchema,
+	apiKey: UpsertModelCatalogVendorApiKeySchema.optional(),
 	models: z
 		.array(
 			UpsertModelCatalogModelSchema.extend({

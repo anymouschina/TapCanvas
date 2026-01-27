@@ -279,6 +279,113 @@ export async function listModelCatalogMappings(
 	return rows.map(mapMapping);
 }
 
+export async function exportModelCatalogPackage(
+	c: AppContext,
+	options?: { includeApiKeys?: boolean },
+): Promise<ModelCatalogImportPackage> {
+	requireAdmin(c);
+	const nowIso = new Date().toISOString();
+	const includeApiKeys = options?.includeApiKeys === true;
+
+	const [vendorRows, modelRows, mappingRows, apiKeyRows] =
+		await Promise.all([
+			listCatalogVendors(c.env.DB),
+			listCatalogModels(c.env.DB),
+			listCatalogMappings(c.env.DB),
+			includeApiKeys ? listCatalogVendorApiKeys(c.env.DB) : Promise.resolve([]),
+		]);
+
+	if (!vendorRows.length) {
+		throw new AppError("No vendors to export", {
+			status: 400,
+			code: "empty_export",
+		});
+	}
+
+	const modelsByVendor = (modelRows || []).reduce<Record<string, any[]>>(
+		(acc, row) => {
+			const vendorKey = normalizeKey(row.vendor_key);
+			if (!vendorKey) return acc;
+			(acc[vendorKey] ||= []).push(row);
+			return acc;
+		},
+		{},
+	);
+
+	const mappingsByVendor = (mappingRows || []).reduce<Record<string, any[]>>(
+		(acc, row) => {
+			const vendorKey = normalizeKey(row.vendor_key);
+			if (!vendorKey) return acc;
+			(acc[vendorKey] ||= []).push(row);
+			return acc;
+		},
+		{},
+	);
+
+	const apiKeyByVendor = (apiKeyRows || []).reduce<
+		Record<string, { apiKey: string; enabled: boolean }>
+	>((acc, row: any) => {
+		const vendorKey = normalizeKey(row.vendor_key);
+		if (!vendorKey) return acc;
+		const apiKey = typeof row.api_key === "string" ? row.api_key.trim() : "";
+		if (!apiKey) return acc;
+		acc[vendorKey] = {
+			apiKey,
+			enabled: Number(row.enabled ?? 1) !== 0,
+		};
+		return acc;
+	}, {});
+
+	const vendors = vendorRows.map((row) => {
+		const vendorKey = normalizeKey(row.key);
+		const authTypeRaw = typeof row.auth_type === "string" ? row.auth_type : null;
+		const authType = (() => {
+			const parsed = ModelCatalogVendorAuthTypeSchema.safeParse(authTypeRaw);
+			return parsed.success ? parsed.data : "bearer";
+		})();
+
+		const keyBundle = includeApiKeys ? apiKeyByVendor[vendorKey] : undefined;
+		const bundleModels = (modelsByVendor[vendorKey] || []).map((m) => ({
+			modelKey: String(m.model_key || "").trim(),
+			vendorKey,
+			labelZh: String(m.label_zh || "").trim(),
+			kind: String(m.kind || "").trim(),
+			enabled: Number(m.enabled ?? 1) !== 0,
+			meta: safeJsonParse(m.meta ?? null),
+		}));
+
+		const bundleMappings = (mappingsByVendor[vendorKey] || []).map((mp) => ({
+			taskKind: String(mp.task_kind || "").trim(),
+			name: String(mp.name || "").trim(),
+			enabled: Number(mp.enabled ?? 1) !== 0,
+			requestMapping: safeJsonParse(mp.request_mapping ?? null),
+			responseMapping: safeJsonParse(mp.response_mapping ?? null),
+		}));
+
+		return {
+			vendor: {
+				key: vendorKey,
+				name: String(row.name || "").trim(),
+				enabled: Number(row.enabled ?? 1) !== 0,
+				baseUrlHint: row.base_url_hint ?? null,
+				authType,
+				authHeader: row.auth_header ?? null,
+				authQueryParam: row.auth_query_param ?? null,
+				meta: safeJsonParse(row.meta ?? null),
+			},
+			...(keyBundle ? { apiKey: { ...keyBundle } } : {}),
+			models: bundleModels,
+			mappings: bundleMappings,
+		};
+	});
+
+	return {
+		version: "v1",
+		exportedAt: nowIso,
+		vendors,
+	};
+}
+
 export async function upsertModelCatalogMapping(
 	c: AppContext,
 	input: {
@@ -380,6 +487,27 @@ export async function importModelCatalogPackage(
 				nowIso,
 			);
 			if (vendorRow) result.imported.vendors += 1;
+
+			if (bundle.apiKey?.apiKey) {
+				try {
+					await upsertCatalogVendorApiKeyRow(
+						c.env.DB,
+						{
+							vendorKey,
+							apiKey: String(bundle.apiKey.apiKey || "").trim(),
+							enabled:
+								typeof bundle.apiKey.enabled === "boolean"
+									? bundle.apiKey.enabled
+									: true,
+						},
+						nowIso,
+					);
+				} catch (err: any) {
+					result.errors.push(
+						`Failed to import vendor api key "${vendorKey}": ${err?.message ?? String(err)}`,
+					);
+				}
+			}
 
 			for (const m of bundle.models || []) {
 				try {

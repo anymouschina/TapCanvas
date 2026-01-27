@@ -1291,6 +1291,10 @@ export type ModelCatalogImportPackageDto = {
       authQueryParam?: string | null
       meta?: any
     }
+    apiKey?: {
+      apiKey: string
+      enabled?: boolean
+    }
     models?: Array<{
       modelKey: string
       vendorKey?: string
@@ -1317,6 +1321,18 @@ export type ModelCatalogImportResultDto = {
 export async function listModelCatalogVendors(): Promise<ModelCatalogVendorDto[]> {
   const r = await apiFetch(`${API_BASE}/model-catalog/vendors`, withAuth())
   if (!r.ok) throw new Error(`list model catalog vendors failed: ${r.status}`)
+  return r.json()
+}
+
+export async function exportModelCatalogPackage(params?: { includeApiKeys?: boolean }): Promise<ModelCatalogImportPackageDto> {
+  const u = new URL(`${API_BASE}/model-catalog/export`)
+  if (params?.includeApiKeys) u.searchParams.set('includeApiKeys', 'true')
+  const r = await apiFetch(u.toString(), withAuth())
+  if (!r.ok) {
+    const body = await r.json().catch(() => null as any)
+    const msg = body?.message || body?.error || `export model catalog failed: ${r.status}`
+    throw new Error(msg)
+  }
   return r.json()
 }
 

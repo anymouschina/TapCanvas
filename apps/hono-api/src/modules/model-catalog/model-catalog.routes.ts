@@ -21,6 +21,7 @@ import {
 	listModelCatalogMappings,
 	listModelCatalogModels,
 	listModelCatalogVendors,
+	exportModelCatalogPackage,
 	upsertModelCatalogVendorApiKey,
 	upsertModelCatalogMapping,
 	upsertModelCatalogModel,
@@ -30,6 +31,14 @@ import {
 export const modelCatalogRouter = new Hono<AppEnv>();
 
 modelCatalogRouter.use("*", authMiddleware);
+
+modelCatalogRouter.get("/export", async (c) => {
+	const includeApiKeysRaw = c.req.query("includeApiKeys");
+	const includeApiKeys =
+		includeApiKeysRaw === "true" || includeApiKeysRaw === "1";
+	const pkg = await exportModelCatalogPackage(c, { includeApiKeys });
+	return c.json(pkg);
+});
 
 modelCatalogRouter.get("/vendors", async (c) => {
 	const vendors = await listModelCatalogVendors(c);

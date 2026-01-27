@@ -1,7 +1,7 @@
 import React from 'react'
 import { ActionIcon, Alert, Badge, Button, CopyButton, Divider, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
 import { IconCheck, IconCopy, IconDownload, IconKey, IconPlus, IconRefresh, IconTrash, IconUpload } from '@tabler/icons-react'
-import { clearModelCatalogVendorApiKey, deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, upsertModelCatalogVendorApiKey, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
+import { clearModelCatalogVendorApiKey, deleteModelCatalogMapping, deleteModelCatalogModel, deleteModelCatalogVendor, exportModelCatalogPackage, importModelCatalogPackage, listModelCatalogMappings, listModelCatalogModels, listModelCatalogVendors, upsertModelCatalogMapping, upsertModelCatalogModel, upsertModelCatalogVendor, upsertModelCatalogVendorApiKey, type BillingModelKind, type ModelCatalogImportPackageDto, type ModelCatalogImportResultDto, type ModelCatalogMappingDto, type ModelCatalogModelDto, type ModelCatalogVendorAuthType, type ModelCatalogVendorDto, type ProfileKind } from '../api/server'
 import { toast } from './toast'
 
 type JsonParseResult = { ok: true; value: any } | { ok: false; error: string }
@@ -287,6 +287,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
   const [lastImportResult, setLastImportResult] = React.useState<ModelCatalogImportResultDto | null>(null)
 
   const [exportSubmitting, setExportSubmitting] = React.useState(false)
+  const [exportMode, setExportMode] = React.useState<'safe' | 'full' | null>(null)
   const quickImportInputRef = React.useRef<HTMLInputElement | null>(null)
 
   const vendorSelectData = React.useMemo(() => {
@@ -735,9 +736,18 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         return
       }
 
-      const vendorCount = Array.isArray((parsed.value as any).vendors) ? (parsed.value as any).vendors.length : null
+      const vendorsArr = Array.isArray((parsed.value as any).vendors) ? (parsed.value as any).vendors : []
+      const apiKeyCount = vendorsArr.reduce((acc: number, b: any) => {
+        const raw = b?.apiKey?.apiKey
+        return typeof raw === 'string' && raw.trim().length > 0 ? acc + 1 : acc
+      }, 0)
+      const hasApiKeys = apiKeyCount > 0
+
+      const vendorCount = vendorsArr.length || null
       const label = vendorCount === null ? '该' : `vendors=${vendorCount} 的`
-      const ok = window.confirm(`确定导入${label}配置？\n\n注意：\n- 会覆盖同 Key 的厂商/模型/映射配置\n- 不会导入任何 API Key（需在 PRD 手动配置）`)
+      const ok = window.confirm(
+        `确定导入${label}配置？\n\n注意：\n- 会覆盖同 Key 的厂商/模型/映射配置\n- ${hasApiKeys ? `会覆盖同 Key 的厂商 API Key（明文导入，apiKeys=${apiKeyCount}；请妥善保管文件）` : '不包含 API Key（不会改动现有 API Key）'}`,
+      )
       if (!ok) return
 
       await runImport(parsed.value)
@@ -753,6 +763,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
 
   const handleExport = React.useCallback(async () => {
     if (exportSubmitting) return
+    setExportMode('safe')
     setExportSubmitting(true)
     try {
       const [v, m, mp] = await Promise.all([
@@ -782,6 +793,40 @@ export default function StatsModelCatalogManagement({ className }: { className?:
       toast(err?.message || '导出失败', 'error')
     } finally {
       setExportSubmitting(false)
+      setExportMode(null)
+    }
+  }, [exportSubmitting])
+
+  const handleExportFull = React.useCallback(async () => {
+    if (exportSubmitting) return
+    const ok = window.confirm('即将导出“迁移包”（包含所有厂商配置 + API Key 明文）。\n\n注意：\n- 文件包含敏感信息，请勿上传到公开渠道\n- 建议仅用于本地 -> PRD 迁移后立即删除\n\n确定继续导出？')
+    if (!ok) return
+
+    setExportMode('full')
+    setExportSubmitting(true)
+    try {
+      const pkg = await exportModelCatalogPackage({ includeApiKeys: true })
+      const vendorCount = Array.isArray(pkg?.vendors) ? pkg.vendors.length : 0
+      if (!vendorCount) {
+        toast('暂无厂商配置可导出', 'error')
+        return
+      }
+      const apiKeyCount = (pkg?.vendors || []).reduce((acc, b: any) => {
+        const raw = b?.apiKey?.apiKey
+        return typeof raw === 'string' && raw.trim().length > 0 ? acc + 1 : acc
+      }, 0)
+
+      const now = new Date()
+      const jsonStr = JSON.stringify(pkg, null, 2)
+      const fileName = `tapcanvas-model-catalog-full-${buildSafeFileTimestamp(now)}.json`
+      downloadTextAsFile(jsonStr, fileName, 'application/json')
+      toast(`已导出迁移包（vendors=${vendorCount}，apiKeys=${apiKeyCount}）`, 'success')
+    } catch (err: any) {
+      console.error('export model catalog full failed', err)
+      toast(err?.message || '导出失败', 'error')
+    } finally {
+      setExportSubmitting(false)
+      setExportMode(null)
     }
   }, [exportSubmitting])
 
@@ -800,6 +845,22 @@ export default function StatsModelCatalogManagement({ className }: { className?:
       toast('导入内容必须是 JSON 对象', 'error')
       return
     }
+
+    const vendorsArr = Array.isArray((parsed.value as any).vendors) ? (parsed.value as any).vendors : null
+    if (!vendorsArr || vendorsArr.length === 0) {
+      toast('导入 JSON 缺少 vendors 或为空', 'error')
+      return
+    }
+
+    const apiKeyCount = vendorsArr.reduce((acc: number, b: any) => {
+      const raw = b?.apiKey?.apiKey
+      return typeof raw === 'string' && raw.trim().length > 0 ? acc + 1 : acc
+    }, 0)
+    const ok = window.confirm(
+      `确定导入 vendors=${vendorsArr.length} 的配置？\n\n注意：\n- 会覆盖同 Key 的厂商/模型/映射配置\n- ${apiKeyCount > 0 ? `会覆盖同 Key 的厂商 API Key（明文导入，apiKeys=${apiKeyCount}）` : '不包含 API Key（不会改动现有 API Key）'}`,
+    )
+    if (!ok) return
+
     await runImport(parsed.value)
   }, [importText, runImport])
 
@@ -872,7 +933,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
               label="导入 JSON"
               value={importText}
               onChange={(e) => setImportText(e.currentTarget.value)}
-              placeholder="粘贴导入 JSON（支持 vendors/models/mappings）"
+              placeholder="粘贴导入 JSON（支持 vendors/models/mappings/apiKey）"
               minRows={12}
               autosize
             />
@@ -904,8 +965,11 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Button className="stats-model-catalog-vendor-create" size="xs" variant="light" leftSection={<IconPlus className="stats-model-catalog-vendor-create-icon" size={14} />} onClick={openCreateVendor}>
           新增厂商
         </Button>
-        <Button className="stats-model-catalog-vendor-export" size="xs" variant="light" leftSection={<IconDownload className="stats-model-catalog-vendor-export-icon" size={14} />} onClick={() => void handleExport()} loading={exportSubmitting}>
+        <Button className="stats-model-catalog-vendor-export" size="xs" variant="light" leftSection={<IconDownload className="stats-model-catalog-vendor-export-icon" size={14} />} onClick={() => void handleExport()} loading={exportSubmitting && exportMode === 'safe'}>
           导出配置
+        </Button>
+        <Button className="stats-model-catalog-vendor-export-full" size="xs" variant="light" leftSection={<IconKey className="stats-model-catalog-vendor-export-full-icon" size={14} />} onClick={() => void handleExportFull()} loading={exportSubmitting && exportMode === 'full'}>
+          导出迁移包
         </Button>
         <Button className="stats-model-catalog-vendor-import" size="xs" variant="light" leftSection={<IconUpload className="stats-model-catalog-vendor-import-icon" size={14} />} onClick={triggerQuickImport} loading={importSubmitting}>
           导入配置
@@ -1128,7 +1192,7 @@ export default function StatsModelCatalogManagement({ className }: { className?:
         <Stack className="stats-model-catalog-vendor-api-key-form" gap="sm">
           <Alert className="stats-model-catalog-vendor-api-key-alert" variant="light" color="blue" title="系统级全局 Key">
             <Text className="stats-model-catalog-vendor-api-key-alert-text" size="sm" c="dimmed">
-              仅用于服务商侧统一调用；保存后不会回显，也不会出现在导入/导出 JSON 中。
+              仅用于服务商侧统一调用；保存后不会回显。导出“配置”默认不含 Key；导出“迁移包”会包含 Key（明文）。
             </Text>
           </Alert>
           <TextInput
