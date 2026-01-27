@@ -9,6 +9,8 @@ import { $ } from '../canvas/i18n'
 import StatsSystemManagement from './StatsSystemManagement'
 import StatsEnterpriseManagement from './StatsEnterpriseManagement'
 
+type StatsSection = 'overview' | 'system' | 'enterprise'
+
 function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   if (!values.length) return null
   const w = 920
@@ -43,13 +45,38 @@ function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   )
 }
 
+function parseStatsSectionFromPathname(pathname: string): StatsSection {
+  const path = String(pathname || '')
+
+  if (path === '/stats' || path === '/stats/' || !path) return 'overview'
+
+  if (!path.startsWith('/stats/')) return 'overview'
+
+  const raw = path.slice('/stats/'.length)
+  const first = raw.split('/').filter(Boolean)[0] || ''
+
+  if (first === 'system') return 'system'
+  if (first === 'enterprise') return 'enterprise'
+  if (first === 'overview') return 'overview'
+
+  return 'overview'
+}
+
+function getPathnameForStatsSection(section: StatsSection): string {
+  if (section === 'overview') return '/stats'
+  return `/stats/${section}`
+}
+
 export default function StatsFullPage(): JSX.Element {
   const user = useAuth((s) => s.user)
   const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
 
-  const [section, setSection] = React.useState<'overview' | 'system' | 'enterprise'>('overview')
+  const [section, setSection] = React.useState<StatsSection>(() => {
+    if (typeof window === 'undefined') return 'overview'
+    return parseStatsSectionFromPathname(window.location.pathname || '')
+  })
 
   const [loading, setLoading] = React.useState(false)
   const [stats, setStats] = React.useState<{ onlineUsers: number; totalUsers: number; newUsersToday: number } | null>(null)
@@ -58,6 +85,28 @@ export default function StatsFullPage(): JSX.Element {
   const [vendorDays, setVendorDays] = React.useState<'7' | '15' | '30'>('7')
   const [vendorStats, setVendorStats] = React.useState<VendorApiCallStatDto[]>([])
   const [lastUpdated, setLastUpdated] = React.useState<number | null>(null)
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onPopState = () => {
+      setSection(parseStatsSectionFromPathname(window.location.pathname || ''))
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const desired = getPathnameForStatsSection(section)
+    const current = window.location.pathname || ''
+    if (current === desired || current === `${desired}/`) return
+    if (!(current === '/stats' || current === '/stats/' || current.startsWith('/stats/'))) return
+    try {
+      window.history.pushState({}, '', desired)
+    } catch {
+      // ignore
+    }
+  }, [section])
 
   const reload = React.useCallback(async () => {
     setLoading(true)
@@ -178,7 +227,7 @@ export default function StatsFullPage(): JSX.Element {
               size="xs"
               radius="xl"
               value={section}
-              onChange={(v) => setSection(v as any)}
+              onChange={(v) => setSection(v as StatsSection)}
               data={[
                 { value: 'overview', label: '概览' },
                 { value: 'system', label: '系统管理' },
