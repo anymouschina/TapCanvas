@@ -18,6 +18,11 @@ import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
 import { ensureModelCatalogSchema } from "../model-catalog/model-catalog.repo";
 import {
+	buildMappedUpstreamRequest,
+	parseMappedTaskResultFromPayload,
+	resolveEnabledModelCatalogMappingForTask,
+} from "./task.mappings";
+import {
 	getVendorTaskRefByTaskId,
 	upsertVendorTaskRef,
 } from "./vendor-task-refs.repo";
