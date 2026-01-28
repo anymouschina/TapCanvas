@@ -6203,8 +6203,72 @@ async function runTuziVideoTask(
 		form.append("seconds", seconds);
 		form.append("size", size);
 		if (absoluteInputReference) {
-			// Tuzi 文档：input_reference 支持图片文件或 URL
-			form.append("input_reference", absoluteInputReference);
+			// NOTE: Tuzi upstream validates `input_reference` as a file part (multipart/form-data).
+			// If callers provide a URL, we try to fetch and upload the image bytes; if fetch fails,
+			// fall back to sending the URL as a "file" (text/plain) so gateways that accept URL
+			// payloads can still work.
+			const ref = absoluteInputReference.trim();
+			const filePart = await (async (): Promise<{
+				blob: Blob;
+				filename: string;
+				meta: { url: string; mode: "fetched_file" | "url_file" | "data_url_file" };
+			}> => {
+				const dataUrlMatch = ref.match(/^data:([^;]+);base64,(.+)$/i);
+				if (dataUrlMatch) {
+					const mimeType = (dataUrlMatch[1] || "").trim() || "application/octet-stream";
+					const base64 = (dataUrlMatch[2] || "").trim();
+					const bytes = decodeBase64ToBytes(base64);
+					const ext = detectImageExtensionFromMimeType(mimeType);
+					return {
+						blob: new Blob([bytes], { type: mimeType }),
+						filename: `input_reference.${ext || "bin"}`,
+						meta: { url: ref.slice(0, 64), mode: "data_url_file" },
+					};
+				}
+
+				if (/^https?:\/\//i.test(ref)) {
+					try {
+						const res = await fetchWithHttpDebugLog(
+							c,
+							ref,
+							{ method: "GET", headers: { Accept: "image/*,*/*;q=0.8" } },
+							{ tag: "tuzi:input_reference:fetch" },
+						);
+						if (res.ok) {
+							const contentType =
+								(res.headers.get("content-type") || "").split(";")[0]?.trim() ||
+								"application/octet-stream";
+							const buf = await res.arrayBuffer();
+							const extFromUrl = (() => {
+								try {
+									const pathname = new URL(ref).pathname || "";
+									const m = pathname.match(/\.([a-zA-Z0-9]+)$/);
+									return m && m[1] ? m[1].toLowerCase() : null;
+								} catch {
+									return null;
+								}
+							})();
+							const ext = extFromUrl || detectImageExtensionFromMimeType(contentType);
+							return {
+								blob: new Blob([buf], { type: contentType }),
+								filename: `input_reference.${ext || "bin"}`,
+								meta: { url: ref, mode: "fetched_file" },
+							};
+						}
+					} catch {
+						// fall through to url-file fallback
+					}
+				}
+
+				// Fallback: send URL as a file part (some gateways accept URL content).
+				return {
+					blob: new Blob([ref], { type: "text/plain" }),
+					filename: "input_reference.url",
+					meta: { url: ref, mode: "url_file" },
+				};
+			})();
+
+			form.append("input_reference", filePart.blob, filePart.filename);
 		}
 
 		const url = new URL("/v1/videos", baseUrl).toString();
