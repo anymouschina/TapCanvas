@@ -4864,6 +4864,297 @@ export async function fetchAsyncDataTaskResult(
 	return result;
 }
 
+export async function fetchTuziTaskResult(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+	options?: { taskKind?: TaskRequestDto["kind"] | null; promptFromClient?: string | null },
+): Promise<TaskResult> {
+	if (!taskId || !taskId.trim()) {
+		throw new AppError("taskId is required", {
+			status: 400,
+			code: "task_id_required",
+		});
+	}
+
+	const taskKind: TaskRequestDto["kind"] =
+		typeof options?.taskKind === "string" && options.taskKind.trim()
+			? (options.taskKind as TaskRequestDto["kind"])
+			: "text_to_video";
+
+	const refForTask = await (async () => {
+		try {
+			return await getVendorTaskRefByTaskId(c.env.DB, userId, "video", taskId);
+		} catch {
+			return null;
+		}
+	})();
+
+	// Enforce per-user task ownership.
+	if (!refForTask) {
+		throw new AppError("taskId is not found", {
+			status: 404,
+			code: "task_not_found",
+		});
+	}
+
+	const vendorRefRaw =
+		typeof refForTask?.vendor === "string" ? refForTask.vendor.trim() : "";
+	const vendorForLog = vendorRefRaw ? vendorRefRaw.split(":")[0]?.trim() || "tuzi" : "tuzi";
+	const dispatchTail = vendorRefRaw
+		? vendorRefRaw.split(":").slice(-1)[0]?.trim().toLowerCase() || ""
+		: "";
+	if (dispatchTail === "asyncdata") {
+		return fetchAsyncDataTaskResult(c, userId, taskId, options);
+	}
+
+	const pid = typeof refForTask?.pid === "string" ? refForTask.pid.trim() : "";
+	const upstreamTaskId = pid || taskId.trim();
+
+	const ctx = await resolveVendorContext(c, userId, "tuzi");
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = ctx.apiKey.trim();
+	if (!baseUrl || !apiKey) {
+		throw new AppError("未配置 Tuzi API Key", {
+			status: 400,
+			code: "tuzi_api_key_missing",
+		});
+	}
+
+	const candidates = [
+		new URL(`/v1/videos/${encodeURIComponent(upstreamTaskId)}`, baseUrl).toString(),
+		new URL(`/v1/videos?task_id=${encodeURIComponent(upstreamTaskId)}`, baseUrl).toString(),
+		new URL(`/v1/videos?id=${encodeURIComponent(upstreamTaskId)}`, baseUrl).toString(),
+	];
+
+	let payload: any = null;
+	let lastError: { status?: number; data?: any; message?: string; url?: string } | null =
+		null;
+
+	for (const url of candidates) {
+		let res: Response;
+		let data: any = null;
+		try {
+			res = await fetchWithHttpDebugLog(
+				c,
+				url,
+				{
+					method: "GET",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						Accept: "application/json",
+					},
+				},
+				{ tag: "tuzi:videos:result" },
+			);
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (err: any) {
+			lastError = { message: err?.message ?? String(err), url };
+			continue;
+		}
+
+		if (!res.ok) {
+			lastError = { status: res.status, data, url };
+			continue;
+		}
+
+		payload = data;
+		break;
+	}
+
+	if (!payload) {
+		const msg =
+			(lastError?.data &&
+				(lastError.data.error?.message || lastError.data.message || lastError.data.error)) ||
+			lastError?.message ||
+			"Tuzi 结果查询失败";
+		throw new AppError(msg, {
+			status: lastError?.status ?? 502,
+			code: "tuzi_result_failed",
+			details: {
+				upstreamStatus: lastError?.status ?? null,
+				upstreamData: lastError?.data ?? null,
+				endpointTried: lastError?.url ?? null,
+			},
+		});
+	}
+
+	let status = normalizeTuziVideoTaskStatus(
+		payload?.status ?? payload?.data?.status ?? payload?.result?.status,
+	);
+	const progress =
+		typeof payload?.progress === "number" && Number.isFinite(payload.progress)
+			? Math.max(0, Math.min(100, Math.round(payload.progress)))
+			: typeof payload?.data?.progress === "number" && Number.isFinite(payload.data.progress)
+				? Math.max(0, Math.min(100, Math.round(payload.data.progress)))
+				: undefined;
+
+	const videoUrl =
+		extractSora2OfficialVideoUrl(payload) ||
+		extractSora2OfficialVideoUrl(payload?.data) ||
+		null;
+	const thumbRaw =
+		(typeof payload?.thumbnail_url === "string" && payload.thumbnail_url.trim()) ||
+		(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()) ||
+		(typeof payload?.gif_url === "string" && payload.gif_url.trim()) ||
+		(typeof payload?.gifUrl === "string" && payload.gifUrl.trim()) ||
+		(null as string | null);
+
+	if (status === "succeeded" && !videoUrl) {
+		status = "running";
+	}
+	if (status !== "succeeded" && videoUrl) {
+		status = "succeeded";
+	}
+
+	if (status === "succeeded" && videoUrl) {
+		const asset = TaskAssetSchema.parse({
+			type: "video",
+			url: videoUrl,
+			thumbnailUrl: thumbRaw ? thumbRaw.trim() : null,
+		});
+
+		const promptForAsset =
+			typeof options?.promptFromClient === "string" && options.promptFromClient.trim()
+				? options.promptFromClient.trim()
+				: null;
+
+		let hostedAssets: Array<ReturnType<typeof TaskAssetSchema.parse>>;
+		try {
+			hostedAssets = await hostTaskAssetsInWorker({
+				c,
+				userId,
+				assets: [asset],
+				meta: {
+					taskKind,
+					prompt: promptForAsset,
+					vendor: vendorForLog,
+					modelKey:
+						typeof payload?.model === "string"
+							? payload.model
+							: typeof payload?.data?.model === "string"
+								? payload.data.model
+								: undefined,
+					taskId: upstreamTaskId || null,
+				},
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "OSS 托管失败，稍后重试";
+			const result = TaskResultSchema.parse({
+				id: upstreamTaskId,
+				kind: taskKind,
+				status: "running",
+				assets: [],
+				raw: {
+					provider: "tuzi",
+					vendor: vendorForLog,
+					upstreamTaskId,
+					response: payload ?? null,
+					progress,
+					hosting: { status: "pending", message },
+				},
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorForLog,
+				taskKind,
+				result,
+			});
+			return result;
+		}
+
+		const result = TaskResultSchema.parse({
+			id: upstreamTaskId,
+			kind: taskKind,
+			status: "succeeded",
+			assets: hostedAssets,
+			raw: {
+				provider: "tuzi",
+				vendor: vendorForLog,
+				upstreamTaskId,
+				response: payload ?? null,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+		return result;
+	}
+
+	if (status === "failed") {
+		const errorMessage = (() => {
+			const candidates = [
+				payload?.error?.message,
+				payload?.error_message,
+				payload?.message,
+				payload?.error,
+				payload?.data?.error?.message,
+				payload?.data?.error_message,
+				payload?.data?.message,
+				payload?.data?.error,
+			];
+			for (const value of candidates) {
+				if (typeof value === "string" && value.trim()) return value.trim();
+			}
+			return null;
+		})();
+
+		const result = TaskResultSchema.parse({
+			id: upstreamTaskId,
+			kind: taskKind,
+			status: "failed",
+			assets: [],
+			raw: {
+				provider: "tuzi",
+				vendor: vendorForLog,
+				upstreamTaskId,
+				response: payload ?? null,
+				progress,
+				error: errorMessage,
+				message: errorMessage,
+			},
+		});
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind,
+			result,
+		});
+		return result;
+	}
+
+	const result = TaskResultSchema.parse({
+		id: upstreamTaskId,
+		kind: taskKind,
+		status,
+		assets: [],
+		raw: {
+			provider: "tuzi",
+			vendor: vendorForLog,
+			upstreamTaskId,
+			response: payload ?? null,
+			progress,
+		},
+	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: vendorForLog,
+		taskKind,
+		result,
+	});
+	return result;
+}
+
 function normalizeGrsaiDrawTaskStatus(value: unknown): TaskStatus {
 	if (typeof value !== "string") return "running";
 	const normalized = value.trim().toLowerCase();
@@ -5690,6 +5981,328 @@ export async function fetchGrsaiDrawTaskResult(
 		} catch (err) {
 			return await releaseReservationOnThrow(c, userId, reservation, err);
 		}
+}
+
+function normalizeTuziVideoTaskStatus(value: unknown): TaskStatus {
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if (!normalized) return "running";
+		if (
+			normalized === "queued" ||
+			normalized === "pending" ||
+			normalized === "submitted" ||
+			normalized === "waiting"
+		) {
+			return "queued";
+		}
+		if (
+			normalized === "running" ||
+			normalized === "processing" ||
+			normalized === "generating" ||
+			normalized === "in_progress" ||
+			normalized === "in-progress"
+		) {
+			return "running";
+		}
+		if (
+			normalized === "completed" ||
+			normalized === "complete" ||
+			normalized === "succeeded" ||
+			normalized === "success" ||
+			normalized === "done"
+		) {
+			return "succeeded";
+		}
+		if (
+			normalized === "failed" ||
+			normalized === "failure" ||
+			normalized === "error" ||
+			normalized === "cancelled" ||
+			normalized === "canceled"
+		) {
+			return "failed";
+		}
+		return "running";
+	}
+	if (typeof value === "number" && Number.isFinite(value)) {
+		const code = Math.floor(value);
+		if (code === 0) return "queued";
+		if (code === 1) return "running";
+		if (code === 2) return "succeeded";
+		if (code === 3 || code === -1) return "failed";
+	}
+	return "running";
+}
+
+function normalizeTuziVideoSeconds(
+	requestedSeconds: number | null | undefined,
+	isProModel: boolean,
+): string {
+	const requested =
+		typeof requestedSeconds === "number" && Number.isFinite(requestedSeconds)
+			? Math.max(1, Math.floor(requestedSeconds))
+			: 10;
+
+	// Explicit opt-in for OpenAI group seconds (4/8/12).
+	if (requested === 4 || requested === 8 || requested === 12) {
+		return String(requested);
+	}
+	if (requested <= 10) return "10";
+	if (requested <= 15) return "15";
+	return isProModel ? "25" : "15";
+}
+
+function normalizeTuziVideoSize(input: {
+	sizeRaw: unknown;
+	orientation: "portrait" | "landscape";
+	isProModel: boolean;
+}): string {
+	const allowed = input.isProModel
+		? new Set(["1280x720", "720x1280", "1024x1792", "1792x1024"])
+		: new Set(["1280x720", "720x1280"]);
+	const raw = typeof input.sizeRaw === "string" ? input.sizeRaw.trim() : "";
+	const compact =
+		raw && /^\d+\s*x\s*\d+$/i.test(raw) ? raw.replace(/\s+/g, "") : "";
+	if (compact && allowed.has(compact)) return compact;
+
+	const wantsHd = (() => {
+		const lowered = raw.toLowerCase();
+		if (lowered === "large" || lowered === "hd" || lowered === "high") return true;
+		return false;
+	})();
+
+	if (input.orientation === "portrait") {
+		return input.isProModel && wantsHd ? "1024x1792" : "720x1280";
+	}
+	return input.isProModel && wantsHd ? "1792x1024" : "1280x720";
+}
+
+async function runTuziVideoTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	const v = "tuzi";
+	const ctx = await resolveVendorContext(c, userId, v);
+	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
+	const apiKey = (ctx.apiKey || "").trim();
+	if (!baseUrl) {
+		throw new AppError(`No base URL configured for vendor ${v}`, {
+			status: 400,
+			code: "base_url_missing",
+		});
+	}
+	if (!apiKey) {
+		throw new AppError(`No API key configured for vendor ${v}`, {
+			status: 400,
+			code: "api_key_missing",
+		});
+	}
+
+	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
+	const modelKeyRaw =
+		explicitModelKey ||
+		(await resolveDefaultModelKeyFromCatalogForVendor(c, v, "video"));
+	const model = modelKeyRaw?.startsWith("models/") ? modelKeyRaw.slice(7) : modelKeyRaw;
+	if (!model) {
+		throw new AppError(
+			"未配置可用的模型（请在 /stats -> 模型管理（系统级）为该厂商添加并启用 video 模型，或在请求里传 extras.modelKey）",
+			{
+				status: 400,
+				code: "model_not_configured",
+				details: { vendor: v, taskKind: req.kind },
+			},
+		);
+	}
+	const normalizedModel = model.toLowerCase();
+	if (normalizedModel !== "sora-2" && normalizedModel !== "sora-2-pro") {
+		throw new AppError("Tuzi /v1/videos 仅支持 sora-2 / sora-2-pro", {
+			status: 400,
+			code: "invalid_model",
+			details: { vendor: v, model },
+		});
+	}
+	const isProModel = normalizedModel === "sora-2-pro";
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: v,
+		modelKey: model,
+	});
+
+	try {
+		const extras = (req.extras || {}) as Record<string, any>;
+		const orientation = (() => {
+			const raw =
+				(typeof extras.orientation === "string" && extras.orientation.trim()) ||
+				(typeof extras.videoOrientation === "string" &&
+					extras.videoOrientation.trim()) ||
+				"";
+			if (raw === "portrait" || raw === "landscape") return raw;
+			const ratio =
+				(typeof extras.aspectRatio === "string" && extras.aspectRatio.trim()) ||
+				(typeof extras.aspect_ratio === "string" && extras.aspect_ratio.trim()) ||
+				"";
+			if (ratio === "9:16") return "portrait";
+			if (ratio === "16:9") return "landscape";
+			return "landscape";
+		})();
+
+		const durationSeconds =
+			typeof (req as any).durationSeconds === "number" &&
+			Number.isFinite((req as any).durationSeconds)
+				? (req as any).durationSeconds
+				: typeof extras.durationSeconds === "number" &&
+						Number.isFinite(extras.durationSeconds)
+					? extras.durationSeconds
+					: 10;
+		const seconds = normalizeTuziVideoSeconds(durationSeconds, isProModel);
+		const size = normalizeTuziVideoSize({
+			sizeRaw: extras.size,
+			orientation,
+			isProModel,
+		});
+
+		const inputReferenceRaw =
+			(typeof extras.input_reference === "string" &&
+				extras.input_reference.trim()) ||
+			(typeof extras.inputReference === "string" &&
+				extras.inputReference.trim()) ||
+			(typeof extras.firstFrameUrl === "string" &&
+				extras.firstFrameUrl.trim()) ||
+			(typeof extras.url === "string" && extras.url.trim()) ||
+			(Array.isArray(extras.urls) && extras.urls[0]
+				? String(extras.urls[0]).trim()
+				: "") ||
+			"";
+		const inputReferenceUrl = inputReferenceRaw ? String(inputReferenceRaw).trim() : "";
+		if (inputReferenceUrl && /^blob:/i.test(inputReferenceUrl)) {
+			throw new AppError("Tuzi input_reference 不支持 blob: URL，请先上传为可访问的图片地址", {
+				status: 400,
+				code: "tuzi_input_reference_invalid",
+			});
+		}
+
+		const absoluteInputReference = (() => {
+			if (!inputReferenceUrl) return null;
+			if (/^https?:\/\//i.test(inputReferenceUrl)) return inputReferenceUrl;
+			if (inputReferenceUrl.startsWith("/")) {
+				return new URL(inputReferenceUrl, new URL(c.req.url).origin).toString();
+			}
+			return inputReferenceUrl;
+		})();
+
+		const form = new FormData();
+		form.append("model", model);
+		form.append("prompt", req.prompt);
+		form.append("seconds", seconds);
+		form.append("size", size);
+		if (absoluteInputReference) {
+			// Tuzi 文档：input_reference 支持图片文件或 URL
+			form.append("input_reference", absoluteInputReference);
+		}
+
+		const url = new URL("/v1/videos", baseUrl).toString();
+		let res: Response;
+		let data: any = null;
+		try {
+			res = await fetchWithHttpDebugLog(
+				c,
+				url,
+				{
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						Accept: "application/json",
+					},
+					body: form,
+				},
+				{ tag: "tuzi:videos:create" },
+			);
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		} catch (error: any) {
+			throw new AppError("Tuzi 视频任务创建失败", {
+				status: 502,
+				code: "tuzi_request_failed",
+				details: { message: error?.message ?? String(error) },
+			});
+		}
+
+		if (!res.ok) {
+			const msg =
+				(data && (data.error?.message || data.message || data.error)) ||
+				`Tuzi 视频任务创建失败：${res.status}`;
+			throw new AppError(msg, {
+				status: res.status,
+				code: "tuzi_request_failed",
+				details: { upstreamStatus: res.status, upstreamData: data ?? null },
+			});
+		}
+
+		const taskId =
+			(typeof data?.id === "string" && data.id.trim()) ||
+			(typeof data?.task_id === "string" && data.task_id.trim()) ||
+			(typeof data?.taskId === "string" && data.taskId.trim()) ||
+			null;
+		if (!taskId) {
+			throw new AppError("Tuzi API 未返回任务 ID", {
+				status: 502,
+				code: "tuzi_task_id_missing",
+				details: { upstreamData: data ?? null },
+			});
+		}
+
+		const nowIso = new Date().toISOString();
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{
+					kind: "video",
+					taskId,
+					vendor: "tuzi",
+				},
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert tuzi video ref failed",
+				err?.message || err,
+			);
+		}
+
+		await bindReservationToTaskId(c, userId, reservation, taskId);
+
+		const status = normalizeTuziVideoTaskStatus(data?.status);
+		return TaskResultSchema.parse({
+			id: taskId,
+			kind: req.kind,
+			status,
+			assets: [],
+			raw: {
+				provider: "tuzi",
+				vendor: "tuzi",
+				model,
+				request: {
+					seconds,
+					size,
+					input_reference: absoluteInputReference,
+				},
+				response: data ?? null,
+			},
+		});
+	} catch (err) {
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
 }
 
 function normalizeMiniMaxStatus(value: unknown): TaskStatus {
@@ -9373,7 +9986,11 @@ export async function runGenericTaskForVendor(
 			} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
 				result = await runOpenAiCompatibleImageTaskForVendor(c, userId, v, req);
 			} else if (req.kind === "text_to_video" || req.kind === "image_to_video") {
-				result = await runOpenAiCompatibleVideoTaskForVendor(c, userId, v, req);
+				if (v === "tuzi") {
+					result = await runTuziVideoTask(c, userId, req);
+				} else {
+					result = await runOpenAiCompatibleVideoTaskForVendor(c, userId, v, req);
+				}
 			} else {
 				throw new AppError(`Unsupported vendor: ${vendor}`, {
 					status: 400,

@@ -14,6 +14,7 @@ import {
 import {
 	fetchApimartTaskResult,
 	fetchAsyncDataTaskResult,
+	fetchTuziTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
@@ -462,8 +463,13 @@ taskRouter.post("/result", async (c) => {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
-	} else if (dispatch === "asyncdata" || dispatch === "tuzi") {
+	} else if (dispatch === "asyncdata") {
 		result = await fetchAsyncDataTaskResult(c, userId, taskId, {
+			taskKind: (taskKind as any) ?? null,
+			promptFromClient: prompt,
+		});
+	} else if (dispatch === "tuzi") {
+		result = await fetchTuziTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});

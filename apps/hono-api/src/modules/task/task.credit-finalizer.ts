@@ -4,6 +4,8 @@ import { tryReleaseTeamCreditsOnce } from "../team/team.repo";
 import { getVendorTaskRefByTaskId } from "./vendor-task-refs.repo";
 import {
 	fetchGrsaiDrawTaskResult,
+	fetchAsyncDataTaskResult,
+	fetchTuziTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchVeoTaskResult,
@@ -283,6 +285,16 @@ export async function runCreditTaskFinalizer(
 					taskKind: (taskKind as any) ?? null,
 					promptFromClient: null,
 				});
+			} else if (dispatch === "asyncdata") {
+				result = await fetchAsyncDataTaskResult(c, userId, taskId, {
+					taskKind: (taskKind as any) ?? null,
+					promptFromClient: null,
+				});
+			} else if (dispatch === "tuzi") {
+				result = await fetchTuziTaskResult(c, userId, taskId, {
+					taskKind: (taskKind as any) ?? null,
+					promptFromClient: null,
+				});
 			} else if (vendorHead === "sora2api") {
 				result = await fetchSora2ApiTaskResult(c, userId, taskId, null);
 			} else if (dispatch === "veo") {
@@ -359,4 +371,3 @@ export async function runCreditTaskFinalizer(
 		errors,
 	};
 }
-

@@ -23,6 +23,7 @@ import { createApiKey, deleteApiKey, listApiKeys, updateApiKey } from "./apiKey.
 import {
 	fetchApimartTaskResult,
 	fetchAsyncDataTaskResult,
+	fetchTuziTaskResult,
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
@@ -1542,8 +1543,13 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
-	} else if (dispatch === "asyncdata" || dispatch === "tuzi") {
+	} else if (dispatch === "asyncdata") {
 		result = await fetchAsyncDataTaskResult(c, userId, taskId, {
+			taskKind: (taskKind as any) ?? null,
+			promptFromClient: prompt,
+		});
+	} else if (dispatch === "tuzi") {
+		result = await fetchTuziTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
