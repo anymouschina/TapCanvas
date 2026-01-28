@@ -484,8 +484,9 @@ async function rankVendorsByRecentPerformance(
 	);
 	if (deduped.length <= 1) return deduped;
 
-	const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 	const taskKindFilter = typeof taskKind === "string" && taskKind.trim() ? taskKind.trim() : null;
+	const isVideoTaskKind =
+		taskKindFilter === "text_to_video" || taskKindFilter === "image_to_video";
 
 	try {
 		await ensureVendorCallLogsSchema(c.env.DB);
@@ -497,17 +498,27 @@ async function rankVendorsByRecentPerformance(
 		const v = normalizeDispatchVendor(vendor);
 		if (!v) return { vendor, rate: 0.5, total: 0, avgMs: Number.POSITIVE_INFINITY };
 		try {
+			const vendorWhere =
+				isVideoTaskKind && v === "sora2api"
+					? "(vendor = ? OR vendor LIKE 'grsai-%')"
+					: "vendor = ?";
 			const where: string[] = [
 				"user_id = ?",
-				"vendor = ?",
+				vendorWhere,
 				"status IN ('succeeded','failed')",
 				"finished_at IS NOT NULL",
-				"finished_at >= ?",
 			];
-			const bindings: unknown[] = [userId, v, sinceIso];
+			const bindings: unknown[] = [userId, v];
 			if (taskKindFilter) {
 				where.push("task_kind = ?");
 				bindings.push(taskKindFilter);
+			}
+			if (!isVideoTaskKind) {
+				const sinceIso = new Date(
+					Date.now() - 7 * 24 * 60 * 60 * 1000,
+				).toISOString();
+				where.push("finished_at >= ?");
+				bindings.push(sinceIso);
 			}
 			const row = await c.env.DB.prepare(
 				`
@@ -534,6 +545,39 @@ async function rankVendorsByRecentPerformance(
 	};
 
 	const scored = await Promise.all(deduped.map((v) => scoreVendor(v)));
+
+	if (isVideoTaskKind) {
+		const MIN_CALLS_PER_VENDOR = 100;
+		const isWarm = scored.every((s) => s.total >= MIN_CALLS_PER_VENDOR);
+
+		const randomInt = (maxExclusive: number) => {
+			const max = Math.max(0, Math.floor(maxExclusive));
+			if (max <= 1) return 0;
+			const buf = new Uint32Array(1);
+			crypto.getRandomValues(buf);
+			return buf[0]! % max;
+		};
+
+		if (!isWarm) {
+			const shuffled = [...deduped];
+			for (let i = shuffled.length - 1; i > 0; i--) {
+				const j = randomInt(i + 1);
+				const tmp = shuffled[i]!;
+				shuffled[i] = shuffled[j]!;
+				shuffled[j] = tmp;
+			}
+			return shuffled;
+		}
+
+		const sorted = scored.sort((a, b) => {
+			if (b.rate !== a.rate) return b.rate - a.rate;
+			if (a.avgMs !== b.avgMs) return a.avgMs - b.avgMs;
+			if (b.total !== a.total) return b.total - a.total;
+			return a.vendor.localeCompare(b.vendor);
+		});
+		return sorted.map((s) => s.vendor);
+	}
+
 	const enriched = scored.map((s) => ({
 		...s,
 		// Prefer faster expected time-to-success (avgMs / successRate), then more reliable.
@@ -640,6 +684,18 @@ async function runPublicTaskWithFallback(
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
 	const enabledSystemVendors = await listEnabledSystemVendors(c);
 	const isAutoVendor = vendorRaw === "auto";
+	const explicitVendor = !isAutoVendor ? normalizeDispatchVendor(vendorRaw) : "";
+	if (explicitVendor && !enabledSystemVendors.has(explicitVendor)) {
+		throw new AppError("该厂商已禁用或未配置（系统级）", {
+			status: 400,
+			code: "vendor_disabled",
+			details: {
+				vendorRaw: vendorRaw || null,
+				vendor: explicitVendor,
+				systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+			},
+		});
+	}
 
 	const modelAliasRaw =
 		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
@@ -651,9 +707,6 @@ async function runPublicTaskWithFallback(
 			? Array.from(enabledSystemVendors.values()).sort((a, b) => a.localeCompare(b))
 			: pickAutoVendorsForKind(request.kind, enabledSystemVendors, extras)
 		: [vendorRaw];
-	// NOTE:
-	// - vendor=auto: only use system-enabled vendors (admin-configured global allowlist)
-	// - vendor=explicit: allow user-level proxy/provider configs to work (even if not in system allowlist)
 	let vendorCandidates = isAutoVendor
 		? rawCandidates
 		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));

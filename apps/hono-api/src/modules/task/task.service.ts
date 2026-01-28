@@ -584,13 +584,23 @@ async function resolveProxyForVendor(
 	// Public API: prefer higher-success proxies when multiple are enabled.
 	if (isPublicApiRequest() && candidates.length > 1 && !readProxyDisabled()) {
 		const taskKind = readRoutingTaskKind();
-		const sinceIso = new Date(
-			Date.now() - 7 * 24 * 60 * 60 * 1000,
-		).toISOString();
+		const isVideoTaskKind =
+			taskKind === "text_to_video" || taskKind === "image_to_video";
+		const sinceIso = !isVideoTaskKind
+			? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+			: null;
 
 		const scoreProxy = async (proxyVendor: string) => {
 			const vkey = (proxyVendor || "").trim().toLowerCase();
-			if (!vkey) return { vendor: proxyVendor, success: 0, total: 0, rate: 0 };
+			if (!vkey) {
+				return {
+					vendor: proxyVendor,
+					success: 0,
+					total: 0,
+					rate: 0,
+					avgMs: Number.POSITIVE_INFINITY,
+				};
+			}
 			try {
 				await ensureVendorCallLogsSchema(c.env.DB);
 				const where: string[] = [
@@ -598,18 +608,25 @@ async function resolveProxyForVendor(
 					"vendor = ?",
 					"status IN ('succeeded','failed')",
 					"finished_at IS NOT NULL",
-					"finished_at >= ?",
 				];
-				const bindings: unknown[] = [userId, vkey, sinceIso];
 				if (taskKind) {
 					where.push("task_kind = ?");
-					bindings.push(taskKind);
 				}
+				if (sinceIso) {
+					where.push("finished_at >= ?");
+				}
+				const bindings: unknown[] = [
+					userId,
+					vkey,
+					...(taskKind ? [taskKind] : []),
+					...(sinceIso ? [sinceIso] : []),
+				];
 				const row = await c.env.DB.prepare(
 					`
             SELECT
               COUNT(1) AS total,
-              SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS success
+              SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS success,
+              AVG(CASE WHEN status = 'succeeded' THEN duration_ms ELSE NULL END) AS avg_ms
             FROM vendor_api_call_logs
             WHERE ${where.join(" AND ")}
           `,
@@ -620,9 +637,20 @@ async function resolveProxyForVendor(
 				const success = Number(row?.success ?? 0) || 0;
 				// Laplace smoothing to avoid 0/0 and reduce cold-start noise
 				const rate = (success + 1) / (total + 2);
-				return { vendor: proxyVendor, success, total, rate };
+				const avgRaw = Number(row?.avg_ms);
+				const avgMs =
+					Number.isFinite(avgRaw) && avgRaw >= 0
+						? avgRaw
+						: Number.POSITIVE_INFINITY;
+				return { vendor: proxyVendor, success, total, rate, avgMs };
 			} catch {
-				return { vendor: proxyVendor, success: 0, total: 0, rate: 0 };
+				return {
+					vendor: proxyVendor,
+					success: 0,
+					total: 0,
+					rate: 0,
+					avgMs: Number.POSITIVE_INFINITY,
+				};
 			}
 		};
 
@@ -633,14 +661,42 @@ async function resolveProxyForVendor(
 			}),
 		);
 
-		const best = scored.sort((a, b) => {
-			if (b.rate !== a.rate) return b.rate - a.rate;
-			if (b.total !== a.total) return b.total - a.total;
-			const bt = parseEpoch(b.proxy.updated_at) || parseEpoch(b.proxy.created_at);
-			const at = parseEpoch(a.proxy.updated_at) || parseEpoch(a.proxy.created_at);
-			return bt - at;
-		})[0];
-		if (best?.proxy) return best.proxy;
+		if (isVideoTaskKind) {
+			const MIN_CALLS_PER_VENDOR = 100;
+			const isWarm = scored.every((s) => s.total >= MIN_CALLS_PER_VENDOR);
+
+			const randomInt = (maxExclusive: number) => {
+				const max = Math.max(0, Math.floor(maxExclusive));
+				if (max <= 1) return 0;
+				const buf = new Uint32Array(1);
+				crypto.getRandomValues(buf);
+				return buf[0]! % max;
+			};
+
+			if (!isWarm) {
+				const idx = randomInt(candidates.length);
+				return candidates[idx]!;
+			}
+
+			const best = scored.sort((a, b) => {
+				if (b.rate !== a.rate) return b.rate - a.rate;
+				if (a.avgMs !== b.avgMs) return a.avgMs - b.avgMs;
+				if (b.total !== a.total) return b.total - a.total;
+				const bt = parseEpoch(b.proxy.updated_at) || parseEpoch(b.proxy.created_at);
+				const at = parseEpoch(a.proxy.updated_at) || parseEpoch(a.proxy.created_at);
+				return bt - at;
+			})[0];
+			if (best?.proxy) return best.proxy;
+		} else {
+			const best = scored.sort((a, b) => {
+				if (b.rate !== a.rate) return b.rate - a.rate;
+				if (b.total !== a.total) return b.total - a.total;
+				const bt = parseEpoch(b.proxy.updated_at) || parseEpoch(b.proxy.created_at);
+				const at = parseEpoch(a.proxy.updated_at) || parseEpoch(a.proxy.created_at);
+				return bt - at;
+			})[0];
+			if (best?.proxy) return best.proxy;
+		}
 	}
 
 	// Default: prefer most recently updated proxy config to make vendor switching predictable
