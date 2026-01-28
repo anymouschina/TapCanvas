@@ -111,6 +111,8 @@ export const VendorCallLogSchema = z.object({
 	finishedAt: z.string().nullable().optional(),
 	durationMs: z.number().nullable().optional(),
 	errorMessage: z.string().nullable().optional(),
+	requestPayload: z.string().nullable().optional(),
+	upstreamResponse: z.string().nullable().optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });

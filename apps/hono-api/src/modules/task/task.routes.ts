@@ -337,6 +337,10 @@ taskRouter.get("/logs", async (c) => {
 					? Math.round(r.duration_ms)
 					: null,
 			errorMessage: r.error_message ?? null,
+			requestPayload:
+				typeof r.request_json === "string" ? r.request_json : null,
+			upstreamResponse:
+				typeof r.response_json === "string" ? r.response_json : null,
 			createdAt: r.created_at,
 			updatedAt: r.updated_at,
 		}),

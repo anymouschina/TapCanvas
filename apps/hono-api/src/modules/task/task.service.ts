@@ -30,6 +30,7 @@ import {
 	upsertVendorCallLogFinal,
 	upsertVendorCallLogStarted,
 	ensureVendorCallLogsSchema,
+	upsertVendorCallLogPayloads,
 } from "./vendor-call-logs.repo";
 import {
 	bindTeamCreditsReservationToTaskId,
@@ -214,6 +215,36 @@ async function recordVendorCallFinal(
 	} catch (err: any) {
 		console.warn(
 			"[vendor-call-logs] upsert final failed",
+			err?.message || err,
+		);
+	}
+}
+
+async function recordVendorCallPayloads(
+	c: AppContext,
+	input: {
+		userId: string;
+		vendor: string;
+		taskId: string;
+		taskKind?: string | null;
+		request?: unknown;
+		upstreamResponse?: unknown;
+	},
+): Promise<void> {
+	const nowIso = new Date().toISOString();
+	try {
+		await upsertVendorCallLogPayloads(c.env.DB, {
+			userId: input.userId,
+			vendor: input.vendor,
+			taskId: input.taskId,
+			taskKind: input.taskKind ?? null,
+			request: input.request,
+			upstreamResponse: input.upstreamResponse,
+			nowIso,
+		});
+	} catch (err: any) {
+		console.warn(
+			"[vendor-call-logs] upsert payloads failed",
 			err?.message || err,
 		);
 	}
@@ -7751,6 +7782,7 @@ async function runOpenAiCompatibleImageTaskForVendor(
 		};
 
 		let url = buildOpenAIImagesGenerationsUrlForTask(baseUrl);
+		const logUrl = url;
 		if (auth?.authType === "none") {
 			// no-op
 		} else if (auth?.authType === "query") {
@@ -7797,6 +7829,15 @@ async function runOpenAiCompatibleImageTaskForVendor(
 			(typeof data?.taskId === "string" && data.taskId.trim()) ||
 			`${v}-img-${Date.now().toString(36)}`;
 		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+		await recordVendorCallPayloads(c, {
+			userId,
+			vendor: v,
+			taskId: id,
+			taskKind: req.kind,
+			request: { url: logUrl, body },
+			upstreamResponse: { url: logUrl, data },
+		});
 
 		await bindReservationToTaskId(c, userId, reservation, id);
 
@@ -8728,13 +8769,20 @@ async function runGeminiBananaImageTask(
 						body.image_size = val;
 					}
 				}
-			}
+				}
 
-			const url = `${baseUrl.replace(/\/+$/, "")}/v1/images/generations`;
-			const data = await callJsonApi(
-				c,
-				url,
-				{
+				const url = `${baseUrl.replace(/\/+$/, "")}/v1/images/generations`;
+				await recordVendorCallPayloads(c, {
+					userId,
+					vendor: vendorKeyForLog,
+					taskId: localTaskId,
+					taskKind: req.kind,
+					request: { url, body },
+				});
+				const data = await callJsonApi(
+					c,
+					url,
+					{
 					method: "POST",
 					headers: {
 						"Content-Type": "application/json",
@@ -8742,11 +8790,18 @@ async function runGeminiBananaImageTask(
 					},
 					body: JSON.stringify(body),
 				},
-				{ provider: "comfly" },
-			);
+					{ provider: "comfly" },
+				);
+				await recordVendorCallPayloads(c, {
+					userId,
+					vendor: vendorKeyForLog,
+					taskId: localTaskId,
+					taskKind: req.kind,
+					upstreamResponse: { url, data },
+				});
 
-			// Comfly OpenAI/DALL·E 风格返回：优先拿 url，若返回 b64_json 则上传到 R2。
-			const resolvedUrls: string[] = [];
+				// Comfly OpenAI/DALL·E 风格返回：优先拿 url，若返回 b64_json 则上传到 R2。
+				const resolvedUrls: string[] = [];
 			const extracted = extractBananaImageUrls(data);
 			for (const item of extracted.slice(0, 4)) {
 				const raw = typeof item === "string" ? item.trim() : "";
@@ -8832,21 +8887,28 @@ async function runGeminiBananaImageTask(
 					? String((extras as any).imageResolution).trim()
 					: null;
 
-		const body: Record<string, any> = {
-			model,
-			prompt: req.prompt,
-			n: 1,
+			const body: Record<string, any> = {
+				model,
+				prompt: req.prompt,
+				n: 1,
 			...(resolvedAspect ? { size: resolvedAspect } : {}),
 			...(resolution ? { resolution } : {}),
 			...(referenceImages.length
 				? { image_urls: referenceImages.slice(0, 14) }
-				: {}),
-		};
+					: {}),
+			};
 
-		const data = await callJsonApi(
-			c,
-			endpoint,
-			{
+			await recordVendorCallPayloads(c, {
+				userId,
+				vendor: vendorKeyForLog,
+				taskId: localTaskId,
+				taskKind: req.kind,
+				request: { url: endpoint, body },
+			});
+			const data = await callJsonApi(
+				c,
+				endpoint,
+				{
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -8854,12 +8916,19 @@ async function runGeminiBananaImageTask(
 				},
 				body: JSON.stringify(body),
 			},
-			{ provider: "apimart" },
-		);
+				{ provider: "apimart" },
+			);
+			await recordVendorCallPayloads(c, {
+				userId,
+				vendor: vendorKeyForLog,
+				taskId: localTaskId,
+				taskKind: req.kind,
+				upstreamResponse: { url: endpoint, data },
+			});
 
-		if (typeof data?.code === "number" && data.code !== 200) {
-			throw new AppError(
-				(data?.error?.message ||
+			if (typeof data?.code === "number" && data.code !== 200) {
+				throw new AppError(
+					(data?.error?.message ||
 					data?.message ||
 					`apimart 图像生成失败: code ${data.code}`) as string,
 				{
@@ -8970,14 +9039,22 @@ async function runGeminiBananaImageTask(
 	if (referenceImages.length) {
 		body.urls = referenceImages;
 	}
-	if (typeof extras.webHook === "string" && extras.webHook.trim()) {
-		body.webHook = extras.webHook.trim();
-	}
+		if (typeof extras.webHook === "string" && extras.webHook.trim()) {
+			body.webHook = extras.webHook.trim();
+		}
 
-	let res: Response;
-	let data: any = null;
-	try {
-		res = await fetchWithHttpDebugLog(
+		await recordVendorCallPayloads(c, {
+			userId,
+			vendor: vendorKeyForLog,
+			taskId: localTaskId,
+			taskKind: req.kind,
+			request: { url: endpoint, body },
+		});
+
+		let res: Response;
+		let data: any = null;
+		try {
+			res = await fetchWithHttpDebugLog(
 			c,
 			endpoint,
 			{
@@ -9042,12 +9119,19 @@ async function runGeminiBananaImageTask(
 						: undefined,
 			},
 		});
-	}
+		}
 
-	const normalized = normalizeBananaResponse(data);
-	let upstreamTaskId: string | null = null;
-	if (!ct.includes("application/json")) {
-		const resolveUpstreamFromSse = async (): Promise<{
+		const normalized = normalizeBananaResponse(data);
+		await recordVendorCallPayloads(c, {
+			userId,
+			vendor: vendorKeyForLog,
+			taskId: localTaskId,
+			taskKind: req.kind,
+			upstreamResponse: { url: endpoint, status: res.status, contentType: ct, data: normalized.payload ?? data },
+		});
+		let upstreamTaskId: string | null = null;
+		if (!ct.includes("application/json")) {
+			const resolveUpstreamFromSse = async (): Promise<{
 			upstreamTaskId: string | null;
 			firstEvent: any | null;
 		}> => {
@@ -9491,10 +9575,11 @@ async function runQwenTextToImageTask(
 
 	let res: Response;
 	let rawText = "";
+	const url = `${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`;
 	try {
 		res = await fetchWithHttpDebugLog(
 			c,
-			`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
+			url,
 			{
 				method: "POST",
 				headers: {
@@ -9594,6 +9679,15 @@ async function runQwenTextToImageTask(
 		(typeof payload?.id === "string" && payload.id.trim()) ||
 		`sd-img-${Date.now().toString(36)}`;
 	const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+	const vendorForLog = ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api";
+	await recordVendorCallPayloads(c, {
+		userId,
+		vendor: vendorForLog,
+		taskId: id,
+		taskKind: req.kind,
+		request: { url, body },
+		upstreamResponse: { status: res.status, contentType: ct, parsedBody: payload, rawBody: rawText },
+	});
 
 	emitProgress(userId, progressCtx, {
 		status: status === "succeeded" ? "succeeded" : "failed",
@@ -9610,7 +9704,7 @@ async function runQwenTextToImageTask(
 			assets,
 			raw: {
 				provider: "sora2api",
-				vendor: ctx.viaProxyVendor === "grsai" ? "grsai" : "sora2api",
+				vendor: vendorForLog,
 				model,
 				response: payload,
 				rawBody: rawText,
@@ -10123,18 +10217,27 @@ export async function runGenericTaskForVendor(
 		}
 
 		// 统一发出完成事件，便于前端通过 /tasks/stream 或 /tasks/pending 聚合观察
-		emitProgress(userId, progressCtx, {
-			status: result.status,
-			progress: result.status === "succeeded" ? 100 : undefined,
-			taskId: result.id,
-			assets: result.assets,
-			raw: result.raw,
-		});
+			emitProgress(userId, progressCtx, {
+				status: result.status,
+				progress: result.status === "succeeded" ? 100 : undefined,
+				taskId: result.id,
+				assets: result.assets,
+				raw: result.raw,
+			});
 
-		await recordVendorCallFromTaskResult(c, {
-			userId,
-			vendor: apiVendor,
-			taskKind: req.kind,
+			await recordVendorCallPayloads(c, {
+				userId,
+				vendor: apiVendor,
+				taskId: result.id,
+				taskKind: req.kind,
+				request: { vendor: v, request: req },
+				upstreamResponse: { status: result.status, raw: result.raw },
+			});
+
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: apiVendor,
+				taskKind: req.kind,
 			result,
 			durationMs: Date.now() - startedAtMs,
 		});

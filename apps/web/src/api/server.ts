@@ -128,6 +128,8 @@ export type VendorCallLogDto = {
   finishedAt?: string | null
   durationMs?: number | null
   errorMessage?: string | null
+  requestPayload?: string | null
+  upstreamResponse?: string | null
   createdAt: string
   updatedAt: string
 }

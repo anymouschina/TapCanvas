@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActionIcon, Badge, Button, CopyButton, Divider, Group, Loader, Modal, Paper, Select, Stack, Switch, Table, Text, Textarea, TextInput, Tooltip, Title } from '@mantine/core'
-import { IconCheck, IconCopy, IconPencil, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconEye, IconPencil, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { API_BASE, createApiKey, deleteApiKey, listApiKeys, listTaskLogs, updateApiKey, type ApiKeyDto, type VendorCallLogDto, type VendorCallLogStatus } from '../api/server'
 import { toast } from './toast'
 import StatsPublicApiDebugger from './StatsPublicApiDebugger'
@@ -46,6 +46,16 @@ function formatDuration(durationMs?: number | null): string {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs <= 0) return '—'
   if (durationMs < 1000) return `${Math.round(durationMs)}ms`
   return `${(durationMs / 1000).toFixed(durationMs >= 10_000 ? 0 : 1)}s`
+}
+
+function formatJsonPreview(input?: string | null): string {
+  const raw = typeof input === 'string' ? input.trim() : ''
+  if (!raw) return ''
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
 }
 
 export default function StatsSystemManagement({ className }: { className?: string }): JSX.Element {
@@ -219,6 +229,14 @@ fetch('${publicChatUrl}', {
   const [logsCursor, setLogsCursor] = React.useState<string | null>(null)
   const [logsVendor, setLogsVendor] = React.useState<string>('all')
   const [logsStatus, setLogsStatus] = React.useState<string>('all')
+
+  const [inspectOpen, setInspectOpen] = React.useState(false)
+  const [inspectItem, setInspectItem] = React.useState<VendorCallLogDto | null>(null)
+
+  const openInspect = (item: VendorCallLogDto) => {
+    setInspectItem(item)
+    setInspectOpen(true)
+  }
 
   const fetchLogs = React.useCallback(
     async (before: string | null) => {
@@ -524,13 +542,14 @@ fetch('${publicChatUrl}', {
                 <Table.Th className="stats-system-logs-table-head-cell" style={{ width: 90 }}>状态</Table.Th>
                 <Table.Th className="stats-system-logs-table-head-cell" style={{ width: 80 }}>耗时</Table.Th>
                 <Table.Th className="stats-system-logs-table-head-cell" style={{ width: 240 }}>任务</Table.Th>
+                <Table.Th className="stats-system-logs-table-head-cell" style={{ width: 70 }}>详情</Table.Th>
                 <Table.Th className="stats-system-logs-table-head-cell">错误</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody className="stats-system-logs-table-body">
               {!logsLoading && logs.length === 0 && (
                 <Table.Tr className="stats-system-logs-table-row-empty">
-                  <Table.Td className="stats-system-logs-table-cell-empty" colSpan={7}>
+                  <Table.Td className="stats-system-logs-table-cell-empty" colSpan={8}>
                     <Text className="stats-system-logs-empty" size="sm" c="dimmed">
                       暂无生成记录
                     </Text>
@@ -583,6 +602,26 @@ fetch('${publicChatUrl}', {
                           </Tooltip>
                         )}
                       </CopyButton>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td className="stats-system-logs-table-cell">
+                    <Group className="stats-system-logs-debug" gap={6} justify="center" wrap="nowrap">
+                      <Tooltip
+                        className="stats-system-logs-debug-tooltip"
+                        label={(it.requestPayload || it.upstreamResponse) ? '查看请求/回显' : '暂无调试内容'}
+                        withArrow
+                      >
+                        <ActionIcon
+                          className="stats-system-logs-debug-open"
+                          size="sm"
+                          variant="subtle"
+                          aria-label="inspect-log"
+                          onClick={() => openInspect(it)}
+                          disabled={!it.requestPayload && !it.upstreamResponse}
+                        >
+                          <IconEye className="stats-system-logs-debug-open-icon" size={14} />
+                        </ActionIcon>
+                      </Tooltip>
                     </Group>
                   </Table.Td>
                   <Table.Td className="stats-system-logs-table-cell">
@@ -684,6 +723,71 @@ fetch('${publicChatUrl}', {
               保存
             </Button>
           </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        className="stats-system-log-inspect-modal"
+        opened={inspectOpen}
+        onClose={() => setInspectOpen(false)}
+        title="任务调试详情"
+        centered
+        size="lg"
+      >
+        <Stack className="stats-system-log-inspect-body" gap="sm">
+          <Text className="stats-system-log-inspect-meta" size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
+            {inspectItem ? `vendor=${inspectItem.vendor} taskId=${inspectItem.taskId} kind=${inspectItem.taskKind || '—'} status=${inspectItem.status}` : ''}
+          </Text>
+
+          <Stack className="stats-system-log-inspect-section" gap={6}>
+            <Group className="stats-system-log-inspect-section-header" justify="space-between" align="center" wrap="nowrap">
+              <Text className="stats-system-log-inspect-section-title" size="sm" fw={600}>发起请求内容</Text>
+              <CopyButton value={inspectItem?.requestPayload || ''} timeout={1200}>
+                {({ copied, copy }) => (
+                  <Tooltip className="stats-system-log-inspect-copy-tooltip" label={copied ? '已复制' : '复制'} withArrow>
+                    <ActionIcon className="stats-system-log-inspect-copy" size="sm" variant="light" onClick={copy} aria-label="copy-request-payload">
+                      {copied ? <IconCheck className="stats-system-log-inspect-copy-icon" size={14} /> : <IconCopy className="stats-system-log-inspect-copy-icon" size={14} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            </Group>
+            <Textarea
+              className="stats-system-log-inspect-request"
+              value={formatJsonPreview(inspectItem?.requestPayload)}
+              readOnly
+              autosize
+              minRows={6}
+              maxRows={14}
+              placeholder="—"
+              styles={{ input: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' } }}
+            />
+          </Stack>
+
+          <Stack className="stats-system-log-inspect-section" gap={6}>
+            <Group className="stats-system-log-inspect-section-header" justify="space-between" align="center" wrap="nowrap">
+              <Text className="stats-system-log-inspect-section-title" size="sm" fw={600}>上游回显</Text>
+              <CopyButton value={inspectItem?.upstreamResponse || ''} timeout={1200}>
+                {({ copied, copy }) => (
+                  <Tooltip className="stats-system-log-inspect-copy-tooltip" label={copied ? '已复制' : '复制'} withArrow>
+                    <ActionIcon className="stats-system-log-inspect-copy" size="sm" variant="light" onClick={copy} aria-label="copy-upstream-response">
+                      {copied ? <IconCheck className="stats-system-log-inspect-copy-icon" size={14} /> : <IconCopy className="stats-system-log-inspect-copy-icon" size={14} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            </Group>
+            <Textarea
+              className="stats-system-log-inspect-response"
+              value={formatJsonPreview(inspectItem?.upstreamResponse)}
+              readOnly
+              autosize
+              minRows={6}
+              maxRows={14}
+              placeholder="—"
+              styles={{ input: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' } }}
+            />
+          </Stack>
         </Stack>
       </Modal>
     </Stack>
