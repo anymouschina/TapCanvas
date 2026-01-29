@@ -24,6 +24,34 @@ This worker generates an OpenAPI schema from code and validates requests against
 3. Open `http://localhost:8788/openapi.json` to get the OpenAPI 3.1 schema.
 4. Changes made in the `src/` folder will automatically trigger the server to reload.
 
+## Docker (standalone)
+
+Build & run from `apps/hono-api`:
+
+```bash
+docker compose up -d
+```
+
+Default image tag is `tapcanvas/hono-api:local`. To override:
+
+```bash
+HONO_API_IMAGE=your-registry/hono-api:dev docker compose build
+HONO_API_IMAGE=your-registry/hono-api:dev docker compose up -d
+```
+
+Environment overrides (examples):
+
+```bash
+PORT=8790 docker compose up -d
+```
+
+Push image:
+
+```bash
+HONO_API_IMAGE=your-registry/hono-api:dev docker compose build
+docker push your-registry/hono-api:dev
+```
+
 ### Local HTTP debug logs
 
 - Run `pnpm dev:log` to tee JSON logs into `log.txt` (includes downstream + upstream URL / request body / response).

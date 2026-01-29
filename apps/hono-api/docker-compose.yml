@@ -1,0 +1,53 @@
+services:
+  hono-api:
+    image: ${HONO_API_IMAGE:-tapcanvas/hono-api:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.1ms.run}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+    env_file:
+      - ./.dev.vars
+    environment:
+      NODE_ENV: development
+      PORT: ${PORT:-8788}
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      PNPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      pnpm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    ports:
+      - "${PORT:-8788}:8788"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm db:update:local && pnpm dev:docker"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - pnpm_store:/app/.pnpm-store
+      - hono_api_node_modules:/app/node_modules
+      - hono_api_wrangler:/app/.wrangler
+
+volumes:
+  root_node_modules:
+    driver: local
+  pnpm_store:
+    driver: local
+  hono_api_node_modules:
+    driver: local
+  hono_api_wrangler:
+    driver: local
