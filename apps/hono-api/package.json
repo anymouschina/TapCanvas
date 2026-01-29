@@ -16,6 +16,8 @@
     "@ai-sdk/anthropic": "^2.0.45",
     "@ai-sdk/google": "^2.0.39",
     "@ai-sdk/openai": "^2.0.69",
+    "@aws-sdk/client-s3": "^3.978.0",
+    "@xmldom/xmldom": "^0.8.10",
     "@hono/zod-openapi": "^0.19.10",
     "ai": "^5.0.97",
     "hono": "^4.6.20",

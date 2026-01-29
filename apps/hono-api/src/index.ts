@@ -28,6 +28,9 @@ import {
 	renderEndpointExplorerHtml,
 } from "./openapi/docs.zh";
 import { runCreditTaskFinalizer } from "./modules/task/task.credit-finalizer";
+import { installDomParserIfNeeded } from "./polyfills/domparser";
+
+await installDomParserIfNeeded();
 
 // Start a Hono app
 const app = new OpenAPIHono<AppEnv>({

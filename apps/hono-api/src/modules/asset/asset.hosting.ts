@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { AppError } from "../../middleware/error";
 import {
@@ -12,6 +13,12 @@ import {
 	updateAssetDataRow,
 } from "./asset.repo";
 import { resolvePublicAssetBaseUrl } from "./asset.publicBase";
+import {
+	createRustfsClient,
+	createRustfsClientFromConfig,
+	resolveRustfsConfig,
+	type RustfsConfig,
+} from "./rustfs.client";
 
 type HostedAssetMeta = {
 	type: "image" | "video";
@@ -322,15 +329,19 @@ async function putToR2FromStream(options: {
 	}
 }
 
-async function uploadToR2FromUrl(options: {
+type StorageTarget =
+	| { kind: "r2"; bucket: R2Bucket }
+	| { kind: "rustfs"; config: RustfsConfig };
+
+async function uploadToStorageFromUrl(options: {
 	c: AppContext;
 	userId: string;
 	sourceUrl: string;
 	prefix?: string;
-	bucket: R2Bucket;
+	storage: StorageTarget;
 	publicBase: string;
 }): Promise<{ key: string; url: string }> {
-	const { c, userId, bucket } = options;
+	const { c, userId } = options;
 	const publicBase = options.publicBase.trim().replace(/\/+$/, "");
 	const sourceUrl = (options.sourceUrl || "").trim();
 	if (!sourceUrl) {
@@ -377,39 +388,81 @@ async function uploadToR2FromUrl(options: {
 
 	try {
 		const stream = res.body;
-		const putOptions: R2PutOptions = {
-			httpMetadata: {
-				contentType,
-				cacheControl: "public, max-age=31536000, immutable",
-			},
-		};
+		if (options.storage.kind === "rustfs") {
+			const client = createRustfsClient(c.env);
+			const streamUsable = !!stream && !stream.locked;
+			const fallbackClone = streamUsable ? res.clone() : null;
+			try {
+				await client.send(
+					new PutObjectCommand({
+						Bucket: options.storage.config.bucket,
+						Key: key,
+						Body: streamUsable ? stream : await res.arrayBuffer(),
+						ContentType: contentType,
+						CacheControl: "public, max-age=31536000, immutable",
+						ContentLength:
+							typeof contentLength === "number" ? contentLength : undefined,
+					}),
+				);
+			} catch (err: any) {
+				const message =
+					typeof err?.message === "string" ? err.message : String(err);
+				if (
+					fallbackClone &&
+					(message.includes("ReadableStream did not return bytes") ||
+						message.includes("ReadableStream is currently locked"))
+				) {
+					const buf = await fallbackClone.arrayBuffer();
+					await client.send(
+						new PutObjectCommand({
+							Bucket: options.storage.config.bucket,
+							Key: key,
+							Body: buf,
+							ContentType: contentType,
+							CacheControl: "public, max-age=31536000, immutable",
+							ContentLength: buf.byteLength,
+						}),
+					);
+				} else {
+					throw err;
+				}
+			}
+			console.log("[asset-hosting] RustFS put ok", { key });
+		} else {
+			const putOptions: R2PutOptions = {
+				httpMetadata: {
+					contentType,
+					cacheControl: "public, max-age=31536000, immutable",
+				},
+			};
 
-		if (stream) {
-			const obj = await putToR2FromStream({
-				bucket,
-				key,
-				stream,
-				contentLength,
-				putOptions,
-			});
-			if (obj) {
+			if (stream) {
+				const obj = await putToR2FromStream({
+					bucket: options.storage.bucket,
+					key,
+					stream,
+					contentLength,
+					putOptions,
+				});
+				if (obj) {
+					console.log("[asset-hosting] R2 put ok", {
+						key: obj.key,
+						size: obj.size,
+						etag: obj.etag,
+					});
+				}
+			} else {
+				const buf = await res.arrayBuffer();
+				const obj = await options.storage.bucket.put(key, buf, putOptions);
 				console.log("[asset-hosting] R2 put ok", {
 					key: obj.key,
 					size: obj.size,
 					etag: obj.etag,
 				});
 			}
-		} else {
-			const buf = await res.arrayBuffer();
-			const obj = await bucket.put(key, buf, putOptions);
-			console.log("[asset-hosting] R2 put ok", {
-				key: obj.key,
-				size: obj.size,
-				etag: obj.etag,
-			});
 		}
 	} catch (err: any) {
-		console.warn("[asset-hosting] R2 put failed", {
+		console.warn("[asset-hosting] OSS put failed", {
 			name: typeof err?.name === "string" ? err.name : undefined,
 			message: err?.message || String(err),
 			sourceUrl: stripUrlSearchAndHash(sourceUrl),
@@ -436,10 +489,10 @@ async function uploadToR2FromUrl(options: {
 	return { key, url };
 }
 
-async function uploadToR2FromInlineBytes(options: {
+async function uploadToStorageFromInlineBytes(options: {
 	userId: string;
 	prefix?: string;
-	bucket: R2Bucket;
+	storage: StorageTarget;
 	publicBase: string;
 	mimeType: string;
 	bytes: Uint8Array;
@@ -452,12 +505,25 @@ async function uploadToR2FromInlineBytes(options: {
 	const ext = detectExtension("", contentType);
 	const key = buildR2Key(options.userId, ext, options.prefix);
 
-	await options.bucket.put(key, options.bytes, {
-		httpMetadata: {
-			contentType,
-			cacheControl: "public, max-age=31536000, immutable",
-		},
-	});
+	if (options.storage.kind === "rustfs") {
+		const client = createRustfsClientFromConfig(options.storage.config);
+		await client.send(
+			new PutObjectCommand({
+				Bucket: options.storage.config.bucket,
+				Key: key,
+				Body: options.bytes,
+				ContentType: contentType,
+				CacheControl: "public, max-age=31536000, immutable",
+			}),
+		);
+	} else {
+		await options.storage.bucket.put(key, options.bytes, {
+			httpMetadata: {
+				contentType,
+				cacheControl: "public, max-age=31536000, immutable",
+			},
+		});
+	}
 
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
 	return { key, url };
@@ -541,9 +607,14 @@ export async function hostTaskAssetsInWorker(options: {
 	const hosted: TaskAssetDto[] = [];
 	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	const hostingDisabled = isAssetHostingDisabled(c);
-	let cachedBucket: R2Bucket | null = null;
-	const getBucketOrThrow = (): R2Bucket => {
-		if (cachedBucket) return cachedBucket;
+	let cachedStorage: StorageTarget | null = null;
+	const getStorageOrThrow = (): StorageTarget => {
+		if (cachedStorage) return cachedStorage;
+		const rustfs = resolveRustfsConfig(c.env);
+		if (rustfs) {
+			cachedStorage = { kind: "rustfs", config: rustfs };
+			return cachedStorage;
+		}
 		const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
 		if (!bucket) {
 			throw new AppError("OSS storage is not configured", {
@@ -552,8 +623,8 @@ export async function hostTaskAssetsInWorker(options: {
 				details: { binding: "R2_ASSETS" },
 			});
 		}
-		cachedBucket = bucket;
-		return bucket;
+		cachedStorage = { kind: "r2", bucket };
+		return cachedStorage;
 	};
 	const isHostedUrl = (url: string): boolean => {
 		const trimmed = (url || "").trim();
@@ -633,10 +704,10 @@ export async function hostTaskAssetsInWorker(options: {
 			if (!reusedExisting) {
 				// data:*;base64,... 不符合我们的接口规范：必须上传到 OSS 后返回 URL（即便禁用了 hosting 也要处理）
 				if (inlineData && inlineBytes) {
-					const uploaded = await uploadToR2FromInlineBytes({
+					const uploaded = await uploadToStorageFromInlineBytes({
 						userId,
 						prefix: value.type === "video" ? "gen/videos" : "gen/images",
-						bucket: getBucketOrThrow(),
+						storage: getStorageOrThrow(),
 						publicBase,
 						mimeType: inlineMimeType || inlineData.mimeType,
 						bytes: inlineBytes,
@@ -647,12 +718,12 @@ export async function hostTaskAssetsInWorker(options: {
 					});
 					didUpload = true;
 				} else if (!hostingDisabled && !isHostedUrl(originalUrl)) {
-					const uploaded = await uploadToR2FromUrl({
+					const uploaded = await uploadToStorageFromUrl({
 						c,
 						userId,
 						sourceUrl: originalUrl,
 						prefix: value.type === "video" ? "gen/videos" : "gen/images",
-						bucket: getBucketOrThrow(),
+						storage: getStorageOrThrow(),
 						publicBase,
 					});
 					value = TaskAssetSchema.parse({
@@ -674,10 +745,10 @@ export async function hostTaskAssetsInWorker(options: {
 							thumbBytes,
 							inlineThumb.mimeType,
 						);
-						const uploadedThumb = await uploadToR2FromInlineBytes({
+						const uploadedThumb = await uploadToStorageFromInlineBytes({
 							userId,
 							prefix: "gen/thumbnails",
-							bucket: getBucketOrThrow(),
+							storage: getStorageOrThrow(),
 							publicBase,
 							mimeType: thumbMimeType,
 							bytes: thumbBytes,
@@ -687,12 +758,12 @@ export async function hostTaskAssetsInWorker(options: {
 							thumbnailUrl: uploadedThumb.url,
 						});
 					} else if (!hostingDisabled) {
-						const uploadedThumb = await uploadToR2FromUrl({
+						const uploadedThumb = await uploadToStorageFromUrl({
 							c,
 							userId,
 							sourceUrl: thumbRaw,
 							prefix: "gen/thumbnails",
-							bucket: getBucketOrThrow(),
+							storage: getStorageOrThrow(),
 							publicBase,
 						});
 						value = TaskAssetSchema.parse({

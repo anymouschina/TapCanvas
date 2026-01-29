@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import type { AppContext, AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
@@ -16,6 +17,7 @@ import {
 	renameAssetRow,
 } from "./asset.repo";
 import { resolvePublicAssetBaseUrl } from "./asset.publicBase";
+import { createRustfsClient, resolveRustfsConfig } from "./rustfs.client";
 
 export const assetRouter = new Hono<AppEnv>();
 
@@ -117,6 +119,19 @@ function parseHttpByteRangeHeader(header: string): R2Range | null {
 	const end = Number(endStr);
 	if (!Number.isFinite(end) || end < start) return null;
 	return { offset: Math.floor(start), length: Math.floor(end - start + 1) };
+}
+
+function toHttpRangeHeader(range: R2Range | null): string | null {
+	if (!range) return null;
+	if ("suffix" in range) return `bytes=-${range.suffix}`;
+	if (typeof range.offset === "number" && typeof range.length === "number") {
+		const end = range.offset + range.length - 1;
+		return `bytes=${range.offset}-${end}`;
+	}
+	if (typeof range.offset === "number") {
+		return `bytes=${range.offset}-`;
+	}
+	return null;
 }
 
 function resolveR2ServedRange(
@@ -364,7 +379,8 @@ assetRouter.delete("/:id", authMiddleware, async (c) => {
 // Public R2 asset proxy: serves objects stored in R2_ASSETS without requiring a custom domain.
 assetRouter.get("/r2/*", async (c) => {
 	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
-	if (!bucket) {
+	const rustfs = resolveRustfsConfig(c.env);
+	if (!bucket && !rustfs) {
 		return c.json({ error: "OSS storage is not configured" }, 500);
 	}
 
@@ -377,6 +393,51 @@ assetRouter.get("/r2/*", async (c) => {
 
 	const rangeHeader = c.req.header("range") || c.req.header("Range") || "";
 	const range = rangeHeader ? parseHttpByteRangeHeader(rangeHeader) : null;
+	const rangeValue = toHttpRangeHeader(range);
+
+	if (rustfs) {
+		try {
+			const client = createRustfsClient(c.env);
+			const res = await client.send(
+				new GetObjectCommand({
+					Bucket: rustfs.bucket,
+					Key: key,
+					Range: rangeValue || undefined,
+				}),
+			);
+			if (!res.Body) return c.json({ error: "not found" }, 404);
+			const headers = new Headers();
+			headers.set(
+				"Content-Type",
+				typeof res.ContentType === "string"
+					? res.ContentType
+					: "application/octet-stream",
+			);
+			headers.set(
+				"Cache-Control",
+				typeof res.CacheControl === "string"
+					? res.CacheControl
+					: "public, max-age=31536000, immutable",
+			);
+			headers.set("Access-Control-Allow-Origin", "*");
+			headers.set(
+				"Access-Control-Expose-Headers",
+				"Content-Length,Content-Range,Accept-Ranges,ETag",
+			);
+			headers.set("Accept-Ranges", "bytes");
+			if (typeof res.ETag === "string") headers.set("ETag", res.ETag);
+			if (typeof res.ContentRange === "string") {
+				headers.set("Content-Range", res.ContentRange);
+			}
+			if (typeof res.ContentLength === "number") {
+				headers.set("Content-Length", String(res.ContentLength));
+			}
+			const status = range ? 206 : 200;
+			return new Response(res.Body as ReadableStream, { status, headers });
+		} catch {
+			return c.json({ error: "not found" }, 404);
+		}
+	}
 
 	let obj: R2ObjectBody | null = null;
 	try {
@@ -590,16 +651,35 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		return c.json({ error: "request body is required" }, 400);
 	}
 	try {
-		const putPromise = bucket.put(key, uploadValue, {
-			httpMetadata: {
-				contentType,
-				cacheControl: "public, max-age=31536000, immutable",
-			},
-		});
-		if (uploadPump) {
-			await Promise.all([putPromise, uploadPump]);
+		const rustfsConfig = resolveRustfsConfig(c.env);
+		if (rustfsConfig) {
+			const client = createRustfsClient(c.env);
+			const putPromise = client.send(
+				new PutObjectCommand({
+					Bucket: rustfsConfig.bucket,
+					Key: key,
+					Body: uploadValue as any,
+					ContentType: contentType,
+					CacheControl: "public, max-age=31536000, immutable",
+				}),
+			);
+			if (uploadPump) {
+				await Promise.all([putPromise, uploadPump]);
+			} else {
+				await putPromise;
+			}
 		} else {
-			await putPromise;
+			const putPromise = bucket.put(key, uploadValue, {
+				httpMetadata: {
+					contentType,
+					cacheControl: "public, max-age=31536000, immutable",
+				},
+			});
+			if (uploadPump) {
+				await Promise.all([putPromise, uploadPump]);
+			} else {
+				await putPromise;
+			}
 		}
 	} catch (err: any) {
 		const msg = String(err?.message || "");

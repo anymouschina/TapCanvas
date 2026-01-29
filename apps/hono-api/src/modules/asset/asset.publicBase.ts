@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import { resolveRustfsConfig } from "./rustfs.client";
 
 /**
  * Resolve the publicly-accessible base URL for hosted assets.
@@ -10,6 +11,9 @@ import type { AppContext } from "../../types";
 export function resolvePublicAssetBaseUrl(
 	c: Pick<AppContext, "env" | "req">,
 ): string {
+	const rustfs = resolveRustfsConfig(c.env);
+	if (rustfs?.publicBase) return rustfs.publicBase;
+
 	const fromEnv =
 		typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
 			? String((c.env as any).R2_PUBLIC_BASE_URL).trim()
@@ -24,4 +28,3 @@ export function resolvePublicAssetBaseUrl(
 		return "";
 	}
 }
-

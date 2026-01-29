@@ -16,6 +16,11 @@ import {
 import { emitTaskProgress } from "./task.progress";
 import { hostTaskAssetsInWorker } from "../asset/asset.hosting";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+	createRustfsClient,
+	resolveRustfsConfig,
+} from "../asset/rustfs.client";
 import { ensureModelCatalogSchema } from "../model-catalog/model-catalog.repo";
 import {
 	buildMappedUpstreamRequest,
@@ -414,8 +419,9 @@ async function uploadInlineImageToR2(options: {
 	prefix?: string;
 }): Promise<string> {
 	const { c, userId, mimeType, base64 } = options;
+	const rustfs = resolveRustfsConfig(c.env);
 	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
-	if (!bucket) {
+	if (!rustfs && !bucket) {
 		throw new AppError("OSS storage is not configured", {
 			status: 500,
 			code: "oss_not_configured",
@@ -426,11 +432,23 @@ async function uploadInlineImageToR2(options: {
 	const ext = detectImageExtensionFromMimeType(mimeType);
 	const key = buildInlineAssetR2Key(userId, ext, options.prefix || "gen/images");
 	const bytes = decodeBase64ToBytes(base64);
-	await bucket.put(key, bytes, {
-		httpMetadata: {
-			contentType: mimeType || "application/octet-stream",
-		},
-	});
+	if (rustfs) {
+		const client = createRustfsClient(c.env);
+		await client.send(
+			new PutObjectCommand({
+				Bucket: rustfs.bucket,
+				Key: key,
+				Body: bytes,
+				ContentType: mimeType || "application/octet-stream",
+			}),
+		);
+	} else {
+		await bucket!.put(key, bytes, {
+			httpMetadata: {
+				contentType: mimeType || "application/octet-stream",
+			},
+		});
+	}
 
 	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	return publicBase ? `${publicBase}/${key}` : `/${key}`;

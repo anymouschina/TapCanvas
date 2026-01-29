@@ -1,5 +1,6 @@
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
+import { resolveRustfsConfig } from "../asset/rustfs.client";
 import type { TeamRole } from "./team.schemas";
 import {
 	addTeamMember,
@@ -407,12 +408,15 @@ export async function requireSufficientTeamCredits(
 			hostingDisabledFlag === "true" ||
 			hostingDisabledFlag === "yes" ||
 			hostingDisabledFlag === "on";
+		const rustfs = resolveRustfsConfig(c.env);
 		const hasBucket = !!(c.env as any).R2_ASSETS;
 		const publicBase =
 			typeof (c.env as any).R2_PUBLIC_BASE_URL === "string"
 				? String((c.env as any).R2_PUBLIC_BASE_URL).trim()
 				: "";
-		if (hostingDisabled || !hasBucket || !publicBase) {
+		const hasRustfs = !!rustfs?.publicBase;
+		const hasR2 = hasBucket && !!publicBase;
+		if (hostingDisabled || (!hasR2 && !hasRustfs)) {
 			throw new AppError("扣积分任务要求开启 OSS 托管（请检查 R2 配置）", {
 				status: 503,
 				code: "asset_hosting_required",
@@ -420,6 +424,7 @@ export async function requireSufficientTeamCredits(
 					ASSET_HOSTING_DISABLED: (c.env as any).ASSET_HOSTING_DISABLED,
 					R2_ASSETS: hasBucket ? "bound" : "missing",
 					R2_PUBLIC_BASE_URL: publicBase ? "configured" : "missing",
+					RUSTFS: hasRustfs ? "configured" : "missing",
 				},
 			});
 		}

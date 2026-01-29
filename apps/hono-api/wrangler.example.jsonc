@@ -47,6 +47,14 @@
 		// 可选：LangGraph Assistant base URL（例如 http://127.0.0.1:9011）
 		"LANGGRAPH_ASSISTANT_URL": "",
 
+		// RustFS (S3 compatible)
+		"RUSTFS_ACCESS_KEY_ID": "YOUR_RUSTFS_ACCESS_KEY_ID",
+		"RUSTFS_SECRET_ACCESS_KEY": "YOUR_RUSTFS_SECRET_ACCESS_KEY",
+		"RUSTFS_ENDPOINT_URL": "https://rustfs.example.com",
+		"RUSTFS_REGION": "cn-east-1",
+		"RUSTFS_BUCKET": "pixel-mind-new",
+		"RUSTFS_PUBLIC_BASE_URL": "https://rustfs.example.com",
+
 		// 可选：本地调试 HTTP 日志（`pnpm dev:log`）
 		"DEBUG_HTTP_LOG": "0",
 		"DEBUG_HTTP_LOG_UNSAFE": "0",

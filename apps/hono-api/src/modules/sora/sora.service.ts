@@ -7,6 +7,11 @@ import {
 } from "./sora.schemas";
 import { resolveVendorContext } from "../task/task.service";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+	createRustfsClient,
+	resolveRustfsConfig,
+} from "../asset/rustfs.client";
 import {
 	searchSavedSoraCharacters,
 	upsertSavedSoraCharacter,
@@ -1602,8 +1607,9 @@ export async function uploadSoraImage(
 ) {
 	// NOTE: 本仓库已废弃上游 Sora 上传服务；该接口只负责把图片上传到 OSS（R2），
 	// 并返回一个可公开访问的 URL，供前端作为 referenceImages / imageUrl 使用。
+	const rustfs = resolveRustfsConfig(c.env);
 	const bucket = (c.env as any).R2_ASSETS as R2Bucket | undefined;
-	if (!bucket) {
+	if (!rustfs && !bucket) {
 		throw new AppError("OSS storage is not configured", {
 			status: 500,
 			code: "oss_not_configured",
@@ -1639,12 +1645,25 @@ export async function uploadSoraImage(
 	const random = crypto.randomUUID();
 	const key = `uploads/sora/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
 
-	await bucket.put(key, file, {
-		httpMetadata: {
-			contentType,
-			cacheControl: "public, max-age=31536000, immutable",
-		},
-	});
+	if (rustfs) {
+		const client = createRustfsClient(c.env);
+		await client.send(
+			new PutObjectCommand({
+				Bucket: rustfs.bucket,
+				Key: key,
+				Body: file,
+				ContentType: contentType,
+				CacheControl: "public, max-age=31536000, immutable",
+			}),
+		);
+	} else {
+		await bucket!.put(key, file, {
+			httpMetadata: {
+				contentType,
+				cacheControl: "public, max-age=31536000, immutable",
+			},
+		});
+	}
 
 	const publicBase = resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
