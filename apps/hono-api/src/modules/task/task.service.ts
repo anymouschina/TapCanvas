@@ -7871,17 +7871,32 @@ async function runOpenAiCompatibleImageTaskForVendor(
 			Accept: "application/json",
 		};
 
+		const extras = (req.extras || {}) as Record<string, any>;
+		const referenceImages = (() => {
+			const urls: string[] = [];
+			const pushAll = (value: any) => {
+				const items = Array.isArray(value) ? value : [value];
+				for (const item of items) {
+					if (typeof item === "string" && item.trim()) urls.push(item.trim());
+				}
+			};
+			pushAll(extras.referenceImages);
+			pushAll((extras as any).reference_images);
+			pushAll((extras as any).image_urls);
+			pushAll((extras as any).imageUrls);
+			pushAll((extras as any).urls);
+			return Array.from(new Set(urls));
+		})();
+
 		if (v === "dmxapi" && req.kind === "image_edit") {
-			const extras = (req.extras || {}) as Record<string, any>;
-			const referenceImages: string[] = Array.isArray(extras.referenceImages)
-				? extras.referenceImages
-						.map((u: any) => (typeof u === "string" ? u.trim() : ""))
-						.filter(Boolean)
-				: [];
 			if (!referenceImages.length) {
 				throw new AppError("image_edit 需要提供 extras.referenceImages", {
 					status: 400,
 					code: "reference_images_missing",
+					details: {
+						vendor: v,
+						extrasKeys: Object.keys(extras || {}).sort(),
+					},
 				});
 			}
 
@@ -8064,16 +8079,21 @@ async function runOpenAiCompatibleImageTaskForVendor(
 			}
 
 			if (req.kind === "image_edit") {
-				const extras = (req.extras || {}) as Record<string, any>;
-				const referenceImages = Array.from(
-					new Set(
-						(Array.isArray(extras.referenceImages) ? extras.referenceImages : [])
-							.map((u: any) => (typeof u === "string" ? u.trim() : ""))
-							.filter(Boolean),
-					),
-				);
+				if (!referenceImages.length) {
+					throw new AppError(
+						"image_edit 需要提供 extras.referenceImages（或 image_urls/imageUrls/urls）",
+						{
+							status: 400,
+							code: "reference_images_missing",
+							details: {
+								vendor: v,
+								extrasKeys: Object.keys(extras || {}).sort(),
+							},
+						},
+					);
+				}
 
-				if (referenceImages.length) {
+				{
 					let editUrl = buildOpenAIImagesEditsUrlForTask(baseUrl);
 					const editLogUrl = editUrl;
 

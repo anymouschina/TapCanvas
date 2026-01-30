@@ -1,6 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
-import { errorMiddleware } from "./middleware/error";
+import { honoErrorHandler } from "./middleware/error";
 import { httpDebugLoggerMiddleware } from "./middleware/httpDebugLogger";
 import { authRouter } from "./modules/auth/auth.routes";
 import { projectRouter } from "./modules/project/project.routes";
@@ -74,9 +74,9 @@ app.use(
 	}),
 );
 
-// Global error handler
-// Keep it after CORS so error responses also get CORS headers.
-app.use("*", errorMiddleware);
+// Global error handler (AppError -> JSON with proper status/code)
+// NOTE: Hono routes throw into `onError` (middleware try/catch won't see them).
+app.onError(honoErrorHandler);
 
 // Copyable Chinese API docs (Markdown)
 app.get("/", (c) =>

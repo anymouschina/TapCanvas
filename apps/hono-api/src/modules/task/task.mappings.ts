@@ -209,6 +209,33 @@ function extractFirstByExpr(root: any, expr: string): any {
 	return undefined;
 }
 
+function extractValueByExpr(root: any, expr: string): any {
+	const raw = (expr || "").trim();
+	if (!raw) return undefined;
+	const candidates = raw.split("|").map((s) => s.trim()).filter(Boolean);
+	for (const c of candidates) {
+		const v = getByPath(root, c);
+		if (v === undefined || v === null) continue;
+		if (typeof v === "string") {
+			const trimmed = v.trim();
+			if (!trimmed) continue;
+			return trimmed;
+		}
+		if (typeof v === "number") {
+			if (!Number.isFinite(v)) continue;
+			return v;
+		}
+		if (typeof v === "boolean") return v;
+		if (Array.isArray(v)) {
+			if (!v.length) continue;
+			return v.map((item) => (typeof item === "string" ? item.trim() : item));
+		}
+		if (typeof v === "object") return v;
+		return v;
+	}
+	return undefined;
+}
+
 function extractAllByExpr(root: any, expr: string): any[] {
 	const raw = (expr || "").trim();
 	if (!raw) return [];
@@ -225,7 +252,7 @@ function extractAllByExpr(root: any, expr: string): any[] {
 
 function resolveValueFromSource(source: any, spec: ValueSpec): any {
 	if (typeof spec === "string") {
-		return extractFirstByExpr(source, spec);
+		return extractValueByExpr(source, spec);
 	}
 	if (typeof spec === "number" || typeof spec === "boolean" || spec === null) return spec;
 	if (Array.isArray(spec)) {
@@ -234,7 +261,7 @@ function resolveValueFromSource(source: any, spec: ValueSpec): any {
 	if (isRecord(spec)) {
 		if (typeof spec.value !== "undefined") return spec.value;
 		if (typeof spec.from === "string" && spec.from.trim()) {
-			return extractFirstByExpr(source, spec.from.trim());
+			return extractValueByExpr(source, spec.from.trim());
 		}
 		// Nested JSON object mapping (best-effort)
 		const out: Record<string, any> = {};
