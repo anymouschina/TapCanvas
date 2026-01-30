@@ -31,6 +31,7 @@ import {
 	getVendorTaskRefByTaskId,
 	upsertVendorTaskRef,
 } from "./vendor-task-refs.repo";
+import { upsertTaskResult } from "./task-result.repo";
 import {
 	upsertVendorCallLogFinal,
 	upsertVendorCallLogStarted,
@@ -166,6 +167,187 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
 	const val = (raw || "").trim();
 	if (!val) return "";
 	return val.replace(/\/+$/, "");
+}
+
+export async function enqueueStoredTaskForVendor(
+	c: AppContext,
+	userId: string,
+	vendor: string,
+	req: TaskRequestDto,
+	options?: { taskId?: string | null },
+): Promise<TaskResult> {
+	const taskIdFromClient =
+		typeof options?.taskId === "string" && options.taskId.trim()
+			? options.taskId.trim()
+			: "";
+	const taskId = taskIdFromClient || `task_${crypto.randomUUID()}`;
+	const vendorKey = normalizeVendorKey(vendor);
+	const nowIso = new Date().toISOString();
+
+	const refKind = (() => {
+		if (req.kind === "text_to_video" || req.kind === "image_to_video") return "video";
+		if (req.kind === "text_to_image" || req.kind === "image_edit") return "image";
+		return null;
+	})();
+
+	const initial = TaskResultSchema.parse({
+		id: taskId,
+		kind: req.kind,
+		status: "queued",
+		assets: [],
+		raw: {
+			provider: "task_store",
+			vendor: vendorKey,
+			mode: "async",
+			enqueuedAt: nowIso,
+		},
+	});
+
+	await upsertTaskResult(c.env.DB, {
+		userId,
+		taskId,
+		vendor: vendorKey,
+		kind: req.kind,
+		status: initial.status,
+		result: initial,
+		completedAt: null,
+		nowIso,
+	});
+
+	if (refKind) {
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{ kind: refKind as any, taskId, vendor: vendorKey },
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert async task ref failed",
+				err?.message || err,
+			);
+		}
+	}
+
+	// Make pending tasks visible in /tasks/logs immediately.
+	await recordVendorCallPayloads(c, {
+		userId,
+		vendor: vendorKey,
+		taskId,
+		taskKind: req.kind,
+		request: { vendor: vendorKey, request: req },
+	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: vendorKey,
+		taskKind: req.kind,
+		result: initial,
+	});
+
+	const execCtx = (c as any)?.executionCtx;
+	const runInBackground = async () => {
+		const startedAtMs = Date.now();
+		try {
+			const startedIso = new Date().toISOString();
+			const running = TaskResultSchema.parse({
+				...initial,
+				status: "running",
+				raw: {
+					...(typeof initial.raw === "object" && initial.raw ? (initial.raw as any) : {}),
+					startedAt: startedIso,
+				},
+			});
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor: vendorKey,
+				kind: req.kind,
+				status: running.status,
+				result: running,
+				completedAt: null,
+				nowIso: startedIso,
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorKey,
+				taskKind: req.kind,
+				result: running,
+			});
+
+			const final = await runGenericTaskForVendor(c, userId, vendorKey, req, {
+				forceTaskId: taskId,
+			});
+			const completedAt =
+				final.status === "succeeded" || final.status === "failed"
+					? new Date().toISOString()
+					: null;
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor: vendorKey,
+				kind: req.kind,
+				status: final.status,
+				result: final,
+				completedAt,
+				nowIso: completedAt || new Date().toISOString(),
+			});
+		} catch (err: any) {
+			const message =
+				typeof err?.message === "string" && err.message.trim()
+					? err.message.trim()
+					: "任务执行失败";
+			const completedAt = new Date().toISOString();
+			const failed = TaskResultSchema.parse({
+				id: taskId,
+				kind: req.kind,
+				status: "failed",
+				assets: [],
+				raw: {
+					provider: "task_store",
+					vendor: vendorKey,
+					mode: "async",
+					error: message,
+					stack: typeof err?.stack === "string" ? err.stack : undefined,
+				},
+			});
+
+			try {
+				await upsertTaskResult(c.env.DB, {
+					userId,
+					taskId,
+					vendor: vendorKey,
+					kind: req.kind,
+					status: failed.status,
+					result: failed,
+					completedAt,
+					nowIso: completedAt,
+				});
+			} catch (persistErr: any) {
+				console.warn(
+					"[task-store] persist async failure failed",
+					persistErr?.message || persistErr,
+				);
+			}
+
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: vendorKey,
+				taskKind: req.kind,
+				result: failed,
+				durationMs: Date.now() - startedAtMs,
+			});
+		}
+	};
+
+	if (execCtx && typeof execCtx.waitUntil === "function") {
+		execCtx.waitUntil(runInBackground());
+	} else {
+		// Fallback (e.g. unit tests / non-worker runtimes): execute inline.
+		await runInBackground();
+	}
+
+	return initial;
 }
 
 async function recordVendorCallStarted(
@@ -7755,8 +7937,13 @@ async function runOpenAiCompatibleImageTaskForVendor(
 	userId: string,
 	vendorKey: string,
 	req: TaskRequestDto,
+	options?: { forceTaskId?: string | null },
 ): Promise<TaskResult> {
 	const v = normalizeVendorKey(vendorKey);
+	const forcedTaskId =
+		typeof options?.forceTaskId === "string" && options.forceTaskId.trim()
+			? options.forceTaskId.trim()
+			: null;
 	const ctx = await resolveVendorContext(c, userId, v);
 	const baseUrl = normalizeBaseUrl(ctx.baseUrl);
 	const apiKey = (ctx.apiKey || "").trim();
@@ -7990,9 +8177,10 @@ async function runOpenAiCompatibleImageTaskForVendor(
 				referenceImages: referenceImages.slice(0, 8),
 			};
 
-			const id = `dmxapi-img-${Date.now().toString(36)}-${crypto
+			const generatedId = `dmxapi-img-${Date.now().toString(36)}-${crypto
 				.randomUUID()
 				.slice(0, 6)}`;
+			const id = forcedTaskId || generatedId;
 
 			await recordVendorCallPayloads(c, {
 				userId,
@@ -8447,11 +8635,12 @@ async function runOpenAiCompatibleImageTaskForVendor(
 					const assets = urls.map((u) =>
 						TaskAssetSchema.parse({ type: "image", url: u, thumbnailUrl: null }),
 					);
-					const id =
+					const upstreamId =
 						(typeof data?.id === "string" && data.id.trim()) ||
 						(typeof data?.task_id === "string" && data.task_id.trim()) ||
 						(typeof data?.taskId === "string" && data.taskId.trim()) ||
 						`${v}-img-${Date.now().toString(36)}`;
+					const id = forcedTaskId || upstreamId;
 					const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
 
 					await recordVendorCallPayloads(c, {
@@ -8532,11 +8721,12 @@ async function runOpenAiCompatibleImageTaskForVendor(
 		const assets = urls.map((u) =>
 			TaskAssetSchema.parse({ type: "image", url: u, thumbnailUrl: null }),
 		);
-		const id =
+		const upstreamId =
 			(typeof data?.id === "string" && data.id.trim()) ||
 			(typeof data?.task_id === "string" && data.task_id.trim()) ||
 			(typeof data?.taskId === "string" && data.taskId.trim()) ||
 			`${v}-img-${Date.now().toString(36)}`;
+		const id = forcedTaskId || upstreamId;
 		const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
 
 		await recordVendorCallPayloads(c, {
@@ -10750,18 +10940,28 @@ export async function runGenericTaskForVendor(
 	userId: string,
 	vendor: string,
 	req: TaskRequestDto,
+	options?: { forceTaskId?: string | null },
 ): Promise<TaskResult> {
 	const v = normalizeVendorKey(vendor);
 	const progressCtx = extractProgressContext(req, v);
 	const startedAtMs = Date.now();
+	const forcedTaskId =
+		typeof options?.forceTaskId === "string" && options.forceTaskId.trim()
+			? options.forceTaskId.trim()
+			: "";
 
 	// 所有厂商统一：/tasks 视为“创建任务”，立即发出 queued/running 事件
-	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+	emitProgress(userId, progressCtx, {
+		status: "queued",
+		progress: 0,
+		...(forcedTaskId ? { taskId: forcedTaskId } : {}),
+	});
 
 	try {
 		emitProgress(userId, progressCtx, {
 			status: "running",
 			progress: 5,
+			...(forcedTaskId ? { taskId: forcedTaskId } : {}),
 		});
 
 		let result: TaskResult;
@@ -10856,7 +11056,9 @@ export async function runGenericTaskForVendor(
 				}
 				result = await runOpenAiCompatibleTextTaskForVendor(c, userId, v, req);
 			} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
-				result = await runOpenAiCompatibleImageTaskForVendor(c, userId, v, req);
+				result = await runOpenAiCompatibleImageTaskForVendor(c, userId, v, req, {
+					...(forcedTaskId ? { forceTaskId: forcedTaskId } : {}),
+				});
 			} else if (req.kind === "text_to_video" || req.kind === "image_to_video") {
 				if (v === "tuzi") {
 					result = await runTuziVideoTask(c, userId, req);

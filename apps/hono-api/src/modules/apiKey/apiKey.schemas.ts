@@ -92,6 +92,11 @@ export const PublicDrawRequestSchema = z.object({
 			"指定厂商 key（默认 auto）；vendor=auto 会从 /model-catalog/vendors 中 enabled 且已配置 API Key（或 authType=none）的厂商里自动回退。",
 		example: "auto",
 	}),
+	async: z.boolean().optional().openapi({
+		description:
+			"是否异步执行（立即返回 taskId，结果通过 /public/tasks/result 轮询）。部分慢厂商建议开启；默认 false。",
+		example: true,
+	}),
 	kind: z.enum(["text_to_image", "image_edit"]).optional().openapi({
 		description: "任务类型（默认 text_to_image）。",
 		example: "text_to_image",

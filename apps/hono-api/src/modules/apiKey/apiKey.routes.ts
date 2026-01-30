@@ -34,6 +34,7 @@ import {
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
 	runGenericTaskForVendor,
+	enqueueStoredTaskForVendor,
 } from "../task/task.service";
 import {
 	ensureModelCatalogSchema,
@@ -1326,6 +1327,120 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 			: {}),
 		...(input.extras ? { extras: input.extras } : {}),
 	};
+
+	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
+	const dispatchVendor = vendorRaw && vendorRaw !== "auto" ? normalizeDispatchVendor(vendorRaw) : "";
+	const preferAsync =
+		input.async === true || (input.async !== false && dispatchVendor === "tuzi");
+
+	if (preferAsync) {
+		if (!dispatchVendor) {
+			return c.json(
+				{
+					error: "vendor is required for async draw",
+					code: "vendor_required",
+				},
+				400,
+			);
+		}
+
+		const enabledSystemVendors = await listEnabledSystemVendors(c);
+		if (!enabledSystemVendors.has(dispatchVendor)) {
+			throw new AppError("该厂商已禁用或未配置（系统级）", {
+				status: 400,
+				code: "vendor_disabled",
+				details: {
+					vendorRaw: vendorRaw || null,
+					vendor: dispatchVendor,
+					systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+				},
+			});
+		}
+
+		// Map modelAlias -> modelKey for this explicit vendor (keeps behavior aligned with fallback runner).
+		const extras = (request?.extras || {}) as Record<string, any>;
+		const modelAliasRaw =
+			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+				? extras.modelAlias.trim()
+				: "";
+		const requestForVendor = await (async () => {
+			if (!modelAliasRaw) {
+				const cleanExtras = { ...(extras || {}) } as Record<string, any>;
+				delete (cleanExtras as any).modelAlias;
+				return { ...request, extras: cleanExtras };
+			}
+
+			const expectedKind = resolveCatalogKindForTaskKind(request?.kind ?? null);
+			let mappedModelKey: string | null = null;
+			try {
+				const rows = await listCatalogModelsByModelAlias(c.env.DB, modelAliasRaw);
+				for (const row of rows) {
+					if (!row) continue;
+					if (Number((row as any).enabled ?? 1) === 0) continue;
+					const kindRaw =
+						typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
+					if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
+					const vendorKeyRaw =
+						typeof (row as any).vendor_key === "string"
+							? (row as any).vendor_key.trim()
+							: "";
+					const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
+					if (!vendorKey || vendorKey !== dispatchVendor) continue;
+					const mk =
+						typeof (row as any).model_key === "string"
+							? (row as any).model_key.trim()
+							: "";
+					if (!mk) continue;
+					mappedModelKey = mk;
+					break;
+				}
+			} catch {
+				mappedModelKey = null;
+			}
+
+			if (!mappedModelKey) {
+				throw new AppError(
+					"未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）",
+					{
+						status: 400,
+						code: "model_alias_not_found",
+						details: {
+							taskKind: request?.kind ?? null,
+							vendor: dispatchVendor,
+							modelAlias: modelAliasRaw,
+						},
+					},
+				);
+			}
+
+			const cleanExtras = { ...(extras || {}) } as Record<string, any>;
+			delete (cleanExtras as any).modelAlias;
+			cleanExtras.modelKey = mappedModelKey;
+			return { ...request, extras: cleanExtras };
+		})();
+
+		try {
+			// Hint proxy selector: prefer higher-success channels for this task kind.
+			if (requestForVendor?.kind) c.set("routingTaskKind", requestForVendor.kind);
+		} catch {
+			// ignore
+		}
+
+		const result = await enqueueStoredTaskForVendor(
+			c as any,
+			userId,
+			dispatchVendor,
+			requestForVendor as any,
+		);
+
+		return c.json(
+			PublicRunTaskResponseSchema.parse({
+				vendor: dispatchVendor,
+				result,
+			}),
+			200,
+		);
+	}
 
 	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
 		vendor: input.vendor,
