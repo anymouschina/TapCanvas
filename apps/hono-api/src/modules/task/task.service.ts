@@ -7793,11 +7793,267 @@ async function runOpenAiCompatibleImageTaskForVendor(
 	});
 
 	try {
+		const normalizeGeminiCompatibleBaseUrl = (raw: string): string => {
+			const trimmed = String(raw || "").trim().replace(/\/+$/, "");
+			if (!trimmed) return trimmed;
+			// Some providers reuse the same base URL for OpenAI-compatible paths (e.g. /v1/openai).
+			// Gemini generateContent endpoints require the root base.
+			return trimmed
+				.replace(/\/openai\/v\d+(?:beta)?$/i, "")
+				.replace(/\/v\d+(?:beta)?\/openai$/i, "")
+				.replace(/\/openai$/i, "")
+				.replace(/\/v\d+(?:beta)?$/i, "");
+		};
+
+		const redactGeminiInlineData = (value: any): any => {
+			if (!value || typeof value !== "object") return value;
+			const inline = (value as any).inlineData || (value as any).inline_data || null;
+			if (!inline || typeof inline !== "object") return value;
+			const b64 = typeof (inline as any).data === "string" ? (inline as any).data : "";
+			const mimeType =
+				typeof (inline as any).mimeType === "string"
+					? (inline as any).mimeType
+					: typeof (inline as any).mime_type === "string"
+						? (inline as any).mime_type
+						: null;
+			const redacted = {
+				inlineData: {
+					mimeType,
+					data: b64 ? `[omitted len=${b64.length}]` : "[omitted]",
+				},
+			};
+			return redacted;
+		};
+
+		const summarizeGeminiGenerateContentResponse = (data: any): any => {
+			if (!data || typeof data !== "object") return data;
+			const candidates = Array.isArray((data as any).candidates)
+				? (data as any).candidates
+				: [];
+			return {
+				candidates: candidates.slice(0, 4).map((c: any) => ({
+					finishReason: c?.finishReason ?? c?.finish_reason ?? null,
+					content: {
+						role:
+							typeof c?.content?.role === "string" ? c.content.role : null,
+						parts: Array.isArray(c?.content?.parts)
+							? c.content.parts.slice(0, 20).map((p: any) => {
+									if (p && typeof p.text === "string") {
+										const t = p.text.trim();
+										return {
+											text: t.length > 400 ? `${t.slice(0, 400)}…` : t,
+										};
+									}
+									return redactGeminiInlineData(p);
+								})
+							: [],
+					},
+					usageMetadata: c?.usageMetadata ?? c?.usage_metadata ?? null,
+				})),
+				usageMetadata:
+					(data as any).usageMetadata ?? (data as any).usage_metadata ?? null,
+				modelVersion:
+					(data as any).modelVersion ?? (data as any).model_version ?? null,
+			};
+		};
+
 		const auth = await resolveModelCatalogVendorAuthForTask(c, v);
 		const headers: Record<string, string> = {
 			"Content-Type": "application/json",
 			Accept: "application/json",
 		};
+
+		if (v === "dmxapi" && req.kind === "image_edit") {
+			const extras = (req.extras || {}) as Record<string, any>;
+			const referenceImages: string[] = Array.isArray(extras.referenceImages)
+				? extras.referenceImages
+						.map((u: any) => (typeof u === "string" ? u.trim() : ""))
+						.filter(Boolean)
+				: [];
+			if (!referenceImages.length) {
+				throw new AppError("image_edit 需要提供 extras.referenceImages", {
+					status: 400,
+					code: "reference_images_missing",
+				});
+			}
+
+			const aspectRatioRaw =
+				typeof extras.aspectRatio === "string" ? extras.aspectRatio.trim() : "";
+			const aspectRatio =
+				aspectRatioRaw && aspectRatioRaw.toLowerCase() !== "auto"
+					? aspectRatioRaw
+					: null;
+
+			const imageSizeRaw =
+				typeof extras.imageSize === "string" ? extras.imageSize.trim() : "";
+			const imageSize =
+				imageSizeRaw === "1K" || imageSizeRaw === "2K" || imageSizeRaw === "4K"
+					? imageSizeRaw
+					: null;
+
+			const inputParts: any[] = [{ text: req.prompt }];
+			for (const ref of referenceImages.slice(0, 8)) {
+				const resolved = await resolveSora2ApiImageUrl(c, ref);
+				const match = resolved.match(/^data:([^;]+);base64,(.+)$/i);
+				if (!match) {
+					throw new AppError("参考图无法解析为 data:image/*;base64", {
+						status: 400,
+						code: "invalid_reference_image",
+						details: { url: ref.slice(0, 128) },
+					});
+				}
+				const mimeType = (match[1] || "").trim() || "image/png";
+				const base64 = (match[2] || "").trim();
+				if (!base64) continue;
+				inputParts.push({
+					inlineData: {
+						mimeType,
+						data: base64,
+					},
+				});
+			}
+
+			if (inputParts.length <= 1) {
+				throw new AppError("未找到可用的参考图（无法上传到上游）", {
+					status: 400,
+					code: "reference_images_invalid",
+				});
+			}
+
+			const modelPath = `models/${model}`;
+			const geminiBase = normalizeGeminiCompatibleBaseUrl(baseUrl);
+			const logUrl = `${geminiBase}/v1beta/${modelPath}:generateContent`;
+			let url = logUrl;
+
+			if (auth?.authType === "none") {
+				// no-op
+			} else if (auth?.authType === "query") {
+				const param = auth.authQueryParam || "key";
+				const u = new URL(url);
+				u.searchParams.set(param, apiKey);
+				url = u.toString();
+			} else if (auth?.authType === "x-api-key") {
+				const header = auth.authHeader || "X-API-Key";
+				headers[header] = apiKey;
+				if (!auth.authHeader) headers["x-goog-api-key"] = apiKey;
+			} else {
+				const header = auth?.authHeader || "Authorization";
+				headers[header] = `Bearer ${apiKey}`;
+			}
+
+			const generationConfig: Record<string, any> = {
+				responseModalities: ["IMAGE"],
+			};
+			if (aspectRatio || imageSize) {
+				generationConfig.imageConfig = {
+					...(aspectRatio ? { aspectRatio } : {}),
+					...(imageSize ? { imageSize } : {}),
+				};
+			}
+
+			const body = {
+				contents: [{ role: "user", parts: inputParts }],
+				generationConfig,
+			};
+
+			const logBody = {
+				...body,
+				contents: [
+					{
+						role: "user",
+						parts: inputParts.map((p) => redactGeminiInlineData(p)),
+					},
+				],
+				referenceImages: referenceImages.slice(0, 8),
+			};
+
+			const id = `dmxapi-img-${Date.now().toString(36)}-${crypto
+				.randomUUID()
+				.slice(0, 6)}`;
+
+			await recordVendorCallPayloads(c, {
+				userId,
+				vendor: v,
+				taskId: id,
+				taskKind: req.kind,
+				request: { url: logUrl, body: logBody },
+			});
+
+			const data = await callJsonApi(
+				c,
+				url,
+				{
+					method: "POST",
+					headers,
+					body: JSON.stringify(body),
+				},
+				{ provider: v },
+			);
+
+			await recordVendorCallPayloads(c, {
+				userId,
+				vendor: v,
+				taskId: id,
+				taskKind: req.kind,
+				upstreamResponse: {
+					url: logUrl,
+					data: summarizeGeminiGenerateContentResponse(data),
+				},
+			});
+
+			const images = (() => {
+				const collected: { mimeType: string; base64: string }[] = [];
+				const candidates = Array.isArray((data as any)?.candidates)
+					? (data as any).candidates
+					: [];
+				for (const cand of candidates) {
+					const parts = Array.isArray(cand?.content?.parts) ? cand.content.parts : [];
+					for (const part of parts) {
+						const inline = part?.inlineData || part?.inline_data || null;
+						const mimeType =
+							typeof inline?.mimeType === "string"
+								? inline.mimeType
+								: typeof inline?.mime_type === "string"
+									? inline.mime_type
+									: "";
+						const base64 =
+							typeof inline?.data === "string" ? inline.data.trim() : "";
+						if (!base64) continue;
+						collected.push({
+							mimeType: mimeType.trim() || "image/png",
+							base64,
+						});
+						if (collected.length >= 4) break;
+					}
+					if (collected.length >= 4) break;
+				}
+				return collected;
+			})();
+
+			const assets = images.map((img) =>
+				TaskAssetSchema.parse({
+					type: "image",
+					url: `data:${img.mimeType};base64,${img.base64}`,
+					thumbnailUrl: null,
+				}),
+			);
+			const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+			await bindReservationToTaskId(c, userId, reservation, id);
+
+			return TaskResultSchema.parse({
+				id,
+				kind: req.kind,
+				status,
+				assets,
+				raw: {
+					provider: "gemini_generateContent",
+					vendor: v,
+					model,
+					response: summarizeGeminiGenerateContentResponse(data),
+				},
+			});
+		}
 
 		let url = buildOpenAIImagesGenerationsUrlForTask(baseUrl);
 		const logUrl = url;
