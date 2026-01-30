@@ -8126,8 +8126,32 @@ async function runOpenAiCompatibleImageTaskForVendor(
 						filename: string;
 						bytes: number;
 					}> = [];
+					const failedRefs: Array<{ url: string; error: string }> = [];
 
 					const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+					const REF_FETCH_TIMEOUT_MS = 25_000;
+					const EDIT_REQUEST_TIMEOUT_MS = 120_000;
+					const promiseWithTimeout = async <T>(
+						promise: Promise<T>,
+						timeoutMs: number,
+						onTimeout: () => Error,
+					): Promise<T> => {
+						if (!timeoutMs || timeoutMs <= 0) return promise;
+						return await new Promise<T>((resolve, reject) => {
+							const timer = setTimeout(() => reject(onTimeout()), timeoutMs);
+							(timer as any)?.unref?.();
+							promise.then(
+								(value) => {
+									clearTimeout(timer);
+									resolve(value);
+								},
+								(err) => {
+									clearTimeout(timer);
+									reject(err);
+								},
+							);
+						});
+					};
 					const resolveReferenceImageFilePart = async (
 						raw: string,
 						idx: number,
@@ -8205,24 +8229,37 @@ async function runOpenAiCompatibleImageTaskForVendor(
 						}
 
 						let res: Response;
+						const controller = new AbortController();
+						const timeout = setTimeout(() => controller.abort(), REF_FETCH_TIMEOUT_MS);
 						try {
 							res = await fetchWithHttpDebugLog(
 								c,
 								resolved,
-								{ method: "GET", headers: { Accept: "image/*,*/*;q=0.8" } },
+								{
+									method: "GET",
+									headers: { Accept: "image/*,*/*;q=0.8" },
+									signal: controller.signal,
+								},
 								{ tag: `${v}:images:edits:fetch` },
 							);
 						} catch (err: any) {
-							throw new AppError("参考图下载失败", {
+							clearTimeout(timeout);
+							const isAbort =
+								err?.name === "AbortError" || /aborted|timeout/i.test(err?.message || "");
+							throw new AppError(isAbort ? "参考图下载超时" : "参考图下载失败", {
 								status: 502,
-								code: "reference_image_fetch_failed",
+								code: isAbort
+									? "reference_image_fetch_timeout"
+									: "reference_image_fetch_failed",
 								details: { message: err?.message ?? String(err) },
 							});
-						}
-						if (!res.ok) {
-							throw new AppError(`参考图下载失败: ${res.status}`, {
-								status: 502,
-								code: "reference_image_fetch_failed",
+							} finally {
+								clearTimeout(timeout);
+							}
+							if (!res.ok) {
+								throw new AppError(`参考图下载失败: ${res.status}`, {
+									status: 502,
+									code: "reference_image_fetch_failed",
 								details: { upstreamStatus: res.status, url: resolved },
 							});
 						}
@@ -8251,7 +8288,23 @@ async function runOpenAiCompatibleImageTaskForVendor(
 							});
 						}
 
-						const buf = await res.arrayBuffer();
+						const buf = await promiseWithTimeout(
+							res.arrayBuffer(),
+							REF_FETCH_TIMEOUT_MS,
+							() => new Error("reference_image_read_timeout"),
+						).catch((err: any) => {
+							if (String(err?.message || "").includes("reference_image_read_timeout")) {
+								try {
+									res.body?.cancel();
+								} catch {}
+								throw new AppError("参考图读取超时", {
+									status: 502,
+									code: "reference_image_fetch_timeout",
+									details: { url: resolved.slice(0, 160) },
+								});
+							}
+							throw err;
+						});
 						if (buf.byteLength > MAX_IMAGE_BYTES) {
 							throw new AppError("参考图过大，无法上传到上游", {
 								status: 400,
@@ -8288,10 +8341,24 @@ async function runOpenAiCompatibleImageTaskForVendor(
 						};
 					};
 
-					for (const [idx, ref] of referenceImages.slice(0, 4).entries()) {
-						const filePart = await resolveReferenceImageFilePart(ref, idx);
-						form.append("image", filePart.blob, filePart.filename);
-						uploadedRefs.push(filePart.meta);
+					const settled = await Promise.allSettled(
+						referenceImages
+							.slice(0, 4)
+							.map((ref, idx) => resolveReferenceImageFilePart(ref, idx)),
+					);
+					for (const [idx, item] of settled.entries()) {
+						const ref = referenceImages[idx] || "";
+						if (item.status === "fulfilled") {
+							const filePart = item.value;
+							form.append("image", filePart.blob, filePart.filename);
+							uploadedRefs.push(filePart.meta);
+							continue;
+						}
+						const msg =
+							typeof (item.reason as any)?.message === "string"
+								? (item.reason as any).message
+								: String(item.reason || "unknown error");
+						failedRefs.push({ url: ref.slice(0, 160) || `ref_${idx + 1}`, error: msg });
 					}
 
 					if (!uploadedRefs.length) {
@@ -8301,16 +8368,60 @@ async function runOpenAiCompatibleImageTaskForVendor(
 						});
 					}
 
-					const data = await callJsonApi(
-						c,
-						editUrl,
-						{
-							method: "POST",
-							headers: editHeaders,
-							body: form,
-						},
-						{ provider: v },
+					const editController = new AbortController();
+					const editTimeout = setTimeout(
+						() => editController.abort(),
+						EDIT_REQUEST_TIMEOUT_MS,
 					);
+
+					let res: Response;
+					let data: any = null;
+					try {
+						res = await fetchWithHttpDebugLog(
+							c,
+							editUrl,
+							{
+								method: "POST",
+								headers: editHeaders,
+								body: form,
+								signal: editController.signal,
+							},
+							{ tag: `${v}:images:edits` },
+						);
+						try {
+							data = await promiseWithTimeout(
+								res.json(),
+								EDIT_REQUEST_TIMEOUT_MS,
+								() => new Error("image_edit_response_timeout"),
+							);
+						} catch {
+							data = null;
+						}
+					} catch (err: any) {
+						const isAbort =
+							err?.name === "AbortError" || /aborted|timeout/i.test(err?.message || "");
+						throw new AppError(
+							isAbort ? "上游图像编辑请求超时" : `${v} 请求失败`,
+							{
+								status: 502,
+								code: isAbort ? `${v}_request_timeout` : `${v}_request_failed`,
+								details: { message: err?.message ?? String(err) },
+							},
+						);
+					} finally {
+						clearTimeout(editTimeout);
+					}
+
+					if (!res.ok) {
+						const msg =
+							(data && (data.error?.message || data.message || data.error)) ||
+							`${v} 调用失败: ${res.status}`;
+						throw new AppError(msg, {
+							status: res.status,
+							code: `${v}_request_failed`,
+							details: { upstreamStatus: res.status, upstreamData: data ?? null },
+						});
+					}
 
 					const urls = extractBananaImageUrls(data);
 					const assets = urls.map((u) =>
@@ -8336,6 +8447,7 @@ async function runOpenAiCompatibleImageTaskForVendor(
 								prompt: req.prompt,
 								n,
 								referenceImages: uploadedRefs,
+								referenceImagesFailed: failedRefs.length ? failedRefs : undefined,
 							},
 						},
 						upstreamResponse: { url: editLogUrl, data },
