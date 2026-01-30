@@ -4,6 +4,7 @@ import { tryReleaseTeamCreditsOnce } from "../team/team.repo";
 import { getVendorTaskRefByTaskId } from "./vendor-task-refs.repo";
 import {
 	fetchGrsaiDrawTaskResult,
+	fetchApimartTaskResult,
 	fetchAsyncDataTaskResult,
 	fetchTuziTaskResult,
 	fetchMiniMaxTaskResult,
@@ -47,7 +48,19 @@ function normalizeVendorHint(vendor: string): string | null {
 	const head = raw.split(":")[0]?.trim() || raw;
 	if (head === "comfly" || raw.startsWith("comfly-")) return "comfly";
 	if (head === "grsai" || raw.startsWith("grsai-")) return "grsai";
+	if (head === "apimart" || raw.startsWith("apimart-")) return "apimart";
+	if (head === "yunwu" || raw.startsWith("yunwu-")) return "yunwu";
 	return null;
+}
+
+function shouldUseGrsaiDrawPollingForImageTask(vendor: string): boolean {
+	const raw = (vendor || "").trim().toLowerCase();
+	if (!raw) return false;
+	if (raw === "gemini" || raw === "google") return true;
+	if (raw === "grsai" || raw.startsWith("grsai-") || raw.startsWith("grsai:")) return true;
+	if (raw === "comfly" || raw.startsWith("comfly-") || raw.startsWith("comfly:")) return true;
+	if (raw.startsWith("apimart-") || raw.startsWith("apimart:")) return true;
+	return false;
 }
 
 function parseVendorFromNote(note: string | null): string | null {
@@ -270,6 +283,8 @@ export async function runCreditTaskFinalizer(
 		const vendorHead = vendorRef.trim().toLowerCase().split(":")[0]?.trim() || "";
 		const dispatch = normalizeDispatchVendor(vendorRef);
 		const proxyHint = normalizeVendorHint(vendorRef);
+		const useGrsaiDrawImagePolling =
+			refKind === "image" && shouldUseGrsaiDrawPollingForImageTask(vendorRef);
 
 		const c = createInternalAppContext(env, {
 			apiKeyId: "internal-finalizer",
@@ -280,11 +295,33 @@ export async function runCreditTaskFinalizer(
 
 		try {
 			let result: any;
-			if (refKind === "image") {
+			if (dispatch === "apimart") {
+				result = await fetchApimartTaskResult(c, userId, taskId, null, {
+					taskKind: (taskKind as any) ?? null,
+				});
+			} else if (useGrsaiDrawImagePolling) {
 				result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
 					taskKind: (taskKind as any) ?? null,
 					promptFromClient: null,
 				});
+			} else if (refKind === "image") {
+				await upsertTaskStatus(env.DB, {
+					taskId,
+					provider: FINALIZER_PROVIDER,
+					userId,
+					status: "running",
+					data: {
+						reason: "polling_not_supported",
+						vendor: vendorRef,
+						dispatch,
+						pid,
+						taskKind,
+						teamId: row.teamId,
+						credits: { reserved: row.reserved, pending: pendingAmount },
+					},
+					nowIso,
+				});
+				continue;
 			} else if (dispatch === "asyncdata") {
 				result = await fetchAsyncDataTaskResult(c, userId, taskId, {
 					taskKind: (taskKind as any) ?? null,

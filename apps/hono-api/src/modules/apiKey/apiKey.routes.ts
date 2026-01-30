@@ -335,6 +335,29 @@ function normalizeDispatchVendor(vendor: string): string {
 	return last;
 }
 
+function normalizeProxyVendorHint(vendor: string): string | null {
+	const raw = (vendor || "").trim().toLowerCase();
+	if (!raw) return null;
+	const head = raw.split(":")[0]?.trim() || raw;
+	if (head === "comfly" || raw.startsWith("comfly-")) return "comfly";
+	if (head === "grsai" || raw.startsWith("grsai-")) return "grsai";
+	if (head === "apimart" || raw.startsWith("apimart-")) return "apimart";
+	if (head === "yunwu" || raw.startsWith("yunwu-")) return "yunwu";
+	return null;
+}
+
+function shouldUseGrsaiDrawPollingForImageTask(vendor: string): boolean {
+	const raw = (vendor || "").trim().toLowerCase();
+	if (!raw) return false;
+	// Legacy compatibility: Gemini image tasks are polled via grsai draw result.
+	if (raw === "gemini" || raw === "google") return true;
+	// Banana/grsai draw vendor refs are stored like "grsai-nano-banana-*" / "comfly-*" / "apimart-*".
+	if (raw === "grsai" || raw.startsWith("grsai-") || raw.startsWith("grsai:")) return true;
+	if (raw === "comfly" || raw.startsWith("comfly-") || raw.startsWith("comfly:")) return true;
+	if (raw.startsWith("apimart-") || raw.startsWith("apimart:")) return true;
+	return false;
+}
+
 async function listEnabledSystemVendors(c: any): Promise<Set<string>> {
 	const isLocalDevRequest = () => {
 		try {
@@ -1057,6 +1080,38 @@ async function runPublicTaskWithFallback(
 				}
 			}
 
+			// Persist final result so callers can safely poll /public/tasks/result even for sync vendors.
+			try {
+				const taskId =
+					typeof result?.id === "string"
+						? result.id.trim()
+						: String(result?.id || "").trim();
+				const status =
+					typeof result?.status === "string" ? result.status.trim() : "";
+				const kind =
+					typeof result?.kind === "string"
+						? result.kind.trim()
+						: String(requestForVendor.kind || "").trim();
+				if (taskId && kind && (status === "succeeded" || status === "failed")) {
+					const nowIso = new Date().toISOString();
+					await upsertTaskResult(c.env.DB, {
+						userId,
+						taskId,
+						vendor: v,
+						kind,
+						status,
+						result,
+						completedAt: nowIso,
+						nowIso,
+					});
+				}
+			} catch (err: any) {
+				console.warn(
+					"[task-store] persist public result failed",
+					err?.message || err,
+				);
+			}
+
 			return { vendor: v, result };
 		} catch (err: any) {
 			debugLog("vendor_candidate_failed", {
@@ -1490,7 +1545,8 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 		}
 	}
 
-	if (!resolved.vendor) {
+	resolved.vendor = resolved.vendor.trim();
+	if (!resolved.vendor || resolved.vendor.toLowerCase() === "auto") {
 		return c.json(
 			{
 				error: "vendor is required (or the task vendor cannot be inferred)",
@@ -1512,12 +1568,7 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 				// ignore
 			}
 		}
-		const hint =
-			head === "comfly" || raw.startsWith("comfly-")
-				? "comfly"
-				: head === "grsai" || raw.startsWith("grsai-")
-					? "grsai"
-					: null;
+		const hint = normalizeProxyVendorHint(raw);
 		if (hint) {
 			try {
 				c.set("proxyVendorHint", hint);
@@ -1532,27 +1583,57 @@ publicApiRouter.openapi(PublicFetchTaskResultOpenApiRoute, async (c) => {
 
 	const vendorHead = resolved.vendor.trim().toLowerCase().split(":")[0]?.trim() || "";
 	const dispatch = normalizeDispatchVendor(resolved.vendor);
+	const useGrsaiDrawImagePolling =
+		resolved.kind === "image" &&
+		shouldUseGrsaiDrawPollingForImageTask(resolved.vendor);
 	let result: any;
 
 	if (dispatch === "apimart") {
 		result = await fetchApimartTaskResult(c, userId, taskId, prompt, {
 			taskKind: (taskKind as any) ?? null,
 		});
-	} else if (resolved.kind === "image") {
+	} else if (useGrsaiDrawImagePolling) {
 		result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
 	} else if (dispatch === "asyncdata") {
+		if (resolved.kind === "image") {
+			return c.json(
+				{
+					error: "asyncdata 仅支持视频任务轮询",
+					code: "invalid_task_kind",
+				},
+				400,
+			);
+		}
 		result = await fetchAsyncDataTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
 	} else if (dispatch === "tuzi") {
+		if (resolved.kind === "image") {
+			return c.json(
+				{
+					error:
+						"tuzi 图像任务通常为同步返回；如需轮询请携带创建接口返回的 taskId/vendor（或直接使用创建接口返回结果）",
+					code: "invalid_task_kind",
+				},
+				400,
+			);
+		}
 		result = await fetchTuziTaskResult(c, userId, taskId, {
 			taskKind: (taskKind as any) ?? null,
 			promptFromClient: prompt,
 		});
+	} else if (resolved.kind === "image") {
+		return c.json(
+			{
+				error: "该图像任务不支持轮询（请使用创建接口返回结果，或选择支持轮询的厂商）",
+				code: "polling_not_supported",
+			},
+			400,
+		);
 	} else if (vendorHead === "sora2api") {
 		result = await fetchSora2ApiTaskResult(c, userId, taskId, prompt);
 	} else if (dispatch === "veo") {
