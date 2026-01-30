@@ -6958,13 +6958,21 @@ function buildOpenAIChatCompletionsUrlForTask(baseUrl?: string | null): string {
 	return `${raw}${hasVersionSegment ? "" : "/v1"}/chat/completions`;
 }
 
-function buildOpenAIImagesGenerationsUrlForTask(baseUrl?: string | null): string {
-	const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
-	if (!raw) return "https://api.openai.com/v1/images/generations";
-	if (/\/images\/generations$/i.test(raw)) return raw;
-	const hasVersionSegment = /\/v\d+(?:beta)?(\/|$)/i.test(raw);
-	return `${raw}${hasVersionSegment ? "" : "/v1"}/images/generations`;
-}
+	function buildOpenAIImagesGenerationsUrlForTask(baseUrl?: string | null): string {
+		const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+		if (!raw) return "https://api.openai.com/v1/images/generations";
+		if (/\/images\/generations$/i.test(raw)) return raw;
+		const hasVersionSegment = /\/v\d+(?:beta)?(\/|$)/i.test(raw);
+		return `${raw}${hasVersionSegment ? "" : "/v1"}/images/generations`;
+	}
+
+	function buildOpenAIImagesEditsUrlForTask(baseUrl?: string | null): string {
+		const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+		if (!raw) return "https://api.openai.com/v1/images/edits";
+		if (/\/images\/edits$/i.test(raw)) return raw;
+		const hasVersionSegment = /\/v\d+(?:beta)?(\/|$)/i.test(raw);
+		return `${raw}${hasVersionSegment ? "" : "/v1"}/images/edits`;
+	}
 
 function normalizeMessageContentForResponses(
 	content: string | OpenAIContentPartForTask[],
@@ -8052,13 +8060,308 @@ async function runOpenAiCompatibleImageTaskForVendor(
 					model,
 					response: summarizeGeminiGenerateContentResponse(data),
 				},
-			});
-		}
+				});
+			}
 
-		let url = buildOpenAIImagesGenerationsUrlForTask(baseUrl);
-		const logUrl = url;
-		if (auth?.authType === "none") {
-			// no-op
+			if (req.kind === "image_edit") {
+				const extras = (req.extras || {}) as Record<string, any>;
+				const referenceImages = Array.from(
+					new Set(
+						(Array.isArray(extras.referenceImages) ? extras.referenceImages : [])
+							.map((u: any) => (typeof u === "string" ? u.trim() : ""))
+							.filter(Boolean),
+					),
+				);
+
+				if (referenceImages.length) {
+					let editUrl = buildOpenAIImagesEditsUrlForTask(baseUrl);
+					const editLogUrl = editUrl;
+
+					const editHeaders: Record<string, string> = {
+						Accept: "application/json",
+					};
+
+					if (auth?.authType === "none") {
+						// no-op
+					} else if (auth?.authType === "query") {
+						const param = auth.authQueryParam || "api_key";
+						const u = new URL(editUrl);
+						u.searchParams.set(param, apiKey);
+						editUrl = u.toString();
+					} else if (auth?.authType === "x-api-key") {
+						const header = auth.authHeader || "X-API-Key";
+						editHeaders[header] = apiKey;
+					} else {
+						const header = auth?.authHeader || "Authorization";
+						editHeaders[header] = `Bearer ${apiKey}`;
+					}
+
+					const n = (() => {
+						const raw =
+							typeof extras.variants === "number"
+								? extras.variants
+								: typeof extras.n === "number"
+									? extras.n
+									: null;
+						if (typeof raw !== "number" || !Number.isFinite(raw)) return 1;
+						return Math.max(1, Math.min(8, Math.round(raw)));
+					})();
+
+					const form = new FormData();
+					form.append("model", model);
+					form.append("prompt", req.prompt);
+					form.append("n", String(n));
+					form.append("response_format", "url");
+
+					if (typeof req.width === "number" && typeof req.height === "number") {
+						const w = Math.max(1, Math.round(req.width));
+						const h = Math.max(1, Math.round(req.height));
+						form.append("size", `${w}x${h}`);
+					}
+
+					const uploadedRefs: Array<{
+						url: string;
+						mode: "fetched_file" | "data_url_file";
+						contentType: string;
+						filename: string;
+						bytes: number;
+					}> = [];
+
+					const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+					const resolveReferenceImageFilePart = async (
+						raw: string,
+						idx: number,
+					): Promise<{ blob: Blob; filename: string; meta: (typeof uploadedRefs)[number] }> => {
+						const ref = String(raw || "").trim();
+						if (!ref) {
+							throw new AppError("参考图为空", {
+								status: 400,
+								code: "invalid_reference_image",
+							});
+						}
+						if (/^blob:/i.test(ref)) {
+							throw new AppError(
+								"blob: URL 无法在 Worker 侧下载，请先上传为可访问的图片地址",
+								{
+									status: 400,
+									code: "invalid_reference_image",
+								},
+							);
+						}
+
+						const dataUrlMatch = ref.match(/^data:([^;]+);base64,(.+)$/i);
+						if (dataUrlMatch) {
+							const mimeType =
+								(dataUrlMatch[1] || "").trim() || "application/octet-stream";
+							if (!/^image\//i.test(mimeType)) {
+								throw new AppError("参考图不是 image/* 内容", {
+									status: 400,
+									code: "invalid_reference_image",
+									details: { contentType: mimeType },
+								});
+							}
+							const base64 = (dataUrlMatch[2] || "").trim();
+							const bytes = decodeBase64ToBytes(base64);
+							if (bytes.byteLength > MAX_IMAGE_BYTES) {
+								throw new AppError("参考图过大，无法上传到上游", {
+									status: 400,
+									code: "reference_image_too_large",
+									details: {
+										contentLength: bytes.byteLength,
+										maxBytes: MAX_IMAGE_BYTES,
+									},
+								});
+							}
+							const ext = detectImageExtensionFromMimeType(mimeType);
+							const filename = `input_reference_${idx + 1}.${ext || "bin"}`;
+							return {
+								blob: new Blob([bytes], { type: mimeType }),
+								filename,
+								meta: {
+									url: ref.slice(0, 160),
+									mode: "data_url_file",
+									contentType: mimeType,
+									filename,
+									bytes: bytes.byteLength,
+								},
+							};
+						}
+
+						let resolved = ref;
+						if (resolved.startsWith("/")) {
+							try {
+								resolved = new URL(resolved, new URL(c.req.url).origin).toString();
+							} catch {
+								resolved = ref;
+							}
+						}
+
+						if (!/^https?:\/\//i.test(resolved)) {
+							throw new AppError("参考图必须为 http(s) URL 或 data:image/*;base64", {
+								status: 400,
+								code: "invalid_reference_image",
+								details: { url: ref.slice(0, 160) },
+							});
+						}
+
+						let res: Response;
+						try {
+							res = await fetchWithHttpDebugLog(
+								c,
+								resolved,
+								{ method: "GET", headers: { Accept: "image/*,*/*;q=0.8" } },
+								{ tag: `${v}:images:edits:fetch` },
+							);
+						} catch (err: any) {
+							throw new AppError("参考图下载失败", {
+								status: 502,
+								code: "reference_image_fetch_failed",
+								details: { message: err?.message ?? String(err) },
+							});
+						}
+						if (!res.ok) {
+							throw new AppError(`参考图下载失败: ${res.status}`, {
+								status: 502,
+								code: "reference_image_fetch_failed",
+								details: { upstreamStatus: res.status, url: resolved },
+							});
+						}
+
+						const contentType =
+							(res.headers.get("content-type") || "").split(";")[0]?.trim() ||
+							"application/octet-stream";
+						if (!/^image\//i.test(contentType)) {
+							throw new AppError("参考图不是 image/* 内容", {
+								status: 400,
+								code: "invalid_reference_image",
+								details: { contentType, url: resolved },
+							});
+						}
+
+						const lenHeader = res.headers.get("content-length");
+						const len =
+							typeof lenHeader === "string" && /^\d+$/.test(lenHeader)
+								? Number(lenHeader)
+								: null;
+						if (typeof len === "number" && Number.isFinite(len) && len > MAX_IMAGE_BYTES) {
+							throw new AppError("参考图过大，无法上传到上游", {
+								status: 400,
+								code: "reference_image_too_large",
+								details: { contentLength: len, maxBytes: MAX_IMAGE_BYTES, url: resolved },
+							});
+						}
+
+						const buf = await res.arrayBuffer();
+						if (buf.byteLength > MAX_IMAGE_BYTES) {
+							throw new AppError("参考图过大，无法上传到上游", {
+								status: 400,
+								code: "reference_image_too_large",
+								details: {
+									contentLength: buf.byteLength,
+									maxBytes: MAX_IMAGE_BYTES,
+									url: resolved,
+								},
+							});
+						}
+
+						const extFromUrl = (() => {
+							try {
+								const pathname = new URL(resolved).pathname || "";
+								const m = pathname.match(/\.([a-zA-Z0-9]+)$/);
+								return m && m[1] ? m[1].toLowerCase() : null;
+							} catch {
+								return null;
+							}
+						})();
+						const ext = extFromUrl || detectImageExtensionFromMimeType(contentType);
+						const filename = `input_reference_${idx + 1}.${ext || "bin"}`;
+						return {
+							blob: new Blob([buf], { type: contentType }),
+							filename,
+							meta: {
+								url: resolved.slice(0, 160),
+								mode: "fetched_file",
+								contentType,
+								filename,
+								bytes: buf.byteLength,
+							},
+						};
+					};
+
+					for (const [idx, ref] of referenceImages.slice(0, 4).entries()) {
+						const filePart = await resolveReferenceImageFilePart(ref, idx);
+						form.append("image", filePart.blob, filePart.filename);
+						uploadedRefs.push(filePart.meta);
+					}
+
+					if (!uploadedRefs.length) {
+						throw new AppError("未找到可用的参考图（无法上传到上游）", {
+							status: 400,
+							code: "reference_images_invalid",
+						});
+					}
+
+					const data = await callJsonApi(
+						c,
+						editUrl,
+						{
+							method: "POST",
+							headers: editHeaders,
+							body: form,
+						},
+						{ provider: v },
+					);
+
+					const urls = extractBananaImageUrls(data);
+					const assets = urls.map((u) =>
+						TaskAssetSchema.parse({ type: "image", url: u, thumbnailUrl: null }),
+					);
+					const id =
+						(typeof data?.id === "string" && data.id.trim()) ||
+						(typeof data?.task_id === "string" && data.task_id.trim()) ||
+						(typeof data?.taskId === "string" && data.taskId.trim()) ||
+						`${v}-img-${Date.now().toString(36)}`;
+					const status: "succeeded" | "failed" = assets.length ? "succeeded" : "failed";
+
+					await recordVendorCallPayloads(c, {
+						userId,
+						vendor: v,
+						taskId: id,
+						taskKind: req.kind,
+						request: {
+							url: editLogUrl,
+							body: {
+								contentType: "multipart",
+								model,
+								prompt: req.prompt,
+								n,
+								referenceImages: uploadedRefs,
+							},
+						},
+						upstreamResponse: { url: editLogUrl, data },
+					});
+
+					await bindReservationToTaskId(c, userId, reservation, id);
+
+					return TaskResultSchema.parse({
+						id,
+						kind: req.kind,
+						status,
+						assets,
+						raw: {
+							provider: "openai_compat",
+							vendor: v,
+							model,
+							response: data,
+						},
+					});
+				}
+			}
+
+			let url = buildOpenAIImagesGenerationsUrlForTask(baseUrl);
+			const logUrl = url;
+			if (auth?.authType === "none") {
+				// no-op
 		} else if (auth?.authType === "query") {
 			const param = auth.authQueryParam || "api_key";
 			const u = new URL(url);
