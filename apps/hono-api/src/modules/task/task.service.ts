@@ -2839,6 +2839,172 @@ export async function fetchVeoTaskResult(
 
 // ---------- APIMART ----------
 
+export async function runApimartTextTask(
+	c: AppContext,
+	userId: string,
+	req: TaskRequestDto,
+): Promise<TaskResult> {
+	if (req.kind !== "chat" && req.kind !== "prompt_refine") {
+		throw new AppError("apimart 仅支持 chat/prompt_refine", {
+			status: 400,
+			code: "invalid_task_kind",
+		});
+	}
+
+	const modelKeyRaw =
+		pickModelKey(req, { modelKey: undefined }) ||
+		(await resolveDefaultModelKeyFromCatalogForVendor(c, "apimart", "text")) ||
+		"models/gemini-2.5-pro";
+	const modelKey = modelKeyRaw.startsWith("models/")
+		? modelKeyRaw
+		: `models/${modelKeyRaw}`;
+	const modelId = modelKey.startsWith("models/") ? modelKey.slice(7) : modelKey;
+
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: req.kind,
+		modelKey: modelId,
+	});
+	const progressCtx = extractProgressContext(req, "apimart");
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: req.kind,
+		vendor: "apimart",
+		modelKey: modelId,
+	});
+	emitProgress(userId, progressCtx, { status: "queued", progress: 0 });
+
+	const startedAtMs = Date.now();
+	const taskId = `apimart-${Date.now().toString(36)}`;
+	const vendorForLog = `apimart-${modelId}`;
+
+	await recordVendorCallStarted(c, {
+		userId,
+		vendor: vendorForLog,
+		taskId,
+		taskKind: req.kind,
+	});
+
+	try {
+		const ctx = await resolveVendorContext(c, userId, "apimart");
+		const baseUrl = normalizeBaseUrl(ctx.baseUrl) || "https://api.apimart.ai";
+		const apiKey = ctx.apiKey.trim();
+		if (!apiKey) {
+			throw new AppError("未配置 apimart API Key", {
+				status: 400,
+				code: "apimart_api_key_missing",
+			});
+		}
+
+		const systemPrompt =
+			req.kind === "prompt_refine"
+				? pickSystemPrompt(
+						req,
+						"你是一个提示词修订助手。请在保持原意的前提下优化并返回脚本正文。",
+					)
+				: pickSystemPrompt(req, "请用中文回答。");
+
+		const contents: any[] = [];
+		if (systemPrompt) {
+			contents.push({ role: "user", parts: [{ text: systemPrompt }] });
+		}
+		contents.push({ role: "user", parts: [{ text: req.prompt }] });
+
+		const url = `${normalizeApimartBaseUrl(baseUrl)}/v1beta/${modelKey}:generateContent`;
+		const body = { contents };
+
+		emitProgress(userId, progressCtx, { status: "running", progress: 10, taskId });
+		await recordVendorCallPayloads(c, {
+			userId,
+			vendor: vendorForLog,
+			taskId,
+			taskKind: req.kind,
+			request: { url, body },
+		});
+
+		const wrapper = await callJsonApi(
+			c,
+			url,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify(body),
+			},
+			{ provider: "apimart" },
+		);
+		await recordVendorCallPayloads(c, {
+			userId,
+			vendor: vendorForLog,
+			taskId,
+			taskKind: req.kind,
+			upstreamResponse: { url, data: wrapper },
+		});
+
+		if (typeof wrapper?.code === "number" && wrapper.code !== 200) {
+			throw new AppError(
+				(wrapper?.error?.message ||
+					wrapper?.message ||
+					`apimart 文本生成失败: code ${wrapper.code}`) as string,
+				{
+					status: 502,
+					code: "apimart_request_failed",
+					details: { upstreamData: wrapper ?? null, requestBody: body },
+				},
+			);
+		}
+
+		const payload = wrapper?.data ?? wrapper;
+		const firstCandidate = Array.isArray(payload?.candidates)
+			? payload.candidates[0]
+			: null;
+		const parts = Array.isArray(firstCandidate?.content?.parts)
+			? firstCandidate.content.parts
+			: [];
+		const text = parts
+			.map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+			.join("")
+			.trim();
+
+		const result = TaskResultSchema.parse({
+			id: taskId,
+			kind: req.kind,
+			status: "succeeded",
+			assets: [],
+			raw: {
+				provider: "apimart",
+				model: modelId,
+				response: wrapper ?? null,
+				text,
+			},
+		});
+		await bindReservationToTaskId(c, userId, reservation, taskId);
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: vendorForLog,
+			taskKind: req.kind,
+			result,
+			durationMs: Date.now() - startedAtMs,
+		});
+		emitProgress(userId, progressCtx, {
+			status: "succeeded",
+			progress: 100,
+			taskId,
+			raw: result.raw,
+		});
+		return result;
+	} catch (err) {
+		emitProgress(userId, progressCtx, {
+			status: "failed",
+			progress: 0,
+			taskId,
+			message: typeof (err as any)?.message === "string" ? (err as any).message : "任务执行失败",
+		});
+		return await releaseReservationOnThrow(c, userId, reservation, err);
+	}
+}
+
 export async function runApimartVideoTask(
 	c: AppContext,
 	userId: string,

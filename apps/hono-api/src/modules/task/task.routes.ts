@@ -19,6 +19,7 @@ import {
 	fetchGrsaiDrawTaskResult,
 	fetchMiniMaxTaskResult,
 	fetchVeoTaskResult,
+	runApimartTextTask,
 	runApimartVideoTask,
 	runApimartImageTask,
 	runMiniMaxVideoTask,
@@ -120,10 +121,12 @@ taskRouter.post("/", async (c) => {
 			result = await runApimartVideoTask(c, userId, req);
 		} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
 			result = await runApimartImageTask(c, userId, req);
+		} else if (req.kind === "chat" || req.kind === "prompt_refine") {
+			result = await runApimartTextTask(c, userId, req);
 		} else {
 			return c.json(
 				{
-					error: "apimart only supports text_to_video/text_to_image/image_edit tasks",
+					error: "apimart only supports chat/prompt_refine/text_to_video/text_to_image/image_edit tasks",
 					code: "invalid_task_kind",
 				},
 				400,

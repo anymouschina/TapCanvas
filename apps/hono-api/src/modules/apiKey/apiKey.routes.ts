@@ -28,6 +28,7 @@ import {
 	fetchMiniMaxTaskResult,
 	fetchSora2ApiTaskResult,
 	fetchVeoTaskResult,
+	runApimartTextTask,
 	runApimartImageTask,
 	runApimartVideoTask,
 	runMiniMaxVideoTask,
@@ -280,7 +281,6 @@ function pickAutoVendorsForKind(
 	const addEnabledTextVendors = () => {
 		// Exclude known non-text protocols/channels to avoid predictable failures.
 		const nonText = new Set([
-			"apimart",
 			"veo",
 			"sora2api",
 			"qwen",
@@ -957,6 +957,11 @@ async function runPublicTaskWithFallback(
 						{ kind: "image", taskId: result.id, vendor: "apimart" },
 						nowIso,
 					);
+				} else if (
+					requestForVendor.kind === "chat" ||
+					requestForVendor.kind === "prompt_refine"
+				) {
+					result = await runApimartTextTask(c, userId, requestForVendor);
 				} else {
 					throw Object.assign(new Error("invalid task kind"), {
 						status: 400,
