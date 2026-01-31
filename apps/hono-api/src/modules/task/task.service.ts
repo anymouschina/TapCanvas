@@ -11521,6 +11521,24 @@ export async function runGenericTaskForVendor(
 				? (req.extras as any).persistAssets
 				: true;
 
+		// When enqueued via task_store, keep the returned TaskResult.id stable so clients can poll
+		// using the same taskId they received from the create endpoint.
+		if (forcedTaskId) {
+			const upstreamTaskId =
+				typeof result?.id === "string" ? result.id.trim() : String(result?.id || "").trim();
+			if (upstreamTaskId && upstreamTaskId !== forcedTaskId) {
+				result = TaskResultSchema.parse({
+					...result,
+					id: forcedTaskId,
+					raw: {
+						...(typeof result.raw === "object" && result.raw ? (result.raw as any) : {}),
+						upstreamTaskId,
+						taskStoreId: forcedTaskId,
+					},
+				});
+			}
+		}
+
 		if (result.status === "succeeded" && result.assets && result.assets.length > 0) {
 			// 将生成结果写入 assets（默认托管到 OSS/R2 并替换 URL；ASSET_HOSTING_DISABLED=1 时保持源 URL）
 			try {

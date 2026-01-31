@@ -1363,9 +1363,24 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 	};
 
 	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
-	const dispatchVendor = vendorRaw && vendorRaw !== "auto" ? normalizeDispatchVendor(vendorRaw) : "";
+	let dispatchVendor =
+		vendorRaw && vendorRaw !== "auto" ? normalizeDispatchVendor(vendorRaw) : "";
+
+	const extras = (request?.extras || {}) as Record<string, any>;
+	const modelAliasRaw =
+		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+			? extras.modelAlias.trim()
+			: "";
+	const looksLikeNanoBananaAlias = /^nano-banana/i.test(modelAliasRaw);
+
+	// nano-banana models are slow sync calls; allow vendor=auto to go async safely by pinning to gemini.
+	if (!dispatchVendor && vendorRaw === "auto" && looksLikeNanoBananaAlias) {
+		dispatchVendor = "gemini";
+	}
 	const preferAsync =
-		input.async === true || (input.async !== false && dispatchVendor === "tuzi");
+		input.async === true ||
+		(input.async !== false && dispatchVendor === "tuzi") ||
+		(input.async !== false && vendorRaw === "auto" && looksLikeNanoBananaAlias);
 
 	if (preferAsync) {
 		if (!dispatchVendor) {
@@ -1392,11 +1407,6 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 		}
 
 		// Map modelAlias -> modelKey for this explicit vendor (keeps behavior aligned with fallback runner).
-		const extras = (request?.extras || {}) as Record<string, any>;
-		const modelAliasRaw =
-			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
-				? extras.modelAlias.trim()
-				: "";
 		const requestForVendor = await (async () => {
 			if (!modelAliasRaw) {
 				const cleanExtras = { ...(extras || {}) } as Record<string, any>;

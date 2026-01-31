@@ -73,6 +73,83 @@ function sleep(ms: number) {
 }
 const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
 
+function extractTaskProgressPercent(snapshot: TaskResultDto): number | null {
+  const raw = snapshot.raw as any
+  const rawProgress =
+    (typeof raw?.progress === 'number' ? raw.progress : null) ??
+    (typeof raw?.response?.progress === 'number' ? raw.response.progress : null) ??
+    (typeof raw?.response?.progress_pct === 'number' ? raw.response.progress_pct * 100 : null)
+  if (typeof rawProgress !== 'number' || !Number.isFinite(rawProgress)) return null
+  const pct = rawProgress <= 1 ? rawProgress * 100 : rawProgress
+  return Math.max(0, Math.min(100, pct))
+}
+
+async function pollTaskResultUntilDone(
+  ctx: RunnerContext,
+  options: {
+    taskId: string
+    taskKind: TaskKind
+    prompt: string
+    progressRange?: { min: number; max: number }
+    pollIntervalMs?: number
+    pollTimeoutMs?: number
+    statusPatch?: Record<string, any>
+  },
+): Promise<TaskResultDto> {
+  const { id, setNodeStatus, appendLog, isCanceled } = ctx
+  const pollIntervalMs = options.pollIntervalMs ?? 2500
+  const pollTimeoutMs = options.pollTimeoutMs ?? 420_000
+  const progressMin = options.progressRange?.min
+  const progressMax = options.progressRange?.max
+  let lastProgress = typeof progressMin === 'number' ? progressMin : 10
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < pollTimeoutMs) {
+    if (isCanceled(id)) throw new Error('任务已取消')
+
+    let snapshot: TaskResultDto
+    try {
+      snapshot = await fetchTaskResult(options.taskId, options.taskKind, options.prompt)
+    } catch (err: any) {
+      const msg = err?.message || '查询任务进度失败'
+      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      await sleep(pollIntervalMs)
+      continue
+    }
+
+    if (snapshot.status === 'queued' || snapshot.status === 'running') {
+      const pct = extractTaskProgressPercent(snapshot)
+      if (pct != null && typeof progressMin === 'number' && typeof progressMax === 'number') {
+        const mapped = progressMin + Math.round(((progressMax - progressMin) * pct) / 100)
+        const normalized = Math.min(95, Math.max(lastProgress, Math.max(progressMin, mapped)))
+        lastProgress = normalized
+        setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', {
+          ...(options.statusPatch || {}),
+          progress: normalized,
+        })
+      }
+      await sleep(pollIntervalMs)
+      continue
+    }
+
+    if (snapshot.status === 'failed') {
+      const raw = snapshot.raw as any
+      const msg =
+        (typeof raw?.failureReason === 'string' && raw.failureReason.trim()) ||
+        (typeof raw?.response?.error === 'string' && raw.response.error.trim()) ||
+        (typeof raw?.response?.message === 'string' && raw.response.message.trim()) ||
+        (typeof raw?.error === 'string' && raw.error.trim()) ||
+        (typeof raw?.message === 'string' && raw.message.trim()) ||
+        '任务失败'
+      throw new Error(msg)
+    }
+
+    return snapshot
+  }
+
+  throw new Error('任务超时，请稍后重试')
+}
+
 type StoryboardImageStyle = 'realistic' | 'comic' | 'sketch' | 'strip'
 type StoryboardImageAspectRatio = '16:9' | '9:16'
 
@@ -2656,7 +2733,7 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         : '如果提供了参考图：请在角色外观（脸/发型/服装/配饰）、场景、光线与画风上保持一致，并在此基础上生成新的分镜网格。'
       : ''
     const finalPromptForModel = continuityHint ? `${promptForModel}\n\n${continuityHint}` : promptForModel
-    const res = await runTaskByVendor(vendor, {
+    let res = await runTaskByVendor(vendor, {
       kind: wantsImageEdit ? 'image_edit' : 'text_to_image',
       prompt: finalPromptForModel,
       extras: {
@@ -2670,6 +2747,36 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         persistAssets: persist,
       },
     })
+
+    if (res.status === 'queued' || res.status === 'running') {
+      const taskId = typeof res.id === 'string' ? res.id.trim() : String(res.id || '').trim()
+      if (!taskId) {
+        throw new Error('分镜网格任务创建失败：未返回任务 ID')
+      }
+
+      setNodeStatus(id, res.status === 'queued' ? 'queued' : 'running', {
+        progress: 10,
+        imageTaskId: taskId,
+        imageTaskKind: wantsImageEdit ? 'image_edit' : 'text_to_image',
+        imageModel: selectedModel,
+        imageModelVendor: (data as any)?.imageModelVendor || vendor,
+        lastResult: {
+          id: taskId,
+          at: Date.now(),
+          kind,
+          preview: { type: 'text', value: `已创建分镜网格任务（ID: ${taskId}）` },
+        },
+      })
+      appendLog(id, `[${nowLabel()}] 已创建分镜网格任务（ID: ${taskId}），开始轮询进度…`)
+
+      res = await pollTaskResultUntilDone(ctx, {
+        taskId,
+        taskKind: wantsImageEdit ? 'image_edit' : 'text_to_image',
+        prompt: finalPromptForModel,
+        progressRange: { min: 10, max: 50 },
+        statusPatch: { imageTaskId: taskId, imageTaskKind: wantsImageEdit ? 'image_edit' : 'text_to_image' },
+      })
+    }
 
     const gridUrl = extractFirstImageAssetUrl(res)
     if (!gridUrl) {
@@ -2913,7 +3020,7 @@ async function runImageFissionTask(ctx: RunnerContext) {
       appendLog(id, `[${nowLabel()}] 生成裂变网格（${gridIdx + 1}/${desiredGrids}）…`)
 
       // eslint-disable-next-line no-await-in-loop
-      const res = await runTaskByVendor(vendor, {
+      let res = await runTaskByVendor(vendor, {
         kind: 'image_edit',
         prompt: promptForModel,
         extras: {
@@ -2927,6 +3034,24 @@ async function runImageFissionTask(ctx: RunnerContext) {
           persistAssets: persist,
         },
       })
+
+      if (res.status === 'queued' || res.status === 'running') {
+        const taskId = typeof res.id === 'string' ? res.id.trim() : String(res.id || '').trim()
+        if (!taskId) {
+          throw new Error('裂变任务创建失败：未返回任务 ID')
+        }
+
+        appendLog(id, `[${nowLabel()}] 已创建裂变任务（ID: ${taskId}），开始轮询进度…`)
+        const sliceSpan = Math.max(5, Math.floor(45 / Math.max(1, desiredGrids)))
+        const progressMax = Math.min(50, progressBase + sliceSpan)
+        res = await pollTaskResultUntilDone(ctx, {
+          taskId,
+          taskKind: 'image_edit',
+          prompt: promptForModel,
+          progressRange: { min: progressBase, max: progressMax },
+          statusPatch: { imageTaskId: taskId, imageTaskKind: 'image_edit' },
+        })
+      }
 
       lastRes = res
       const gridUrl = extractFirstImageAssetUrl(res)

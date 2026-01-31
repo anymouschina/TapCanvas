@@ -22,6 +22,7 @@ import {
 	runApimartTextTask,
 	runApimartVideoTask,
 	runApimartImageTask,
+	enqueueStoredTaskForVendor,
 	runMiniMaxVideoTask,
 	runSora2ApiVideoTask,
 	runVeoVideoTask,
@@ -159,7 +160,12 @@ taskRouter.post("/", async (c) => {
 			);
 		}
 	} else {
-		result = await runGenericTaskForVendor(c, userId, vendor, req);
+		const shouldUseTaskStore =
+			(vendor === "gemini" || vendor === "google") &&
+			(req.kind === "text_to_image" || req.kind === "image_edit");
+		result = shouldUseTaskStore
+			? await enqueueStoredTaskForVendor(c as any, userId, vendor, req)
+			: await runGenericTaskForVendor(c, userId, vendor, req);
 	}
 
 	// dmxapi: sync image response still needs to follow "taskId -> poll result" contract.
