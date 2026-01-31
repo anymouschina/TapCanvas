@@ -45,6 +45,7 @@ import {
 	settleTeamCreditsOnSuccess,
 } from "../team/team.service";
 import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
+import { setTraceStage } from "../../trace";
 
 type VendorContext = {
 	baseUrl: string;
@@ -10943,6 +10944,7 @@ export async function runGenericTaskForVendor(
 	options?: { forceTaskId?: string | null },
 ): Promise<TaskResult> {
 	const v = normalizeVendorKey(vendor);
+	setTraceStage(c, "task:run:begin", { vendor: v, taskKind: req.kind });
 	const progressCtx = extractProgressContext(req, v);
 	const startedAtMs = Date.now();
 	const forcedTaskId =
@@ -10966,6 +10968,7 @@ export async function runGenericTaskForVendor(
 
 		let result: TaskResult;
 
+		setTraceStage(c, "task:vendor:dispatch", { vendor: v, taskKind: req.kind });
 		if (v === "openai") {
 			if (req.kind === "image_to_prompt") {
 				result = await runOpenAiImageToPromptTask(c, userId, req);
@@ -11082,6 +11085,11 @@ export async function runGenericTaskForVendor(
 		if (result.status === "succeeded" && result.assets && result.assets.length > 0) {
 			// 将生成结果写入 assets（默认托管到 OSS/R2 并替换 URL；ASSET_HOSTING_DISABLED=1 时保持源 URL）
 			try {
+				setTraceStage(c, "task:asset_hosting:begin", {
+					vendor: apiVendor,
+					taskKind: req.kind,
+					assetCount: result.assets.length,
+				});
 				const hostedAssets = await hostTaskAssetsInWorker({
 					c,
 					userId,
@@ -11103,12 +11111,22 @@ export async function runGenericTaskForVendor(
 					...result,
 					assets: hostedAssets,
 				});
+				setTraceStage(c, "task:asset_hosting:done", {
+					vendor: apiVendor,
+					taskKind: req.kind,
+					hostedCount: hostedAssets.length,
+				});
 			} catch (err: any) {
 				// Hosting failed: do not charge; keep reserved and allow clients to retry polling.
 				const message =
 					typeof err?.message === "string" && err.message.trim()
 						? err.message.trim()
 						: "OSS 托管失败，稍后自动重试";
+				setTraceStage(c, "task:asset_hosting:error", {
+					vendor: apiVendor,
+					taskKind: req.kind,
+					message: message.slice(0, 300),
+				});
 				result = TaskResultSchema.parse({
 					...result,
 					status: "running",
@@ -11160,6 +11178,11 @@ export async function runGenericTaskForVendor(
 			typeof err?.message === "string"
 				? err.message
 				: "任务执行失败";
+		setTraceStage(c, "task:run:error", {
+			vendor: v,
+			taskKind: req.kind,
+			message: String(message || "").slice(0, 300),
+		});
 		emitProgress(userId, progressCtx, {
 			status: "failed",
 			progress: 0,

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
+import { listApiRequestLogs } from "../observability/request-logs.repo";
 
 export const statsRouter = new Hono<AppEnv>();
 
@@ -270,4 +271,57 @@ statsRouter.get("/vendors", async (c) => {
 	);
 
 	return c.json({ days, points, vendors: extras });
+});
+
+statsRouter.get("/requests", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+
+	const rawDays = c.req.query("days");
+	const parsedDays = Number(rawDays ?? 7);
+	const days = Number.isFinite(parsedDays)
+		? Math.max(1, Math.min(90, Math.floor(parsedDays)))
+		: 7;
+
+	const rawLimit = c.req.query("limit");
+	const parsedLimit = Number(rawLimit ?? 200);
+	const limit = Number.isFinite(parsedLimit)
+		? Math.max(1, Math.min(500, Math.floor(parsedLimit)))
+		: 200;
+
+	const pathPrefixRaw = c.req.query("pathPrefix");
+	const pathPrefix =
+		typeof pathPrefixRaw === "string" && pathPrefixRaw.trim()
+			? pathPrefixRaw.trim()
+			: null;
+
+	const sinceIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+	const rows = await listApiRequestLogs(c.env.DB, { sinceIso, limit, pathPrefix });
+
+	const items = rows.map((r) => {
+		let trace: any = null;
+		if (typeof r.trace_json === "string" && r.trace_json.trim()) {
+			try {
+				trace = JSON.parse(r.trace_json);
+			} catch {
+				trace = null;
+			}
+		}
+		return {
+			id: r.id,
+			userId: r.user_id,
+			apiKeyId: r.api_key_id,
+			method: r.method,
+			path: r.path,
+			status: r.status,
+			stage: r.stage,
+			aborted: !!r.aborted,
+			startedAt: r.started_at,
+			finishedAt: r.finished_at,
+			durationMs: r.duration_ms,
+			trace,
+		};
+	});
+
+	return c.json({ days, limit, sinceIso, items });
 });

@@ -604,6 +604,28 @@ CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_vendor_finished_at ON vendor
 CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_finished_at ON vendor_api_call_logs(finished_at);
 CREATE INDEX IF NOT EXISTS idx_vendor_api_call_logs_status ON vendor_api_call_logs(status);
 
+-- API request logs (slow/aborted requests; debug tracing)
+CREATE TABLE IF NOT EXISTS api_request_logs (
+	id TEXT PRIMARY KEY,
+	user_id TEXT,
+	api_key_id TEXT,
+	method TEXT NOT NULL,
+	path TEXT NOT NULL,
+	status INTEGER,
+	stage TEXT,
+	aborted INTEGER NOT NULL DEFAULT 0,
+	started_at TEXT NOT NULL,
+	finished_at TEXT,
+	duration_ms INTEGER,
+	trace_json TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_request_logs_started_at ON api_request_logs(started_at);
+CREATE INDEX IF NOT EXISTS idx_api_request_logs_path_started_at ON api_request_logs(path, started_at);
+CREATE INDEX IF NOT EXISTS idx_api_request_logs_user_started_at ON api_request_logs(user_id, started_at);
+
 -- External API keys (for browser/server clients; enforce Origin allowlist at runtime)
 CREATE TABLE IF NOT EXISTS api_keys (
 	id TEXT PRIMARY KEY,

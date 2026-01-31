@@ -42,6 +42,9 @@ export type AppEnv = {
 		apiKeyId?: string;
 		apiKeyOwnerId?: string;
 		requestId?: string;
+		traceStartedAtMs?: number;
+		traceStage?: string;
+		traceEvents?: unknown;
 		// Public API routing hints (set by /public endpoints)
 		routingTaskKind?: string;
 		proxyVendorHint?: string;

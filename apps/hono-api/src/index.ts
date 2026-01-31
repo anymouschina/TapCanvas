@@ -2,6 +2,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { honoErrorHandler } from "./middleware/error";
 import { httpDebugLoggerMiddleware } from "./middleware/httpDebugLogger";
+import { requestTraceMiddleware } from "./middleware/requestTrace";
 import { authRouter } from "./modules/auth/auth.routes";
 import { projectRouter } from "./modules/project/project.routes";
 import { flowRouter } from "./modules/flow/flow.routes";
@@ -47,6 +48,9 @@ const app = new OpenAPIHono<AppEnv>({
 		}
 	},
 });
+
+// Request tracing / slow-request watchdog (stdout + D1; enable via REQUEST_TRACE_* envs)
+app.use("*", requestTraceMiddleware);
 
 // Global HTTP debug logger (local-only; enable via DEBUG_HTTP_LOG=1)
 app.use("*", httpDebugLoggerMiddleware);

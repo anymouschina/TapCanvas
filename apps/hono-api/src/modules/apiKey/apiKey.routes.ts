@@ -44,6 +44,7 @@ import {
 import { getTaskResultByTaskId, upsertTaskResult } from "../task/task-result.repo";
 import { upsertVendorTaskRef, getVendorTaskRefByTaskId } from "../task/vendor-task-refs.repo";
 import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
+import { setTraceStage } from "../../trace";
 
 export const apiKeyRouter = new Hono<AppEnv>();
 export const publicApiRouter = new OpenAPIHono<AppEnv>({
@@ -686,6 +687,14 @@ async function runPublicTaskWithFallback(
 ): Promise<{ vendor: string; result: any }> {
 	const request = input.request;
 	const extras = (request?.extras || {}) as Record<string, any>;
+	setTraceStage(c, "public:run:begin", {
+		taskKind: request?.kind ?? null,
+		vendor: typeof input?.vendor === "string" ? input.vendor : null,
+		modelAlias:
+			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+				? extras.modelAlias.trim()
+				: null,
+	});
 	const debug = isHttpDebugLogEnabled(c);
 	const debugLog = (event: string, payload: Record<string, unknown>) => {
 		if (!debug) return;
@@ -807,6 +816,12 @@ async function runPublicTaskWithFallback(
 				? extras.modelKey.trim()
 				: null,
 	});
+	setTraceStage(c, "public:vendors:resolved", {
+		taskKind: request?.kind ?? null,
+		vendorRaw: vendorRaw || null,
+		vendorCandidates: vendorCandidates.slice(0, 12),
+		modelAlias: modelAliasRaw || null,
+	});
 
 	let preferredVendor: string | null = null;
 	if (isAutoVendor && !modelAliasRaw) {
@@ -885,6 +900,11 @@ async function runPublicTaskWithFallback(
 	let lastFailed: { vendor: string; result: any } | null = null;
 	for (const vendorCandidate of vendorCandidates) {
 		const v = normalizeDispatchVendor(vendorCandidate);
+		setTraceStage(c, "public:vendor:attempt", {
+			taskKind: request?.kind ?? null,
+			vendorCandidate,
+			dispatchVendor: v || null,
+		});
 		try {
 			const requestForVendor = (() => {
 				if (!modelAliasRaw) {
@@ -1004,6 +1024,11 @@ async function runPublicTaskWithFallback(
 			// For public endpoints, a failed TaskResult should trigger vendor fallback
 			// (e.g. missing token / upstream transient issues).
 			if (result?.status === "failed") {
+				setTraceStage(c, "public:vendor:task_failed", {
+					taskKind: request?.kind ?? null,
+					vendor: v || null,
+					resultStatus: "failed",
+				});
 				lastFailed = { vendor: v, result };
 				continue;
 			}
@@ -1115,6 +1140,22 @@ async function runPublicTaskWithFallback(
 
 			return { vendor: v, result };
 		} catch (err: any) {
+			setTraceStage(c, "public:vendor:error", {
+				taskKind: request?.kind ?? null,
+				vendorCandidate,
+				dispatchVendor: v || null,
+				code: typeof err?.code === "string" ? err.code : null,
+				status:
+					typeof err?.status === "number"
+						? err.status
+						: Number.isFinite(Number(err?.status))
+							? Number(err.status)
+							: null,
+				message:
+					typeof err?.message === "string"
+						? err.message.slice(0, 300)
+						: String(err).slice(0, 300),
+			});
 			debugLog("vendor_candidate_failed", {
 				taskKind: request?.kind ?? null,
 				vendorCandidate,
