@@ -8102,34 +8102,58 @@ async function runOpenAiCompatibleImageTaskForVendor(
 					? imageSizeRaw
 					: null;
 
-			const inputParts: any[] = [{ text: req.prompt }];
-			for (const ref of referenceImages.slice(0, 8)) {
-				const resolved = await resolveSora2ApiImageUrl(c, ref);
-				const match = resolved.match(/^data:([^;]+);base64,(.+)$/i);
-				if (!match) {
-					throw new AppError("参考图无法解析为 data:image/*;base64", {
+			const normalizeReferenceImageForDmxapi = (raw: string): string => {
+				const trimmed = (raw || "").trim();
+				if (!trimmed) return "";
+				if (/^data:image\//i.test(trimmed)) return trimmed;
+				if (/^blob:/i.test(trimmed)) {
+					throw new AppError(
+						"blob: URL 无法在 Worker 侧透传给 dmxapi，请先上传为可访问的图片地址",
+						{
+							status: 400,
+							code: "invalid_reference_image",
+							details: { url: trimmed.slice(0, 64) },
+						},
+					);
+				}
+
+				let resolved = trimmed;
+				if (resolved.startsWith("/")) {
+					try {
+						resolved = new URL(resolved, new URL(c.req.url).origin).toString();
+					} catch {
+						throw new AppError("参考图 URL 无法解析为可访问地址", {
+							status: 400,
+							code: "invalid_reference_image",
+							details: { url: trimmed.slice(0, 128) },
+						});
+					}
+				}
+
+				if (!/^https?:\/\//i.test(resolved)) {
+					throw new AppError("参考图必须是 https?:// 或 data:image/*;base64", {
 						status: 400,
 						code: "invalid_reference_image",
-						details: { url: ref.slice(0, 128) },
+						details: { url: resolved.slice(0, 128) },
 					});
 				}
-				const mimeType = (match[1] || "").trim() || "image/png";
-				const base64 = (match[2] || "").trim();
-				if (!base64) continue;
-				inputParts.push({
-					inlineData: {
-						mimeType,
-						data: base64,
-					},
-				});
-			}
 
-			if (inputParts.length <= 1) {
-				throw new AppError("未找到可用的参考图（无法上传到上游）", {
+				return resolved;
+			};
+
+			const referenceImagesForUpstream = referenceImages
+				.slice(0, 8)
+				.map(normalizeReferenceImageForDmxapi)
+				.filter(Boolean);
+
+			if (!referenceImagesForUpstream.length) {
+				throw new AppError("未找到可用的参考图（无法透传给上游）", {
 					status: 400,
 					code: "reference_images_invalid",
 				});
 			}
+
+			const inputParts: any[] = [{ text: req.prompt }];
 
 			const modelPath = `models/${model}`;
 			const geminiBase = normalizeGeminiCompatibleBaseUrl(baseUrl);
@@ -8165,17 +8189,12 @@ async function runOpenAiCompatibleImageTaskForVendor(
 			const body = {
 				contents: [{ role: "user", parts: inputParts }],
 				generationConfig,
+				referenceImages: referenceImagesForUpstream,
 			};
 
 			const logBody = {
 				...body,
-				contents: [
-					{
-						role: "user",
-						parts: inputParts.map((p) => redactGeminiInlineData(p)),
-					},
-				],
-				referenceImages: referenceImages.slice(0, 8),
+				contents: [{ role: "user", parts: inputParts }],
 			};
 
 			const generatedId = `dmxapi-img-${Date.now().toString(36)}-${crypto
