@@ -7,9 +7,8 @@
 - Header（推荐）：
   - `X-API-Key: tc_sk_...`
   - 或 `Authorization: Bearer tc_sk_...`
-- Origin 白名单：
-  - 浏览器跨站调用会自动携带 `Origin`，必须命中你创建 Key 时配置的白名单。
-  - 纯服务端（Node/Go/Java）请求通常没有 `Origin`：此时请在 Key 的 `allowedOrigins` 配置 `*`，或自行补 `Origin` 请求头。
+- CORS：
+  - 已允许任意 `Origin` 跨站调用（仍需 `X-API-Key` 鉴权）。
 
 ## 2. 通用返回结构
 

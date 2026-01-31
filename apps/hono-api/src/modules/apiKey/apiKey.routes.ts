@@ -199,10 +199,6 @@ const PublicChatOpenApiRoute = createRoute({
 			description: "Unauthorized (missing/invalid API key)",
 			content: { "application/json": { schema: PublicAppErrorSchema } },
 		},
-		403: {
-			description: "Origin not allowed",
-			content: { "application/json": { schema: PublicAppErrorSchema } },
-		},
 	},
 });
 
@@ -1249,10 +1245,6 @@ const PublicRunTaskOpenApiRoute = createRoute({
 			description: "Unauthorized (missing/invalid API key)",
 			content: { "application/json": { schema: PublicAppErrorSchema } },
 		},
-		403: {
-			description: "Origin not allowed",
-			content: { "application/json": { schema: PublicAppErrorSchema } },
-		},
 	},
 });
 
@@ -1343,10 +1335,6 @@ const PublicDrawOpenApiRoute = createRoute({
 		},
 		401: {
 			description: "Unauthorized (missing/invalid API key)",
-			content: { "application/json": { schema: PublicAppErrorSchema } },
-		},
-		403: {
-			description: "Origin not allowed",
 			content: { "application/json": { schema: PublicAppErrorSchema } },
 		},
 	},
@@ -1557,10 +1545,6 @@ const PublicVideoOpenApiRoute = createRoute({
 			description: "Unauthorized (missing/invalid API key)",
 			content: { "application/json": { schema: PublicAppErrorSchema } },
 		},
-		403: {
-			description: "Origin not allowed",
-			content: { "application/json": { schema: PublicAppErrorSchema } },
-		},
 	},
 });
 
@@ -1644,10 +1628,6 @@ const PublicFetchTaskResultOpenApiRoute = createRoute({
 		},
 		401: {
 			description: "Unauthorized (missing/invalid API key)",
-			content: { "application/json": { schema: PublicAppErrorSchema } },
-		},
-		403: {
-			description: "Origin not allowed",
 			content: { "application/json": { schema: PublicAppErrorSchema } },
 		},
 	},

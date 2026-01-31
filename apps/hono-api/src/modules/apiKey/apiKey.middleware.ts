@@ -21,40 +21,6 @@ function readApiKeyFromRequest(c: AppContext): string | null {
 	return null;
 }
 
-function normalizeOrigin(input: string): string | null {
-	const trimmed = input.trim();
-	if (!trimmed) return null;
-	try {
-		const url = new URL(trimmed);
-		if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-		return url.origin;
-	} catch {
-		return null;
-	}
-}
-
-function parseAllowedOrigins(json: string): string[] {
-	try {
-		const parsed = JSON.parse(json);
-		if (Array.isArray(parsed)) {
-			return parsed.filter(
-				(v) => typeof v === "string" && !!v.trim(),
-			) as string[];
-		}
-		return [];
-	} catch {
-		return [];
-	}
-}
-
-function isOriginAllowed(allowedOrigins: string[], originHeader: string | null): boolean {
-	if (allowedOrigins.includes("*")) return true;
-	if (!originHeader) return false;
-	const normalized = normalizeOrigin(originHeader);
-	if (!normalized) return false;
-	return allowedOrigins.includes(normalized);
-}
-
 export async function apiKeyAuthMiddleware(c: AppContext, next: Next) {
 	const apiKey = readApiKeyFromRequest(c);
 	if (!apiKey) {
@@ -70,18 +36,6 @@ export async function apiKeyAuthMiddleware(c: AppContext, next: Next) {
 		throw new AppError("Unauthorized", {
 			status: 401,
 			code: "api_key_invalid",
-		});
-	}
-
-	const allowedOrigins = parseAllowedOrigins(row.allowed_origins);
-	const originHeader = c.req.header("Origin");
-	if (!isOriginAllowed(allowedOrigins, originHeader)) {
-		throw new AppError("Origin not allowed", {
-			status: 403,
-			code: "origin_not_allowed",
-			details: {
-				origin: originHeader || null,
-			},
 		});
 	}
 
