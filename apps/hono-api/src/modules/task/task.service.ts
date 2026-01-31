@@ -8153,7 +8153,254 @@ async function runOpenAiCompatibleImageTaskForVendor(
 				});
 			}
 
-			const inputParts: any[] = [{ text: req.prompt }];
+			const MAX_REFERENCE_IMAGES = 8;
+			const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+			const REF_FETCH_TIMEOUT_MS = 25_000;
+
+			const promiseWithTimeout = async <T>(
+				promise: Promise<T>,
+				timeoutMs: number,
+				onTimeout: () => Error,
+			): Promise<T> => {
+				if (!timeoutMs || timeoutMs <= 0) return await promise;
+				return await new Promise<T>((resolve, reject) => {
+					const timer = setTimeout(() => reject(onTimeout()), timeoutMs);
+					(timer as any)?.unref?.();
+					promise.then(
+						(value) => {
+							clearTimeout(timer);
+							resolve(value);
+						},
+						(err) => {
+							clearTimeout(timer);
+							reject(err);
+						},
+					);
+				});
+			};
+
+			const resolveReferenceImageInlinePart = async (
+				raw: string,
+				idx: number,
+			): Promise<{
+				part: {
+					inlineData: { mimeType: string; data: string };
+				};
+				meta: {
+					url: string;
+					mode: "data_url_inline" | "fetched_inline";
+					contentType: string;
+					bytes: number;
+				};
+			}> => {
+				const ref = String(raw || "").trim();
+				if (!ref) {
+					throw new AppError("参考图为空", {
+						status: 400,
+						code: "invalid_reference_image",
+					});
+				}
+				if (/^blob:/i.test(ref)) {
+					throw new AppError(
+						"blob: URL 无法在 Worker 侧下载，请先上传为可访问的图片地址",
+						{
+							status: 400,
+							code: "invalid_reference_image",
+						},
+					);
+				}
+
+				const dataUrlMatch = ref.match(/^data:([^;]+);base64,(.+)$/i);
+				if (dataUrlMatch) {
+					const mimeType =
+						(dataUrlMatch[1] || "").trim() || "application/octet-stream";
+					if (!/^image\//i.test(mimeType)) {
+						throw new AppError("参考图不是 image/* 内容", {
+							status: 400,
+							code: "invalid_reference_image",
+							details: { contentType: mimeType },
+						});
+					}
+					const base64 = (dataUrlMatch[2] || "").trim();
+					const bytes = decodeBase64ToBytes(base64);
+					if (bytes.byteLength > MAX_IMAGE_BYTES) {
+						throw new AppError("参考图过大，无法透传给上游", {
+							status: 400,
+							code: "reference_image_too_large",
+							details: {
+								contentLength: bytes.byteLength,
+								maxBytes: MAX_IMAGE_BYTES,
+							},
+						});
+					}
+					return {
+						part: { inlineData: { mimeType, data: base64 } },
+						meta: {
+							url: ref.slice(0, 160),
+							mode: "data_url_inline",
+							contentType: mimeType,
+							bytes: bytes.byteLength,
+						},
+					};
+				}
+
+				let resolved = ref;
+				if (resolved.startsWith("/")) {
+					try {
+						resolved = new URL(resolved, new URL(c.req.url).origin).toString();
+					} catch {
+						resolved = ref;
+					}
+				}
+
+				if (!/^https?:\/\//i.test(resolved)) {
+					throw new AppError("参考图必须为 http(s) URL 或 data:image/*;base64", {
+						status: 400,
+						code: "invalid_reference_image",
+						details: { url: ref.slice(0, 160) },
+					});
+				}
+
+				let res: Response;
+				const controller = new AbortController();
+				const timeout = setTimeout(() => controller.abort(), REF_FETCH_TIMEOUT_MS);
+				try {
+					res = await fetchWithHttpDebugLog(
+						c,
+						resolved,
+						{
+							method: "GET",
+							headers: { Accept: "image/*,*/*;q=0.8" },
+							signal: controller.signal,
+						},
+						{ tag: `${v}:gemini:image_edit:fetch:${idx + 1}` },
+					);
+				} catch (err: any) {
+					const isAbort =
+						err?.name === "AbortError" ||
+						/aborted|timeout/i.test(err?.message || "");
+					throw new AppError(isAbort ? "参考图下载超时" : "参考图下载失败", {
+						status: 502,
+						code: isAbort
+							? "reference_image_fetch_timeout"
+							: "reference_image_fetch_failed",
+						details: { message: err?.message ?? String(err) },
+					});
+				} finally {
+					clearTimeout(timeout);
+				}
+
+				if (!res.ok) {
+					throw new AppError(`参考图下载失败: ${res.status}`, {
+						status: 502,
+						code: "reference_image_fetch_failed",
+						details: { upstreamStatus: res.status, url: resolved },
+					});
+				}
+
+				const contentType =
+					(res.headers.get("content-type") || "").split(";")[0]?.trim() ||
+					"application/octet-stream";
+				if (!/^image\//i.test(contentType)) {
+					throw new AppError("参考图不是 image/* 内容", {
+						status: 400,
+						code: "invalid_reference_image",
+						details: { contentType, url: resolved },
+					});
+				}
+
+				const lenHeader = res.headers.get("content-length");
+				const len =
+					typeof lenHeader === "string" && /^\d+$/.test(lenHeader)
+						? Number(lenHeader)
+						: null;
+				if (typeof len === "number" && Number.isFinite(len) && len > MAX_IMAGE_BYTES) {
+					throw new AppError("参考图过大，无法透传给上游", {
+						status: 400,
+						code: "reference_image_too_large",
+						details: { contentLength: len, maxBytes: MAX_IMAGE_BYTES, url: resolved },
+					});
+				}
+
+				const buf = await promiseWithTimeout(
+					res.arrayBuffer(),
+					REF_FETCH_TIMEOUT_MS,
+					() => new Error("reference_image_read_timeout"),
+				).catch((err: any) => {
+					if (String(err?.message || "").includes("reference_image_read_timeout")) {
+						try {
+							res.body?.cancel();
+						} catch {}
+						throw new AppError("参考图读取超时", {
+							status: 502,
+							code: "reference_image_fetch_timeout",
+							details: { url: resolved.slice(0, 160) },
+						});
+					}
+					throw err;
+				});
+				if (buf.byteLength > MAX_IMAGE_BYTES) {
+					throw new AppError("参考图过大，无法透传给上游", {
+						status: 400,
+						code: "reference_image_too_large",
+						details: {
+							contentLength: buf.byteLength,
+							maxBytes: MAX_IMAGE_BYTES,
+							url: resolved,
+						},
+					});
+				}
+
+				const base64 = arrayBufferToBase64(buf);
+				return {
+					part: { inlineData: { mimeType: contentType, data: base64 } },
+					meta: {
+						url: resolved.slice(0, 160),
+						mode: "fetched_inline",
+						contentType,
+						bytes: buf.byteLength,
+					},
+				};
+			};
+
+			const inlinedRefs: Array<{
+				url: string;
+				mode: "data_url_inline" | "fetched_inline";
+				contentType: string;
+				bytes: number;
+			}> = [];
+			const failedRefs: Array<{ url: string; error: string }> = [];
+			const resolvedParts: Array<{ inlineData: { mimeType: string; data: string } }> =
+				[];
+
+			const settled = await Promise.allSettled(
+				referenceImagesForUpstream
+					.slice(0, MAX_REFERENCE_IMAGES)
+					.map((ref, idx) => resolveReferenceImageInlinePart(ref, idx)),
+			);
+			for (const [idx, item] of settled.entries()) {
+				const ref = referenceImagesForUpstream[idx] || "";
+				if (item.status === "fulfilled") {
+					resolvedParts.push(item.value.part);
+					inlinedRefs.push(item.value.meta);
+					continue;
+				}
+				const msg =
+					typeof (item.reason as any)?.message === "string"
+						? (item.reason as any).message
+						: String(item.reason || "unknown error");
+				failedRefs.push({ url: ref.slice(0, 160) || `ref_${idx + 1}`, error: msg });
+			}
+
+			if (!resolvedParts.length) {
+				throw new AppError("未找到可用的参考图（无法内联到上游请求）", {
+					status: 400,
+					code: "reference_images_invalid",
+					details: { failedRefs },
+				});
+			}
+
+			const inputParts: any[] = [{ text: req.prompt }, ...resolvedParts];
 
 			const modelPath = `models/${model}`;
 			const geminiBase = normalizeGeminiCompatibleBaseUrl(baseUrl);
@@ -8189,12 +8436,19 @@ async function runOpenAiCompatibleImageTaskForVendor(
 			const body = {
 				contents: [{ role: "user", parts: inputParts }],
 				generationConfig,
-				referenceImages: referenceImagesForUpstream,
 			};
 
 			const logBody = {
 				...body,
-				contents: [{ role: "user", parts: inputParts }],
+				contents: [
+					{
+						role: "user",
+						parts: inputParts.map((p) => redactGeminiInlineData(p)),
+					},
+				],
+				referenceImages: referenceImagesForUpstream,
+				referenceImagesInlined: inlinedRefs,
+				...(failedRefs.length ? { referenceImagesFailed: failedRefs } : {}),
 			};
 
 			const generatedId = `dmxapi-img-${Date.now().toString(36)}-${crypto
