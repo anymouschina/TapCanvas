@@ -36,6 +36,7 @@ import {
 	runVeoVideoTask,
 	runGenericTaskForVendor,
 	enqueueStoredTaskForVendor,
+	enqueueStoredTaskForVendorAttempts,
 } from "../task/task.service";
 import {
 	ensureModelCatalogSchema,
@@ -263,62 +264,15 @@ function pickAutoVendorsForKind(
 	enabledSystemVendors: Set<string>,
 	extras?: Record<string, any> | null,
 ): string[] {
+	void extras;
 	const k = (kind || "").trim();
+	if (!isPublicTaskKindSupported(k)) return [];
 	const enabled = enabledSystemVendors || new Set<string>();
-	const output: string[] = [];
-
-	const addIfEnabled = (vendor: string) => {
-		const v = normalizeDispatchVendor(vendor);
-		if (!v) return;
-		if (!enabled.has(v)) return;
-		if (!output.includes(v)) output.push(v);
-	};
-
-	const addEnabledTextVendors = () => {
-		// Exclude known non-text protocols/channels to avoid predictable failures.
-		const nonText = new Set([
-			"veo",
-			"sora2api",
-			"qwen",
-			"minimax",
-			"grsai",
-			"comfly",
-			"yunwu",
-		]);
-		const rest = Array.from(enabled.values())
-			.map((v) => normalizeDispatchVendor(v))
-			.filter((v): v is string => !!v)
-			.filter((v) => !output.includes(v))
-			.filter((v) => !nonText.has(v))
-			.sort((a, b) => a.localeCompare(b));
-		for (const v of rest) output.push(v);
-	};
-
-	if (k === "text_to_image" || k === "image_edit") {
-		["gemini", "apimart", "sora2api", "qwen"].forEach(addIfEnabled);
-		return output;
-	}
-	if (k === "text_to_video") {
-		["veo", "sora2api", "apimart"].forEach(addIfEnabled);
-		const hasMiniMaxFirstFrame =
-			typeof extras?.first_frame_image === "string" ||
-			typeof extras?.firstFrameImage === "string" ||
-			typeof extras?.firstFrameUrl === "string" ||
-			typeof extras?.url === "string";
-		if (hasMiniMaxFirstFrame) addIfEnabled("minimax");
-		return output;
-	}
-	if (k === "chat" || k === "prompt_refine") {
-		["openai", "gemini", "anthropic"].forEach(addIfEnabled);
-		addEnabledTextVendors();
-		return output;
-	}
-	if (k === "image_to_prompt") {
-		["openai", "gemini"].forEach(addIfEnabled);
-		return output;
-	}
-	// Not supported for now (public API can evolve later).
-	return [];
+	const vendors = Array.from(enabled.values())
+		.map((v) => normalizeDispatchVendor(v))
+		.filter((v): v is string => !!v)
+		.sort((a, b) => a.localeCompare(b));
+	return Array.from(new Set(vendors).values());
 }
 
 function normalizeDispatchVendor(vendor: string): string {
@@ -912,7 +866,9 @@ async function runPublicTask(
 		modelAlias: modelAliasRaw || null,
 	});
 
-	for (const vendorCandidate of vendorCandidates.slice(0, 1)) {
+	let lastErr: any = null;
+	let lastFailed: { vendor: string; result: any } | null = null;
+	for (const vendorCandidate of vendorCandidates) {
 		const v = normalizeDispatchVendor(vendorCandidate);
 		setTraceStage(c, "public:vendor:attempt", {
 			taskKind: request?.kind ?? null,
@@ -1040,14 +996,17 @@ async function runPublicTask(
 				result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
 			}
 
-				// Public API: do not vendor-fallback; just return failed status.
-				if (result?.status === "failed") {
-					setTraceStage(c, "public:vendor:task_failed", {
-						taskKind: request?.kind ?? null,
-						vendor: v || null,
-						resultStatus: "failed",
-					});
-				}
+			// For public endpoints, a failed TaskResult should trigger vendor fallback
+			// (e.g. missing token / upstream transient issues).
+			if (result?.status === "failed") {
+				setTraceStage(c, "public:vendor:task_failed", {
+					taskKind: request?.kind ?? null,
+					vendor: v || null,
+					resultStatus: "failed",
+				});
+				lastFailed = { vendor: v, result };
+				continue;
+			}
 
 			// dmxapi: sync image response still needs to follow "taskId -> poll result" contract.
 			if (
@@ -1189,10 +1148,13 @@ async function runPublicTask(
 					details: err?.details ?? undefined,
 				},
 			});
-			throw err;
+			lastErr = err;
+			continue;
 		}
+	}
 
-	throw new Error("run public task failed");
+	if (lastFailed) return lastFailed;
+	throw lastErr || new Error("run public task failed");
 }
 
 // Unified public task API: supports image/video/chat via API key.
@@ -1296,7 +1258,7 @@ const PublicDrawOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "绘图 /public/draw",
 	description:
-		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（vendor=auto 会选择一个可用厂商执行；不会自动回退）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
+		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（vendor=auto 会在系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
 	request: {
 		body: {
 			required: true,
@@ -1387,14 +1349,67 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 		(input.async !== false && vendorRaw === "auto" && looksLikeNanoBananaAlias);
 
 	if (preferAsync) {
-		const enabledSystemVendors = await (async () => {
-			if (!dispatchVendor && vendorRaw === "auto") {
-				const resolved = await resolvePublicTaskVendors(c, userId, input.vendor, request);
-				dispatchVendor = normalizeDispatchVendor(resolved.vendorCandidates[0] || "");
-				return resolved.enabledSystemVendors;
+		if (vendorRaw === "auto") {
+			const resolved = await resolvePublicTaskVendors(c, userId, input.vendor, request);
+
+			const attempts = resolved.vendorCandidates
+				.map((candidate) => {
+					const v = normalizeDispatchVendor(candidate);
+					if (!v) return null;
+
+					const requestForVendor = (() => {
+						const cleanExtras = { ...(extras || {}) } as Record<string, any>;
+						delete (cleanExtras as any).modelAlias;
+						if (!modelAliasRaw) return { ...request, extras: cleanExtras };
+
+						const mappedModelKey = resolved.aliasMap?.get(v || "");
+						if (!mappedModelKey) return null;
+						cleanExtras.modelKey = mappedModelKey;
+						return { ...request, extras: cleanExtras };
+					})();
+
+					if (!requestForVendor) return null;
+					return { vendor: v, request: requestForVendor as any };
+				})
+				.filter(Boolean) as Array<{ vendor: string; request: any }>;
+
+			if (!attempts.length) {
+				throw new AppError(
+					"没有可用的全局厂商配置（请在 /stats -> 模型管理（系统级）启用并配置 API Key）",
+					{
+						status: 400,
+						code: "no_enabled_vendor",
+						details: {
+							kind: request?.kind,
+							vendorRaw: vendorRaw || null,
+							vendorCandidates: resolved.vendorCandidates,
+							systemEnabledVendors: Array.from(resolved.enabledSystemVendors.values()),
+							modelAlias: modelAliasRaw || null,
+						},
+					},
+				);
 			}
-			return listEnabledSystemVendors(c);
-		})();
+
+			try {
+				// Hint proxy selector: prefer higher-success channels for this task kind.
+				if (request?.kind) c.set("routingTaskKind", request.kind);
+			} catch {
+				// ignore
+			}
+
+			const result = await enqueueStoredTaskForVendorAttempts(c as any, userId, attempts);
+			const firstVendor = normalizeDispatchVendor(attempts[0]?.vendor || "");
+
+			return c.json(
+				PublicRunTaskResponseSchema.parse({
+					vendor: firstVendor || "auto",
+					result,
+				}),
+				200,
+			);
+		}
+
+		const enabledSystemVendors = await listEnabledSystemVendors(c);
 
 		if (!dispatchVendor) {
 			return c.json(
@@ -1518,7 +1533,7 @@ const PublicVideoOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "生成视频 /public/video",
 	description:
-		"便捷视频接口：创建 text_to_video 任务（vendor=auto 会选择一个可用厂商执行；不会自动回退；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
+		"便捷视频接口：创建 text_to_video 任务（vendor=auto 会在系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
 	request: {
 		body: {
 			required: true,

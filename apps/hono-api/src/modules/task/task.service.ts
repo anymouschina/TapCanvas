@@ -351,6 +351,357 @@ export async function enqueueStoredTaskForVendor(
 	return initial;
 }
 
+export async function enqueueStoredTaskForVendorAttempts(
+	c: AppContext,
+	userId: string,
+	inputAttempts: Array<{ vendor: string; request: TaskRequestDto }>,
+	options?: { taskId?: string | null },
+): Promise<TaskResult> {
+	const attempts = (() => {
+		const out: Array<{ vendorKey: string; request: TaskRequestDto }> = [];
+		const seen = new Set<string>();
+		for (const attempt of inputAttempts) {
+			const vendorKey = normalizeVendorKey(attempt?.vendor || "");
+			if (!vendorKey || vendorKey === "auto") continue;
+			if (seen.has(vendorKey)) continue;
+			seen.add(vendorKey);
+			if (!attempt?.request?.kind) continue;
+			out.push({ vendorKey, request: attempt.request });
+		}
+		return out;
+	})();
+
+	if (!attempts.length) {
+		throw new AppError("No vendor candidates for stored task", {
+			status: 400,
+			code: "vendor_required",
+		});
+	}
+
+	const taskIdFromClient =
+		typeof options?.taskId === "string" && options.taskId.trim()
+			? options.taskId.trim()
+			: "";
+	const taskId = taskIdFromClient || `task_${crypto.randomUUID()}`;
+	const nowIso = new Date().toISOString();
+	const kind = attempts[0]!.request.kind;
+
+	const refKind = (() => {
+		if (kind === "text_to_video" || kind === "image_to_video") return "video";
+		if (kind === "text_to_image" || kind === "image_edit") return "image";
+		return null;
+	})();
+
+	const initialVendorKey = attempts[0]!.vendorKey;
+	const initial = TaskResultSchema.parse({
+		id: taskId,
+		kind,
+		status: "queued",
+		assets: [],
+		raw: {
+			provider: "task_store",
+			vendor: initialVendorKey,
+			mode: "async",
+			enqueuedAt: nowIso,
+			vendorCandidates: attempts.map((a) => a.vendorKey),
+		},
+	});
+
+	await upsertTaskResult(c.env.DB, {
+		userId,
+		taskId,
+		vendor: initialVendorKey,
+		kind,
+		status: initial.status,
+		result: initial,
+		completedAt: null,
+		nowIso,
+	});
+
+	if (refKind) {
+		try {
+			await upsertVendorTaskRef(
+				c.env.DB,
+				userId,
+				{ kind: refKind as any, taskId, vendor: initialVendorKey },
+				nowIso,
+			);
+		} catch (err: any) {
+			console.warn(
+				"[vendor-task-refs] upsert async task ref failed",
+				err?.message || err,
+			);
+		}
+	}
+
+	// Make pending tasks visible in /tasks/logs immediately.
+	await recordVendorCallPayloads(c, {
+		userId,
+		vendor: initialVendorKey,
+		taskId,
+		taskKind: kind,
+		request: {
+			vendor: "auto",
+			request: attempts[0]!.request,
+			vendorCandidates: attempts.map((a) => a.vendorKey),
+		},
+	});
+	await recordVendorCallFromTaskResult(c, {
+		userId,
+		vendor: initialVendorKey,
+		taskKind: kind,
+		result: initial,
+	});
+
+	const execCtx = (c as any)?.executionCtx;
+	const runInBackground = async () => {
+		const startedAtMs = Date.now();
+		let lastErr: any = null;
+		let lastFailed: { vendorKey: string; result: TaskResult } | null = null;
+
+		try {
+			const startedIso = new Date().toISOString();
+			const runningBase = TaskResultSchema.parse({
+				...initial,
+				status: "running",
+				raw: {
+					...(typeof initial.raw === "object" && initial.raw ? (initial.raw as any) : {}),
+					startedAt: startedIso,
+				},
+			});
+
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor: initialVendorKey,
+				kind,
+				status: runningBase.status,
+				result: runningBase,
+				completedAt: null,
+				nowIso: startedIso,
+			});
+			await recordVendorCallFromTaskResult(c, {
+				userId,
+				vendor: initialVendorKey,
+				taskKind: kind,
+				result: runningBase,
+			});
+
+			for (let i = 0; i < attempts.length; i += 1) {
+				const attempt = attempts[i]!;
+				const vendorKey = attempt.vendorKey;
+
+				const running = TaskResultSchema.parse({
+					...runningBase,
+					raw: {
+						...(typeof runningBase.raw === "object" && runningBase.raw
+							? (runningBase.raw as any)
+							: {}),
+						vendor: vendorKey,
+						attempt: { index: i, total: attempts.length },
+					},
+				});
+
+				await upsertTaskResult(c.env.DB, {
+					userId,
+					taskId,
+					vendor: vendorKey,
+					kind,
+					status: running.status,
+					result: running,
+					completedAt: null,
+					nowIso: new Date().toISOString(),
+				});
+
+				await recordVendorCallPayloads(c, {
+					userId,
+					vendor: vendorKey,
+					taskId,
+					taskKind: kind,
+					request: { vendor: vendorKey, request: attempt.request },
+				});
+				await recordVendorCallFromTaskResult(c, {
+					userId,
+					vendor: vendorKey,
+					taskKind: kind,
+					result: running,
+				});
+
+				try {
+					const result = await runGenericTaskForVendor(
+						c,
+						userId,
+						vendorKey,
+						attempt.request,
+						{ forceTaskId: taskId },
+					);
+
+					if (result?.status === "failed") {
+						lastFailed = { vendorKey, result };
+						continue;
+					}
+
+					const completedAt =
+						result.status === "succeeded" || result.status === "failed"
+							? new Date().toISOString()
+							: null;
+					await upsertTaskResult(c.env.DB, {
+						userId,
+						taskId,
+						vendor: vendorKey,
+						kind,
+						status: result.status,
+						result,
+						completedAt,
+						nowIso: completedAt || new Date().toISOString(),
+					});
+					if (refKind) {
+						try {
+							await upsertVendorTaskRef(
+								c.env.DB,
+								userId,
+								{ kind: refKind as any, taskId, vendor: vendorKey },
+								completedAt || new Date().toISOString(),
+							);
+						} catch (err: any) {
+							console.warn(
+								"[vendor-task-refs] update async task ref failed",
+								err?.message || err,
+							);
+						}
+					}
+					return;
+				} catch (err: any) {
+					lastErr = err;
+
+					const message =
+						typeof err?.message === "string" && err.message.trim()
+							? err.message.trim()
+							: "任务执行失败";
+					const failedAttempt = TaskResultSchema.parse({
+						id: taskId,
+						kind,
+						status: "failed",
+						assets: [],
+						raw: {
+							provider: "task_store",
+							vendor: vendorKey,
+							mode: "async",
+							error: message,
+							stack: typeof err?.stack === "string" ? err.stack : undefined,
+							attempt: { index: i, total: attempts.length },
+						},
+					});
+
+					try {
+						await recordVendorCallFromTaskResult(c, {
+							userId,
+							vendor: vendorKey,
+							taskKind: kind,
+							result: failedAttempt,
+							durationMs: Date.now() - startedAtMs,
+						});
+					} catch (logErr: any) {
+						console.warn(
+							"[vendor-call-logs] record failed attempt failed",
+							logErr?.message || logErr,
+						);
+					}
+					continue;
+				}
+			}
+
+			// Exhausted candidates: persist the last failed TaskResult if available.
+			if (lastFailed) {
+				const completedAt = new Date().toISOString();
+				await upsertTaskResult(c.env.DB, {
+					userId,
+					taskId,
+					vendor: lastFailed.vendorKey,
+					kind,
+					status: "failed",
+					result: lastFailed.result,
+					completedAt,
+					nowIso: completedAt,
+				});
+				if (refKind) {
+					try {
+						await upsertVendorTaskRef(
+							c.env.DB,
+							userId,
+							{ kind: refKind as any, taskId, vendor: lastFailed.vendorKey },
+							completedAt,
+						);
+					} catch (err: any) {
+						console.warn(
+							"[vendor-task-refs] update async task ref failed",
+							err?.message || err,
+						);
+					}
+				}
+				return;
+			}
+		} catch (err: any) {
+			lastErr = err;
+		}
+
+		const completedAt = new Date().toISOString();
+		const message =
+			typeof lastErr?.message === "string" && lastErr.message.trim()
+				? lastErr.message.trim()
+				: "任务执行失败";
+		const failed = TaskResultSchema.parse({
+			id: taskId,
+			kind,
+			status: "failed",
+			assets: [],
+			raw: {
+				provider: "task_store",
+				vendor: initialVendorKey,
+				mode: "async",
+				error: message,
+				stack: typeof lastErr?.stack === "string" ? lastErr.stack : undefined,
+				vendorCandidates: attempts.map((a) => a.vendorKey),
+			},
+		});
+
+		try {
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor: initialVendorKey,
+				kind,
+				status: failed.status,
+				result: failed,
+				completedAt,
+				nowIso: completedAt,
+			});
+		} catch (persistErr: any) {
+			console.warn(
+				"[task-store] persist async failure failed",
+				persistErr?.message || persistErr,
+			);
+		}
+
+		await recordVendorCallFromTaskResult(c, {
+			userId,
+			vendor: initialVendorKey,
+			taskKind: kind,
+			result: failed,
+			durationMs: Date.now() - startedAtMs,
+		});
+	};
+
+	if (execCtx && typeof execCtx.waitUntil === "function") {
+		execCtx.waitUntil(runInBackground());
+	} else {
+		// Fallback (e.g. unit tests / non-worker runtimes): execute inline.
+		await runInBackground();
+	}
+
+	return initial;
+}
+
 async function recordVendorCallStarted(
 	c: AppContext,
 	input: { userId: string; vendor: string; taskId: string; taskKind?: string | null },

@@ -32,7 +32,11 @@ export const UpdateApiKeyRequestSchema = z.object({
 });
 
 export const PublicChatRequestSchema = z.object({
-	vendor: z.string().optional(),
+	vendor: z.string().optional().openapi({
+		description:
+			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽。",
+		example: "auto",
+	}),
 	prompt: z.string().min(1),
 	modelKey: z.string().optional(),
 	modelAlias: z.string().optional(),
@@ -53,7 +57,11 @@ export type PublicChatResponseDto = z.infer<typeof PublicChatResponseSchema>;
 // ---- Public tasks (API key) ----
 
 export const PublicRunTaskRequestSchema = z.object({
-	vendor: z.string().optional(),
+	vendor: z.string().optional().openapi({
+		description:
+			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽。",
+		example: "auto",
+	}),
 	request: TaskRequestSchema,
 });
 
@@ -68,7 +76,11 @@ export type PublicRunTaskResponseDto = z.infer<typeof PublicRunTaskResponseSchem
 
 export const PublicFetchTaskResultRequestSchema = z.object({
 	taskId: z.string().min(1),
-	vendor: z.string().optional(),
+	vendor: z.string().optional().openapi({
+		description:
+			"任务所属厂商（可选）；不传或传 auto 时会尝试基于 taskId 推断；若无法推断则需要显式传 vendor。",
+		example: "auto",
+	}),
 	taskKind: TaskKindSchema.optional(),
 	prompt: z.string().nullable().optional(),
 });
@@ -89,12 +101,12 @@ export type PublicFetchTaskResultResponseDto = z.infer<
 export const PublicDrawRequestSchema = z.object({
 	vendor: z.string().optional().openapi({
 		description:
-			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商里选择一个执行（不会自动回退/重试其他厂商）。",
+			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽。",
 		example: "auto",
 	}),
 	async: z.boolean().optional().openapi({
 		description:
-			"是否异步执行（立即返回 taskId，结果通过 /public/tasks/result 轮询）。部分慢厂商建议开启；默认 false。",
+			"是否异步执行（立即返回 taskId，结果通过 /public/tasks/result 轮询）。默认 false；当 vendor=tuzi 或 vendor=auto 且 extras.modelAlias 以 nano-banana 开头时，为避免请求超时会默认启用（除非显式传 async=false）。",
 		example: true,
 	}),
 	kind: z.enum(["text_to_image", "image_edit"]).optional().openapi({
@@ -144,7 +156,11 @@ export const PublicDrawRequestSchema = z.object({
 export type PublicDrawRequestDto = z.infer<typeof PublicDrawRequestSchema>;
 
 export const PublicVideoRequestSchema = z.object({
-	vendor: z.string().optional(),
+	vendor: z.string().optional().openapi({
+		description:
+			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽。",
+		example: "auto",
+	}),
 	prompt: z.string().min(1),
 	durationSeconds: z.number().optional(),
 	extras: z.record(z.any()).optional(),

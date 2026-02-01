@@ -194,7 +194,7 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 会基于系统级已启用的厂商选择一个厂商执行（可用厂商来自 \`/model-catalog/vendors\`；不会自动回退/重试其他厂商）。
+- \`vendor=auto\` 会在系统级已启用且已配置的厂商列表中依次尝试，直到成功或候选耗尽（可用厂商来自 \`/model-catalog/vendors\`；顺序可能基于近期成功率动态排序）。
 - \`extras.modelAlias\` 用于选择模型（Public 统一别名；推荐；默认=同 modelKey）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
 - 兼容：仍支持 \`extras.modelKey\`（厂商内 modelKey），但不建议对外暴露。
 
@@ -252,7 +252,7 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 会从系统级已启用的厂商中选择一个执行（不会自动回退/重试其他厂商）。
+- \`vendor=auto\` 会在系统级已启用且已配置的厂商列表中依次尝试，直到成功或候选耗尽（顺序可能基于近期成功率动态排序）。
 - MiniMax（hailuo）通常需要首帧图片，放在 \`extras.firstFrameUrl\` / \`extras.firstFrameImage\` / \`extras.first_frame_image\` / \`extras.url\` 等字段中。
 
 请求体（完整字段，按需填写）：
