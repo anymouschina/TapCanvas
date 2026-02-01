@@ -1372,15 +1372,19 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 			? extras.modelAlias.trim()
 			: "";
 	const looksLikeNanoBananaAlias = /^nano-banana/i.test(modelAliasRaw);
+    const enabledSystemVendors = await listEnabledSystemVendors(c);
 
 	// nano-banana models are slow sync calls; allow vendor=auto to go async safely by pinning to gemini.
 	if (!dispatchVendor && vendorRaw === "auto" && looksLikeNanoBananaAlias) {
-		dispatchVendor = "gemini";
+		const vendorArr =  Array.from(enabledSystemVendors);
+		dispatchVendor =  vendorArr[Math.floor(Math.random() * 10000) % vendorArr.length]
+
 	}
 	const preferAsync =
 		input.async === true ||
 		(input.async !== false && dispatchVendor === "tuzi") ||
 		(input.async !== false && vendorRaw === "auto" && looksLikeNanoBananaAlias);
+		console.log(enabledSystemVendors,'enabledSystemVendors',dispatchVendor)
 
 	if (preferAsync) {
 		if (!dispatchVendor) {
@@ -1393,7 +1397,6 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 			);
 		}
 
-		const enabledSystemVendors = await listEnabledSystemVendors(c);
 		if (!enabledSystemVendors.has(dispatchVendor)) {
 			throw new AppError("该厂商已禁用或未配置（系统级）", {
 				status: 400,
