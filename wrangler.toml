@@ -1,4 +1,4 @@
-name = "tap-anvas"
+name = "webcut-main"
 main = "cloudflare/worker.ts"
 compatibility_date = "2025-01-01"
 
