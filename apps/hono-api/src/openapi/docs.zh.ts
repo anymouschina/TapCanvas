@@ -194,7 +194,7 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 会基于系统级已启用的厂商自动回退（可用厂商来自 \`/model-catalog/vendors\`；默认优先顺序：\`gemini\` → \`apimart\` → \`sora2api\` → \`qwen\`）。
+- \`vendor=auto\` 会基于系统级已启用的厂商选择一个厂商执行（可用厂商来自 \`/model-catalog/vendors\`；不会自动回退/重试其他厂商）。
 - \`extras.modelAlias\` 用于选择模型（Public 统一别名；推荐；默认=同 modelKey）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
 - 兼容：仍支持 \`extras.modelKey\`（厂商内 modelKey），但不建议对外暴露。
 
@@ -252,7 +252,7 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 默认优先 \`veo\` / \`sora2api\` / \`apimart\`，如带首帧参数也会尝试 \`minimax\`。
+- \`vendor=auto\` 会从系统级已启用的厂商中选择一个执行（不会自动回退/重试其他厂商）。
 - MiniMax（hailuo）通常需要首帧图片，放在 \`extras.firstFrameUrl\` / \`extras.firstFrameImage\` / \`extras.first_frame_image\` / \`extras.url\` 等字段中。
 
 请求体（完整字段，按需填写）：

@@ -89,7 +89,7 @@ export type PublicFetchTaskResultResponseDto = z.infer<
 export const PublicDrawRequestSchema = z.object({
 	vendor: z.string().optional().openapi({
 		description:
-			"指定厂商 key（默认 auto）；vendor=auto 会从 /model-catalog/vendors 中 enabled 且已配置 API Key（或 authType=none）的厂商里自动回退。",
+			"指定厂商 key（默认 auto）；vendor=auto 会从系统级已启用且已配置的厂商里选择一个执行（不会自动回退/重试其他厂商）。",
 		example: "auto",
 	}),
 	async: z.boolean().optional().openapi({

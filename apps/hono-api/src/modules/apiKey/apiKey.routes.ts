@@ -229,7 +229,7 @@ publicApiRouter.openapi(PublicChatOpenApiRoute, async (c) => {
 		},
 	};
 
-	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
+	const { vendor, result } = await runPublicTask(c, userId, {
 		vendor: input.vendor ?? "auto",
 		request,
 	});
@@ -571,25 +571,7 @@ async function rankVendorsByRecentPerformance(
 	if (isVideoTaskKind) {
 		const MIN_CALLS_PER_VENDOR = 100;
 		const isWarm = scored.every((s) => s.total >= MIN_CALLS_PER_VENDOR);
-
-		const randomInt = (maxExclusive: number) => {
-			const max = Math.max(0, Math.floor(maxExclusive));
-			if (max <= 1) return 0;
-			const buf = new Uint32Array(1);
-			crypto.getRandomValues(buf);
-			return buf[0]! % max;
-		};
-
-		if (!isWarm) {
-			const shuffled = [...deduped];
-			for (let i = shuffled.length - 1; i > 0; i--) {
-				const j = randomInt(i + 1);
-				const tmp = shuffled[i]!;
-				shuffled[i] = shuffled[j]!;
-				shuffled[j] = tmp;
-			}
-			return shuffled;
-		}
+		if (!isWarm) return deduped;
 
 		const sorted = scored.sort((a, b) => {
 			if (b.rate !== a.rate) return b.rate - a.rate;
@@ -676,42 +658,25 @@ async function resolvePreferredVendorFromModelCatalog(
 	return null;
 }
 
-async function runPublicTaskWithFallback(
+type ResolvedPublicTaskVendors = {
+	vendorRaw: string;
+	enabledSystemVendors: Set<string>;
+	rawCandidates: string[];
+	vendorCandidates: string[];
+	modelAliasRaw: string;
+	aliasMap: Map<string, string> | null;
+};
+
+async function resolvePublicTaskVendors(
 	c: any,
 	userId: string,
-	input: any,
-): Promise<{ vendor: string; result: any }> {
-	const request = input.request;
+	inputVendor: unknown,
+	request: any,
+): Promise<ResolvedPublicTaskVendors> {
 	const extras = (request?.extras || {}) as Record<string, any>;
-	setTraceStage(c, "public:run:begin", {
-		taskKind: request?.kind ?? null,
-		vendor: typeof input?.vendor === "string" ? input.vendor : null,
-		modelAlias:
-			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
-				? extras.modelAlias.trim()
-				: null,
-	});
-	const debug = isHttpDebugLogEnabled(c);
-	const debugLog = (event: string, payload: Record<string, unknown>) => {
-		if (!debug) return;
-		try {
-			console.log(
-				JSON.stringify({
-					ts: new Date().toISOString(),
-					type: "public_task_debug",
-					event,
-					...payload,
-				}),
-			);
-		} catch {
-			// best-effort only
-		}
-	};
-
-	// Hint proxy selector: prefer higher-success channels for this task kind.
-	if (request?.kind) c.set("routingTaskKind", request.kind);
-
-	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
+	const vendorRaw = ((typeof inputVendor === "string" ? inputVendor : "") || "auto")
+		.trim()
+		.toLowerCase();
 	const enabledSystemVendors = await listEnabledSystemVendors(c);
 	const isAutoVendor = vendorRaw === "auto";
 	const explicitVendor = !isAutoVendor ? normalizeDispatchVendor(vendorRaw) : "";
@@ -741,7 +706,7 @@ async function runPublicTaskWithFallback(
 		? rawCandidates
 		: rawCandidates.filter((v) => !!normalizeDispatchVendor(v));
 
-	const modelKeyByVendorFromAlias = (async (): Promise<Map<string, string> | null> => {
+	const aliasMap = await (async (): Promise<Map<string, string> | null> => {
 		if (!modelAliasRaw) return null;
 		const expectedKind = resolveCatalogKindForTaskKind(request?.kind ?? null);
 		try {
@@ -772,7 +737,6 @@ async function runPublicTaskWithFallback(
 		}
 	})();
 
-	const aliasMap = await modelKeyByVendorFromAlias;
 	if (modelAliasRaw) {
 		const supported =
 			aliasMap && aliasMap.size
@@ -783,41 +747,24 @@ async function runPublicTaskWithFallback(
 				: [];
 
 		if (!supported.length) {
-			throw new AppError("未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）", {
-				status: 400,
-				code: "model_alias_not_found",
-				details: {
-					taskKind: request?.kind ?? null,
-					vendorRaw: vendorRaw || null,
-					rawCandidates,
-					systemEnabledVendors: Array.from(enabledSystemVendors.values()),
-					modelAlias: modelAliasRaw,
+			throw new AppError(
+				"未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）",
+				{
+					status: 400,
+					code: "model_alias_not_found",
+					details: {
+						taskKind: request?.kind ?? null,
+						vendorRaw: vendorRaw || null,
+						rawCandidates,
+						systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+						modelAlias: modelAliasRaw,
+					},
 				},
-			});
+			);
 		}
 
-		// Enforce alias selection: only try vendors that have the alias mapped.
 		vendorCandidates = supported;
 	}
-
-	debugLog("vendor_candidates_resolved", {
-		taskKind: request?.kind ?? null,
-		vendorRaw: vendorRaw || null,
-		rawCandidates,
-		vendorCandidates,
-		systemEnabledVendors: Array.from(enabledSystemVendors.values()),
-		modelAlias: modelAliasRaw || null,
-		modelKey:
-			typeof extras?.modelKey === "string" && extras.modelKey.trim()
-				? extras.modelKey.trim()
-				: null,
-	});
-	setTraceStage(c, "public:vendors:resolved", {
-		taskKind: request?.kind ?? null,
-		vendorRaw: vendorRaw || null,
-		vendorCandidates: vendorCandidates.slice(0, 12),
-		modelAlias: modelAliasRaw || null,
-	});
 
 	let preferredVendor: string | null = null;
 	if (isAutoVendor && !modelAliasRaw) {
@@ -892,9 +839,80 @@ async function runPublicTaskWithFallback(
 		);
 	}
 
-	let lastErr: any = null;
-	let lastFailed: { vendor: string; result: any } | null = null;
-	for (const vendorCandidate of vendorCandidates) {
+	return {
+		vendorRaw,
+		enabledSystemVendors,
+		rawCandidates,
+		vendorCandidates,
+		modelAliasRaw,
+		aliasMap,
+	};
+}
+
+async function runPublicTask(
+	c: any,
+	userId: string,
+	input: any,
+): Promise<{ vendor: string; result: any }> {
+	const request = input.request;
+	const extras = (request?.extras || {}) as Record<string, any>;
+	setTraceStage(c, "public:run:begin", {
+		taskKind: request?.kind ?? null,
+		vendor: typeof input?.vendor === "string" ? input.vendor : null,
+		modelAlias:
+			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+				? extras.modelAlias.trim()
+				: null,
+	});
+	const debug = isHttpDebugLogEnabled(c);
+	const debugLog = (event: string, payload: Record<string, unknown>) => {
+		if (!debug) return;
+		try {
+			console.log(
+				JSON.stringify({
+					ts: new Date().toISOString(),
+					type: "public_task_debug",
+					event,
+					...payload,
+				}),
+			);
+		} catch {
+			// best-effort only
+		}
+	};
+
+	// Hint proxy selector: prefer higher-success channels for this task kind.
+	if (request?.kind) c.set("routingTaskKind", request.kind);
+
+	const {
+		vendorRaw,
+		enabledSystemVendors,
+		rawCandidates,
+		vendorCandidates,
+		modelAliasRaw,
+		aliasMap,
+	} = await resolvePublicTaskVendors(c, userId, input?.vendor, request);
+
+	debugLog("vendor_candidates_resolved", {
+		taskKind: request?.kind ?? null,
+		vendorRaw: vendorRaw || null,
+		rawCandidates,
+		vendorCandidates,
+		systemEnabledVendors: Array.from(enabledSystemVendors.values()),
+		modelAlias: modelAliasRaw || null,
+		modelKey:
+			typeof extras?.modelKey === "string" && extras.modelKey.trim()
+				? extras.modelKey.trim()
+				: null,
+	});
+	setTraceStage(c, "public:vendors:resolved", {
+		taskKind: request?.kind ?? null,
+		vendorRaw: vendorRaw || null,
+		vendorCandidates: vendorCandidates.slice(0, 12),
+		modelAlias: modelAliasRaw || null,
+	});
+
+	for (const vendorCandidate of vendorCandidates.slice(0, 1)) {
 		const v = normalizeDispatchVendor(vendorCandidate);
 		setTraceStage(c, "public:vendor:attempt", {
 			taskKind: request?.kind ?? null,
@@ -912,7 +930,7 @@ async function runPublicTaskWithFallback(
 
 				const mappedModelKey = aliasMap?.get(v || "");
 				if (!mappedModelKey) {
-					// vendorCandidates should already be filtered, but keep a defensive fallback.
+					// vendorCandidates should already be filtered, but keep a defensive guard.
 					throw new AppError("未找到别名对应的模型 Key", {
 						status: 400,
 						code: "model_alias_not_found",
@@ -1022,17 +1040,14 @@ async function runPublicTaskWithFallback(
 				result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
 			}
 
-			// For public endpoints, a failed TaskResult should trigger vendor fallback
-			// (e.g. missing token / upstream transient issues).
-			if (result?.status === "failed") {
-				setTraceStage(c, "public:vendor:task_failed", {
-					taskKind: request?.kind ?? null,
-					vendor: v || null,
-					resultStatus: "failed",
-				});
-				lastFailed = { vendor: v, result };
-				continue;
-			}
+				// Public API: do not vendor-fallback; just return failed status.
+				if (result?.status === "failed") {
+					setTraceStage(c, "public:vendor:task_failed", {
+						taskKind: request?.kind ?? null,
+						vendor: v || null,
+						resultStatus: "failed",
+					});
+				}
 
 			// dmxapi: sync image response still needs to follow "taskId -> poll result" contract.
 			if (
@@ -1174,13 +1189,10 @@ async function runPublicTaskWithFallback(
 					details: err?.details ?? undefined,
 				},
 			});
-			lastErr = err;
-			continue;
+			throw err;
 		}
-	}
 
-	if (lastFailed) return lastFailed;
-	throw lastErr || new Error("run public task failed");
+	throw new Error("run public task failed");
 }
 
 // Unified public task API: supports image/video/chat via API key.
@@ -1254,11 +1266,7 @@ publicApiRouter.openapi(PublicRunTaskOpenApiRoute, async (c) => {
 	const input = c.req.valid("json");
 
 	try {
-		const { vendor, result } = await runPublicTaskWithFallback(
-			c,
-			userId,
-			input,
-		);
+		const { vendor, result } = await runPublicTask(c, userId, input);
 		return c.json(
 			PublicRunTaskResponseSchema.parse({
 				vendor,
@@ -1288,7 +1296,7 @@ const PublicDrawOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "绘图 /public/draw",
 	description:
-		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（会自动 vendor 回退）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
+		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（vendor=auto 会选择一个可用厂商执行；不会自动回退）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
 	request: {
 		body: {
 			required: true,
@@ -1372,21 +1380,22 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 			? extras.modelAlias.trim()
 			: "";
 	const looksLikeNanoBananaAlias = /^nano-banana/i.test(modelAliasRaw);
-    const enabledSystemVendors = await listEnabledSystemVendors(c);
 
-	// nano-banana models are slow sync calls; allow vendor=auto to go async safely by pinning to gemini.
-	if (!dispatchVendor && vendorRaw === "auto" && looksLikeNanoBananaAlias) {
-		const vendorArr =  Array.from(enabledSystemVendors);
-		dispatchVendor =  vendorArr[Math.floor(Math.random() * 10000) % vendorArr.length]
-
-	}
 	const preferAsync =
 		input.async === true ||
 		(input.async !== false && dispatchVendor === "tuzi") ||
 		(input.async !== false && vendorRaw === "auto" && looksLikeNanoBananaAlias);
-		console.log(enabledSystemVendors,'enabledSystemVendors',dispatchVendor)
 
 	if (preferAsync) {
+		const enabledSystemVendors = await (async () => {
+			if (!dispatchVendor && vendorRaw === "auto") {
+				const resolved = await resolvePublicTaskVendors(c, userId, input.vendor, request);
+				dispatchVendor = normalizeDispatchVendor(resolved.vendorCandidates[0] || "");
+				return resolved.enabledSystemVendors;
+			}
+			return listEnabledSystemVendors(c);
+		})();
+
 		if (!dispatchVendor) {
 			return c.json(
 				{
@@ -1409,7 +1418,7 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 			});
 		}
 
-		// Map modelAlias -> modelKey for this explicit vendor (keeps behavior aligned with fallback runner).
+		// Map modelAlias -> modelKey for this explicit vendor (keeps behavior aligned with /public/tasks).
 		const requestForVendor = await (async () => {
 			if (!modelAliasRaw) {
 				const cleanExtras = { ...(extras || {}) } as Record<string, any>;
@@ -1489,7 +1498,7 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 		);
 	}
 
-	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
+	const { vendor, result } = await runPublicTask(c, userId, {
 		vendor: input.vendor,
 		request,
 	});
@@ -1509,7 +1518,7 @@ const PublicVideoOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "生成视频 /public/video",
 	description:
-		"便捷视频接口：创建 text_to_video 任务（会自动 vendor 回退；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
+		"便捷视频接口：创建 text_to_video 任务（vendor=auto 会选择一个可用厂商执行；不会自动回退；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
 	request: {
 		body: {
 			required: true,
@@ -1576,7 +1585,7 @@ publicApiRouter.openapi(PublicVideoOpenApiRoute, async (c) => {
 		extras,
 	};
 
-	const { vendor, result } = await runPublicTaskWithFallback(c, userId, {
+	const { vendor, result } = await runPublicTask(c, userId, {
 		vendor: input.vendor,
 		request,
 	});
