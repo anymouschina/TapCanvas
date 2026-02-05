@@ -2,7 +2,7 @@ import React from 'react'
 import { Paper, Group, Title, Transition, Button, Stack, Text } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { getServerFlow, listFlowVersions, rollbackFlow } from '../api/server'
-import { useRFStore } from '../canvas/store'
+import { normalizeNodesParentId, useRFStore } from '../canvas/store'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 
 export default function HistoryPanel(): JSX.Element | null {
@@ -81,7 +81,7 @@ export default function HistoryPanel(): JSX.Element | null {
                         const data: any = r?.data || {}
                         const nodes = Array.isArray(data.nodes) ? data.nodes : []
                         const edges = Array.isArray(data.edges) ? data.edges : []
-                        setNodesAndEdges(nodes, edges)
+                        setNodesAndEdges(normalizeNodesParentId(nodes as any), edges)
                         setCurrentFlow({ name: r.name })
                         setDirty(false)
                         setActivePanel(null)

@@ -1777,7 +1777,7 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
       const allNodes = useRFStore.getState().nodes
       const self = allNodes.find((n) => n.id === id) as any
       const basePos = self?.position || { x: 0, y: 0 }
-      const parentNode = self?.parentNode as string | undefined
+      const parentId = self?.parentId as string | undefined
       const extent = self?.extent as any
 
       const spacingX = CANVAS_CONFIG.NODE_SPACING_X + 60
@@ -1803,7 +1803,7 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
             id: p.id,
             type: 'taskNode' as const,
             position: p.position,
-            parentNode,
+            parentId,
             extent,
             data: { label: 'Image', kind: 'image', imageUrl: p.localUrl },
             selected: false,

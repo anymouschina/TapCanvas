@@ -21,8 +21,8 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
     if (data?.editing && !editing) setEditing(true)
   }, [data?.editing])
 
-  // gather direct children by parentNode
-  const childIds = React.useMemo(() => new Set(nodes.filter(n => n.parentNode === id).map(n => n.id)), [nodes, id])
+  // gather direct children by parentId
+  const childIds = React.useMemo(() => new Set(nodes.filter(n => (n as any).parentId === id).map(n => n.id)), [nodes, id])
 
   return (
     <div className="group-node" style={{
