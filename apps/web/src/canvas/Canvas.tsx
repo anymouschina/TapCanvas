@@ -1343,13 +1343,21 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }
   const getNodeRectSize = (n: any) => {
     const kind = normalizeKindForRect(n?.data?.kind)
+    const measuredW =
+      (typeof n?.measured?.width === 'number' && Number.isFinite(n.measured.width) && n.measured.width > 0 ? n.measured.width : undefined) ??
+      (typeof n?.width === 'number' && Number.isFinite(n.width) && n.width > 0 ? n.width : undefined)
+    const measuredH =
+      (typeof n?.measured?.height === 'number' && Number.isFinite(n.measured.height) && n.measured.height > 0 ? n.measured.height : undefined) ??
+      (typeof n?.height === 'number' && Number.isFinite(n.height) && n.height > 0 ? n.height : undefined)
     const w =
-      (typeof n?.width === 'number' && Number.isFinite(n.width) ? n.width : undefined) ??
+      measuredW ??
       parseNumericStyle(n?.style?.width) ??
+      parseNumericStyle(n?.data?.nodeWidth) ??
       defaultW
     const h =
-      (typeof n?.height === 'number' && Number.isFinite(n.height) ? n.height : undefined) ??
+      measuredH ??
       parseNumericStyle(n?.style?.height) ??
+      parseNumericStyle(n?.data?.nodeHeight) ??
       defaultH
     return { w, h }
   }
@@ -1393,12 +1401,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   // selection partially overlaps existing groups?
   const selectionPartialOverlaps = useMemo(() => {
-    if (selectedNodes.length < 2) return false
-    const parents = new Set(selectedNodes.map(n => n.parentNode || ''))
-    // Do not treat selection within same group as valid for grouping
-    if (!parents.has('') && parents.size === 1) return true
-    // Disallow grouping across different parents
-    return parents.size > 1
+    // 允许跨组打组：选中的节点会从原组中移出并进入新组
+    return false
   }, [selectedNodes])
 
   // Apply focus filtering (group focus mode)
