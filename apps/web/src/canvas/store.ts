@@ -96,13 +96,28 @@ function parseNumericStyle(value: unknown): number | undefined {
 
 function getNodeSizeForLayout(node: Node): TreeLayoutSize {
   const anyNode = node as any
-  const measuredW = typeof anyNode?.width === 'number' && Number.isFinite(anyNode.width) ? anyNode.width : undefined
-  const measuredH = typeof anyNode?.height === 'number' && Number.isFinite(anyNode.height) ? anyNode.height : undefined
+  const measuredW =
+    typeof anyNode?.measured?.width === 'number' && Number.isFinite(anyNode.measured.width) && anyNode.measured.width > 0
+      ? anyNode.measured.width
+      : typeof anyNode?.width === 'number' && Number.isFinite(anyNode.width) && anyNode.width > 0
+        ? anyNode.width
+        : undefined
+  const measuredH =
+    typeof anyNode?.measured?.height === 'number' && Number.isFinite(anyNode.measured.height) && anyNode.measured.height > 0
+      ? anyNode.measured.height
+      : typeof anyNode?.height === 'number' && Number.isFinite(anyNode.height) && anyNode.height > 0
+        ? anyNode.height
+        : undefined
   const styleW = parseNumericStyle(anyNode?.style?.width)
   const styleH = parseNumericStyle(anyNode?.style?.height)
+  const dataW = parseNumericStyle(anyNode?.data?.nodeWidth)
+  const dataH = parseNumericStyle(anyNode?.data?.nodeHeight)
   const fallbackW = 220
   const fallbackH = 120
-  return { w: measuredW ?? styleW ?? fallbackW, h: measuredH ?? styleH ?? fallbackH }
+  return {
+    w: measuredW ?? styleW ?? dataW ?? fallbackW,
+    h: measuredH ?? styleH ?? dataH ?? fallbackH
+  }
 }
 
 const GROUP_PADDING = 8
@@ -145,13 +160,17 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
 
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) continue
 
+    const manualW = parseNumericStyle((group as any)?.data?.manualWidth)
+    const manualH = parseNumericStyle((group as any)?.data?.manualHeight)
     const desiredPos = {
-      x: (group.position?.x ?? 0) + (minX - GROUP_PADDING),
-      y: (group.position?.y ?? 0) + (minY - GROUP_PADDING),
+      x: (group.position?.x ?? 0) + ((Number.isFinite(manualW) && manualW! > 0) ? Math.min(0, minX - GROUP_PADDING) : (minX - GROUP_PADDING)),
+      y: (group.position?.y ?? 0) + ((Number.isFinite(manualH) && manualH! > 0) ? Math.min(0, minY - GROUP_PADDING) : (minY - GROUP_PADDING)),
     }
+    const minW = Math.max(GROUP_MIN_WIDTH, Number.isFinite(manualW) && manualW! > 0 ? manualW! : 0)
+    const minH = Math.max(GROUP_MIN_HEIGHT, Number.isFinite(manualH) && manualH! > 0 ? manualH! : 0)
     const desiredSize = {
-      w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
-      h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
+      w: Math.max(minW, (maxX - minX) + GROUP_PADDING * 2),
+      h: Math.max(minH, (maxY - minY) + GROUP_PADDING * 2),
     }
 
     const currentW =
@@ -176,6 +195,7 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
         ...(group.style || {}),
         width: desiredSize.w,
         height: desiredSize.h,
+        zIndex: -10,
       },
     })
 
@@ -193,6 +213,111 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
 
   if (!changed) return nodes
   return nodes.map(n => updates.get(n.id) || n)
+}
+
+function getNodeAbsPosition(node: Node, nodeById: Map<string, Node>): { x: number; y: number } {
+  const visiting = new Set<string>()
+  let x = node.position?.x ?? 0
+  let y = node.position?.y ?? 0
+  let parentId = (node as any)?.parentNode as string | undefined
+  while (parentId) {
+    if (visiting.has(parentId)) break
+    visiting.add(parentId)
+    const parent = nodeById.get(parentId)
+    if (!parent) break
+    x += parent.position?.x ?? 0
+    y += parent.position?.y ?? 0
+    parentId = (parent as any)?.parentNode as string | undefined
+  }
+  return { x, y }
+}
+
+function getAncestorChain(node: Node, nodeById: Map<string, Node>): string[] {
+  const out: string[] = []
+  const visiting = new Set<string>()
+  let parentId = (node as any)?.parentNode as string | undefined
+  while (parentId) {
+    if (visiting.has(parentId)) break
+    visiting.add(parentId)
+    out.push(parentId)
+    const parent = nodeById.get(parentId)
+    parentId = (parent as any)?.parentNode as string | undefined
+  }
+  return out
+}
+
+type AbsRect = { id: string; x: number; y: number; w: number; h: number; area: number }
+
+function computeGroupAbsRects(nodes: Node[], nodeById: Map<string, Node>): AbsRect[] {
+  const out: AbsRect[] = []
+  for (const n of nodes) {
+    if (n.type !== 'groupNode') continue
+    const abs = getNodeAbsPosition(n, nodeById)
+    const { w, h } = getNodeSizeForLayout(n)
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) continue
+    out.push({ id: n.id, x: abs.x, y: abs.y, w, h, area: w * h })
+  }
+  return out
+}
+
+function pickBestGroupIdForPoint(point: { x: number; y: number }, groupRects: AbsRect[]): string | null {
+  let bestId: string | null = null
+  let bestArea = Number.POSITIVE_INFINITY
+  for (const g of groupRects) {
+    const inside =
+      point.x >= g.x &&
+      point.x <= g.x + g.w &&
+      point.y >= g.y &&
+      point.y <= g.y + g.h
+    if (!inside) continue
+    if (bestId === null || g.area < bestArea || (g.area === bestArea && g.id < bestId)) {
+      bestId = g.id
+      bestArea = g.area
+    }
+  }
+  return bestId
+}
+
+function applyDragDropGrouping(nodes: Node[], dragEndNodeIds: Set<string>): Node[] {
+  if (!dragEndNodeIds.size) return nodes
+
+  const nodeById = new Map(nodes.map(n => [n.id, n] as const))
+  const groupRects = computeGroupAbsRects(nodes, nodeById)
+  if (!groupRects.length) return nodes
+
+  const updates = new Map<string, Partial<Node>>()
+
+  for (const id of dragEndNodeIds) {
+    const node = nodeById.get(id)
+    if (!node) continue
+    if (node.type === 'groupNode' || node.type === 'ioNode') continue
+
+    const abs = getNodeAbsPosition(node, nodeById)
+    const { w, h } = getNodeSizeForLayout(node)
+    const center = { x: abs.x + w / 2, y: abs.y + h / 2 }
+
+    const bestGroupId = pickBestGroupIdForPoint(center, groupRects)
+    const currentParentId = (node as any)?.parentNode as string | undefined
+    const nextParentId = bestGroupId || undefined
+    if ((currentParentId || undefined) === (nextParentId || undefined)) continue
+
+    if (!nextParentId) {
+      updates.set(id, { parentNode: undefined, extent: undefined, position: { x: abs.x, y: abs.y } })
+      continue
+    }
+
+    const group = nodeById.get(nextParentId)
+    if (!group) continue
+    const gAbs = getNodeAbsPosition(group, nodeById)
+    const rel = { x: abs.x - gAbs.x, y: abs.y - gAbs.y }
+    updates.set(id, { parentNode: nextParentId, extent: undefined, position: rel })
+  }
+
+  if (!updates.size) return nodes
+  return nodes.map(n => {
+    const patch = updates.get(n.id)
+    return patch ? { ...n, ...patch } : n
+  })
 }
 
 function computeTreeLayout(
@@ -441,11 +566,12 @@ export const useRFStore = create<RFState>((set, get) => ({
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
-    const dimChanges = new Map<string, { width?: number; height?: number }>()
+    const dimChanges = new Map<string, { width?: number; height?: number; isResizeEvent?: boolean }>()
     let hasDragMove = false
     let hasDragStop = false
     let isDragStart = false
     let hasNonDragRelatedChange = false
+    const dragEndNodeIds = new Set<string>()
 
     for (const change of changes as any[]) {
       if (!change || typeof change !== 'object') continue
@@ -464,6 +590,7 @@ export const useRFStore = create<RFState>((set, get) => ({
         if (draggingFlag === false) {
           hasDragStop = true
           if (id) activeDragNodeIds.delete(id)
+          if (id) dragEndNodeIds.add(id)
           continue
         }
         // Programmatic or non-drag position change: treat as normal update.
@@ -478,9 +605,12 @@ export const useRFStore = create<RFState>((set, get) => ({
         if (!id) continue
         const width = Number(change.dimensions?.width)
         const height = Number(change.dimensions?.height)
+        const resizingFlag = (change as any)?.resizing
+        const isResizeEvent = typeof resizingFlag === 'boolean'
         dimChanges.set(id, {
           ...(Number.isFinite(width) && width > 0 ? { width: Math.round(width) } : null),
           ...(Number.isFinite(height) && height > 0 ? { height: Math.round(height) } : null),
+          isResizeEvent,
         })
       }
     }
@@ -490,6 +620,16 @@ export const useRFStore = create<RFState>((set, get) => ({
       const dims = dimChanges.get(node.id)
       if (!dims) return node
       const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind) : ''
+      if (node.type === 'groupNode' && dims.isResizeEvent) {
+        return {
+          ...node,
+          data: {
+            ...(node.data || {}),
+            ...(typeof dims.width === 'number' ? { manualWidth: dims.width } : null),
+            ...(typeof dims.height === 'number' ? { manualHeight: dims.height } : null),
+          },
+        }
+      }
       const isCanvasMediaKind =
         kind === 'image' ||
         kind === 'textToImage' ||
@@ -507,10 +647,11 @@ export const useRFStore = create<RFState>((set, get) => ({
       }
     })
 
+    const updatedWithDrop = dragEndNodeIds.size ? applyDragDropGrouping(updatedWithDims, dragEndNodeIds) : updatedWithDims
     const shouldAutoFitGroups = !hasDragMove
     const updated = shouldAutoFitGroups
-      ? autoFitGroupNodes(updatedWithDims).map(enforceNodeSelectability)
-      : updatedWithDims
+      ? autoFitGroupNodes(updatedWithDrop).map(enforceNodeSelectability)
+      : updatedWithDrop
 
     const isDragRelated = hasDragMove || hasDragStop
     const shouldCaptureHistory = hasNonDragRelatedChange || !isDragRelated || isDragStart
@@ -723,12 +864,26 @@ export const useRFStore = create<RFState>((set, get) => ({
       .map(upgradeVideoKind)
       .map(upgradeImageFissionModel)
       .map(enforceNodeSelectability)
+    const groupIds = new Set(upgradedNodes.filter(n => n.type === 'groupNode').map(n => n.id))
+    const normalizedNodes = upgradedNodes.map((n) => {
+      const p = (n as any)?.parentNode as string | undefined
+      if (!p || !groupIds.has(p)) return n
+      return { ...n, extent: undefined }
+    })
+    const legacyNextGroupId = Array.isArray(anyData.groups) ? anyData.groups.length + 1 : 1
+    const maxGroupNum = normalizedNodes.reduce((acc, n) => {
+      if (n.type !== 'groupNode') return acc
+      const m = /^g(\d+)$/.exec(String(n.id || ''))
+      if (!m) return acc
+      const num = Number(m[1])
+      return Number.isFinite(num) ? Math.max(acc, num) : acc
+    }, 0)
     set((s) => ({
-      nodes: upgradedNodes,
+      nodes: normalizedNodes,
       edges: data.edges,
-      nextId: upgradedNodes.length + 1,
+      nextId: normalizedNodes.length + 1,
       groups: Array.isArray(anyData.groups) ? anyData.groups : [],
-      nextGroupId: Array.isArray(anyData.groups) ? anyData.groups.length + 1 : 1,
+      nextGroupId: Math.max(legacyNextGroupId, maxGroupNum + 1),
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }))
@@ -1005,37 +1160,67 @@ export const useRFStore = create<RFState>((set, get) => ({
     edges: s.edges.map(e => ({ ...e, selected: !e.selected })),
   })),
   addGroupForSelection: (name) => set((s) => {
-    const selectedNodes = s.nodes.filter(n => n.selected && n.type !== 'groupNode')
+    const selectedNodes = s.nodes.filter(n => n.selected && n.type !== 'groupNode' && n.type !== 'ioNode')
     if (selectedNodes.length < 2) return {}
-    // ensure all selected share same parent (or no parent)
-    const parents = new Set(selectedNodes.map(n => n.parentNode || ''))
-    if (parents.size > 1) return {}
-    // compute bbox in absolute coordinates (assume current parent is same)
-    const padding = 8
-    const minX = Math.min(...selectedNodes.map(n => n.position.x + (0)))
-    const minY = Math.min(...selectedNodes.map(n => n.position.y + (0)))
-    const defaultW = 180, defaultH = 96
-    const maxX = Math.max(...selectedNodes.map(n => n.position.x + (((n as any).width) || defaultW)))
-    const maxY = Math.max(...selectedNodes.map(n => n.position.y + (((n as any).height) || defaultH)))
+
+    const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
+    const chains = selectedNodes.map(n => getAncestorChain(n, nodeById))
+    let common = new Set(chains[0] || [])
+    for (let i = 1; i < chains.length; i++) {
+      common = new Set((chains[i] || []).filter(id => common.has(id)))
+    }
+    const commonParentId = (chains[0] || []).find(id => common.has(id)) || null
+    const commonParentAbs = commonParentId ? getNodeAbsPosition(nodeById.get(commonParentId)!, nodeById) : { x: 0, y: 0 }
+
+    // compute bbox in absolute flow coords
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    const absById = new Map<string, { x: number; y: number }>()
+    for (const n of selectedNodes) {
+      const abs = getNodeAbsPosition(n, nodeById)
+      absById.set(n.id, abs)
+      const { w, h } = getNodeSizeForLayout(n)
+      minX = Math.min(minX, abs.x)
+      minY = Math.min(minY, abs.y)
+      maxX = Math.max(maxX, abs.x + w)
+      maxY = Math.max(maxY, abs.y + h)
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return {}
+
     const gid = genGroupId(s.nextGroupId)
+    const groupAbsPos = { x: minX - GROUP_PADDING, y: minY - GROUP_PADDING }
+    const groupSize = {
+      w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
+      h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
+    }
     const groupNode: Node = {
       id: gid,
       type: 'groupNode' as any,
-      position: { x: minX - padding, y: minY - padding },
+      position: { x: groupAbsPos.x - commonParentAbs.x, y: groupAbsPos.y - commonParentAbs.y },
+      ...(commonParentId ? { parentNode: commonParentId } : null),
       data: { label: name || '新建组' },
-      style: { width: (maxX - minX) + padding * 2, height: (maxY - minY) + padding * 2, zIndex: 0, background: 'transparent' },
+      style: { width: groupSize.w, height: groupSize.h, zIndex: -10, background: 'transparent' },
       draggable: true,
       selectable: true,
     }
-    // reparent children to this group; convert positions to relative
+
+    // reparent children to this group; convert positions to relative to groupAbsPos
     const members = new Set(selectedNodes.map(n => n.id))
     const newNodes: Node[] = s.nodes.map((n) => {
-      if (!members.has(n.id)) return n
-      const rel = { x: n.position.x - groupNode.position.x, y: n.position.y - groupNode.position.y }
-      return { ...n, parentNode: gid, position: rel, extent: 'parent' as any, selected: false }
+      if (!members.has(n.id)) return { ...n, selected: false }
+      const abs = absById.get(n.id) || getNodeAbsPosition(n, nodeById)
+      const rel = { x: abs.x - groupAbsPos.x, y: abs.y - groupAbsPos.y }
+      return { ...n, parentNode: gid, position: rel, extent: undefined, selected: false }
     })
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: [...newNodes, groupNode].map(n => n.id === gid ? { ...n, selected: true } : n), nextGroupId: s.nextGroupId + 1, historyPast: past, historyFuture: [] }
+    return {
+      nodes: [{ ...groupNode, selected: true }, ...newNodes],
+      nextGroupId: s.nextGroupId + 1,
+      historyPast: past,
+      historyFuture: []
+    }
   }),
   removeGroupById: (id) => set((s) => {
     // if it's a legacy record, drop it; if there's a group node, ungroup it
