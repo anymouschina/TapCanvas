@@ -218,7 +218,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           }
         } catch (error) {
           console.error('Failed to upload image to OSS:', error)
-          toast('上传图片到 OSS 失败，将使用本地预览', 'error')
         }
 
         let soraResult: any = null
