@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications'
 import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle, IconHelpCircle, IconPlayerPlay } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
-import { useRFStore } from './canvas/store'
+import { normalizeNodesParentId, useRFStore } from './canvas/store'
 import './styles.css'
 import KeyboardShortcuts from './KeyboardShortcuts'
 import { applyTemplate, captureCurrentSelection, deleteTemplate, listTemplateNames, saveTemplate, renameTemplate } from './templates'
@@ -562,7 +562,7 @@ function CanvasApp(): JSX.Element {
           const data: any = f.data || {}
           const viewport = data?.viewport
           useRFStore.setState({
-            nodes: Array.isArray(data.nodes) ? data.nodes : [],
+            nodes: normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any),
             edges: Array.isArray(data.edges) ? data.edges : [],
           })
           useUIStore.getState().setRestoreViewport(viewport && typeof viewport.zoom === 'number' ? viewport : null)

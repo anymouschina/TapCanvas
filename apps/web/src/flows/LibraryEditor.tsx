@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
+import { normalizeNodesParentId } from '../canvas/store'
 import { type FlowIO } from './registry'
 import { listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersions, rollbackFlow, type FlowDto } from '../api/server'
 import { Button, Group, Title, TextInput, Stack, Text, Divider, Select, Modal } from '@mantine/core'
@@ -29,7 +30,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
       try {
         const r = await getServerFlow(flowId)
         const data = (r?.data || {}) as any
-        setNodes(Array.isArray(data.nodes) ? data.nodes : [])
+        setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
         setEdges(Array.isArray(data.edges) ? data.edges : [])
         setName(r?.name || '')
         setIo({ inputs: [], outputs: [] })
@@ -86,7 +87,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
     setCurrentId(id)
     const r = await getServerFlow(id)
     const data = (r?.data || {}) as any
-    setNodes(Array.isArray(data.nodes) ? data.nodes : [])
+    setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
     setEdges(Array.isArray(data.edges) ? data.edges : [])
     setName(r?.name || '')
     setIo({ inputs: [], outputs: [] })
@@ -177,7 +178,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
                 await rollbackFlow(currentId, v.id)
                 const r = await getServerFlow(currentId)
                 const data = (r?.data || {}) as any
-                setNodes(Array.isArray(data.nodes) ? data.nodes : [])
+                setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
                 setEdges(Array.isArray(data.edges) ? data.edges : [])
                 setName(r?.name || '')
                 setShowHistory(false)

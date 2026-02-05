@@ -394,9 +394,8 @@ export default function AssetPanel(): JSX.Element | null {
     const currentEdges = useRFStore.getState().edges
 
     const validCurrentNodes = currentNodes.filter((n: any) => {
-      if (n.parentNode) {
-        return currentNodes.some((parent: any) => parent.id === n.parentNode)
-      }
+      const parentId = (n?.parentId as string | undefined) || (n?.parentNode as string | undefined)
+      if (parentId) return currentNodes.some((parent: any) => parent.id === parentId)
       return true
     })
 

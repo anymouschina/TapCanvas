@@ -124,6 +124,51 @@ const GROUP_PADDING = 8
 const GROUP_MIN_WIDTH = 160
 const GROUP_MIN_HEIGHT = 90
 
+function getNodeParentId(node: Node): string | undefined {
+  const anyNode = node as any
+  const parentId = anyNode?.parentId
+  if (typeof parentId === 'string' && parentId) return parentId
+  const legacyParentNode = anyNode?.parentNode
+  if (typeof legacyParentNode === 'string' && legacyParentNode) return legacyParentNode
+  return undefined
+}
+
+// React Flow v12 uses `parentId` (v11 used `parentNode`). Normalize legacy data for compatibility.
+export function normalizeNodesParentId(nodes: Node[]): Node[] {
+  let changed = false
+  const normalized = nodes.map((n: any) => {
+    if (!n || typeof n !== 'object') return n
+
+    const parentId = typeof n.parentId === 'string' ? n.parentId : undefined
+    const legacyParentNode = typeof n.parentNode === 'string' ? n.parentNode : undefined
+
+    if (parentId) {
+      if ('parentNode' in n) {
+        const { parentNode: _parentNode, ...rest } = n
+        changed = true
+        return rest
+      }
+      return n
+    }
+
+    if (legacyParentNode) {
+      const { parentNode: _parentNode, ...rest } = n
+      changed = true
+      return { ...rest, parentId: legacyParentNode }
+    }
+
+    if ('parentNode' in n) {
+      const { parentNode: _parentNode, ...rest } = n
+      changed = true
+      return rest
+    }
+
+    return n
+  })
+
+  return changed ? (normalized as Node[]) : nodes
+}
+
 function autoFitGroupNodes(nodes: Node[]): Node[] {
   const groupNodes = nodes.filter(n => n.type === 'groupNode')
   if (!groupNodes.length) return nodes
@@ -140,7 +185,7 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
   }
 
   for (const group of groupNodes) {
-    const children = nodes.filter(n => n.parentNode === group.id)
+    const children = nodes.filter(n => getNodeParentId(n) === group.id)
     if (!children.length) continue
 
     let minX = Number.POSITIVE_INFINITY
@@ -219,7 +264,7 @@ function getNodeAbsPosition(node: Node, nodeById: Map<string, Node>): { x: numbe
   const visiting = new Set<string>()
   let x = node.position?.x ?? 0
   let y = node.position?.y ?? 0
-  let parentId = (node as any)?.parentNode as string | undefined
+  let parentId = getNodeParentId(node)
   while (parentId) {
     if (visiting.has(parentId)) break
     visiting.add(parentId)
@@ -227,7 +272,7 @@ function getNodeAbsPosition(node: Node, nodeById: Map<string, Node>): { x: numbe
     if (!parent) break
     x += parent.position?.x ?? 0
     y += parent.position?.y ?? 0
-    parentId = (parent as any)?.parentNode as string | undefined
+    parentId = getNodeParentId(parent)
   }
   return { x, y }
 }
@@ -235,13 +280,13 @@ function getNodeAbsPosition(node: Node, nodeById: Map<string, Node>): { x: numbe
 function getAncestorChain(node: Node, nodeById: Map<string, Node>): string[] {
   const out: string[] = []
   const visiting = new Set<string>()
-  let parentId = (node as any)?.parentNode as string | undefined
+  let parentId = getNodeParentId(node)
   while (parentId) {
     if (visiting.has(parentId)) break
     visiting.add(parentId)
     out.push(parentId)
     const parent = nodeById.get(parentId)
-    parentId = (parent as any)?.parentNode as string | undefined
+    parentId = parent ? getNodeParentId(parent) : undefined
   }
   return out
 }
@@ -297,12 +342,12 @@ function applyDragDropGrouping(nodes: Node[], dragEndNodeIds: Set<string>): Node
     const center = { x: abs.x + w / 2, y: abs.y + h / 2 }
 
     const bestGroupId = pickBestGroupIdForPoint(center, groupRects)
-    const currentParentId = (node as any)?.parentNode as string | undefined
+    const currentParentId = getNodeParentId(node)
     const nextParentId = bestGroupId || undefined
     if ((currentParentId || undefined) === (nextParentId || undefined)) continue
 
     if (!nextParentId) {
-      updates.set(id, { parentNode: undefined, extent: undefined, position: { x: abs.x, y: abs.y } })
+      updates.set(id, { parentId: undefined, extent: undefined, position: { x: abs.x, y: abs.y } })
       continue
     }
 
@@ -310,7 +355,7 @@ function applyDragDropGrouping(nodes: Node[], dragEndNodeIds: Set<string>): Node
     if (!group) continue
     const gAbs = getNodeAbsPosition(group, nodeById)
     const rel = { x: abs.x - gAbs.x, y: abs.y - gAbs.y }
-    updates.set(id, { parentNode: nextParentId, extent: undefined, position: rel })
+    updates.set(id, { parentId: nextParentId, extent: undefined, position: rel })
   }
 
   if (!updates.size) return nodes
@@ -864,9 +909,10 @@ export const useRFStore = create<RFState>((set, get) => ({
       .map(upgradeVideoKind)
       .map(upgradeImageFissionModel)
       .map(enforceNodeSelectability)
-    const groupIds = new Set(upgradedNodes.filter(n => n.type === 'groupNode').map(n => n.id))
-    const normalizedNodes = upgradedNodes.map((n) => {
-      const p = (n as any)?.parentNode as string | undefined
+    const parentNormalizedNodes = normalizeNodesParentId(upgradedNodes)
+    const groupIds = new Set(parentNormalizedNodes.filter(n => n.type === 'groupNode').map(n => n.id))
+    const normalizedNodes = parentNormalizedNodes.map((n) => {
+      const p = (n as any)?.parentId as string | undefined
       if (!p || !groupIds.has(p)) return n
       return { ...n, extent: undefined }
     })
@@ -900,17 +946,17 @@ export const useRFStore = create<RFState>((set, get) => ({
       // 如果选中的是组节点，添加所有子节点
       const node = selectedNodes.find(n => n.id === id)
       if (node?.type === 'groupNode') {
-        const childNodes = s.nodes.filter(n => n.parentNode === id)
+        const childNodes = s.nodes.filter(n => (n as any).parentId === id)
         childNodes.forEach(child => idsToDelete.add(child.id))
       }
     })
 
     // 如果选中的是子节点，也检查是否需要删除父节点（如果父节点的所有子节点都被选中）
-    const selectedChildNodes = selectedNodes.filter(n => n.parentNode && selectedIds.has(n.parentNode))
+    const selectedChildNodes = selectedNodes.filter(n => (n as any).parentId && selectedIds.has((n as any).parentId))
     selectedChildNodes.forEach(child => {
-      const parentNode = s.nodes.find(n => n.id === child.parentNode)
+      const parentNode = s.nodes.find(n => n.id === (child as any).parentId)
       if (parentNode && parentNode.type === 'groupNode') {
-        const allChildren = s.nodes.filter(n => n.parentNode === parentNode.id)
+        const allChildren = s.nodes.filter(n => (n as any).parentId === parentNode.id)
         const allChildrenSelected = allChildren.every(child => selectedIds.has(child.id))
 
         // 如果所有子节点都被选中，也删除父节点
@@ -1199,7 +1245,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       id: gid,
       type: 'groupNode' as any,
       position: { x: groupAbsPos.x - commonParentAbs.x, y: groupAbsPos.y - commonParentAbs.y },
-      ...(commonParentId ? { parentNode: commonParentId } : null),
+      ...(commonParentId ? { parentId: commonParentId } : null),
       data: { label: name || '新建组' },
       style: { width: groupSize.w, height: groupSize.h, zIndex: -10, background: 'transparent' },
       draggable: true,
@@ -1212,7 +1258,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (!members.has(n.id)) return { ...n, selected: false }
       const abs = absById.get(n.id) || getNodeAbsPosition(n, nodeById)
       const rel = { x: abs.x - groupAbsPos.x, y: abs.y - groupAbsPos.y }
-      return { ...n, parentNode: gid, position: rel, extent: undefined, selected: false }
+      return { ...n, parentId: gid, position: rel, extent: undefined, selected: false }
     })
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return {
@@ -1227,10 +1273,12 @@ export const useRFStore = create<RFState>((set, get) => ({
     const hasGroupNode = s.nodes.some(n => n.id === id && n.type === 'groupNode')
     if (hasGroupNode) {
       const group = s.nodes.find(n => n.id === id)!
-      const children = s.nodes.filter(n => n.parentNode === id)
+      const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
+      const groupAbs = getNodeAbsPosition(group, nodeById)
+      const children = s.nodes.filter(n => (n as any).parentId === id)
       const restored = s.nodes
         .filter(n => n.id !== id)
-        .map(n => n.parentNode === id ? { ...n, parentNode: undefined, extent: undefined, position: { x: (group.position as any).x + n.position.x, y: (group.position as any).y + n.position.y } } : n)
+        .map(n => (n as any).parentId === id ? { ...n, parentId: undefined, extent: undefined, position: { x: groupAbs.x + n.position.x, y: groupAbs.y + n.position.y } } : n)
       const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
       return { nodes: restored, historyPast: past, historyFuture: [] }
     }
@@ -1247,10 +1295,12 @@ export const useRFStore = create<RFState>((set, get) => ({
   ungroupGroupNode: (id) => set((s) => {
     const group = s.nodes.find(n => n.id === id && n.type === 'groupNode')
     if (!group) return {}
-    const children = s.nodes.filter(n => n.parentNode === id)
+    const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
+    const groupAbs = getNodeAbsPosition(group, nodeById)
+    const children = s.nodes.filter(n => (n as any).parentId === id)
     const restored = s.nodes
       .filter(n => n.id !== id)
-      .map(n => n.parentNode === id ? { ...n, parentNode: undefined, extent: undefined, position: { x: (group.position as any).x + n.position.x, y: (group.position as any).y + n.position.y } } : n)
+      .map(n => (n as any).parentId === id ? { ...n, parentId: undefined, extent: undefined, position: { x: groupAbs.x + n.position.x, y: groupAbs.y + n.position.y } } : n)
     // select children after ungroup
     const childIds = new Set(children.map(c => c.id))
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
@@ -1268,7 +1318,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (selected.length < 2) return {}
       const byParent = new Map<string, Node[]>()
       selected.forEach(n => {
-        const p = (n.parentNode as string) || ''
+        const p = ((n as any).parentId as string) || ''
         if (!byParent.has(p)) byParent.set(p, [])
         byParent.get(p)!.push(n)
       })
@@ -1300,7 +1350,7 @@ export const useRFStore = create<RFState>((set, get) => ({
   // DAG auto layout (top-down tree style) for the whole graph
   autoLayoutAllDagVertical: () => set((s) => {
     const byParent = new Map<string, Node[]>()
-    s.nodes.forEach(n => { const p=(n.parentNode as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
+    s.nodes.forEach(n => { const p=((n as any).parentId as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
     const updated = [...s.nodes]
     byParent.forEach(nodesInParent => {
       const idSet = new Set(nodesInParent.map(n => n.id))
@@ -1322,7 +1372,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
   autoLayoutForParent: (parentId) => set((s) => {
-    const nodesInParent = s.nodes.filter(n => (n.parentNode||null) === parentId)
+    const nodesInParent = s.nodes.filter(n => (((n as any).parentId as string | undefined) || null) === parentId)
     if (!nodesInParent.length) return {}
     const updated = [...s.nodes]
     const idSet = new Set(nodesInParent.map(n => n.id))
@@ -1347,7 +1397,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const s = get()
     const g = s.nodes.find((n: any) => n.type === 'groupNode' && n.selected)
     if (!g) return
-    const only = new Set(s.nodes.filter((n: any) => n.parentNode === g.id).map((n:any)=>n.id))
+    const only = new Set(s.nodes.filter((n: any) => (n as any).parentId === g.id).map((n:any)=>n.id))
     await runFlowDag(2, get, set, { only })
   },
   renameSelectedGroup: () => set((s) => {
@@ -1360,12 +1410,13 @@ export const useRFStore = create<RFState>((set, get) => ({
 export function persistToLocalStorage(key = 'tapcanvas-flow') {
   const state = useRFStore.getState()
   // Never persist `dragHandle`: it can make nodes appear "undraggable" if the selector is missing.
-  const nodes = (state.nodes || []).map((n: any) => {
+  const rawNodes = (state.nodes || []).map((n: any) => {
     if (!n || typeof n !== 'object') return n
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { dragHandle: _dragHandle, ...rest } = n
     return rest
-  })
+  }) as Node[]
+  const nodes = normalizeNodesParentId(rawNodes)
   const payload = JSON.stringify({ nodes, edges: state.edges, groups: state.groups })
   localStorage.setItem(key, payload)
 }
@@ -1383,7 +1434,7 @@ export function restoreFromLocalStorage(key = 'tapcanvas-flow') {
       const { dragHandle: _dragHandle, ...rest } = n
       return rest
     }) as Node[]
-    return { ...parsed, nodes }
+    return { ...parsed, nodes: normalizeNodesParentId(nodes) }
   } catch {
     return null
   }

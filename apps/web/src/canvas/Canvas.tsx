@@ -1044,8 +1044,8 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }
 
     // If dragging IO summary nodes in focus mode, persist relative position into group node data
-    if (node?.type === 'ioNode' && (node as any)?.parentNode) {
-      const groupId = (node as any).parentNode as string
+    if (node?.type === 'ioNode' && (node as any)?.parentId) {
+      const groupId = (node as any).parentId as string
       const isIn = (node?.data as any)?.kind === 'io-in'
       const ioSize = { w: 96, h: 28 }
       const grp = useRFStore.getState().nodes.find(n => n.id === groupId)
@@ -1325,7 +1325,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   // Group overlay computation
   const selectedNodes = nodes.filter(n=>n.selected)
   const hasGroupNodeSelected = selectedNodes.some(n => (n as any).type === 'groupNode')
-  const parentIds = new Set(selectedNodes.map(n => (n.parentNode as string) || ''))
+  const parentIds = new Set(selectedNodes.map(n => ((n as any).parentId as string) || ''))
   const allInsideSameGroup = selectedNodes.length > 1 && !parentIds.has('') && parentIds.size === 1
   // Only show pre-group overlay for root-level multi-selection (not when a group is already formed or group node selected)
   const showPreGroupOverlay = selectedNodes.length > 1 && !hasGroupNodeSelected && !allInsideSameGroup
@@ -1371,7 +1371,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         visiting.add(id)
       }
       const base = { x: node?.position?.x || 0, y: node?.position?.y || 0 }
-      const parentId = node?.parentNode as string | undefined
+      const parentId = node?.parentId as string | undefined
       if (!parentId) return base
       const parent = nodeByIdForRect.get(parentId)
       if (!parent) return base
@@ -1410,7 +1410,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     if (!focusGroupId) return { nodes, edges }
     const group = nodes.find(n => n.id === focusGroupId)
     if (!group) return { nodes, edges }
-    const internalIds = new Set<string>([group.id, ...nodes.filter(n => n.parentNode === group.id).map(n => n.id)])
+    const internalIds = new Set<string>([group.id, ...nodes.filter(n => (n as any).parentId === group.id).map(n => n.id)])
     const internalNodes = nodes.filter(n => internalIds.has(n.id))
     const internalEdges = edges.filter(e => internalIds.has(e.source) && internalIds.has(e.target))
     // Build IO summary nodes and remapped edges for cross-boundary connections
@@ -1433,11 +1433,11 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const inPos = ((group.data as any)?.ioInPos) as { x:number;y:number } | undefined
     const outPos = ((group.data as any)?.ioOutPos) as { x:number;y:number } | undefined
     if (inCross.length) {
-      ioNodes.push({ id: inNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: inPos || { x: 8, y: 8 }, data: { kind: 'io-in', label: $('入口'), types: typesIn } })
+      ioNodes.push({ id: inNodeId, type: 'ioNode' as const, parentId: group.id, draggable: true, position: inPos || { x: 8, y: 8 }, data: { kind: 'io-in', label: $('入口'), types: typesIn } })
     }
     if (outCross.length) {
       const def = { x: Math.max(8, gWidth - 104), y: Math.max(8, gHeight - 36) }
-      ioNodes.push({ id: outNodeId, type: 'ioNode' as const, parentNode: group.id, draggable: true, position: outPos || def, data: { kind: 'io-out', label: $('出口'), types: typesOut } })
+      ioNodes.push({ id: outNodeId, type: 'ioNode' as const, parentId: group.id, draggable: true, position: outPos || def, data: { kind: 'io-out', label: $('出口'), types: typesOut } })
     }
     const remapEdgesIn = inCross.map((e, idx) => ({ id: `ioe-in-${idx}-${e.target}`, source: inNodeId, sourceHandle: `out-${inferType(e)}`, target: e.target, targetHandle: e.targetHandle, type: 'typed' as const, animated: true }))
     const remapEdgesOut = outCross.map((e, idx) => ({ id: `ioe-out-${e.source}-${idx}`, source: e.source, sourceHandle: e.sourceHandle, target: outNodeId, targetHandle: `in-${inferType(e)}`, type: 'typed' as const, animated: true }))
@@ -2074,7 +2074,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
               const target = nodes.find(n => n.id === menu.id)
               const isGroup = target?.type === 'groupNode'
               if (isGroup) {
-                const childIds = new Set(nodes.filter(n => n.parentNode === target!.id).map(n=>n.id))
+                const childIds = new Set(nodes.filter(n => (n as any).parentId === target!.id).map(n=>n.id))
                 return (
                   <>
                     <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={async () => { await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds }); setMenu(null) }}>运行该组</Button>
