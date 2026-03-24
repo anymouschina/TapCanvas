@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   ReactFlow,
   Background,
@@ -64,7 +65,14 @@ type CanvasInnerProps = {
 }
 
 function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
-  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore()
+  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore(useShallow((s) => ({
+    nodes: s.nodes,
+    edges: s.edges,
+    onNodesChange: s.onNodesChange,
+    onEdgesChange: s.onEdgesChange,
+    onConnect: s.onConnect,
+    load: s.load,
+  })))
   const focusStack = useUIStore(s => s.focusStack)
   const focusGroupId = focusStack.length ? focusStack[focusStack.length - 1] : null
   const viewOnly = useUIStore(s => s.viewOnly)
