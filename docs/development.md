@@ -3,33 +3,46 @@
 ## 依赖
 
 - Node.js + pnpm（推荐使用 `corepack`）
-- Docker（可选，用于一键启动 web + api）
+- Docker（可选；当前不作为默认开发方式推荐）
 
-## 一键启动（Docker）
+## 本地启动（推荐）
 
 ```bash
-docker compose up -d
+pnpm -w install
+
+cd apps/hono-api
+npm run dev
+```
+
+新开一个终端：
+
+```bash
+cd apps/web
+npm run dev
 ```
 
 - Web: `http://localhost:5173`
 - API: `http://localhost:8788`
+- 默认推荐直接在 `apps/hono-api` 与 `apps/web` 目录内开发，热更新路径更直接
+- `docker-compose` 暂时只保留为可选方案，不再作为默认入口
 
-也可以用脚本（可选 LangGraph profile）：
+或者使用仓库根目录脚本：
+
+```bash
+pnpm dev:web
+pnpm dev:api
+```
+
+## 一键脚本（可选）
+
+更适合希望一次拉起多个服务的场景：
 
 ```bash
 ./scripts/dev.sh docker
 ./scripts/dev.sh docker --langgraph
 ```
 
-## 本地启动（非 Docker）
-
-```bash
-pnpm -w install
-pnpm dev:web
-pnpm --filter ./apps/hono-api dev
-```
-
-或者使用一键脚本（更适合本地最快热更新）：
+本地模式（更适合热更新）：
 
 ```bash
 ./scripts/dev.sh local --install
@@ -46,6 +59,18 @@ pnpm --filter ./apps/hono-api dev
 ```bash
 ./scripts/dev.sh local --install --langgraph
 ```
+
+## Docker（可选，暂不推荐）
+
+如果你需要隔离环境、验证 compose 配置，或临时补齐某些容器化依赖，再使用 Docker：
+
+```bash
+docker compose up -d
+```
+
+- Web: `http://localhost:5173`
+- API: `http://localhost:8788`
+- 详细说明见 [Docker 指南](docker.md)
 
 ## 环境变量
 

@@ -8,6 +8,14 @@ TapCanvas is a visual AI creation canvas (text → image → video) built with R
 
 **Language:** [中文](README.md) | English
 
+## What's New (2026-03-24): Upstream Image Preview
+
+Image nodes now show an **upstream image preview** strip directly in the form area. You can verify the connected reference images, their order, and the current upstream context before running generation.
+
+<p align="center">
+  <img src="assets/2026-3-24.pic.jpg" alt="Upstream image preview" width="1000" />
+</p>
+
 ## What’s New (2025-12-16): Immersive Creation
 
 TapCanvas now ships an **Immersive Creation** entry (aka **XiaoT**) that lets you **describe what you want directly in the canvas**. It will automatically create/connect nodes and run them to produce images/videos. The legacy “AI assistant” entry is deprecated.
@@ -61,11 +69,16 @@ cp apps/hono-api/wrangler.example.jsonc apps/hono-api/wrangler.jsonc
 pnpm --filter cloudflare-workers-openapi db:update:local
 
 # 4) Start (two terminals)
-pnpm dev:web
-pnpm dev:api
+cd apps/hono-api
+npm run dev
+
+cd apps/web
+npm run dev
 ```
 
-### One-command full stack (Docker)
+Default recommendation: run the API from `apps/hono-api` and the web app from `apps/web`. `docker-compose` is still available, but is not the recommended day-to-day dev entry for now.
+
+### Docker (optional, not recommended for now)
 
 ```bash
 docker compose up -d
