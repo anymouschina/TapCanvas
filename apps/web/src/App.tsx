@@ -2,6 +2,7 @@ import React from 'react'
 import { AppShell, ActionIcon, Group, Title, Box, Button, TextInput, Badge, useMantineColorScheme, Text, Tooltip, Popover, Loader, Stack, Image, Modal } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { IconBrandGithub, IconLanguage, IconMoonStars, IconSun, IconRefresh, IconHeartbeat, IconAlertCircle, IconHelpCircle, IconPlayerPlay } from '@tabler/icons-react'
+import { useShallow } from 'zustand/react/shallow'
 import Canvas from './canvas/Canvas'
 import GithubGate from './auth/GithubGate'
 import { normalizeNodesParentId, useRFStore } from './canvas/store'
@@ -74,13 +75,26 @@ function CanvasApp(): JSX.Element {
   const [execId, setExecId] = React.useState<string | null>(null)
   const [execStarting, setExecStarting] = React.useState(false)
   const setActivePanel = useUIStore(s => s.setActivePanel)
-  const { currentFlow, isDirty } = useUIStore()
+  const currentFlow = useUIStore(s => s.currentFlow)
+  const isDirty = useUIStore(s => s.isDirty)
   const currentProject = useUIStore(s => s.currentProject)
   const setCurrentProject = useUIStore(s => s.setCurrentProject)
   const [projects, setProjects] = React.useState<ProjectDto[]>([])
   const setDirty = useUIStore(s => s.setDirty)
   const setCurrentFlow = useUIStore(s => s.setCurrentFlow)
-  const rfState = useRFStore()
+  const nodeLabelEntries = useRFStore(useShallow((s) => {
+    const entries: string[] = []
+    s.nodes.forEach((node: any) => {
+      const data: any = node?.data || {}
+      const label =
+        (typeof data.label === 'string' && data.label.trim()) ||
+        (typeof data.name === 'string' && data.name.trim()) ||
+        (typeof node?.type === 'string' && node.type) ||
+        ''
+      if (node?.id && label) entries.push(`${node.id}\u0000${label}`)
+    })
+    return entries
+  }))
   const auth = useAuth()
   const [saving, setSaving] = React.useState(false)
   const [currentLang, setCurrentLang] = React.useState(getCurrentLanguage())
@@ -127,20 +141,15 @@ function CanvasApp(): JSX.Element {
 
   const nodeLabelById = React.useMemo(() => {
     const map: Record<string, string> = {}
-    const nodes: any[] = (rfState as any)?.nodes
-    if (Array.isArray(nodes)) {
-      for (const node of nodes) {
-        const data: any = node?.data || {}
-        const label =
-          (typeof data.label === 'string' && data.label.trim()) ||
-          (typeof data.name === 'string' && data.name.trim()) ||
-          (typeof node?.type === 'string' && node.type) ||
-          ''
-        if (node?.id && label) map[node.id] = label
-      }
-    }
+    nodeLabelEntries.forEach((entry) => {
+      const sepIndex = entry.indexOf('\u0000')
+      if (sepIndex <= 0) return
+      const id = entry.slice(0, sepIndex)
+      const label = entry.slice(sepIndex + 1)
+      if (id && label) map[id] = label
+    })
     return map
-  }, [(rfState as any)?.nodes])
+  }, [nodeLabelEntries])
 
   React.useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -581,8 +590,14 @@ function CanvasApp(): JSX.Element {
       .catch(() => {})
   }, [currentProject?.id, autoResumeSora2ApiTasks])
 
-  // mark dirty on any node/edge change via polling change (simple and safe)
-  React.useEffect(() => { setDirty(true) }, [rfState.nodes, rfState.edges, setDirty])
+  React.useEffect(() => {
+    return useRFStore.subscribe((state, prevState) => {
+      if (state.nodes === prevState.nodes && state.edges === prevState.edges) return
+      if (!useUIStore.getState().isDirty) {
+        setDirty(true)
+      }
+    })
+  }, [setDirty])
 
   const doSave = async () => {
     if (saving) return

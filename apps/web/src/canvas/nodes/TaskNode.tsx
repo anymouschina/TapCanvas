@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Node, NodeProps } from '@xyflow/react'
 import { Position, NodeResizeControl, NodeToolbar } from '@xyflow/react'
+import { useShallow } from 'zustand/react/shallow'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ActionIcon, Group, Paper, Button, Text, Stack, TextInput, Select, Loader, Badge, Slider, useMantineColorScheme, useMantineTheme } from '@mantine/core'
@@ -71,6 +72,7 @@ import { PromptSection } from './taskNode/components/PromptSection'
 import { VideoContent } from './taskNode/components/VideoContent'
 import { MosaicModal } from './taskNode/components/MosaicModal'
 import { VeoImageModal } from './taskNode/components/VeoImageModal'
+import { UpstreamReferenceStrip } from './taskNode/components/UpstreamReferenceStrip'
 import { VideoResultModal } from './taskNode/VideoResultModal'
 import { StoryboardEditor } from './taskNode/StoryboardEditor'
 import { renderFeatureBlocks } from './taskNode/featureRenderers'
@@ -78,6 +80,7 @@ import { REMOTE_IMAGE_URL_REGEX, normalizeClipRange } from './taskNode/utils'
 import { runNodeRemote } from '../../runner/remoteRunner'
 import { BASE_DURATION_OPTIONS, MINIMAX_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION } from './taskNode/constants'
 import type { FrameSample } from './taskNode/types'
+import { collectConnectedUpstreamReferences, type UpstreamReferenceItem } from '../utils/upstreamReferences'
 
 type Data = {
   label: string
@@ -87,6 +90,84 @@ type Data = {
 }
 
 export type TaskNodeType = Node<Data, 'taskNode'>
+
+type CharacterRefSummary = {
+  nodeId: string
+  username: string
+  displayName: string
+  rawLabel: string
+}
+
+type VeoCandidateImage = {
+  url: string
+  label: string
+  sourceType: 'image' | 'video'
+}
+
+function getCharacterRefSummary(node: Node): CharacterRefSummary | null {
+  const payload: any = node.data || {}
+  const nodeSchema = getTaskNodeSchema(payload.kind)
+  if (nodeSchema.category !== 'character' && !nodeSchema.features.includes('character')) return null
+
+  const usernameRaw = payload.soraCharacterUsername || ''
+  const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
+  const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : node.id)
+  const rawLabel = payload.label || ''
+  if (!username && !displayName) return null
+
+  return { nodeId: node.id, username, displayName, rawLabel }
+}
+
+function encodeCharacterRef(ref: CharacterRefSummary): string {
+  return JSON.stringify([ref.nodeId, ref.username, ref.displayName, ref.rawLabel])
+}
+
+function decodeCharacterRef(token: string): CharacterRefSummary {
+  const [nodeId, username, displayName, rawLabel] = JSON.parse(token) as [string, string, string, string]
+  return { nodeId, username, displayName, rawLabel }
+}
+
+function encodeVeoCandidate(candidate: VeoCandidateImage): string {
+  return JSON.stringify([candidate.url, candidate.label, candidate.sourceType])
+}
+
+function decodeVeoCandidate(token: string): VeoCandidateImage {
+  const [url, label, sourceType] = JSON.parse(token) as [string, string, 'image' | 'video']
+  return { url, label, sourceType }
+}
+
+function encodeUpstreamReferenceItem(item: UpstreamReferenceItem): string {
+  return JSON.stringify([
+    item.edgeId,
+    item.sourceId,
+    item.sourceKind || '',
+    item.sourceLabel,
+    item.url,
+    item.referenceType,
+    item.soraFileId || '',
+  ])
+}
+
+function decodeUpstreamReferenceItem(token: string): UpstreamReferenceItem {
+  const [edgeId, sourceId, sourceKind, sourceLabel, url, referenceType, soraFileId] = JSON.parse(token) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    UpstreamReferenceItem['referenceType'],
+    string,
+  ]
+  return {
+    edgeId,
+    sourceId,
+    sourceKind: sourceKind || undefined,
+    sourceLabel,
+    url,
+    referenceType,
+    soraFileId: soraFileId || null,
+  }
+}
 
 export default function TaskNode({ id, data, selected, dragging }: NodeProps<TaskNodeType>): JSX.Element {
   const status = data?.status ?? 'idle'
@@ -182,7 +263,6 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
   const placeholderIconColor = nodeShellText
   const iconBadgeBackground = isDarkUi ? rgba(accentPrimary, 0.2) : rgba(accentPrimary, 0.12)
   const iconBadgeShadow = isDarkUi ? '0 10px 20px rgba(0,0,0,0.35)' : '0 10px 20px rgba(15,23,42,0.1)'
-  const darkContentBackground = isDarkUi ? 'rgba(9,13,20,0.92)' : 'rgba(246,248,255,0.95)'
   const darkCardShadow = isDarkUi ? '0 12px 24px rgba(0, 0, 0, 0.4)' : '0 12px 24px rgba(15, 23, 42, 0.1)'
   const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.3)' : 'rgba(227,235,255,0.7)'
 
@@ -285,9 +365,29 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
   const cancelNodeExecution = useRFStore(s => s.cancelNode)
   const setNodeStatus = useRFStore(s => s.setNodeStatus)
   const updateNodeData = useRFStore(s => s.updateNodeData)
+  const deleteEdge = useRFStore(s => s.deleteEdge)
   const addNode = useRFStore(s => s.addNode)
-  const allNodes = useRFStore(s => s.nodes)
-  const allEdges = useRFStore(s => s.edges)
+  const allImages = useRFStore(useShallow((s) => {
+    const urls: string[] = []
+    const seen = new Set<string>()
+    const push = (value: unknown) => {
+      if (typeof value !== 'string') return
+      const trimmed = value.trim()
+      if (!trimmed || seen.has(trimmed)) return
+      seen.add(trimmed)
+      urls.push(trimmed)
+    }
+
+    s.nodes.forEach((node) => {
+      const payload: any = node.data || {}
+      push(payload.imageUrl)
+      if (Array.isArray(payload.imageResults)) {
+        payload.imageResults.forEach((item: any) => push(item?.url))
+      }
+    })
+
+    return urls
+  }))
   const rawPrompt = (data as any)?.prompt as string | undefined
   const [prompt, setPrompt] = React.useState<string>(rawPrompt || '')
 
@@ -414,7 +514,7 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
         updateNodeData(id, { systemPrompt })
       }
     }
-  }, [id, updateNodeData])
+  }, [id, rawSystemPrompt, systemPrompt, updateNodeData])
 
   const handleSystemPromptChange = React.useCallback(
     (next: string) => {
@@ -432,9 +532,34 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
     [id, updateNodeData],
   )
 
-  const nodesForCharacters = useRFStore(s => s.nodes)
-  const edgesForCharacters = useRFStore(s => s.edges)
-  const selectedCount = React.useMemo(() => nodesForCharacters.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0), [nodesForCharacters])
+  const selectedCount = useRFStore((s) => s.nodes.reduce((acc, n) => acc + (n.selected ? 1 : 0), 0))
+  const characterRefTokens = useRFStore(useShallow((s) => {
+    const refs: string[] = []
+    s.nodes.forEach((node) => {
+      const ref = getCharacterRefSummary(node)
+      if (ref) refs.push(encodeCharacterRef(ref))
+    })
+    return refs
+  }))
+  const connectedCharacterIds = useRFStore(useShallow((s) => {
+    const characterNodeIds = new Set<string>()
+    s.nodes.forEach((node) => {
+      if (getCharacterRefSummary(node)) {
+        characterNodeIds.add(node.id)
+      }
+    })
+
+    const ids: string[] = []
+    const seen = new Set<string>()
+    s.edges.forEach((edge) => {
+      if (edge.target !== id) return
+      if (!characterNodeIds.has(edge.source)) return
+      if (seen.has(edge.source)) return
+      seen.add(edge.source)
+      ids.push(edge.source)
+    })
+    return ids
+  }))
   const fileRef = React.useRef<HTMLInputElement|null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
   const soraFileId = (data as any)?.soraFileId as string | undefined
@@ -992,27 +1117,10 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
     data,
     isAudioNode,
   ])
-  const characterRefs = React.useMemo(() => {
-    return nodesForCharacters
-      .filter((node) => {
-        const nodeKind = (node.data as any)?.kind
-        const nodeSchema = getTaskNodeSchema(nodeKind)
-        return nodeSchema.category === 'character' || nodeSchema.features.includes('character')
-      })
-      .map((node) => {
-        const payload: any = node.data || {}
-        const usernameRaw = payload.soraCharacterUsername || ''
-        const username = typeof usernameRaw === 'string' ? usernameRaw.replace(/^@/, '') : ''
-        const displayName = payload.characterDisplayName || payload.label || (username ? `@${username}` : node.id)
-        return { nodeId: node.id, username, displayName, rawLabel: payload.label || '' }
-      })
-      .filter((ref) => ref.username || ref.displayName)
-  }, [nodesForCharacters])
-  const characterRefMap = React.useMemo(() => {
-    const map = new Map<string, { nodeId: string; username: string; displayName: string }>()
-    characterRefs.forEach((ref) => map.set(ref.nodeId, ref))
-    return map
-  }, [characterRefs])
+  const characterRefs = React.useMemo(
+    () => characterRefTokens.map(decodeCharacterRef),
+    [characterRefTokens],
+  )
   const primaryMediaUrl = React.useMemo(() => {
     switch (primaryMedia) {
       case 'character':
@@ -1163,24 +1271,6 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
     return imgs.length ? imgs.slice(0, 9) : []
   })
   const mosaicLimit = mosaicGrid * mosaicGrid
-  const allImages = React.useMemo(() => {
-    const urls: string[] = []
-    const push = (url: any) => {
-      if (typeof url !== 'string') return
-      const t = url.trim()
-      if (t) urls.push(t)
-    }
-    allNodes.forEach((n) => {
-      const kd = (n.data as any)?.kind
-      if (!kd) return
-      const d: any = n.data || {}
-      push(d.imageUrl)
-      if (Array.isArray(d.imageResults)) {
-        d.imageResults.forEach((it: any) => push(it?.url))
-      }
-    })
-    return Array.from(new Set(urls))
-  }, [allNodes])
   const availableImages = React.useMemo(() => {
     const filtered = allImages.filter((u) => !mosaicInvalidUrls.includes(u))
     if (mosaicSelected.length) {
@@ -1515,20 +1605,18 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
   }, [])
   const closeVeoModal = React.useCallback(() => setVeoImageModalMode(null), [])
 
-  const { upstreamText, upstreamImageUrl, upstreamVideoUrl, upstreamSoraFileId } = useRFStore((s) => {
+  const upstreamSelectorValues = useRFStore(useShallow((s) => {
     const edgesToThis = s.edges.filter((e) => e.target === id)
+    const upstreamReferenceTokens = collectConnectedUpstreamReferences(s.nodes, s.edges, id, {
+      preferStoryboardTailShot: kind === 'storyboardImage',
+    }).items.map(encodeUpstreamReferenceItem)
     if (!edgesToThis.length) {
-      return {
-        upstreamText: null as string | null,
-        upstreamImageUrl: null as string | null,
-        upstreamVideoUrl: null as string | null,
-        upstreamSoraFileId: null as string | null,
-      }
+      return ['', '', ...upstreamReferenceTokens]
     }
     const last = edgesToThis[edgesToThis.length - 1]
     const src = s.nodes.find((n) => n.id === last.source)
     if (!src) {
-      return { upstreamText: null, upstreamImageUrl: null, upstreamVideoUrl: null, upstreamSoraFileId: null }
+      return ['', '', ...upstreamReferenceTokens]
     }
     const sd: any = src.data || {}
     const skind: string | undefined = sd.kind
@@ -1536,12 +1624,6 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
     const sourceFeatures = new Set(sourceSchema.features)
     const sourceIsImageNode =
       sourceSchema.category === 'image' || sourceFeatures.has('image') || sourceFeatures.has('imageResults')
-    const sourceHasVideoResults =
-      sourceFeatures.has('videoResults') ||
-      sourceFeatures.has('video') ||
-      sourceSchema.category === 'video' ||
-      sourceSchema.category === 'composer' ||
-      sourceSchema.category === 'storyboard'
 
     // 获取最新的主文本 / 提示词
     const uText =
@@ -1554,27 +1636,24 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
             : null
 
     // 获取最新的主图片 URL
-    let uImg = null
     let uSoraFileId = null
     if (sourceIsImageNode) {
-      uImg = (sd.imageUrl as string | undefined) || null
       uSoraFileId = (sd.soraFileId as string | undefined) || null
-    } else if (sourceHasVideoResults && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-      uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
     }
 
-    // 获取最新的主视频 URL
-    let uVideo = null
-    if (sourceHasVideoResults) {
-      if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-        uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
-      } else {
-        uVideo = (sd.videoUrl as string | undefined) || null
-      }
-    }
+    return [uText || '', uSoraFileId || '', ...upstreamReferenceTokens]
+  }))
+  const upstreamText = upstreamSelectorValues[0] || null
+  const upstreamSoraFileId = upstreamSelectorValues[1] || null
+  const upstreamReferenceItems = React.useMemo<UpstreamReferenceItem[]>(
+    () => upstreamSelectorValues.slice(2).map(decodeUpstreamReferenceItem),
+    [upstreamSelectorValues],
+  )
 
-    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo, upstreamSoraFileId: uSoraFileId }
-  })
+  const handleDisconnectUpstreamReference = React.useCallback((edgeId: string) => {
+    if (!edgeId) return
+    deleteEdge(edgeId)
+  }, [deleteEdge])
 
   const buildFeaturePatch = React.useCallback((nextPrompt: string) => {
     const patch: any = { prompt: nextPrompt }
@@ -2154,12 +2233,7 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
 
   const autoCharacterOptions = React.useMemo(() => {
     if (!characterRefs.length) return []
-    const connected = new Set<string>()
-    edgesForCharacters.forEach((edge) => {
-      if (edge.target === id && characterRefMap.has(edge.source)) {
-        connected.add(edge.source)
-      }
-    })
+    const connected = new Set<string>(connectedCharacterIds)
     return characterRefs
       .map((ref) => ({
         value: ref.nodeId,
@@ -2170,7 +2244,7 @@ export default function TaskNode({ id, data, selected, dragging }: NodeProps<Tas
         rawLabel: ref.rawLabel,
       }))
       .sort((a, b) => Number(b.connected) - Number(a.connected))
-  }, [characterRefs, characterRefMap, edgesForCharacters, id])
+  }, [characterRefs, connectedCharacterIds])
   const connectedCharacterOptions = React.useMemo(() => {
     const withUsername = autoCharacterOptions.filter((opt) => opt.username)
     const direct = withUsername.filter((opt) => opt.connected)
@@ -2906,10 +2980,9 @@ const rewritePromptWithCharacters = React.useCallback(
     ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
   }, [hasImageResults, id, insertRefToLittleT, isCharacterNode, isMosaicNode, kind, onReversePrompt, openParamFor, openPoseEditor, refreshCharacters, setActivePanel, supportsReversePrompt, viewOnly])
 
-  type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
-  const veoCandidateImages = useRFStore((s) => {
+  const veoCandidateImageTokens = useRFStore(useShallow((s) => {
     const seen = new Set<string>()
-    const results: VeoCandidateImage[] = []
+    const results: string[] = []
     s.nodes.forEach((node) => {
       const sd: any = node.data || {}
       const kind: string | undefined = sd.kind
@@ -2931,7 +3004,7 @@ const rewritePromptWithCharacters = React.useCallback(
         const trimmed = value.trim()
         if (!trimmed || seen.has(trimmed)) return
         seen.add(trimmed)
-        results.push({ url: trimmed, label, sourceType })
+        results.push(encodeVeoCandidate({ url: trimmed, label, sourceType }))
       }
 
       if (isImageProducer) {
@@ -2952,7 +3025,11 @@ const rewritePromptWithCharacters = React.useCallback(
     })
 
     return results.slice(0, 20)
-  })
+  }))
+  const veoCandidateImages = React.useMemo<VeoCandidateImage[]>(
+    () => veoCandidateImageTokens.map(decodeVeoCandidate),
+    [veoCandidateImageTokens],
+  )
 
   React.useEffect(() => {
     if (!isCharacterNode && !isSoraVideoNode) return
@@ -3903,53 +3980,15 @@ const rewritePromptWithCharacters = React.useCallback(
             </div>
           ) : (
             <>
-              {isComposerNode && (upstreamImageUrl || upstreamText) && (
+              {(isImageNode || isComposerNode || isVideoNode) && (upstreamReferenceItems.length > 0 || (isComposerNode && upstreamText)) && (
                 <div className="tc-task-node__composer-upstream" style={{ marginBottom: 8 }}>
-                  {upstreamImageUrl && (
-                    <div className="tc-task-node__composer-upstream-media"
-                      style={{
-                        position: 'relative',
-                        width: '100%',
-                        maxHeight: 180,
-                        borderRadius: 8,
-                        overflow: 'hidden',
-                        marginBottom: upstreamText ? 4 : 0,
-                        border: 'none',
-                        background: darkContentBackground,
-                      }}
-                    >
-                      <img
-                        className="tc-task-node__composer-upstream-image"
-                        src={upstreamImageUrl}
-                        alt="上游图片素材"
-                        style={{
-                          width: '100%',
-                          height: 'auto',
-                          maxHeight: 180,
-                          objectFit: 'contain',
-                          display: 'block',
-                          backgroundColor: mediaFallbackSurface,
-                        }}
-                      />
-                      {upstreamSoraFileId && (
-                        <div className="tc-task-node__composer-upstream-tag"
-                          style={{
-                            position: 'absolute',
-                            left: 8,
-                            top: 8,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            background: 'rgba(34, 197, 94, 0.9)',
-                            color: 'white',
-                            fontSize: '10px',
-                            fontWeight: 500,
-                          }}
-                          title={`Using Sora File ID: ${upstreamSoraFileId}`}
-                        >
-                          ✓ Sora
-                        </div>
-                      )}
-                    </div>
+                  {upstreamReferenceItems.length > 0 && (
+                    <UpstreamReferenceStrip
+                      items={upstreamReferenceItems}
+                      inlineDividerColor={inlineDividerColor}
+                      mediaFallbackSurface={mediaFallbackSurface}
+                      onRemove={(item) => handleDisconnectUpstreamReference(item.edgeId)}
+                    />
                   )}
                   {upstreamText && (
                     <Text
@@ -3958,6 +3997,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       c="dimmed"
                       lineClamp={1}
                       title={upstreamText || undefined}
+                      mt={upstreamReferenceItems.length > 0 ? 4 : 0}
                     >
                       {upstreamText}
                     </Text>

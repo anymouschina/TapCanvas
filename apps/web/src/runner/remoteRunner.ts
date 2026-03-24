@@ -21,6 +21,7 @@ import { isAnthropicModel } from '../config/modelSource'
 import { getDefaultModel, isImageEditModel } from '../config/models'
 import { normalizeOrientation, type Orientation } from '../utils/orientation'
 import { getAuthToken } from '../auth/store'
+import { collectConnectedUpstreamReferences } from '../canvas/utils/upstreamReferences'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -347,121 +348,13 @@ function collectReferenceImages(
   options?: { preferStoryboardTailShot?: boolean },
 ): string[] {
   if (!state) return []
-  const edges = Array.isArray(state.edges) ? state.edges : []
   const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
-  const inbound = edges.filter((e: any) => e.target === targetId)
-  if (!inbound.length) return []
-
-  const pickPrimaryImage = (data: any): string => {
-    const results = Array.isArray(data?.imageResults) ? data.imageResults : []
-    const primaryIndex =
-      typeof data?.imagePrimaryIndex === 'number' &&
-      data.imagePrimaryIndex >= 0 &&
-      data.imagePrimaryIndex < results.length
-        ? data.imagePrimaryIndex
-        : 0
-    const primaryFromResults =
-      results[primaryIndex] && typeof results[primaryIndex].url === 'string'
-        ? results[primaryIndex].url.trim()
-        : ''
-    const primaryFallback = typeof data?.imageUrl === 'string' ? data.imageUrl.trim() : ''
-    return primaryFromResults || primaryFallback || ''
-  }
-
-  const pickStoryboardTailShot = (data: any): string => {
-    const results = Array.isArray(data?.imageResults) ? data.imageResults : []
-    if (!results.length) return ''
-    const primaryIndex =
-      typeof data?.imagePrimaryIndex === 'number' &&
-      data.imagePrimaryIndex >= 0 &&
-      data.imagePrimaryIndex < results.length
-        ? data.imagePrimaryIndex
-        : 0
-    const slice = results.slice(Math.max(0, primaryIndex + 1))
-    const shots = slice.filter(
-      (it: any) =>
-        it &&
-        typeof it.url === 'string' &&
-        it.url.trim() &&
-        typeof it.title === 'string' &&
-        it.title.trim().startsWith('镜头'),
-    )
-    const lastShot = shots.length ? shots[shots.length - 1] : null
-    const lastShotUrl = lastShot && typeof lastShot.url === 'string' ? lastShot.url.trim() : ''
-    if (lastShotUrl) return lastShotUrl
-
-    for (let i = slice.length - 1; i >= 0; i--) {
-      const url = slice[i] && typeof slice[i].url === 'string' ? slice[i].url.trim() : ''
-      if (url) return url
-    }
-
-    return pickPrimaryImage(data)
-  }
-
-  const pickVideoTailFrame = (data: any): string => {
-    if (!data) return ''
-    const results = Array.isArray(data.videoResults) ? data.videoResults : []
-    const primaryIndex =
-      typeof data.videoPrimaryIndex === 'number' &&
-      data.videoPrimaryIndex >= 0 &&
-      data.videoPrimaryIndex < results.length
-        ? data.videoPrimaryIndex
-        : 0
-    // Treat the latest video's thumbnail as the "tail frame" reference by default.
-    const fromResults =
-      results[primaryIndex] && typeof results[primaryIndex].thumbnailUrl === 'string'
-        ? results[primaryIndex].thumbnailUrl.trim()
-        : results[0] && typeof results[0].thumbnailUrl === 'string'
-          ? results[0].thumbnailUrl.trim()
-          : ''
-    const fromNode = typeof data.videoThumbnailUrl === 'string' ? data.videoThumbnailUrl.trim() : ''
-    return fromResults || fromNode || ''
-  }
-
-  // Prefer multiple upstream images (most recent first) for multi-character consistency,
-  // while still avoiding using the current node's own output as reference.
-  const upstreamImageNodes: Node[] = []
-  const seen = new Set<string>()
-  const collected: string[] = []
-  let videoTailFrameAdded = false
-  for (const edge of [...inbound].reverse()) {
-    const src = nodes.find((n: Node) => n.id === edge.source)
-    if (!src || seen.has(src.id)) continue
-    const kind: string | undefined = (src?.data as any)?.kind
-    if (!kind) continue
-    // If the upstream is a video node, use its thumbnail as a tail-frame reference image.
-    if (!videoTailFrameAdded && (kind === 'video' || kind === 'composeVideo' || kind === 'storyboard')) {
-      const tail = pickVideoTailFrame((src as any)?.data || {})
-      if (tail) {
-        collected.push(tail)
-        videoTailFrameAdded = true
-      }
-      seen.add(src.id)
-      continue
-    }
-    if (!IMAGE_NODE_KINDS.has(kind)) continue
-    seen.add(src.id)
-    upstreamImageNodes.push(src)
-    if (upstreamImageNodes.length >= 3) break
-  }
-
-  // 1) primary images from up to 3 upstream image nodes
-  for (const src of upstreamImageNodes) {
-    const srcKind: string | undefined = (src?.data as any)?.kind
-    const sd: any = (src as any)?.data || {}
-    if (options?.preferStoryboardTailShot && srcKind === 'storyboardImage') {
-      const tail = pickStoryboardTailShot(sd)
-      if (tail) {
-        collected.push(tail)
-        continue
-      }
-    }
-    const primary = pickPrimaryImage(sd)
-    if (primary) collected.push(primary)
-  }
+  const edges = Array.isArray(state.edges) ? state.edges : []
+  const { items, mostRecentImageNode } = collectConnectedUpstreamReferences(nodes, edges, targetId, options)
+  const collected = items.map((item) => item.url)
 
   // 2) pose references only from the most recent upstream image node (avoid crowding out primaries)
-  const mostRecentData: any = (upstreamImageNodes[0] as any)?.data || {}
+  const mostRecentData: any = (mostRecentImageNode as any)?.data || {}
   const poseRefs = Array.isArray(mostRecentData.poseReferenceImages) ? mostRecentData.poseReferenceImages : []
   if (poseRefs.length) {
     poseRefs.forEach((url: any) => {
