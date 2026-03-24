@@ -1,32 +1,46 @@
-# Cloudflare Workers OpenAPI 3.1
+# TapCanvas Hono API
 
-This is a Cloudflare Worker with OpenAPI 3.1 using [chanfana](https://github.com/cloudflare/chanfana) and [Hono](https://github.com/honojs/hono).
+TapCanvas 主后端，基于 Cloudflare Workers + Hono，负责 AI 路由、鉴权、D1 数据与前端画布工具契约。
 
-This is an example project made to be used as a quick start into building OpenAPI compliant Workers that generates the
-`openapi.json` schema automatically from code and validates the incoming request to the defined parameters or request body.
+## 本地开发
 
-## Get started
+默认开发方式是在各自目录内直接启动，不再把 `docker-compose` 作为日常开发首选。
 
-1. Sign up for [Cloudflare Workers](https://workers.dev). The free tier is more than enough for most use cases.
-2. Clone this project and install dependencies with `npm install`
-3. Run `wrangler login` to login to your Cloudflare account in wrangler
-4. Run `wrangler deploy` to publish the API to Cloudflare Workers
+1. 在仓库根目录安装依赖：`pnpm -w install`
+2. 进入当前目录：`cd apps/hono-api`
+3. 启动 API：`npm run dev`
+4. 新开一个终端启动前端：`cd ../web && npm run dev`
+
+本地地址：
+
+- API: `http://localhost:8788`
+- Web: `http://localhost:5173`
+- Swagger / API docs: `http://localhost:8788/`
+
+说明：
+
+- `npm run dev` 会先执行 `db:update:local`，再启动 `wrangler dev --port 8788`
+- `docker-compose` 目前仅作为可选方案保留，暂不推荐作为默认本地开发方式
+
+## 常用命令
+
+```bash
+npm run dev
+npm run dev:log
+npm run db:update:local
+npm run deploy
+```
 
 ## Project structure
 
-1. Your main router is defined in `src/index.ts`.
-2. Each endpoint has its own file in `src/endpoints/`.
-3. For more information read the [chanfana documentation](https://chanfana.pages.dev/) and [Hono documentation](https://hono.dev/docs).
-
-## Development
-
-1. Run `wrangler dev` to start a local instance of the API.
-2. Open `http://localhost:8787/` in your browser to see the Swagger interface where you can try the endpoints.
-3. Changes made in the `src/` folder will automatically trigger the server to reload, you only need to refresh the Swagger interface.
+1. 主入口路由位于 `src/index.ts`
+2. AI 相关模块位于 `src/modules/ai`
+3. 认证、数据库与业务模块位于 `src/modules/*`
+4. Worker 配置与 D1 schema 位于当前目录下的 `wrangler.jsonc`、`schema.sql`
 
 ### Local HTTP debug logs
 
-- Run `pnpm dev:log` to tee JSON logs into `log.txt` (includes downstream + upstream URL / request body / response).
+- Run `npm run dev:log` to tee JSON logs into `log.txt` (includes downstream + upstream URL / request body / response).
 - Env flags:
   - `DEBUG_HTTP_LOG=1` enable logging
   - `DEBUG_HTTP_LOG_BODY_LIMIT=16384` max bytes captured per body snippet

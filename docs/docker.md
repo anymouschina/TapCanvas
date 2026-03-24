@@ -11,9 +11,11 @@
 
 > 说明：当前主后端为 `apps/hono-api`（Cloudflare Workers + Hono），本地通过 Wrangler + D1 local（SQLite）运行；不再依赖 PostgreSQL/Redis 作为必需组件。
 
+> 当前建议：日常开发默认使用 `cd apps/hono-api && npm run dev` 与 `cd apps/web && npm run dev`。Docker Compose 仅作为可选方案保留，暂不推荐作为默认入口。
+
 ## 快速开始
 
-### 1) 启动（推荐）
+### 1) 启动（可选）
 
 ```bash
 docker compose up -d
@@ -56,7 +58,8 @@ docker compose -f docker-compose.minimal.remote.yml up -d
 1) 在宿主机启动 API（本地 Wrangler）：
 
 ```bash
-pnpm dev:api
+cd apps/hono-api
+npm run dev
 ```
 
 2) 启动 Web（Docker）并指向宿主机 API：
