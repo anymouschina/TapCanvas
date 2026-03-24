@@ -1,6 +1,7 @@
 import React from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { Paper, Group, Button, Divider, Text, TextInput } from '@mantine/core'
+import { useShallow } from 'zustand/react/shallow'
 import { useRFStore, persistToLocalStorage } from '../store'
 import { toast } from '../../ui/toast'
 import { runFlowDag } from '../../runner/dag'
@@ -10,7 +11,11 @@ type Data = { label?: string; editing?: boolean }
 
 export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.Element {
   const label = data?.label || '新建组'
-  const nodes = useRFStore(s => s.nodes)
+  const childIdTokens = useRFStore(useShallow((s) =>
+    s.nodes
+      .filter((n) => (n as any).parentId === id)
+      .map((n) => n.id),
+  ))
   const ungroup = useRFStore(s => s.ungroupGroupNode)
   const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
   const [editing, setEditing] = React.useState(false)
@@ -22,7 +27,7 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
   }, [data?.editing])
 
   // gather direct children by parentId
-  const childIds = React.useMemo(() => new Set(nodes.filter(n => (n as any).parentId === id).map(n => n.id)), [nodes, id])
+  const childIds = React.useMemo(() => new Set(childIdTokens), [childIdTokens])
 
   return (
     <div className="group-node" style={{
@@ -71,11 +76,15 @@ export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.
 }
 
 function GroupSummary({ childIds }: { childIds: Set<string> }) {
-  const nodes = useRFStore(s => s.nodes)
-  const kids = nodes.filter(n => childIds.has(n.id))
-  const total = kids.length || 1
-  const counts = kids.reduce((acc, n) => {
-    const st = (n.data as any)?.status || 'idle'
+  const childStatusTokens = useRFStore(useShallow((s) =>
+    s.nodes
+      .filter((n) => childIds.has(n.id))
+      .map((n) => `${n.id}\u0000${String((n.data as any)?.status || 'idle')}`),
+  ))
+  const total = childStatusTokens.length || 1
+  const counts = childStatusTokens.reduce((acc, token) => {
+    const sepIndex = token.indexOf('\u0000')
+    const st = sepIndex >= 0 ? token.slice(sepIndex + 1) : 'idle'
     acc[st] = (acc[st] || 0) + 1
     return acc
   }, {} as Record<string, number>)
