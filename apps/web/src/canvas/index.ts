@@ -36,8 +36,7 @@ export { NodeConfigModal } from './components/shared/Modal/NodeConfigModal';
 
 // 节点组件
 export { default as TaskNode } from './nodes/TaskNode';
-export { TaskNodeRefactored } from './nodes/TaskNode';
-export { default as GroupNode } from './nodes/GroupNode';
+export { default as TaskNodeRefactored } from './nodes/TaskNode';
 export { default as IONode } from './nodes/IONode';
 
 // 边组件
@@ -50,7 +49,3 @@ export { useInsertMenuStore } from './insertMenuStore';
 
 // 主要组件
 export { default as Canvas } from './Canvas';
-
-// 示例组件
-export { I18nDemo, I18nExamples } from './examples/I18nDemo';
-export { QuickI18nExample } from './examples/QuickI18nExample';

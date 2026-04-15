@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react'
+import { getNodeProductionMeta } from '../productionMeta'
 
 type CharacterSummary = {
   nodeId: string
@@ -34,9 +35,9 @@ const MAX_BINDINGS = 5
 const MAX_TIMELINE = 8
 const PROMPT_PREVIEW_LIMIT = 320
 
-const VIDEO_KINDS = new Set(['composeVideo', 'video', 'storyboard'])
+const VIDEO_KINDS = new Set(['video', 'composeVideo'])
 const CHARACTER_KIND = 'character'
-const IMAGE_KINDS = new Set(['image', 'textToImage'])
+const IMAGE_KINDS = new Set(['image', 'storyboard'])
 const STORY_HINTS = ['分镜', '九宫格', '故事板', 'storyboard', '剧情', '续写', '15s视频']
 
 const trimText = (value?: string | null, limit = PROMPT_PREVIEW_LIMIT) => {
@@ -104,7 +105,7 @@ function extractVideoBindings(nodes: Node[], edges: Edge[], characterLookup: Map
     bindings.push({
       nodeId: node.id,
       label: data.label || node.id,
-      promptPreview: trimText(data.videoPrompt || data.prompt || ''),
+      promptPreview: trimText(data.prompt || ''),
       characters: boundCharacters,
       remixSourceLabel: data.remixSourceLabel || data.remixSourceId || data.remixTargetId
     })
@@ -170,11 +171,7 @@ function extractPendingNodes(nodes: Node[]) {
 
 function extractStoryContext(nodes: Node[]) {
   const pickExcerpt = (data: any) => {
-    const raw = typeof data?.videoPrompt === 'string' && data.videoPrompt.trim()
-      ? data.videoPrompt
-      : typeof data?.prompt === 'string'
-        ? data.prompt
-        : ''
+    const raw = typeof data?.prompt === 'string' ? data.prompt : ''
     const normalized = raw.replace(/\s+/g, ' ').trim()
     if (!normalized) return undefined
     const limit = 1200
@@ -193,7 +190,7 @@ function extractStoryContext(nodes: Node[]) {
     .filter((node) => {
       const data = (node.data || {}) as any
       const kind = (data as any)?.kind || node.type
-      return (kind === 'composeVideo' || IMAGE_KINDS.has(kind)) && isStoryNode(node)
+      return (kind === 'video' || IMAGE_KINDS.has(kind)) && isStoryNode(node)
     })
     .slice(-3)
     .reverse()
@@ -216,7 +213,7 @@ export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
     return undefined
   }
 
-  const summarizePrompt = (data: any) => trimText(data?.videoPrompt || data?.prompt || '', PROMPT_PREVIEW_LIMIT)
+  const summarizePrompt = (data: any) => trimText(data?.prompt || '', PROMPT_PREVIEW_LIMIT)
   const summarizeNegativePrompt = (data: any) => trimText(data?.negativePrompt || data?.negative || '', 220)
   const pickPrimaryImageUrl = (data: any) => {
     const primary = typeof data?.imageUrl === 'string' ? data.imageUrl.trim() : ''
@@ -247,19 +244,26 @@ export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
       edgeCount: edges.length,
       kinds: Array.from(new Set(nodes.map(node => ((node.data as any)?.kind || node.type)))).slice(0, 8)
     },
-    nodes: nodes.slice(0, MAX_NODES).map(node => ({
-      id: node.id,
-      label: (node.data as any)?.label,
-      kind: (node.data as any)?.kind || node.type,
-      type: node.type,
-      status: (node.data as any)?.status,
-      promptPreview: summarizePrompt(node.data),
-      negativePromptPreview: summarizeNegativePrompt(node.data),
-      imageUrl: pickPrimaryImageUrl(node.data),
-      videoUrl: pickPrimaryVideoUrl(node.data),
-      imageModel: (node.data as any)?.imageModel,
-      videoModel: (node.data as any)?.videoModel,
-    })),
+    nodes: nodes.slice(0, MAX_NODES).map(node => {
+      const meta = getNodeProductionMeta(node)
+      return {
+        id: node.id,
+        label: (node.data as any)?.label,
+        kind: (node.data as any)?.kind || node.type,
+        type: node.type,
+        status: (node.data as any)?.status,
+        productionLayer: meta.productionLayer,
+        creationStage: meta.creationStage,
+        approvalStatus: meta.approvalStatus,
+        sourceEvidence: meta.sourceEvidence,
+        promptPreview: summarizePrompt(node.data),
+        negativePromptPreview: summarizeNegativePrompt(node.data),
+        imageUrl: pickPrimaryImageUrl(node.data),
+        videoUrl: pickPrimaryVideoUrl(node.data),
+        imageModel: (node.data as any)?.imageModel,
+        videoModel: (node.data as any)?.videoModel,
+      }
+    }),
     edges: edges.slice(0, MAX_EDGES).map(edge => ({
       source: edge.source,
       target: edge.target,
@@ -305,7 +309,7 @@ export function buildCanvasContext(nodes: Node[], edges: Edge[]) {
         kind: data.kind,
         status: data.status,
         progress: data.progress,
-        promptPreview: trimText(data.videoPrompt || data.prompt || '', 320)
+        promptPreview: trimText(data.prompt || '', 320)
       }
     }
   }

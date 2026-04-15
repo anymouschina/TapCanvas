@@ -1,14 +1,157 @@
 import React from 'react'
-import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Modal, Paper, ScrollArea, Select, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
-import { IconArrowLeft, IconCopy, IconCopyPlus, IconFileText, IconMessageCircle, IconRefresh } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Modal, ScrollArea, Select, Stack, Text, Title, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { IconArrowLeft, IconCopy, IconCopyPlus, IconFileText, IconRefresh } from '@tabler/icons-react'
 import Canvas from '../canvas/Canvas'
 import { cloneProject, getPublicProjectFlows, listPublicProjects, type FlowDto, type ProjectDto } from '../api/server'
 import { useRFStore } from '../canvas/store'
+import { buildStudioUrl } from '../utils/appRoutes'
+import { navigateBackOr } from '../utils/spaNavigate'
+import { PanelCard } from './PanelCard'
 import { useUIStore } from './uiStore'
 import { toast } from './toast'
 
+const SHARE_GROUP_PADDING = 24
+const SHARE_GROUP_MIN_WIDTH = 240
+const SHARE_GROUP_MIN_HEIGHT = 160
+
+function toFiniteNumber(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function getReadonlyNodeSize(node: any): { w: number; h: number } {
+  const width = toFiniteNumber(node?.width)
+    ?? toFiniteNumber(node?.style?.width)
+    ?? toFiniteNumber(node?.data?.nodeWidth)
+  const height = toFiniteNumber(node?.height)
+    ?? toFiniteNumber(node?.style?.height)
+    ?? toFiniteNumber(node?.data?.nodeHeight)
+  const fallback = node?.type === 'groupNode'
+    ? { w: SHARE_GROUP_MIN_WIDTH, h: SHARE_GROUP_MIN_HEIGHT }
+    : node?.type === 'ioNode'
+      ? { w: 88, h: 40 }
+      : { w: 120, h: 210 }
+  return {
+    w: Math.max(24, width ?? fallback.w),
+    h: Math.max(24, height ?? fallback.h),
+  }
+}
+
+function normalizeReadonlyGroupLayout(rawNodes: any[]): any[] {
+  if (!Array.isArray(rawNodes) || rawNodes.length === 0) return []
+  let nodes = rawNodes.map((node) => ({ ...node }))
+  for (let pass = 0; pass < 6; pass += 1) {
+    let changed = false
+    const byId = new Map(nodes.map((node) => [String(node?.id || ''), node]))
+    const groupIds = nodes
+      .filter((node) => node?.type === 'groupNode' && node?.id)
+      .map((node) => String(node.id))
+    if (!groupIds.length) break
+
+    // 先修正内层 group，再修正外层 group，避免嵌套场景反复抖动
+    const depthOf = (groupId: string): number => {
+      let depth = 0
+      let current = byId.get(groupId)
+      while (current) {
+        const pid = typeof current?.parentId === 'string' ? current.parentId.trim() : ''
+        if (!pid) break
+        const parent = byId.get(pid)
+        if (!parent || parent.type !== 'groupNode') break
+        depth += 1
+        current = parent
+      }
+      return depth
+    }
+
+    const sortedGroupIds = groupIds.sort((a, b) => depthOf(b) - depthOf(a))
+    for (const groupId of sortedGroupIds) {
+      const group = byId.get(groupId)
+      if (!group) continue
+      const children = nodes.filter((node) => String(node?.parentId || '').trim() === groupId)
+      if (!children.length) continue
+
+      let minX = Number.POSITIVE_INFINITY
+      let minY = Number.POSITIVE_INFINITY
+      let maxX = Number.NEGATIVE_INFINITY
+      let maxY = Number.NEGATIVE_INFINITY
+      for (const child of children) {
+        const px = toFiniteNumber(child?.position?.x) ?? 0
+        const py = toFiniteNumber(child?.position?.y) ?? 0
+        const { w, h } = getReadonlyNodeSize(child)
+        minX = Math.min(minX, px)
+        minY = Math.min(minY, py)
+        maxX = Math.max(maxX, px + w)
+        maxY = Math.max(maxY, py + h)
+      }
+      if (![minX, minY, maxX, maxY].every(Number.isFinite)) continue
+
+      const offsetX = minX < SHARE_GROUP_PADDING ? SHARE_GROUP_PADDING - minX : 0
+      const offsetY = minY < SHARE_GROUP_PADDING ? SHARE_GROUP_PADDING - minY : 0
+      const nextChildren = offsetX > 0 || offsetY > 0
+        ? children.map((child) => ({
+          ...child,
+          position: {
+            x: (toFiniteNumber(child?.position?.x) ?? 0) + offsetX,
+            y: (toFiniteNumber(child?.position?.y) ?? 0) + offsetY,
+          },
+        }))
+        : children
+
+      if (nextChildren !== children) {
+        const nextById = new Map(nextChildren.map((n) => [String(n.id), n]))
+        nodes = nodes.map((node) => nextById.get(String(node?.id || '')) || node)
+        changed = true
+      }
+
+      const nextMinX = minX + offsetX
+      const nextMinY = minY + offsetY
+      const nextMaxX = maxX + offsetX
+      const nextMaxY = maxY + offsetY
+      const desiredWidth = Math.max(
+        SHARE_GROUP_MIN_WIDTH,
+        Math.ceil(nextMaxX + SHARE_GROUP_PADDING),
+      )
+      const desiredHeight = Math.max(
+        SHARE_GROUP_MIN_HEIGHT,
+        Math.ceil(nextMaxY + SHARE_GROUP_PADDING),
+      )
+      const currentWidth = toFiniteNumber(group?.width)
+        ?? toFiniteNumber(group?.style?.width)
+        ?? toFiniteNumber(group?.data?.nodeWidth)
+        ?? SHARE_GROUP_MIN_WIDTH
+      const currentHeight = toFiniteNumber(group?.height)
+        ?? toFiniteNumber(group?.style?.height)
+        ?? toFiniteNumber(group?.data?.nodeHeight)
+        ?? SHARE_GROUP_MIN_HEIGHT
+
+      if (desiredWidth > currentWidth + 0.1 || desiredHeight > currentHeight + 0.1) {
+        const nextGroup = {
+          ...group,
+          width: desiredWidth,
+          height: desiredHeight,
+          style: {
+            ...(group?.style || {}),
+            width: desiredWidth,
+            height: desiredHeight,
+          },
+          data: {
+            ...(group?.data || {}),
+            nodeWidth: desiredWidth,
+            nodeHeight: desiredHeight,
+          },
+        }
+        nodes = nodes.map((node) => (String(node?.id || '') === groupId ? nextGroup : node))
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  return nodes
+}
+
 function sanitizeReadonlyGraph(payload: { nodes: any[]; edges: any[] }): { nodes: any[]; edges: any[] } {
-  const nodes = (payload.nodes || []).map((n: any) => {
+  const normalizedNodes = normalizeReadonlyGroupLayout(payload.nodes || [])
+  const nodes = normalizedNodes.map((n: any) => {
     const { selected: _selected, dragging: _dragging, positionAbsolute: _pa, ...rest } = n || {}
     return {
       ...rest,
@@ -66,8 +209,6 @@ export default function ShareFullPage(): JSX.Element {
   const setViewOnly = useUIStore((s) => s.setViewOnly)
   const setCurrentProject = useUIStore((s) => s.setCurrentProject)
   const setCurrentFlow = useUIStore((s) => s.setCurrentFlow)
-  const openLangGraphChat = useUIStore((s) => s.openLangGraphChat)
-  const closeLangGraphChat = useUIStore((s) => s.closeLangGraphChat)
   const rfLoad = useRFStore((s) => s.load)
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme === 'dark'
@@ -83,12 +224,10 @@ export default function ShareFullPage(): JSX.Element {
 
   React.useEffect(() => {
     setViewOnly(true)
-    closeLangGraphChat()
     return () => {
       setViewOnly(false)
-      closeLangGraphChat()
     }
-  }, [closeLangGraphChat, setViewOnly])
+  }, [setViewOnly])
 
   const reload = React.useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -163,16 +302,7 @@ export default function ShareFullPage(): JSX.Element {
       const cloned = await cloneProject(projectId, baseName)
       toast('已复制到我的项目', 'success')
       if (cloned?.id) {
-        try {
-          const url = new URL(window.location.href)
-          url.pathname = '/'
-          url.search = ''
-          url.hash = ''
-          url.searchParams.set('projectId', cloned.id)
-          window.location.href = url.toString()
-        } catch {
-          window.location.href = `/?projectId=${encodeURIComponent(cloned.id)}`
-        }
+        window.location.href = buildStudioUrl(cloned.id)
       }
     } catch (err: any) {
       console.error(err)
@@ -188,7 +318,7 @@ export default function ShareFullPage(): JSX.Element {
         <Stack className="tc-share__stack" gap="md">
           <Group className="tc-share__header" justify="space-between">
             <Title className="tc-share__title" order={3}>TapCanvas 分享</Title>
-            <Button className="tc-share__action" variant="subtle" component="a" href="/">
+            <Button className="tc-share__action" variant="subtle" onClick={() => navigateBackOr('/')}>
               返回
             </Button>
           </Group>
@@ -245,8 +375,6 @@ export default function ShareFullPage(): JSX.Element {
         const items: { label: string; value: string }[] = []
         const prompt = typeof nodeData.prompt === 'string' ? nodeData.prompt.trim() : ''
         if (prompt) items.push({ label: '提示词', value: prompt })
-        const videoPrompt = typeof nodeData.videoPrompt === 'string' ? nodeData.videoPrompt.trim() : ''
-        if (videoPrompt && videoPrompt !== prompt) items.push({ label: '视频提示词', value: videoPrompt })
         const systemPrompt = typeof nodeData.systemPrompt === 'string' ? nodeData.systemPrompt.trim() : ''
         if (systemPrompt) items.push({ label: '系统提示词', value: systemPrompt })
         const storyboard = typeof nodeData.storyboard === 'string' ? nodeData.storyboard.trim() : ''
@@ -272,7 +400,7 @@ export default function ShareFullPage(): JSX.Element {
         <Group className="tc-share__topbar-row" justify="space-between" align="center" gap="sm">
           <Group className="tc-share__topbar-left" gap="sm" align="center">
             <Tooltip className="tc-share__tooltip" label="返回主页" withArrow>
-              <ActionIcon className="tc-share__icon-button" variant="subtle" component="a" href="/" aria-label="返回">
+              <ActionIcon className="tc-share__icon-button" variant="subtle" onClick={() => navigateBackOr('/')} aria-label="返回">
                 <IconArrowLeft className="tc-share__icon" size={18} />
               </ActionIcon>
             </Tooltip>
@@ -325,11 +453,6 @@ export default function ShareFullPage(): JSX.Element {
                 <IconFileText className="tc-share__icon" size={16} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip className="tc-share__tooltip" label="打开创作过程（只读）" withArrow>
-              <ActionIcon className="tc-share__icon-button" variant="light" onClick={() => openLangGraphChat()} aria-label="打开创作过程">
-                <IconMessageCircle className="tc-share__icon" size={16} />
-              </ActionIcon>
-            </Tooltip>
             <Tooltip className="tc-share__tooltip" label="复制分享链接" withArrow>
               <ActionIcon className="tc-share__icon-button" variant="light" onClick={handleCopyLink} aria-label="复制链接">
                 <IconCopy className="tc-share__icon" size={16} />
@@ -374,7 +497,7 @@ export default function ShareFullPage(): JSX.Element {
               <Text className="tc-share__empty" size="sm" c="dimmed">当前工作流暂无可展示的提示词。</Text>
             ) : (
               promptEntries.map((entry) => (
-                <Paper className="tc-share__prompt-card" key={entry.id} withBorder radius="md" p="md">
+                <PanelCard className="tc-share__prompt-card" key={entry.id}>
                   <Group className="tc-share__prompt-header" justify="space-between" mb="xs" gap="xs">
                     <Text className="tc-share__prompt-title" size="sm" fw={600}>{entry.label}</Text>
                     <Badge className="tc-share__badge" size="xs" variant="light" color="gray">
@@ -389,7 +512,7 @@ export default function ShareFullPage(): JSX.Element {
                       </div>
                     ))}
                   </Stack>
-                </Paper>
+                </PanelCard>
               ))
             )}
           </Stack>

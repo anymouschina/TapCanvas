@@ -69,11 +69,12 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
   };
 
   // 类型指示器样式
+  const indicatorType = (data.outputs?.[0] ?? data.kind ?? undefined) as string | undefined
   const typeIndicatorStyle: React.CSSProperties = {
     width: '8px',
     height: '8px',
     borderRadius: '50%',
-    backgroundColor: getColorForType(data.outputs?.[0] || data.kind),
+    backgroundColor: getColorForType(indicatorType),
     marginRight: '8px',
     flexShrink: 0,
   };
@@ -169,7 +170,7 @@ export const NodeHeader: React.FC<NodeHeaderProps> = ({
             <div
               className="node-header-progress-track"
               style={{
-                ...createStatusIndicator(data.status, data.progress),
+                ...createStatusIndicator((data.status ?? undefined) as string | undefined, data.progress),
                 width: '40px',
                 height: '3px',
                 borderRadius: '2px',

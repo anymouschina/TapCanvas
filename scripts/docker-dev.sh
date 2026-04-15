@@ -53,7 +53,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-PNPM_FILTER_ARGS="${PNPM_FILTER_ARGS:---filter @tapcanvas/web... --filter cloudflare-workers-openapi...}"
+PNPM_FILTER_ARGS="${PNPM_FILTER_ARGS:---filter @tapcanvas/web... --filter @tapcanvas/api...}"
 # shellcheck disable=SC2086
 pnpm install --prefer-offline --frozen-lockfile $PNPM_FILTER_ARGS
 

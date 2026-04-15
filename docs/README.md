@@ -6,6 +6,7 @@
 
 - [快速启动](docker.md)
 - [本地开发](development.md)
+- [画布低缩放闪烁排查记录](canvas-low-zoom-flicker-investigation.md)
 - [AI/后端契约与扩展](INTELLIGENT_AI_IMPLEMENTATION.md)
 - [Prompt 参考](AI_VIDEO_REALISM_GUIDE.md)
 - [根 README 拆分的中文详细文档](README.zh-CN.md)

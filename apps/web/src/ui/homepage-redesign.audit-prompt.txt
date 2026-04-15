@@ -1,0 +1,10 @@
+Context: 这是 TapCanvas monorepo 的首页改版任务，目标是 apps/web 首页。需要大胆、冒险、有记忆点，像创作工具入口，不像保守 SaaS 官网。仓库规则：禁止 any，不做向后兼容分支，每个 JSX 标签都要有描述性 className。当前允许修改首页相关实现，优先 HomePage.tsx 与 homePage.css。
+Deliverable: 基于现有 HomePage.tsx 与 homePage.css 的只读审计，输出一句话结论 + P0/P1/P2 问题清单 + 3-5 条可执行设计方向建议。格式简洁，中文。
+Must include:
+- 为什么当前首页记忆点不够
+- 哪些视觉模式会让它像保守 SaaS
+- 如何建立“创作工具入口”气质
+- 对移动端的关键提醒
+Must avoid:
+- 不要修改代码
+- 不要泛泛而谈“更现代/更高级"

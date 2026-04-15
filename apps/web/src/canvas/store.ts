@@ -2,19 +2,30 @@ import { create } from 'zustand'
 import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from '@xyflow/react'
 import { addEdge, applyEdgeChanges, applyNodeChanges } from '@xyflow/react'
 import { runNodeMock } from '../runner/mockRunner'
-import { runNodeRemote } from '../runner/remoteRunner'
+import { runNodeDagToTarget } from '../runner/dag'
 import { runFlowDag } from '../runner/dag'
-import { getTaskNodeSchema } from './nodes/taskNodeSchema'
-import { CANVAS_CONFIG } from './utils/constants'
+import { getTaskNodeCoreType, getTaskNodeSchema, normalizeTaskNodeKind } from './nodes/taskNodeSchema'
+import { formatErrorMessage } from './utils/formatErrorMessage'
+import { getNodeAbsPosition, getNodeSize } from './utils/nodeBounds'
+import type { NodeRect, NodeSize, XY } from './utils/nodeBounds'
+import { validateWorkflowIoForRun } from './workflowIo'
+import { normalizeWorkflowEdgeMeta, normalizeWorkflowNodeMeta } from './workflowMeta'
+import { normalizeProductionNodeMeta, normalizeProductionNodeMetaRecord } from './productionMeta'
+import { sanitizeFlowValueForPersistence } from './utils/persistenceSanitizer'
+import { useUIStore } from '../ui/uiStore'
+import { extractCanvasGraph, type CanvasImportData, type SerializedCanvas } from './utils/serialization'
+import { normalizeStoryboardNodeData } from './nodes/taskNode/storyboardEditor'
+import { getDefaultModel } from '../config/models'
+import { buildVideoDurationPatch, readVideoDurationSeconds } from '../utils/videoDuration'
 
-type GroupRec = { id: string; name: string; nodeIds: string[] }
+type GroupArrangeDirection = 'grid' | 'column' | 'flow'
 
 type RFState = {
   nodes: Node[]
   edges: Edge[]
   nextId: number
-  groups: GroupRec[]
   nextGroupId: number
+  lastGroupArrangeDirection: GroupArrangeDirection
   onNodesChange: OnNodesChange
   onEdgesChange: OnEdgesChange
   onConnect: OnConnect
@@ -35,28 +46,32 @@ type RFState = {
   // mock run
   runSelected: () => Promise<void>
   runDag: (concurrency: number) => Promise<void>
-  setNodeStatus: (id: string, status: 'idle'|'queued'|'running'|'success'|'error', patch?: Partial<any>) => void
+  setNodeStatus: (id: string, status: 'idle'|'queued'|'running'|'success'|'error', patch?: Record<string, unknown>) => void
   appendLog: (id: string, line: string) => void
-  beginRunToken: (id: string) => void
+  beginRunToken: (id: string) => string
   endRunToken: (id: string) => void
   cancelNode: (id: string) => void
-  isCanceled: (id: string) => boolean
+  isCanceled: (id: string, runToken?: string | null) => boolean
   deleteNode: (id: string) => void
   deleteEdge: (id: string) => void
+  reorderEdgeForTarget: (edgeId: string, direction: 'left' | 'right') => void
   duplicateNode: (id: string) => void
   pasteFromClipboardAt: (pos: { x: number; y: number }) => void
-  importWorkflow: (workflowData: { nodes: Node[], edges: Edge[] }, position?: { x: number; y: number }) => void
+  importWorkflow: (workflowData: CanvasImportData | SerializedCanvas | null | undefined, position?: { x: number; y: number }) => void
   selectAll: () => void
   clearSelection: () => void
   invertSelection: () => void
-  // groups
+  // group actions (parentId-based model)
   addGroupForSelection: (name?: string) => void
+  createGroupForNodeIds: (nodeIds: string[], name?: string, options?: { preserveLayout?: boolean }) => string | null
+  fitGroupToChildren: (groupId: string, nodeIds?: string[]) => void
+  createScriptBundleFromSelection: (name?: string) => void
   removeGroupById: (id: string) => void
-  findGroupMatchingSelection: () => GroupRec | null
+  findGroupMatchingSelection: () => { id: string; name: string; nodeIds: string[] } | null
   renameGroup: (id: string, name: string) => void
   ungroupGroupNode: (id: string) => void
-  runSelectedGroup: () => Promise<void>
-  renameSelectedGroup: () => void
+  arrangeGroupChildren: (groupId: string, direction: GroupArrangeDirection, nodeIds?: string[]) => void
+  arrangeGroupChildrenByLastDirection: (groupId: string, nodeIds?: string[]) => void
   formatTree: () => void
   autoLayoutAllDagVertical: () => void
   autoLayoutForParent: (parentId: string|null) => void
@@ -70,12 +85,503 @@ function genNodeId(): string {
   return `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function genRunToken(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return (crypto as any).randomUUID() as string
+  }
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 function genGroupId(n: number) {
   return `g${n}`
 }
 
 function cloneGraph(nodes: Node[], edges: Edge[]) {
-  return JSON.parse(JSON.stringify({ nodes, edges })) as { nodes: Node[]; edges: Edge[] }
+  const snapshot = { nodes, edges }
+  if (typeof structuredClone === 'function') {
+    return structuredClone(snapshot) as { nodes: Node[]; edges: Edge[] }
+  }
+  return JSON.parse(JSON.stringify(snapshot)) as { nodes: Node[]; edges: Edge[] }
+}
+
+function computeNextGroupId(nodes: Node[]): number {
+  let maxId = 0
+  for (const node of nodes) {
+    if (!node || node.type !== 'groupNode') continue
+    const rawId = typeof node.id === 'string' ? node.id : ''
+    const match = /^g(\d+)$/.exec(rawId)
+    if (!match) continue
+    const value = Number.parseInt(match[1], 10)
+    if (Number.isFinite(value)) maxId = Math.max(maxId, value)
+  }
+  return maxId + 1
+}
+
+const SCRIPT_BUNDLE_KINDS = new Set(['text'])
+
+function getNodeDataRecord(node: Node): Record<string, unknown> {
+  return node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
+}
+
+function getNodeTextField(node: Node, key: string): string {
+  const value = getNodeDataRecord(node)[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function getScriptBundleNodeContent(node: Node): string {
+  const prompt = getNodeTextField(node, 'prompt')
+  if (prompt) return prompt
+  const text = getNodeTextField(node, 'text')
+  if (text) return text
+  return ''
+}
+
+function escapeScriptBundleHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function convertScriptBundlePlainTextToHtml(value: string): string {
+  return value
+    .split('\n')
+    .map((line) => `<p>${escapeScriptBundleHtml(line)}</p>`)
+    .join('')
+}
+
+function stripBundleLabelPrefix(label: string): string {
+  const trimmed = label.trim()
+  if (!trimmed) return ''
+  const parts = trimmed.split('｜')
+  return parts.length > 1 ? parts.slice(1).join('｜').trim() : trimmed
+}
+
+function compareNodesByCanvasPosition(left: Node, right: Node, nodesById: Map<string, Node>): number {
+  const leftPos = getNodeAbsPosition(left, nodesById)
+  const rightPos = getNodeAbsPosition(right, nodesById)
+  if (leftPos.y !== rightPos.y) return leftPos.y - rightPos.y
+  if (leftPos.x !== rightPos.x) return leftPos.x - rightPos.x
+  return String(getNodeDataRecord(left).label || left.id).localeCompare(String(getNodeDataRecord(right).label || right.id))
+}
+
+function compareNodesByHorizontalPriority(left: Node, right: Node, nodesById: Map<string, Node>): number {
+  const leftPos = getNodeAbsPosition(left, nodesById)
+  const rightPos = getNodeAbsPosition(right, nodesById)
+  if (leftPos.x !== rightPos.x) return leftPos.x - rightPos.x
+  if (leftPos.y !== rightPos.y) return leftPos.y - rightPos.y
+  return String(getNodeDataRecord(left).label || left.id).localeCompare(String(getNodeDataRecord(right).label || right.id))
+}
+
+function orderScriptBundleNodes(nodes: Node[], edges: Edge[]): Node[] {
+  const selectedIds = new Set(nodes.map((node) => node.id))
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
+  const adjacency = new Map<string, string[]>()
+  const indegree = new Map<string, number>()
+
+  for (const node of nodes) {
+    adjacency.set(node.id, [])
+    indegree.set(node.id, 0)
+  }
+
+  for (const edge of edges) {
+    if (!selectedIds.has(edge.source) || !selectedIds.has(edge.target)) continue
+    adjacency.get(edge.source)?.push(edge.target)
+    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1)
+  }
+
+  const pending = nodes
+    .filter((node) => (indegree.get(node.id) || 0) === 0)
+    .sort((left, right) => compareNodesByCanvasPosition(left, right, nodesById))
+  const ordered: Node[] = []
+
+  while (pending.length > 0) {
+    const current = pending.shift()
+    if (!current) break
+    ordered.push(current)
+    const nextIds = adjacency.get(current.id) || []
+    for (const nextId of nextIds) {
+      const nextDegree = (indegree.get(nextId) || 0) - 1
+      indegree.set(nextId, nextDegree)
+      if (nextDegree === 0) {
+        const nextNode = nodesById.get(nextId)
+        if (nextNode) {
+          pending.push(nextNode)
+          pending.sort((left, right) => compareNodesByCanvasPosition(left, right, nodesById))
+        }
+      }
+    }
+  }
+
+  if (ordered.length === nodes.length) return ordered
+
+  const remaining = nodes
+    .filter((node) => !ordered.some((item) => item.id === node.id))
+    .sort((left, right) => compareNodesByCanvasPosition(left, right, nodesById))
+  return [...ordered, ...remaining]
+}
+
+function buildScriptBundleLabel(nodes: Node[]): string {
+  const labels = nodes
+    .map((node) => getNodeTextField(node, 'label'))
+    .filter(Boolean)
+  if (!labels.length) return '脚本合集'
+  const prefixParts = labels.map((label) => label.split('｜')[0]?.trim() || '')
+  const sharedPrefix = prefixParts.every((item) => item && item === prefixParts[0]) ? prefixParts[0] : ''
+  return sharedPrefix ? `${sharedPrefix}｜合集` : '脚本合集'
+}
+
+function buildScriptBundlePrompt(nodes: Node[]): string {
+  return nodes
+    .map((node) => {
+      const label = stripBundleLabelPrefix(getNodeTextField(node, 'label')) || getNodeTextField(node, 'label') || '未命名段落'
+      const content = getScriptBundleNodeContent(node)
+      return `## ${label}\n${content}`.trim()
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function getTaskNodeHandles(node: Node): { targets: Set<string>; sources: Set<string> } | null {
+  if (!node || node.type !== 'taskNode') return null
+  const data = (node as { data?: Record<string, unknown> }).data
+  const kind = typeof data?.kind === 'string' ? data.kind : null
+  const schema = getTaskNodeSchema(kind)
+  const handles = schema.handles
+  if (!handles || (typeof handles === 'object' && 'dynamic' in handles && handles.dynamic)) {
+    return null
+  }
+  const targets = Array.isArray(handles.targets) ? handles.targets : []
+  const sources = Array.isArray(handles.sources) ? handles.sources : []
+  const targetIds = new Set<string>(targets.map((h) => String(h.id || '').trim()).filter(Boolean))
+  const sourceIds = new Set<string>(sources.map((h) => String(h.id || '').trim()).filter(Boolean))
+  const defaultInputType = String(targets[0]?.type || 'any').trim() || 'any'
+  const defaultOutputType = String(sources[0]?.type || 'any').trim() || 'any'
+  targetIds.add(`in-${defaultInputType}-wide`)
+  sourceIds.add(`out-${defaultOutputType}-wide`)
+  return { targets: targetIds, sources: sourceIds }
+}
+
+function pickLegacyCompatibleHandle(
+  knownHandles: Set<string>,
+  prefix: 'in-' | 'out-',
+): string | null {
+  const wideHandle = Array.from(knownHandles).find((handleId) => handleId.startsWith(prefix) && handleId.endsWith('-wide'))
+  if (wideHandle) return wideHandle
+  const firstKnown = Array.from(knownHandles).find((handleId) => handleId.startsWith(prefix))
+  return firstKnown ?? null
+}
+
+function normalizeLegacyImportedEdgeHandle(
+  handleId: string,
+  known: { targets: Set<string>; sources: Set<string> } | null,
+  direction: 'source' | 'target',
+): string {
+  const trimmed = handleId.trim()
+  if (!trimmed || !known) return trimmed
+
+  const handleSet = direction === 'source' ? known.sources : known.targets
+  if (handleSet.has(trimmed)) return trimmed
+
+  if (direction === 'source' && (trimmed === 'right' || trimmed === 'bottom' || trimmed === 'source')) {
+    return pickLegacyCompatibleHandle(known.sources, 'out-') ?? trimmed
+  }
+
+  if (direction === 'target' && (trimmed === 'left' || trimmed === 'top' || trimmed === 'target')) {
+    return pickLegacyCompatibleHandle(known.targets, 'in-') ?? trimmed
+  }
+
+  return trimmed
+}
+
+function normalizeImportedEdgeHandles(nodes: Node[], edges: Edge[]): Edge[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const))
+  return (Array.isArray(edges) ? edges : []).map((edge) => {
+    const sourceNode = nodeById.get(edge.source)
+    const targetNode = nodeById.get(edge.target)
+    const sourceKnown = sourceNode ? getTaskNodeHandles(sourceNode) : null
+    const targetKnown = targetNode ? getTaskNodeHandles(targetNode) : null
+    const nextSourceHandle =
+      typeof edge.sourceHandle === 'string'
+        ? normalizeLegacyImportedEdgeHandle(edge.sourceHandle, sourceKnown, 'source')
+        : edge.sourceHandle
+    const nextTargetHandle =
+      typeof edge.targetHandle === 'string'
+        ? normalizeLegacyImportedEdgeHandle(edge.targetHandle, targetKnown, 'target')
+        : edge.targetHandle
+    const targetKind =
+      targetNode && targetNode.type === 'taskNode'
+        ? getTaskNodeCoreType(typeof (targetNode.data as Record<string, unknown> | undefined)?.kind === 'string' ? String((targetNode.data as Record<string, unknown>).kind) : null)
+        : null
+    const normalizedTargetHandle =
+      targetKind === 'video' &&
+      typeof nextTargetHandle === 'string' &&
+      (nextTargetHandle === 'in-image' || nextTargetHandle === 'in-video')
+        ? 'in-any'
+        : nextTargetHandle
+
+    if (nextSourceHandle === edge.sourceHandle && normalizedTargetHandle === edge.targetHandle) return edge
+
+    return {
+      ...edge,
+      ...(typeof nextSourceHandle === 'string' ? { sourceHandle: nextSourceHandle } : {}),
+      ...(typeof normalizedTargetHandle === 'string' ? { targetHandle: normalizedTargetHandle } : {}),
+    }
+  })
+}
+
+function sanitizeEdgesForNodes(nodes: Node[], edges: Edge[]): Edge[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const))
+  return (Array.isArray(edges) ? edges : []).filter((edge) => {
+    const sourceNode = nodeById.get(edge.source)
+    const targetNode = nodeById.get(edge.target)
+    if (!sourceNode || !targetNode) return false
+    const sourceHandle = typeof edge.sourceHandle === 'string' ? edge.sourceHandle.trim() : ''
+    const targetHandle = typeof edge.targetHandle === 'string' ? edge.targetHandle.trim() : ''
+    const sourceKnown = getTaskNodeHandles(sourceNode)
+    const targetKnown = getTaskNodeHandles(targetNode)
+    if (sourceHandle && sourceKnown && !sourceKnown.sources.has(sourceHandle)) return false
+    if (targetHandle && targetKnown && !targetKnown.targets.has(targetHandle)) return false
+    return true
+  })
+}
+
+function normalizeImportedNodeType(node: Node): Node {
+  if (node.type !== 'group') return node
+  return { ...node, type: 'groupNode' }
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+function readTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function readFirstString(values: unknown[]): string {
+  for (const value of values) {
+    const trimmed = readTrimmedString(value)
+    if (trimmed) return trimmed
+  }
+  return ''
+}
+
+function readStringArray(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  return values
+    .map((item) => readTrimmedString(item))
+    .filter(Boolean)
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isCoordinateExtentLike(
+  value: unknown,
+): value is [[number, number], [number, number]] {
+  if (!Array.isArray(value) || value.length !== 2) return false
+  const first = value[0]
+  const second = value[1]
+  if (!Array.isArray(first) || first.length !== 2) return false
+  if (!Array.isArray(second) || second.length !== 2) return false
+  return isFiniteNumber(first[0]) && isFiniteNumber(first[1]) && isFiniteNumber(second[0]) && isFiniteNumber(second[1])
+}
+
+function normalizeImportedNodeShape(node: Node): Node {
+  const rawSourcePosition = typeof node.sourcePosition === 'string' ? node.sourcePosition.trim() : ''
+  const rawTargetPosition = typeof node.targetPosition === 'string' ? node.targetPosition.trim() : ''
+  const extent = node.extent === 'parent' || isCoordinateExtentLike(node.extent) ? node.extent : undefined
+  const positionX = isFiniteNumber(node.position?.x) ? node.position.x : 0
+  const positionY = isFiniteNumber(node.position?.y) ? node.position.y : 0
+
+  return {
+    ...node,
+    extent,
+    position: { x: positionX, y: positionY },
+    sourcePosition:
+      rawSourcePosition === 'left' ||
+      rawSourcePosition === 'right' ||
+      rawSourcePosition === 'top' ||
+      rawSourcePosition === 'bottom'
+        ? node.sourcePosition
+        : undefined,
+    targetPosition:
+      rawTargetPosition === 'left' ||
+      rawTargetPosition === 'right' ||
+      rawTargetPosition === 'top' ||
+      rawTargetPosition === 'bottom'
+        ? node.targetPosition
+        : undefined,
+  }
+}
+
+type ImportedAssetResult = { url: string; title?: string }
+
+function normalizeImportedAssetResults(
+  urls: string[],
+  existing: unknown,
+  fallbackTitle: string,
+): ImportedAssetResult[] {
+  const existingItems = Array.isArray(existing) ? existing : []
+  const results: ImportedAssetResult[] = []
+  const seen = new Set<string>()
+
+  for (const item of existingItems) {
+    const record = readRecord(item)
+    const url = readFirstString([record?.url])
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    const title = readFirstString([record?.title])
+    results.push(title ? { url, title } : { url })
+  }
+
+  for (const [index, url] of urls.entries()) {
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    results.push(index === 0 ? { url, title: fallbackTitle } : { url })
+  }
+
+  return results
+}
+
+function adaptImportedCanvasNode(node: Node): Node {
+  if (node.type === 'groupNode' || node.type === 'taskNode' || node.type === 'ioNode') return node
+
+  const externalType = readTrimmedString(node.type)
+  if (!['image', 'video', 'text'].includes(externalType)) return node
+
+  const data = getNodeDataRecord(node)
+  const metadata = readRecord(data.__metadata)
+  const label = readFirstString([data.label, data.title, node.id]) || node.id
+  const prompt = readFirstString([data.prompt])
+  const base = {
+    ...node,
+    type: 'taskNode' as const,
+    data: {
+      ...data,
+      label,
+      kind: externalType,
+      prompt,
+      nodeWidth: isFiniteNumber(node.measured?.width) ? node.measured.width : undefined,
+      nodeHeight: isFiniteNumber(node.measured?.height) ? node.measured.height : undefined,
+    },
+  }
+
+  if (externalType === 'image') {
+    const urls = readStringArray(data.options)
+    const primaryUrl = readFirstString([data.imageUrl, data.src, metadata?.url, urls[0]])
+    const imageResults = normalizeImportedAssetResults(urls, data.imageResults, label)
+    return {
+      ...base,
+      data: {
+        ...base.data,
+        imageUrl: primaryUrl || undefined,
+        imageResults,
+        imagePrimaryIndex: primaryUrl ? Math.max(0, imageResults.findIndex((item) => item.url === primaryUrl)) : 0,
+      },
+    }
+  }
+
+  if (externalType === 'video') {
+    const urls = readStringArray(data.options)
+    const primaryUrl = readFirstString([data.videoUrl, data.src, metadata?.url, urls[0]])
+    const videoResults = normalizeImportedAssetResults(urls, data.videoResults, label)
+    return {
+      ...base,
+      data: {
+        ...base.data,
+        videoUrl: primaryUrl || undefined,
+        videoTitle: label,
+        videoResults,
+        videoPrimaryIndex: primaryUrl ? Math.max(0, videoResults.findIndex((item) => item.url === primaryUrl)) : 0,
+      },
+    }
+  }
+
+  const textValue = readFirstString([
+    data.text,
+    Array.isArray(data.textResults) && data.textResults.length > 0
+      ? readRecord(data.textResults[data.textResults.length - 1])?.text
+      : '',
+    data.prompt,
+  ])
+
+  return {
+    ...base,
+    data: {
+      ...base.data,
+      prompt: textValue,
+      textResults: textValue ? [{ text: textValue }] : [],
+    },
+  }
+}
+
+function normalizeImportedTaskTextNode(node: Node): Node {
+  if (node.type !== 'taskNode') return node
+
+  const data = getNodeDataRecord(node)
+  const kind = normalizeTaskNodeKind(typeof data.kind === 'string' ? data.kind : null)
+  if (kind !== 'text') return node
+
+  const prompt = readTrimmedString(data.prompt)
+  const text = readTrimmedString(data.text)
+  const latestTextResult =
+    Array.isArray(data.textResults) && data.textResults.length > 0
+      ? readTrimmedString(readRecord(data.textResults[data.textResults.length - 1])?.text)
+      : ''
+  const textValue = readFirstString([prompt, text, latestTextResult])
+
+  const nextData: Record<string, unknown> = { ...data }
+  let changed = false
+
+  if (!prompt && textValue) {
+    nextData.prompt = textValue
+    changed = true
+  }
+
+  if ((!Array.isArray(data.textResults) || data.textResults.length === 0) && textValue) {
+    nextData.textResults = [{ text: textValue }]
+    changed = true
+  }
+
+  return changed ? { ...node, data: nextData } : node
+}
+
+export function sanitizeGraphForCanvas(input: CanvasImportData | SerializedCanvas | null | undefined): { nodes: Node[]; edges: Edge[] } {
+  const extracted = extractCanvasGraph(input)
+  const rawNodes = extracted?.nodes || []
+  const rawEdges = extracted?.edges || []
+
+  const normalizedNodes = rawNodes
+    .filter((n): n is Node => Boolean(n))
+    .map(normalizeImportedNodeType)
+    .map(adaptImportedCanvasNode)
+    .map(normalizeImportedTaskTextNode)
+    .map(normalizeImportedNodeShape)
+    .map(normalizeNodeParentId)
+    .map(normalizeWorkflowNodeMeta)
+
+  const groupIds = new Set(normalizedNodes.filter((n) => n.type === 'groupNode').map((n) => n.id))
+  const nodeIds = new Set(normalizedNodes.map((n) => n.id))
+
+  const nodes = normalizedNodes.map((node) => {
+    const pid = getNodeParentId(node)
+    if (!pid) return node
+    const invalidParent = pid === node.id || !groupIds.has(pid) || !nodeIds.has(pid)
+    if (!invalidParent) return node
+    const { parentId: _parentId, parentNode: _legacyParentNode, extent: _extent, ...rest } = (node as any)
+    return rest as Node
+  })
+
+  const finalNodeIds = new Set(nodes.map((n) => n.id))
+  const edgesByNode = normalizeImportedEdgeHandles(
+    nodes,
+    rawEdges.filter((e) => finalNodeIds.has(e.source) && finalNodeIds.has(e.target)),
+  )
+  const edges = sanitizeEdgesForNodes(nodes, edgesByNode).map(normalizeWorkflowEdgeMeta)
+  return { nodes: ensureParentFirstOrder(nodes), edges }
 }
 
 type TreeLayoutPoint = { x: number; y: number }
@@ -85,88 +591,555 @@ type TreeLayoutSize = { w: number; h: number }
 // 若未来有确实需要禁用选择的 taskNode kind，可再加入该集合。
 const UNSELECTABLE_TASK_NODE_KINDS = new Set<string>()
 
-function parseNumericStyle(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const n = Number.parseFloat(value)
-    if (Number.isFinite(n)) return n
-  }
-  return undefined
-}
-
 function getNodeSizeForLayout(node: Node): TreeLayoutSize {
-  const anyNode = node as any
-  const measuredW =
-    typeof anyNode?.measured?.width === 'number' && Number.isFinite(anyNode.measured.width) && anyNode.measured.width > 0
-      ? anyNode.measured.width
-      : typeof anyNode?.width === 'number' && Number.isFinite(anyNode.width) && anyNode.width > 0
-        ? anyNode.width
-        : undefined
-  const measuredH =
-    typeof anyNode?.measured?.height === 'number' && Number.isFinite(anyNode.measured.height) && anyNode.measured.height > 0
-      ? anyNode.measured.height
-      : typeof anyNode?.height === 'number' && Number.isFinite(anyNode.height) && anyNode.height > 0
-        ? anyNode.height
-        : undefined
-  const styleW = parseNumericStyle(anyNode?.style?.width)
-  const styleH = parseNumericStyle(anyNode?.style?.height)
-  const dataW = parseNumericStyle(anyNode?.data?.nodeWidth)
-  const dataH = parseNumericStyle(anyNode?.data?.nodeHeight)
-  const fallbackW = 220
-  const fallbackH = 120
-  return {
-    w: measuredW ?? styleW ?? dataW ?? fallbackW,
-    h: measuredH ?? styleH ?? dataH ?? fallbackH
-  }
+  // Layout must follow actual rendered box first; stale data.nodeWidth/nodeHeight
+  // can otherwise create huge phantom gaps between nodes.
+  const measured = getNodeSize(node)
+  return { w: measured.w, h: measured.h }
 }
 
 const GROUP_PADDING = 8
 const GROUP_MIN_WIDTH = 160
 const GROUP_MIN_HEIGHT = 90
+const LAYOUT_EXCLUDED_GROUP_SOURCES = new Set<string>([
+  'novel_storyboard_progress',
+])
 
-function getNodeParentId(node: Node): string | undefined {
+function getNodeParentId(node: Node): string | null {
   const anyNode = node as any
-  const parentId = anyNode?.parentId
-  if (typeof parentId === 'string' && parentId) return parentId
-  const legacyParentNode = anyNode?.parentNode
-  if (typeof legacyParentNode === 'string' && legacyParentNode) return legacyParentNode
-  return undefined
+  const raw =
+    typeof anyNode?.parentId === 'string'
+      ? anyNode.parentId
+      : typeof anyNode?.parentNode === 'string'
+        ? anyNode.parentNode
+        : ''
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  return trimmed || null
 }
 
-// React Flow v12 uses `parentId` (v11 used `parentNode`). Normalize legacy data for compatibility.
-export function normalizeNodesParentId(nodes: Node[]): Node[] {
-  let changed = false
-  const normalized = nodes.map((n: any) => {
-    if (!n || typeof n !== 'object') return n
+function shouldExcludeNodeFromGroupArrange(node: Node): boolean {
+  if (!node || node.type === 'groupNode') return true
+  const data = (node as any)?.data as Record<string, unknown> | undefined
+  const source = String(data?.source || '').trim()
+  if (source && LAYOUT_EXCLUDED_GROUP_SOURCES.has(source)) return true
+  return false
+}
 
-    const parentId = typeof n.parentId === 'string' ? n.parentId : undefined
-    const legacyParentNode = typeof n.parentNode === 'string' ? n.parentNode : undefined
+function buildFlowArrangeColumns(nodes: Node[], edges: Edge[]): Node[][] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
+  const targetIds = new Set(nodes.map((node) => node.id))
+  const outgoing = new Map<string, Set<string>>()
+  const incomingCount = new Map<string, number>()
 
-    if (parentId) {
-      if ('parentNode' in n) {
-        const { parentNode: _parentNode, ...rest } = n
-        changed = true
-        return rest
+  for (const node of nodes) {
+    outgoing.set(node.id, new Set<string>())
+    incomingCount.set(node.id, 0)
+  }
+
+  for (const edge of edges) {
+    if (!targetIds.has(edge.source) || !targetIds.has(edge.target) || edge.source === edge.target) continue
+    const nextTargets = outgoing.get(edge.source)
+    if (!nextTargets || nextTargets.has(edge.target)) continue
+    nextTargets.add(edge.target)
+    incomingCount.set(edge.target, (incomingCount.get(edge.target) || 0) + 1)
+  }
+
+  const compare = (leftId: string, rightId: string): number => {
+    const leftNode = nodesById.get(leftId)
+    const rightNode = nodesById.get(rightId)
+    if (!leftNode || !rightNode) return leftId.localeCompare(rightId)
+    return compareNodesByHorizontalPriority(leftNode, rightNode, nodesById)
+  }
+
+  const roots = nodes
+    .filter((node) => (incomingCount.get(node.id) || 0) === 0)
+    .sort((left, right) => compareNodesByHorizontalPriority(left, right, nodesById))
+  const visited = new Set<string>()
+  const columns: Node[][] = []
+
+  const visitChain = (startId: string): void => {
+    if (visited.has(startId)) return
+    const queue: string[] = [startId]
+    const orderedIds: string[] = []
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()
+      if (!currentId || visited.has(currentId)) continue
+      visited.add(currentId)
+      orderedIds.push(currentId)
+      const nextIds = Array.from(outgoing.get(currentId) || []).sort(compare)
+      for (const nextId of nextIds) {
+        if (!visited.has(nextId)) queue.push(nextId)
       }
-      return n
     }
 
-    if (legacyParentNode) {
-      const { parentNode: _parentNode, ...rest } = n
-      changed = true
-      return { ...rest, parentId: legacyParentNode }
-    }
+    if (!orderedIds.length) return
+    columns.push(orderedIds.map((id) => nodesById.get(id)).filter((node): node is Node => Boolean(node)))
+  }
 
-    if ('parentNode' in n) {
-      const { parentNode: _parentNode, ...rest } = n
-      changed = true
-      return rest
-    }
+  for (const root of roots) visitChain(root.id)
 
-    return n
+  const remaining = nodes
+    .filter((node) => !visited.has(node.id))
+    .sort((left, right) => compareNodesByHorizontalPriority(left, right, nodesById))
+  for (const node of remaining) visitChain(node.id)
+
+  return columns
+}
+
+function arrangeGroupChildrenInNodes(
+  nodes: Node[],
+  edges: Edge[],
+  groupId: string,
+  direction: GroupArrangeDirection,
+  nodeIds?: string[],
+): Node[] {
+  const group = nodes.find((n) => n.id === groupId && n.type === 'groupNode')
+  if (!group) return nodes
+
+  const allChildren = nodes.filter((n) => getNodeParentId(n) === groupId && !shouldExcludeNodeFromGroupArrange(n))
+  if (allChildren.length < 2) return nodes
+
+  const targetIds =
+    Array.isArray(nodeIds) && nodeIds.length
+      ? new Set(nodeIds.filter((id) => allChildren.some((n) => n.id === id)))
+      : new Set(allChildren.map((n) => n.id))
+  const targets = allChildren
+    .filter((n) => targetIds.has(n.id))
+    .sort((a, b) => {
+      const ay = Number(a.position?.y ?? 0)
+      const by = Number(b.position?.y ?? 0)
+      if (Math.abs(ay - by) > 1) return ay - by
+      const ax = Number(a.position?.x ?? 0)
+      const bx = Number(b.position?.x ?? 0)
+      if (Math.abs(ax - bx) > 1) return ax - bx
+      return String(a.id).localeCompare(String(b.id))
+    })
+  if (targets.length < 2) return nodes
+
+  const padding = GROUP_PADDING
+  const gapX = 12
+  const gapY = 12
+
+  const nodeSizeById = new Map<string, { w: number; h: number }>(
+    targets.map((node) => [node.id, getNodeSizeForLayout(node)] as const),
+  )
+
+  const layoutPos = new Map<string, { x: number; y: number }>()
+  if (direction === 'column') {
+    let cursorY = padding
+    for (const node of targets) {
+      layoutPos.set(node.id, { x: padding, y: cursorY })
+      cursorY += (nodeSizeById.get(node.id)?.h ?? 0) + gapY
+    }
+  } else if (direction === 'flow') {
+    const targetIdSet = new Set(targets.map((node) => node.id))
+    const scopedEdges = edges.filter((edge) => targetIdSet.has(edge.source) && targetIdSet.has(edge.target))
+    const columns = buildFlowArrangeColumns(targets, scopedEdges)
+    let cursorX = padding
+
+    for (const column of columns) {
+      let cursorY = padding
+      let columnWidth = 0
+      for (const node of column) {
+        const size = nodeSizeById.get(node.id) || { w: 0, h: 0 }
+        layoutPos.set(node.id, { x: cursorX, y: cursorY })
+        cursorY += size.h + gapY
+        columnWidth = Math.max(columnWidth, size.w)
+      }
+      cursorX += columnWidth + gapX
+    }
+  } else {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(targets.length)))
+    const rows = Math.max(1, Math.ceil(targets.length / cols))
+    const colWidths = Array.from({ length: cols }, () => 0)
+    const rowHeights = Array.from({ length: rows }, () => 0)
+    targets.forEach((node, idx) => {
+      const row = Math.floor(idx / cols)
+      const col = idx % cols
+      const size = nodeSizeById.get(node.id) || { w: 0, h: 0 }
+      colWidths[col] = Math.max(colWidths[col], size.w)
+      rowHeights[row] = Math.max(rowHeights[row], size.h)
+    })
+    const colOffsets = Array.from({ length: cols }, () => 0)
+    const rowOffsets = Array.from({ length: rows }, () => 0)
+    let x = padding
+    for (let col = 0; col < cols; col += 1) {
+      colOffsets[col] = x
+      x += colWidths[col] + gapX
+    }
+    let y = padding
+    for (let row = 0; row < rows; row += 1) {
+      rowOffsets[row] = y
+      y += rowHeights[row] + gapY
+    }
+    targets.forEach((node, idx) => {
+      const row = Math.floor(idx / cols)
+      const col = idx % cols
+      layoutPos.set(node.id, {
+        x: colOffsets[col] ?? padding,
+        y: rowOffsets[row] ?? padding,
+      })
+    })
+  }
+
+  const laidOutNodes = nodes.map((node) => {
+    const next = layoutPos.get(node.id)
+    if (!next) return node
+    const stripped = stripNodePositionInternals(node)
+    return { ...stripped, position: next }
   })
 
-  return changed ? (normalized as Node[]) : nodes
+  return autoFitSingleGroupNode(laidOutNodes, groupId, new Set(allChildren.map((n) => n.id)))
+}
+
+function normalizeNodeParentId(node: Node): Node {
+  const anyNode = node as any
+  const rawParentId = typeof anyNode?.parentId === 'string' ? anyNode.parentId : null
+  const rawLegacyParentNode = typeof anyNode?.parentNode === 'string' ? anyNode.parentNode : null
+  const resolved = (rawParentId || rawLegacyParentNode || '').trim()
+
+  const shouldStripLegacy = rawLegacyParentNode != null
+  const shouldNormalizeParentId = (rawParentId || '').trim() !== resolved
+  const shouldDropEmptyParentId = rawParentId != null && !resolved
+
+  if (!shouldStripLegacy && !shouldNormalizeParentId && !shouldDropEmptyParentId) return node
+
+  const { parentNode: _legacyParentNode, parentId: _existingParentId, ...rest } = anyNode
+  return resolved ? ({ ...rest, parentId: resolved } as Node) : (rest as Node)
+}
+
+function stripNodePositionInternals(node: Node): Node {
+  const {
+    positionAbsolute: _positionAbsolute,
+    dragging: _dragging,
+    resizing: _resizing,
+    ...rest
+  } = (node as any) || {}
+  return rest as Node
+}
+
+function ensureParentFirstOrder(nodes: Node[]): Node[] {
+  const byId = new Map(nodes.map((n) => [n.id, n] as const))
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const ordered: Node[] = []
+
+  const visit = (node: Node) => {
+    if (visited.has(node.id)) return
+    if (visiting.has(node.id)) {
+      visited.add(node.id)
+      ordered.push(node)
+      return
+    }
+    visiting.add(node.id)
+    const pid = getNodeParentId(node)
+    if (pid && pid !== node.id) {
+      const parent = byId.get(pid)
+      if (parent) visit(parent)
+    }
+    visiting.delete(node.id)
+    if (!visited.has(node.id)) {
+      visited.add(node.id)
+      ordered.push(node)
+    }
+  }
+
+  for (const node of nodes) visit(node)
+  return ordered
+}
+
+function parseViewportTransform(): { tx: number; ty: number; zoom: number } | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null
+  const viewport = document.querySelector('.react-flow__viewport') as HTMLElement | null
+  if (!viewport) return null
+  const transform = window.getComputedStyle(viewport).transform
+  if (!transform || transform === 'none') return { tx: 0, ty: 0, zoom: 1 }
+  const matrixMatch = transform.match(/^matrix\((.+)\)$/)
+  if (matrixMatch?.[1]) {
+    const values = matrixMatch[1].split(',').map((x) => Number.parseFloat(x.trim()))
+    if (values.length >= 6 && values.every((n) => Number.isFinite(n))) {
+      return { tx: values[4], ty: values[5], zoom: values[0] || 1 }
+    }
+  }
+  const matrix3dMatch = transform.match(/^matrix3d\((.+)\)$/)
+  if (matrix3dMatch?.[1]) {
+    const values = matrix3dMatch[1].split(',').map((x) => Number.parseFloat(x.trim()))
+    if (values.length >= 16 && values.every((n) => Number.isFinite(n))) {
+      return { tx: values[12], ty: values[13], zoom: values[0] || 1 }
+    }
+  }
+  return null
+}
+
+function getFlowViewRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null
+  const viewport = document.querySelector('.react-flow__viewport') as HTMLElement | null
+  const host = (viewport?.parentElement as HTMLElement | null) || viewport
+  if (!host) return null
+  const rect = host.getBoundingClientRect()
+  const t = parseViewportTransform() || { tx: 0, ty: 0, zoom: 1 }
+  const safeZoom = Number.isFinite(t.zoom) && t.zoom > 0 ? t.zoom : 1
+  const left = -t.tx / safeZoom
+  const top = -t.ty / safeZoom
+  const width = (rect.width || window.innerWidth) / safeZoom
+  const height = (rect.height || window.innerHeight) / safeZoom
+  return { left, top, right: left + width, bottom: top + height, width, height }
+}
+
+export function computeContextAwarePosition(nodes: Node[], preferredSize?: { w: number; h: number }): { x: number; y: number } {
+  const view = getFlowViewRect()
+  if (!view) return { x: 80, y: 80 }
+  const margin = 24
+  const gap = 28
+  const size = preferredSize || { w: 420, h: 240 }
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+
+  const nodesById = new Map(nodes.map((n) => [n.id, n] as const))
+  const rects = nodes
+    .filter((n) => n.type !== 'groupNode')
+    .map((n) => {
+      const p = getNodeAbsPosition(n, nodesById)
+      const s = getNodeSize(n)
+      return { x: p.x, y: p.y, w: s.w, h: s.h }
+    })
+    .filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.w) && Number.isFinite(r.h))
+  const visible = rects.filter((r) => !(r.x + r.w < view.left || r.x > view.right || r.y + r.h < view.top || r.y > view.bottom))
+  if (!visible.length) {
+    return {
+      x: clamp(view.left + view.width * 0.58, view.left + margin, view.right - size.w - margin),
+      y: clamp(view.top + margin, view.top + margin, view.bottom - size.h - margin),
+    }
+  }
+  const source = visible
+
+  const minX = Math.min(...source.map((r) => r.x))
+  const minY = Math.min(...source.map((r) => r.y))
+  const maxX = Math.max(...source.map((r) => r.x + r.w))
+  const maxY = Math.max(...source.map((r) => r.y + r.h))
+  const rightX = maxX + gap
+  const belowY = maxY + gap
+  const canRight = rightX + size.w <= view.right - margin
+  const canBelow = belowY + size.h <= view.bottom - margin
+
+  if (canRight) {
+    return {
+      x: clamp(rightX, view.left + margin, view.right - size.w - margin),
+      y: clamp(minY, view.top + margin, view.bottom - size.h - margin),
+    }
+  }
+  if (canBelow) {
+    return {
+      x: clamp(minX, view.left + margin, view.right - size.w - margin),
+      y: clamp(belowY, view.top + margin, view.bottom - size.h - margin),
+    }
+  }
+  return {
+    x: clamp(view.right - size.w - margin, view.left + margin, view.right - size.w - margin),
+    y: clamp(view.bottom - size.h - margin, view.top + margin, view.bottom - size.h - margin),
+  }
+}
+
+function resolveViewportImportPosition(preferredSize?: NodeSize): XY {
+  const view = getFlowViewRect()
+  if (!view) return { x: 120, y: 120 }
+  const size = preferredSize ?? { w: 420, h: 240 }
+  return clampPositionToView(
+    { x: view.left + 48, y: view.top + 48 },
+    size,
+    view,
+  )
+}
+
+function getRootImportBounds(nodes: Node[]): NodeRect | null {
+  const roots = nodes.filter((node) => !getNodeParentId(node))
+  const targets = roots.length ? roots : nodes
+  if (!targets.length) return null
+
+  const rects = targets
+    .map((node) => {
+      const x = Number(node.position?.x ?? 0)
+      const y = Number(node.position?.y ?? 0)
+      const size = getNodeSize(node)
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      return { x, y, w: size.w, h: size.h }
+    })
+    .filter((rect): rect is NodeRect => Boolean(rect))
+
+  if (!rects.length) return null
+
+  const minX = Math.min(...rects.map((rect) => rect.x))
+  const minY = Math.min(...rects.map((rect) => rect.y))
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.w))
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.h))
+
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0, maxX - minX),
+    h: Math.max(0, maxY - minY),
+  }
+}
+
+function toNodeRect(position: XY, size: NodeSize): NodeRect {
+  return { x: position.x, y: position.y, w: size.w, h: size.h }
+}
+
+function rectsOverlap(a: NodeRect, b: NodeRect, padding: number): boolean {
+  return !(
+    a.x + a.w + padding <= b.x ||
+    b.x + b.w + padding <= a.x ||
+    a.y + a.h + padding <= b.y ||
+    b.y + b.h + padding <= a.y
+  )
+}
+
+function clampPositionToView(position: XY, size: NodeSize, view: ReturnType<typeof getFlowViewRect>): XY {
+  if (!view) return position
+  const margin = 24
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+  return {
+    x: clamp(position.x, view.left + margin, view.right - size.w - margin),
+    y: clamp(position.y, view.top + margin, view.bottom - size.h - margin),
+  }
+}
+
+function collectOccupiedRects(nodes: Node[], parentId: string | null): NodeRect[] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
+  if (parentId) {
+    return nodes
+      .filter((node) => node.type !== 'groupNode' && String(node.parentId || '').trim() === parentId)
+      .map((node) => toNodeRect({ x: Number(node.position?.x ?? 0), y: Number(node.position?.y ?? 0) }, getNodeSize(node)))
+      .filter((rect) => [rect.x, rect.y, rect.w, rect.h].every((value) => Number.isFinite(value)))
+  }
+
+  return nodes
+    .filter((node) => node.type !== 'groupNode')
+    .map((node) => toNodeRect(getNodeAbsPosition(node, nodesById), getNodeSize(node)))
+    .filter((rect) => [rect.x, rect.y, rect.w, rect.h].every((value) => Number.isFinite(value)))
+}
+
+export function resolveNonOverlappingPosition(
+  nodes: Node[],
+  preferredPosition: XY,
+  preferredSize: NodeSize,
+  parentId: string | null,
+): XY {
+  const occupiedRects = collectOccupiedRects(nodes, parentId)
+  if (!occupiedRects.length) return preferredPosition
+
+  const collisionPadding = 32
+  const stepX = Math.max(180, Math.round(preferredSize.w + collisionPadding))
+  const stepY = Math.max(140, Math.round(preferredSize.h + collisionPadding))
+  const view = parentId ? null : getFlowViewRect()
+  const origin = parentId ? preferredPosition : clampPositionToView(preferredPosition, preferredSize, view)
+  const offsets: XY[] = [{ x: 0, y: 0 }]
+
+  for (let radius = 1; radius <= 8; radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
+        offsets.push({ x: dx, y: dy })
+      }
+    }
+  }
+
+  for (const offset of offsets) {
+    const rawCandidate = {
+      x: origin.x + offset.x * stepX,
+      y: origin.y + offset.y * stepY,
+    }
+    const candidate = parentId ? rawCandidate : clampPositionToView(rawCandidate, preferredSize, view)
+    const candidateRect = toNodeRect(candidate, preferredSize)
+    const overlaps = occupiedRects.some((rect) => rectsOverlap(candidateRect, rect, collisionPadding))
+    if (!overlaps) return candidate
+  }
+
+  return parentId
+    ? { x: origin.x, y: origin.y + stepY * 2 }
+    : clampPositionToView({ x: origin.x, y: origin.y + stepY * 2 }, preferredSize, view)
+}
+
+function applyGroupMembershipOnDragStop(nodes: Node[], movedNodeIds: Set<string>): Node[] {
+  if (!movedNodeIds.size) return nodes
+
+  const nodesById = new Map(nodes.map(n => [n.id, n] as const))
+  const groupNodes = nodes.filter(n => n.type === 'groupNode')
+
+  const groupRects = groupNodes
+    .map((group) => {
+      const pos = getNodeAbsPosition(group, nodesById)
+      const { w, h } = getNodeSize(group)
+      const area = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w * h : Number.POSITIVE_INFINITY
+      return { id: group.id, x: pos.x, y: pos.y, w, h, area }
+    })
+    .filter((g) => Number.isFinite(g.x) && Number.isFinite(g.y) && Number.isFinite(g.w) && Number.isFinite(g.h) && g.w > 0 && g.h > 0)
+
+  if (!groupRects.length) return nodes
+
+  const isCenterInside = (child: Node, group: { x: number; y: number; w: number; h: number }) => {
+    const epsilon = 2
+    const pos = getNodeAbsPosition(child, nodesById)
+    const { w, h } = getNodeSize(child)
+    const cx = pos.x + w / 2
+    const cy = pos.y + h / 2
+    const left = group.x - epsilon
+    const top = group.y - epsilon
+    const right = group.x + group.w + epsilon
+    const bottom = group.y + group.h + epsilon
+    if (![cx, cy, left, top, right, bottom].every(Number.isFinite)) return false
+    return cx >= left && cx <= right && cy >= top && cy <= bottom
+  }
+
+  const updates = new Map<string, Node>()
+  for (const nodeId of movedNodeIds) {
+    const node = nodesById.get(nodeId)
+    if (!node) continue
+    if (node.type === 'groupNode') continue
+
+    let bestGroupId: string | null = null
+    let bestArea = Number.POSITIVE_INFINITY
+    for (const group of groupRects) {
+      if (group.id === node.id) continue
+      if (!isCenterInside(node, group)) continue
+      if (bestGroupId === null || group.area < bestArea || (group.area === bestArea && group.id < bestGroupId)) {
+        bestGroupId = group.id
+        bestArea = group.area
+      }
+    }
+
+    const currentParent = getNodeParentId(node)
+    const nextParent = bestGroupId
+    const shouldStripExtent = (node as any)?.extent != null
+
+    if (nextParent === currentParent && !shouldStripExtent) continue
+
+    const cleanNode = stripNodePositionInternals(normalizeNodeParentId(node))
+    const absPos = getNodeAbsPosition(node, nodesById)
+
+    if (!nextParent) {
+      updates.set(nodeId, {
+        ...cleanNode,
+        parentId: undefined,
+        extent: undefined,
+        position: { x: absPos.x, y: absPos.y },
+      })
+      continue
+    }
+
+    const group = nodesById.get(nextParent)
+    if (!group) continue
+    const groupAbs = getNodeAbsPosition(group, nodesById)
+    updates.set(nodeId, {
+      ...cleanNode,
+      parentId: nextParent,
+      extent: undefined,
+      position: { x: absPos.x - groupAbs.x, y: absPos.y - groupAbs.y },
+    })
+  }
+
+  if (!updates.size) return nodes
+  return ensureParentFirstOrder(nodes.map((n) => updates.get(n.id) || n))
 }
 
 function autoFitGroupNodes(nodes: Node[]): Node[] {
@@ -180,7 +1153,7 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
   const updateNode = (id: string, patch: Partial<Node>) => {
     const base = updates.get(id) || byId.get(id)
     if (!base) return
-    updates.set(id, { ...base, ...patch })
+    updates.set(id, { ...stripNodePositionInternals(base), ...patch })
     changed = true
   }
 
@@ -205,27 +1178,16 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
 
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) continue
 
-    const manualW = parseNumericStyle((group as any)?.data?.manualWidth)
-    const manualH = parseNumericStyle((group as any)?.data?.manualHeight)
     const desiredPos = {
-      x: (group.position?.x ?? 0) + ((Number.isFinite(manualW) && manualW! > 0) ? Math.min(0, minX - GROUP_PADDING) : (minX - GROUP_PADDING)),
-      y: (group.position?.y ?? 0) + ((Number.isFinite(manualH) && manualH! > 0) ? Math.min(0, minY - GROUP_PADDING) : (minY - GROUP_PADDING)),
+      x: (group.position?.x ?? 0) + (minX - GROUP_PADDING),
+      y: (group.position?.y ?? 0) + (minY - GROUP_PADDING),
     }
-    const minW = Math.max(GROUP_MIN_WIDTH, Number.isFinite(manualW) && manualW! > 0 ? manualW! : 0)
-    const minH = Math.max(GROUP_MIN_HEIGHT, Number.isFinite(manualH) && manualH! > 0 ? manualH! : 0)
     const desiredSize = {
-      w: Math.max(minW, (maxX - minX) + GROUP_PADDING * 2),
-      h: Math.max(minH, (maxY - minY) + GROUP_PADDING * 2),
+      w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
+      h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
     }
 
-    const currentW =
-      typeof (group as any)?.width === 'number'
-        ? (group as any).width
-        : parseNumericStyle((group as any)?.style?.width) ?? desiredSize.w
-    const currentH =
-      typeof (group as any)?.height === 'number'
-        ? (group as any).height
-        : parseNumericStyle((group as any)?.style?.height) ?? desiredSize.h
+    const { w: currentW, h: currentH } = getNodeSize(group, { w: desiredSize.w, h: desiredSize.h })
 
     const dx = desiredPos.x - (group.position?.x ?? 0)
     const dy = desiredPos.y - (group.position?.y ?? 0)
@@ -236,11 +1198,17 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
 
     updateNode(group.id, {
       position: { x: desiredPos.x, y: desiredPos.y },
+      width: desiredSize.w,
+      height: desiredSize.h,
+      data: {
+        ...(group.data || {}),
+        nodeWidth: desiredSize.w,
+        nodeHeight: desiredSize.h,
+      },
       style: {
         ...(group.style || {}),
         width: desiredSize.w,
         height: desiredSize.h,
-        zIndex: -10,
       },
     })
 
@@ -260,109 +1228,247 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
   return nodes.map(n => updates.get(n.id) || n)
 }
 
-function getNodeAbsPosition(node: Node, nodeById: Map<string, Node>): { x: number; y: number } {
-  const visiting = new Set<string>()
-  let x = node.position?.x ?? 0
-  let y = node.position?.y ?? 0
-  let parentId = getNodeParentId(node)
-  while (parentId) {
-    if (visiting.has(parentId)) break
-    visiting.add(parentId)
-    const parent = nodeById.get(parentId)
-    if (!parent) break
-    x += parent.position?.x ?? 0
-    y += parent.position?.y ?? 0
-    parentId = getNodeParentId(parent)
-  }
-  return { x, y }
-}
+function autoFitSingleGroupNode(nodes: Node[], groupId: string, childIds?: Set<string>): Node[] {
+  const group = nodes.find((n) => n.id === groupId && n.type === 'groupNode')
+  if (!group) return nodes
 
-function getAncestorChain(node: Node, nodeById: Map<string, Node>): string[] {
-  const out: string[] = []
-  const visiting = new Set<string>()
-  let parentId = getNodeParentId(node)
-  while (parentId) {
-    if (visiting.has(parentId)) break
-    visiting.add(parentId)
-    out.push(parentId)
-    const parent = nodeById.get(parentId)
-    parentId = parent ? getNodeParentId(parent) : undefined
-  }
-  return out
-}
-
-type AbsRect = { id: string; x: number; y: number; w: number; h: number; area: number }
-
-function computeGroupAbsRects(nodes: Node[], nodeById: Map<string, Node>): AbsRect[] {
-  const out: AbsRect[] = []
-  for (const n of nodes) {
-    if (n.type !== 'groupNode') continue
-    const abs = getNodeAbsPosition(n, nodeById)
-    const { w, h } = getNodeSizeForLayout(n)
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) continue
-    out.push({ id: n.id, x: abs.x, y: abs.y, w, h, area: w * h })
-  }
-  return out
-}
-
-function pickBestGroupIdForPoint(point: { x: number; y: number }, groupRects: AbsRect[]): string | null {
-  let bestId: string | null = null
-  let bestArea = Number.POSITIVE_INFINITY
-  for (const g of groupRects) {
-    const inside =
-      point.x >= g.x &&
-      point.x <= g.x + g.w &&
-      point.y >= g.y &&
-      point.y <= g.y + g.h
-    if (!inside) continue
-    if (bestId === null || g.area < bestArea || (g.area === bestArea && g.id < bestId)) {
-      bestId = g.id
-      bestArea = g.area
-    }
-  }
-  return bestId
-}
-
-function applyDragDropGrouping(nodes: Node[], dragEndNodeIds: Set<string>): Node[] {
-  if (!dragEndNodeIds.size) return nodes
-
-  const nodeById = new Map(nodes.map(n => [n.id, n] as const))
-  const groupRects = computeGroupAbsRects(nodes, nodeById)
-  if (!groupRects.length) return nodes
-
-  const updates = new Map<string, Partial<Node>>()
-
-  for (const id of dragEndNodeIds) {
-    const node = nodeById.get(id)
-    if (!node) continue
-    if (node.type === 'groupNode' || node.type === 'ioNode') continue
-
-    const abs = getNodeAbsPosition(node, nodeById)
-    const { w, h } = getNodeSizeForLayout(node)
-    const center = { x: abs.x + w / 2, y: abs.y + h / 2 }
-
-    const bestGroupId = pickBestGroupIdForPoint(center, groupRects)
-    const currentParentId = getNodeParentId(node)
-    const nextParentId = bestGroupId || undefined
-    if ((currentParentId || undefined) === (nextParentId || undefined)) continue
-
-    if (!nextParentId) {
-      updates.set(id, { parentId: undefined, extent: undefined, position: { x: abs.x, y: abs.y } })
-      continue
-    }
-
-    const group = nodeById.get(nextParentId)
-    if (!group) continue
-    const gAbs = getNodeAbsPosition(group, nodeById)
-    const rel = { x: abs.x - gAbs.x, y: abs.y - gAbs.y }
-    updates.set(id, { parentId: nextParentId, extent: undefined, position: rel })
-  }
-
-  if (!updates.size) return nodes
-  return nodes.map(n => {
-    const patch = updates.get(n.id)
-    return patch ? { ...n, ...patch } : n
+  const children = nodes.filter((n) => {
+    if (getNodeParentId(n) !== groupId) return false
+    if (childIds && !childIds.has(n.id)) return false
+    return true
   })
+  if (!children.length) return nodes
+
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const child of children) {
+    const { w, h } = getNodeSizeForLayout(child)
+    const cx = child.position?.x ?? 0
+    const cy = child.position?.y ?? 0
+    minX = Math.min(minX, cx)
+    minY = Math.min(minY, cy)
+    maxX = Math.max(maxX, cx + w)
+    maxY = Math.max(maxY, cy + h)
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return nodes
+  }
+
+  const desiredPos = {
+    x: (group.position?.x ?? 0) + (minX - GROUP_PADDING),
+    y: (group.position?.y ?? 0) + (minY - GROUP_PADDING),
+  }
+  const desiredSize = {
+    w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
+    h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
+  }
+  const currentSize = getNodeSize(group, { w: desiredSize.w, h: desiredSize.h })
+  const dx = desiredPos.x - (group.position?.x ?? 0)
+  const dy = desiredPos.y - (group.position?.y ?? 0)
+  const posChanged = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1
+  const sizeChanged = Math.abs(desiredSize.w - currentSize.w) > 0.1 || Math.abs(desiredSize.h - currentSize.h) > 0.1
+  if (!posChanged && !sizeChanged) return nodes
+
+  return ensureParentFirstOrder(
+    nodes.map((node) => {
+      if (node.id === groupId) {
+        return {
+          ...stripNodePositionInternals(node),
+          position: { x: desiredPos.x, y: desiredPos.y },
+          width: desiredSize.w,
+          height: desiredSize.h,
+          data: {
+            ...(node.data || {}),
+            nodeWidth: desiredSize.w,
+            nodeHeight: desiredSize.h,
+          },
+          style: {
+            ...(node.style || {}),
+            width: desiredSize.w,
+            height: desiredSize.h,
+          },
+        }
+      }
+      if (!posChanged) return node
+      if (getNodeParentId(node) !== groupId) return node
+      return {
+        ...stripNodePositionInternals(node),
+        position: {
+          x: (node.position?.x ?? 0) - dx,
+          y: (node.position?.y ?? 0) - dy,
+        },
+      }
+    }),
+  )
+}
+
+function createGroupForNodeIdsInNodes(
+  nodes: Node[],
+  nextGroupId: number,
+  nodeIds: string[],
+  name?: string,
+  options?: { preserveLayout?: boolean },
+): { nodes: Node[]; nextGroupId: number; groupId: string | null } {
+  const targetIds = new Set(nodeIds.map((id) => String(id || '').trim()).filter(Boolean))
+  if (!targetIds.size) return { nodes, nextGroupId, groupId: null }
+
+  const targetNodes = nodes.filter((node) => targetIds.has(String(node.id || '')) && node.type !== 'groupNode')
+  if (!targetNodes.length) return { nodes, nextGroupId, groupId: null }
+
+  const parentIds = new Set(targetNodes.map((node) => getNodeParentId(node) || ''))
+  if (parentIds.size !== 1) return { nodes, nextGroupId, groupId: null }
+
+  const parentKey = Array.from(parentIds)[0] || ''
+  const parentId = parentKey || null
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
+  const parentNode = parentId ? nodesById.get(parentId) : null
+  if (parentId && !parentNode) return { nodes, nextGroupId, groupId: null }
+
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  const targetAbsById = new Map<string, { x: number; y: number; w: number; h: number }>()
+
+  for (const node of targetNodes) {
+    const abs = getNodeAbsPosition(node, nodesById)
+    const { w, h } = getNodeSize(node)
+    targetAbsById.set(node.id, { x: abs.x, y: abs.y, w, h })
+    minX = Math.min(minX, abs.x)
+    minY = Math.min(minY, abs.y)
+    maxX = Math.max(maxX, abs.x + w)
+    maxY = Math.max(maxY, abs.y + h)
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return { nodes, nextGroupId, groupId: null }
+  }
+
+  let nextGroupNo = nextGroupId
+  let groupId = genGroupId(nextGroupNo)
+  const existingIds = new Set(nodes.map((node) => node.id))
+  while (existingIds.has(groupId)) {
+    nextGroupNo += 1
+    groupId = genGroupId(nextGroupNo)
+  }
+
+  const padding = GROUP_PADDING
+  const groupAbsX = minX - padding
+  const groupAbsY = minY - padding
+  const groupWidth = Math.max(GROUP_MIN_WIDTH, (maxX - minX) + padding * 2)
+  const groupHeight = Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + padding * 2)
+  const parentAbs = parentNode ? getNodeAbsPosition(parentNode, nodesById) : { x: 0, y: 0 }
+  const groupLabel = typeof name === 'string' && name.trim() ? name.trim() : `组 ${nextGroupNo}`
+
+  const groupNode = enforceNodeSelectability({
+    id: groupId,
+    type: 'groupNode',
+    position: { x: groupAbsX - parentAbs.x, y: groupAbsY - parentAbs.y },
+    parentId: parentId || undefined,
+    draggable: true,
+    selectable: true,
+    focusable: true,
+    data: {
+      label: groupLabel,
+      isGroup: true,
+    },
+    selected: false,
+    style: {
+      width: groupWidth,
+      height: groupHeight,
+    },
+  } as Node)
+
+  const nextNodes = nodes.map((node) => {
+    if (!targetIds.has(node.id) || node.type === 'groupNode') return node
+    const box = targetAbsById.get(node.id)
+    if (!box) return node
+    const normalized = stripNodePositionInternals(normalizeNodeParentId(node))
+    return enforceNodeSelectability({
+      ...normalized,
+      parentId: groupId,
+      extent: undefined,
+      selected: false,
+      position: {
+        x: box.x - groupAbsX,
+        y: box.y - groupAbsY,
+      },
+    } as Node)
+  })
+
+  const firstSelectedIndex = nodes.findIndex((node) => targetIds.has(node.id))
+  const insertIndex = firstSelectedIndex >= 0 ? firstSelectedIndex : 0
+  const nextNodesWithGroup = [
+    ...nextNodes.slice(0, insertIndex),
+    groupNode,
+    ...nextNodes.slice(insertIndex),
+  ]
+  const nextNodesRaw = ensureParentFirstOrder(nextNodesWithGroup)
+  const preserveLayout = options?.preserveLayout !== false
+  const arrangedNodes = preserveLayout
+    ? autoFitSingleGroupNode(nextNodesRaw, groupId, targetIds)
+    : arrangeGroupChildrenInNodes(nextNodesRaw, [], groupId, 'grid', Array.from(targetIds))
+
+  return {
+    nodes: arrangedNodes,
+    nextGroupId: nextGroupNo + 1,
+    groupId,
+  }
+}
+
+function scaleNodeByGroupResize(node: Node, scale: number): Node {
+  if (!Number.isFinite(scale) || scale <= 0 || Math.abs(scale - 1) < 1e-6) return node
+
+  const stripped = stripNodePositionInternals(node)
+  const nextPos = {
+    x: Number.isFinite(Number(stripped.position?.x)) ? Number((stripped.position as any).x) * scale : stripped.position?.x,
+    y: Number.isFinite(Number(stripped.position?.y)) ? Number((stripped.position as any).y) * scale : stripped.position?.y,
+  }
+
+  const anyNode = stripped as any
+  const data = (anyNode?.data || {}) as Record<string, any>
+  const style = (anyNode?.style || {}) as Record<string, any>
+
+  const scaledNodeWidth = Number.isFinite(Number(data.nodeWidth)) && Number(data.nodeWidth) > 0
+    ? Math.max(24, Math.round(Number(data.nodeWidth) * scale))
+    : undefined
+  const scaledNodeHeight = Number.isFinite(Number(data.nodeHeight)) && Number(data.nodeHeight) > 0
+    ? Math.max(24, Math.round(Number(data.nodeHeight) * scale))
+    : undefined
+
+  const scaledStyleWidth = Number.isFinite(Number(style.width)) && Number(style.width) > 0
+    ? Math.max(24, Math.round(Number(style.width) * scale))
+    : undefined
+  const scaledStyleHeight = Number.isFinite(Number(style.height)) && Number(style.height) > 0
+    ? Math.max(24, Math.round(Number(style.height) * scale))
+    : undefined
+
+  // Keep React Flow internal measurement fields unmanaged here to avoid hitbox drift.
+  const {
+    width: _internalWidth,
+    height: _internalHeight,
+    measured: _internalMeasured,
+    ...nodeWithoutInternalSize
+  } = stripped as any
+
+  return {
+    ...nodeWithoutInternalSize,
+    position: nextPos as any,
+    style: {
+      ...style,
+      ...(scaledStyleWidth ? { width: scaledStyleWidth } : null),
+      ...(scaledStyleHeight ? { height: scaledStyleHeight } : null),
+    },
+    data: {
+      ...data,
+      ...(scaledNodeWidth ? { nodeWidth: scaledNodeWidth } : null),
+      ...(scaledNodeHeight ? { nodeHeight: scaledNodeHeight } : null),
+    },
+  }
 }
 
 function computeTreeLayout(
@@ -499,36 +1605,36 @@ function computeTreeLayout(
 }
 
 function upgradeVideoKind(node: Node): Node {
-  const data: any = node.data || {}
-  const upgradedKind = data.kind === 'video' ? 'composeVideo' : data.kind
-  const isVideoKind = upgradedKind === 'composeVideo' || upgradedKind === 'storyboard' || upgradedKind === 'video'
-  if (!isVideoKind) {
-    if (upgradedKind === data.kind) return node
-    return { ...node, data: { ...data, kind: upgradedKind } }
+  if (node.type !== 'taskNode') return node
+  const data = node.data && typeof node.data === 'object'
+    ? node.data as Record<string, unknown>
+    : {}
+  const normalizedKind = normalizeTaskNodeKind(typeof data.kind === 'string' ? data.kind : null)
+  if (!normalizedKind) return node
+
+  const nextData: Record<string, unknown> = {
+    ...data,
+    kind: normalizedKind,
   }
 
-  const rawVideoDuration = Number(data.videoDurationSeconds)
-  const rawDuration = Number(data.durationSeconds)
-  const hasVideoDurationSeconds = Number.isFinite(rawVideoDuration) && rawVideoDuration > 0
-  const hasDurationSeconds = Number.isFinite(rawDuration) && rawDuration > 0
-  const defaultSeconds = 15
-  const nextData = {
-    ...data,
-    kind: upgradedKind,
-    ...(hasVideoDurationSeconds ? null : { videoDurationSeconds: defaultSeconds }),
-    ...(hasDurationSeconds ? null : { durationSeconds: defaultSeconds }),
+  if (normalizedKind === 'video') {
+    Object.assign(nextData, buildVideoDurationPatch(readVideoDurationSeconds(data, 5)))
+    if (typeof nextData.videoModel !== 'string' || !nextData.videoModel.trim()) {
+      nextData.videoModel = 'veo3.1-fast'
+    }
   }
+
+  if (normalizedKind === 'image' || normalizedKind === 'imageEdit') {
+    if (typeof nextData.imageModel !== 'string' || !nextData.imageModel.trim()) {
+      nextData.imageModel = getDefaultModel(normalizedKind === 'imageEdit' ? 'imageEdit' : 'image')
+    }
+  }
+
   return { ...node, data: nextData }
 }
 
 function upgradeImageFissionModel(node: Node): Node {
-  if (node.type !== 'taskNode') return node
-  const data: any = node.data || {}
-  const kind = typeof data.kind === 'string' ? data.kind.trim() : ''
-  if (kind !== 'imageFission') return node
-  const hasModel = typeof data.imageModel === 'string' && data.imageModel.trim()
-  if (hasModel) return node
-  return { ...node, data: { ...data, imageModel: 'nano-banana-pro' } }
+  return node
 }
 
 function enforceNodeSelectability(node: Node): Node {
@@ -559,7 +1665,7 @@ function getRemixTargetIdFromNode(node?: Node) {
   const data = node?.data as any
   if (!data) return null
   const kind = String(data.kind || '').toLowerCase()
-  const isVideoKind = kind === 'composevideo' || kind === 'video' || kind === 'storyboard'
+  const isVideoKind = kind === 'video'
   if (!isVideoKind) return null
 
   const sanitize = (val: any) => {
@@ -605,24 +1711,38 @@ export const useRFStore = create<RFState>((set, get) => ({
   nodes: [],
   edges: [],
   nextId: 1,
-  groups: [],
   nextGroupId: 1,
+  lastGroupArrangeDirection: 'grid',
   historyPast: [],
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
-    const dimChanges = new Map<string, { width?: number; height?: number; isResizeEvent?: boolean }>()
-    let hasDragMove = false
-    let hasDragStop = false
-    let isDragStart = false
-    let hasNonDragRelatedChange = false
-    const dragEndNodeIds = new Set<string>()
+    const dimChanges = new Map<string, { width?: number; height?: number }>()
+    const safeEdgeInvariantChangeTypes = new Set(['position', 'select', 'dimensions'])
+    // Dimension changes can come from:
+    // - NodeResizer (explicit user resize): contains `resizing: boolean`
+    // - internal measurement updates (no `resizing` flag)
+    // Only the former should trigger "scale children by group resize"; otherwise it causes drift/flicker.
+	    const resizerDimChangeIds = new Set<string>()
+	    const movedNodeIds = new Set<string>()
+	    const dragStopNodeIds = new Set<string>()
+	    let hasDragMove = false
+	    let hasDragStop = false
+	    let isDragStart = false
+	    let hasNonDragRelatedChange = false
+      let needsEdgeSanitize = false
 
     for (const change of changes as any[]) {
       if (!change || typeof change !== 'object') continue
       const id = typeof change.id === 'string' ? change.id : ''
+      const changeType = typeof change.type === 'string' ? change.type : ''
+
+      if (!safeEdgeInvariantChangeTypes.has(changeType)) {
+        needsEdgeSanitize = true
+      }
 
       if (change.type === 'position') {
+        if (id) movedNodeIds.add(id)
         const draggingFlag = (change as any).dragging
         if (draggingFlag === true) {
           hasDragMove = true
@@ -631,16 +1751,18 @@ export const useRFStore = create<RFState>((set, get) => ({
             isDragStart = true
           }
           continue
-        }
-        if (draggingFlag === false) {
-          hasDragStop = true
-          if (id) activeDragNodeIds.delete(id)
-          if (id) dragEndNodeIds.add(id)
-          continue
-        }
-        // Programmatic or non-drag position change: treat as normal update.
-        hasNonDragRelatedChange = true
-        continue
+	        }
+	        if (draggingFlag === false) {
+	          hasDragStop = true
+	          if (id) {
+	            activeDragNodeIds.delete(id)
+	            dragStopNodeIds.add(id)
+	          }
+	          continue
+	        }
+	        // Programmatic or non-drag position change: treat as normal update.
+	        hasNonDragRelatedChange = true
+	        continue
       }
 
       // Any non-position change is not part of drag ticks.
@@ -650,65 +1772,138 @@ export const useRFStore = create<RFState>((set, get) => ({
         if (!id) continue
         const width = Number(change.dimensions?.width)
         const height = Number(change.dimensions?.height)
-        const resizingFlag = (change as any)?.resizing
-        const isResizeEvent = typeof resizingFlag === 'boolean'
         dimChanges.set(id, {
           ...(Number.isFinite(width) && width > 0 ? { width: Math.round(width) } : null),
           ...(Number.isFinite(height) && height > 0 ? { height: Math.round(height) } : null),
-          isResizeEvent,
         })
+        if (typeof (change as any).resizing === 'boolean') {
+          resizerDimChangeIds.add(id)
+        }
       }
     }
 
     const rawUpdated = applyNodeChanges(changes, s.nodes)
-    const updatedWithDims = rawUpdated.map((node) => {
-      const dims = dimChanges.get(node.id)
-      if (!dims) return node
-      const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind) : ''
-      if (node.type === 'groupNode' && dims.isResizeEvent) {
+    const updatedWithDims = dimChanges.size
+      ? rawUpdated.map((node) => {
+        const dims = dimChanges.get(node.id)
+        if (!dims) return node
+        const kind = typeof (node.data as any)?.kind === 'string' ? String((node.data as any).kind) : ''
+        const coreType = getTaskNodeCoreType(kind)
+        const isCanvasMediaKind = coreType === 'image' || coreType === 'video' || coreType === 'storyboard'
+        if (!isCanvasMediaKind) return node
+
         return {
           ...node,
           data: {
-            ...(node.data || {}),
-            ...(typeof dims.width === 'number' ? { manualWidth: dims.width } : null),
-            ...(typeof dims.height === 'number' ? { manualHeight: dims.height } : null),
+            ...node.data,
+            ...(typeof dims.width === 'number' ? { nodeWidth: dims.width } : null),
+            ...(typeof dims.height === 'number' ? { nodeHeight: dims.height } : null),
           },
         }
-      }
-      const isCanvasMediaKind =
-        kind === 'image' ||
-        kind === 'textToImage' ||
-        kind === 'storyboardImage' ||
-        kind === 'imageFission'
-      if (!isCanvasMediaKind) return node
+      })
+      : rawUpdated
 
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          ...(typeof dims.width === 'number' ? { nodeWidth: dims.width } : null),
-          ...(typeof dims.height === 'number' ? { nodeHeight: dims.height } : null),
-        },
+    const isPureDragMove =
+      hasDragMove &&
+      !hasDragStop &&
+      !hasNonDragRelatedChange &&
+      dimChanges.size === 0 &&
+      !needsEdgeSanitize
+
+    if (isPureDragMove) {
+      if (!isDragStart) {
+        return { nodes: updatedWithDims }
       }
+      const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+      return { nodes: updatedWithDims, historyPast: past, historyFuture: [] }
+    }
+
+    const prevById = new Map(s.nodes.map((n) => [n.id, n] as const))
+    // Treat "group resize" only when it comes from NodeResizer (has `resizing` flag).
+    // This avoids scaling children on measurement-driven dimension updates.
+    const hasGroupResize = Array.from(resizerDimChangeIds).some((id) => {
+      const prev = prevById.get(id)
+      return !!prev && prev.type === 'groupNode'
     })
+    const childScaleById = new Map<string, number>()
+    if (hasGroupResize) {
+      const updatedById = new Map(updatedWithDims.map((n) => [n.id, n] as const))
+      for (const [id, dims] of dimChanges.entries()) {
+        if (!resizerDimChangeIds.has(id)) continue
+        const prev = prevById.get(id)
+        const next = updatedById.get(id)
+        if (!prev || !next || prev.type !== 'groupNode') continue
 
-    const updatedWithDrop = dragEndNodeIds.size ? applyDragDropGrouping(updatedWithDims, dragEndNodeIds) : updatedWithDims
-    const shouldAutoFitGroups = !hasDragMove
-    const updated = shouldAutoFitGroups
-      ? autoFitGroupNodes(updatedWithDrop).map(enforceNodeSelectability)
-      : updatedWithDrop
+        const oldSize = getNodeSize(prev)
+        const nextWidth = typeof dims.width === 'number' ? dims.width : oldSize.w
+        const nextHeight = typeof dims.height === 'number' ? dims.height : oldSize.h
 
-    const isDragRelated = hasDragMove || hasDragStop
-    const shouldCaptureHistory = hasNonDragRelatedChange || !isDragRelated || isDragStart
-    if (!shouldCaptureHistory) return { nodes: updated }
+        if (!Number.isFinite(oldSize.w) || !Number.isFinite(oldSize.h) || oldSize.w <= 0 || oldSize.h <= 0) continue
+        if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight) || nextWidth <= 0 || nextHeight <= 0) continue
+
+        const scaleX = nextWidth / oldSize.w
+        const scaleY = nextHeight / oldSize.h
+        // Use the dominant axis delta for uniform child scaling.
+        // Using min(scaleX, scaleY) causes counter-intuitive shrink when one axis
+        // is slightly reduced (or jittering) while the other axis is being enlarged.
+        const scale =
+          Math.abs(scaleX - 1) >= Math.abs(scaleY - 1)
+            ? scaleX
+            : scaleY
+        if (!Number.isFinite(scale) || scale <= 0 || Math.abs(scale - 1) < 1e-6) continue
+
+        for (const node of updatedWithDims) {
+          if (getNodeParentId(node) !== id) continue
+          if (node.type === 'groupNode') continue
+          if (dimChanges.has(node.id)) continue
+          if (!childScaleById.has(node.id)) childScaleById.set(node.id, scale)
+        }
+      }
+    }
+
+	    const updatedAfterGroupResize = childScaleById.size
+	      ? updatedWithDims.map((node) => {
+	        const scale = childScaleById.get(node.id)
+	        if (!scale) return node
+	        return scaleNodeByGroupResize(node, scale)
+	      })
+	      : updatedWithDims
+	
+	    const membershipMovedNodeIds = new Set<string>()
+	    if (hasDragStop && dragStopNodeIds.size) {
+	      for (const id of dragStopNodeIds) membershipMovedNodeIds.add(id)
+	    }
+
+	    const updatedWithGroupMembership =
+	      membershipMovedNodeIds.size
+	        ? applyGroupMembershipOnDragStop(updatedAfterGroupResize, membershipMovedNodeIds)
+	        : updatedAfterGroupResize
+
+	    const updatedAfterMembershipLayout = ensureParentFirstOrder(updatedWithGroupMembership)
+
+	    // Keep group size fully user-controlled by default.
+	    // Auto-fit is only applied in explicit actions (e.g. group arrange), not on every node change.
+	    const shouldAutoFitGroups = false
+	    const updatedBeforeSanitize = shouldAutoFitGroups
+	      ? autoFitGroupNodes(updatedAfterMembershipLayout).map(enforceNodeSelectability)
+	      : updatedAfterMembershipLayout
+	    const updated = ensureParentFirstOrder(updatedBeforeSanitize.map(stripNodePositionInternals))
+
+	    const isDragRelated = hasDragMove || hasDragStop
+	    const shouldCaptureHistory = hasNonDragRelatedChange || !isDragRelated || isDragStart
+    const sanitizedEdges = needsEdgeSanitize ? sanitizeEdgesForNodes(updated, s.edges) : s.edges
+    if (!shouldCaptureHistory) {
+      return sanitizedEdges === s.edges ? { nodes: updated } : { nodes: updated, edges: sanitizedEdges }
+    }
 
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, historyPast: past, historyFuture: [] }
+    return { nodes: updated, edges: sanitizedEdges, historyPast: past, historyFuture: [] }
   }),
   onEdgesChange: (changes) => set((s) => {
     const updated = applyEdgeChanges(changes, s.edges)
+    const sanitized = sanitizeEdgesForNodes(s.nodes, updated)
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { edges: updated, historyPast: past, historyFuture: [] }
+    return { edges: sanitized, historyPast: past, historyFuture: [] }
   }),
   onConnect: (connection: Connection) => set((s) => {
     const exists = s.edges.some((e) =>
@@ -727,22 +1922,21 @@ export const useRFStore = create<RFState>((set, get) => ({
           },
           s.edges,
         )
+    const sanitizedEdges = sanitizeEdgesForNodes(s.nodes, nextEdges)
     const past = exists ? s.historyPast : [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     if (exists) {
-      return { edges: nextEdges }
+      return { edges: sanitizedEdges }
     }
 
     let updatedNodes = s.nodes
-    if (
-      connection.target &&
-      connection.source &&
-      connection.targetHandle === 'in-video'
-    ) {
+    if (connection.target && connection.source) {
       const targetNode = s.nodes.find((n) => n.id === connection.target)
       const sourceNode = s.nodes.find((n) => n.id === connection.source)
       if (
         targetNode &&
-        ['composeVideo', 'storyboard', 'video'].includes(String((targetNode.data as any)?.kind))
+        getTaskNodeCoreType(typeof (targetNode.data as Record<string, unknown> | undefined)?.kind === 'string' ? String((targetNode.data as Record<string, unknown>).kind) : null) === 'video' &&
+        sourceNode &&
+        getTaskNodeCoreType(typeof (sourceNode.data as Record<string, unknown> | undefined)?.kind === 'string' ? String((sourceNode.data as Record<string, unknown>).kind) : null) === 'video'
       ) {
         const remixId = getRemixTargetIdFromNode(sourceNode)
         if (remixId) {
@@ -757,22 +1951,32 @@ export const useRFStore = create<RFState>((set, get) => ({
 
     return {
       nodes: updatedNodes,
-      edges: nextEdges,
+      edges: sanitizedEdges,
       historyPast: past,
       historyFuture: [],
     }
   }),
   addNode: (type, label, extra) => set((s) => {
+    if (type === 'groupNode') return {}
     const id = genNodeId()
     const rawExtra = extra || {}
-    const { label: extraLabel, autoLabel, position: preferredPosition, ...restExtra } = rawExtra
+    const { label: extraLabel, autoLabel, position: preferredPosition, parentId: requestedParentIdRaw, ...restExtra } = rawExtra
+    const requestedParentId =
+      typeof requestedParentIdRaw === 'string' && requestedParentIdRaw.trim()
+        ? requestedParentIdRaw.trim()
+        : null
+    const desiredParentId = requestedParentId
+    const parentId =
+      desiredParentId && s.nodes.some((n) => n.type === 'groupNode' && n.id === desiredParentId)
+        ? desiredParentId
+        : null
     let finalLabel = label ?? extraLabel ?? type
     const allowAutoLabel = type === 'taskNode' && autoLabel !== false
     if (allowAutoLabel) {
-      const kind = typeof restExtra.kind === 'string' && restExtra.kind.trim() ? restExtra.kind.trim() : null
+      const kind = normalizeTaskNodeKind(typeof restExtra.kind === 'string' ? restExtra.kind : null) || null
       const schema = getTaskNodeSchema(kind)
       const schemaLabel = schema.label || kind || '节点'
-      const sameKindCount = s.nodes.filter((n) => n.type === 'taskNode' && (((n.data as any)?.kind || null) === kind)).length
+      const sameKindCount = s.nodes.filter((n) => n.type === 'taskNode' && normalizeTaskNodeKind(((n.data as any)?.kind || null) as string | null) === kind).length
       const autoGeneratedLabel = `${schemaLabel}-${sameKindCount + 1}`
       const normalizedLabel = typeof finalLabel === 'string' ? finalLabel.trim() : ''
       const normalizedLabelLower = normalizedLabel.toLowerCase()
@@ -786,102 +1990,156 @@ export const useRFStore = create<RFState>((set, get) => ({
         finalLabel = autoGeneratedLabel
       }
     }
-    const index = Math.max(0, s.nextId - 1)
-    const cols = 4
-    const spacingX = CANVAS_CONFIG.NODE_SPACING_X
-    const spacingY = CANVAS_CONFIG.NODE_SPACING_Y
-    const defaultPosition = {
-      x: 80 + (index % cols) * spacingX,
-      y: 80 + Math.floor(index / cols) * spacingY,
-    }
+    const taskKind =
+      type === 'taskNode'
+        ? normalizeTaskNodeKind(typeof restExtra.kind === 'string' ? restExtra.kind : null) || null
+        : null
+    const taskCoreType = taskKind ? getTaskNodeCoreType(taskKind) : null
+    const fallbackW = type === 'taskNode'
+      ? taskCoreType === 'text'
+        ? 380
+        : taskCoreType === 'storyboard'
+          ? 560
+          : taskKind === 'imageEdit'
+            ? 320
+          : 360
+      : 220
+    const fallbackH = type === 'taskNode'
+      ? taskCoreType === 'text'
+        ? 360
+        : taskCoreType === 'storyboard'
+          ? 470
+          : taskKind === 'imageEdit'
+            ? 220
+          : 220
+      : 120
+    const defaultPosition = computeContextAwarePosition(s.nodes, { w: fallbackW, h: fallbackH })
     const hasPreferred =
       preferredPosition &&
       typeof preferredPosition.x === 'number' &&
       typeof preferredPosition.y === 'number' &&
       Number.isFinite(preferredPosition.x) &&
       Number.isFinite(preferredPosition.y)
-    const position = hasPreferred ? preferredPosition : defaultPosition
+    let position = hasPreferred ? preferredPosition : defaultPosition
+    if (!hasPreferred && parentId) {
+      const siblings = s.nodes
+        .filter((n) => String((n as any).parentId || '').trim() === parentId && n.type === 'taskNode')
+        .sort((a, b) => {
+          const ay = Number(a.position?.y ?? 0)
+          const by = Number(b.position?.y ?? 0)
+          if (ay !== by) return ay - by
+          const ax = Number(a.position?.x ?? 0)
+          const bx = Number(b.position?.x ?? 0)
+          return ax - bx
+        })
+      if (!siblings.length) {
+        position = { x: 24, y: 24 }
+      } else {
+        const last = siblings[siblings.length - 1]
+        const lastY = Number(last.position?.y ?? 24)
+        position = { x: 24, y: Number.isFinite(lastY) ? lastY + 96 : 120 }
+      }
+    }
+    position = resolveNonOverlappingPosition(s.nodes, position, { w: fallbackW, h: fallbackH }, parentId)
 
     let dataExtra = restExtra
     if (type === 'taskNode') {
+      const hasResolvedAssetUrl = (value: unknown): boolean => typeof value === 'string' && value.trim().length > 0
+      const hasResolvedAssetList = (value: unknown): boolean =>
+        Array.isArray(value) &&
+        value.some((item) => {
+          if (!item || typeof item !== 'object') return false
+          const record = item as Record<string, unknown>
+          return typeof record.url === 'string' && record.url.trim().length > 0
+        })
+      const taskNodeData = dataExtra as Record<string, unknown>
+      const runtimeStatus = typeof taskNodeData.status === 'string' ? taskNodeData.status.trim().toLowerCase() : ''
+      const isReferenceOnlyTaskNode =
+        runtimeStatus !== 'queued' &&
+        runtimeStatus !== 'running' &&
+        (
+          hasResolvedAssetUrl(taskNodeData.imageUrl) ||
+          hasResolvedAssetUrl(taskNodeData.videoUrl) ||
+          hasResolvedAssetUrl(taskNodeData.audioUrl) ||
+          hasResolvedAssetList(taskNodeData.imageResults) ||
+          hasResolvedAssetList(taskNodeData.videoResults) ||
+          hasResolvedAssetList(taskNodeData.audioResults) ||
+          hasResolvedAssetList(taskNodeData.results) ||
+          hasResolvedAssetList(taskNodeData.assets) ||
+          hasResolvedAssetList(taskNodeData.outputs)
+        )
       const kindValue =
-        typeof dataExtra.kind === 'string' && dataExtra.kind.trim()
-          ? dataExtra.kind.trim()
-          : null
-      if (
-        (kindValue === 'composeVideo' ||
-          kindValue === 'storyboard' ||
-          kindValue === 'video') &&
-        (dataExtra as any).videoModel == null
-      ) {
+        normalizeTaskNodeKind(typeof dataExtra.kind === 'string' ? dataExtra.kind : null) || null
+      if (kindValue && kindValue !== dataExtra.kind) {
         dataExtra = {
           ...dataExtra,
-          videoModel: 'sora-2',
+          kind: kindValue,
+        }
+      }
+      if (kindValue === 'video' && !isReferenceOnlyTaskNode && (dataExtra as any).videoModel == null) {
+        dataExtra = {
+          ...dataExtra,
+          videoModel: 'veo3.1-fast',
           videoModelVendor:
-            (dataExtra as any).videoModelVendor ?? 'sora2api',
+            (dataExtra as any).videoModelVendor ?? 'veo',
         }
       }
 
-      if (kindValue === 'composeVideo' || kindValue === 'storyboard' || kindValue === 'video') {
-        const rawVideoDuration = Number((dataExtra as any).videoDurationSeconds)
-        const rawDuration = Number((dataExtra as any).durationSeconds)
-        const hasVideoDurationSeconds = Number.isFinite(rawVideoDuration) && rawVideoDuration > 0
-        const hasDurationSeconds = Number.isFinite(rawDuration) && rawDuration > 0
-        const defaultSeconds = 15
-        if (!hasVideoDurationSeconds || !hasDurationSeconds) {
-          dataExtra = {
-            ...dataExtra,
-            ...(!hasVideoDurationSeconds ? { videoDurationSeconds: defaultSeconds } : null),
-            ...(!hasDurationSeconds ? { durationSeconds: defaultSeconds } : null),
-          }
-        }
-      }
-
-      if (kindValue === 'storyboardImage') {
-        const hasCount = typeof (dataExtra as any).storyboardCount === 'number' && Number.isFinite((dataExtra as any).storyboardCount)
-        const hasAspect = typeof (dataExtra as any).storyboardAspectRatio === 'string' && (dataExtra as any).storyboardAspectRatio.trim()
-        const hasStyle = typeof (dataExtra as any).storyboardStyle === 'string' && (dataExtra as any).storyboardStyle.trim()
-        const hasModel = typeof (dataExtra as any).imageModel === 'string' && (dataExtra as any).imageModel.trim()
+      if (kindValue === 'video' && !isReferenceOnlyTaskNode) {
         dataExtra = {
           ...dataExtra,
-          ...(hasCount ? null : { storyboardCount: 4 }),
-          ...(hasAspect ? null : { storyboardAspectRatio: '16:9' }),
-          ...(hasStyle ? null : { storyboardStyle: 'realistic' }),
-          ...(hasModel ? null : { imageModel: 'nano-banana-pro' }),
+          ...buildVideoDurationPatch(
+            readVideoDurationSeconds(dataExtra as Record<string, unknown>, 5),
+          ),
         }
       }
 
-      if (kindValue === 'imageFission') {
-        const hasFission = !!(dataExtra as any).imageFission && typeof (dataExtra as any).imageFission === 'object'
-        const hasAspect = typeof (dataExtra as any).aspect === 'string' && (dataExtra as any).aspect.trim()
-        const hasSampleCount = typeof (dataExtra as any).sampleCount === 'number' && Number.isFinite((dataExtra as any).sampleCount)
-        const hasImageSize = typeof (dataExtra as any).imageSize === 'string' && (dataExtra as any).imageSize.trim()
-        const hasModel = typeof (dataExtra as any).imageModel === 'string' && (dataExtra as any).imageModel.trim()
+      if (kindValue === 'imageEdit' && !isReferenceOnlyTaskNode && (dataExtra as any).imageModel == null) {
         dataExtra = {
           ...dataExtra,
-          ...(hasFission
-            ? null
-            : { imageFission: { mode: 'creative', count: 1, aspectRatio: '3:4', hd: false } }),
-          ...(hasAspect ? null : { aspect: '3:4' }),
-          ...(hasSampleCount ? null : { sampleCount: 1 }),
-          ...(hasImageSize ? null : { imageSize: '2K' }),
-          ...(hasModel ? null : { imageModel: 'nano-banana-pro' }),
+          imageModel: getDefaultModel('imageEdit'),
+          imageModelVendor:
+            (dataExtra as any).imageModelVendor ?? null,
         }
       }
 
-      const isCanvasMediaKind =
-        kindValue === 'image' ||
-        kindValue === 'textToImage' ||
-        kindValue === 'storyboardImage' ||
-        kindValue === 'imageFission'
+      if (kindValue === 'workflowInput' || kindValue === 'workflowOutput') {
+        const hasNodeWidth =
+          typeof (dataExtra as any).nodeWidth === 'number' && Number.isFinite((dataExtra as any).nodeWidth)
+        const hasNodeHeight =
+          typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
+        dataExtra = {
+          ...dataExtra,
+          ...(hasNodeWidth ? null : { nodeWidth: 260 }),
+          ...(hasNodeHeight ? null : { nodeHeight: 140 }),
+        }
+      }
+
+      if (kindValue === 'text') {
+        const hasNodeWidth =
+          typeof (dataExtra as any).nodeWidth === 'number' && Number.isFinite((dataExtra as any).nodeWidth)
+        const hasNodeHeight =
+          typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
+        dataExtra = {
+          ...dataExtra,
+          ...(hasNodeWidth ? null : { nodeWidth: 380 }),
+          ...(hasNodeHeight ? null : { nodeHeight: 360 }),
+        }
+      }
+
+      const kindCoreType = kindValue ? getTaskNodeCoreType(kindValue) : null
+      const isCanvasMediaKind = kindCoreType === 'image' || kindCoreType === 'video' || kindCoreType === 'storyboard'
       if (isCanvasMediaKind) {
         const hasNodeWidth =
           typeof (dataExtra as any).nodeWidth === 'number' && Number.isFinite((dataExtra as any).nodeWidth)
         const hasNodeHeight =
           typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
-        const defaults =
-          kindValue === 'storyboardImage'
-            ? { nodeWidth: 210, nodeHeight: 118 }
+        const defaults = kindCoreType === 'video'
+          ? { nodeWidth: 400, nodeHeight: 220 }
+          : kindCoreType === 'storyboard'
+            ? { nodeWidth: 560, nodeHeight: 470 }
+            : kindValue === 'imageEdit'
+              ? { nodeWidth: 320, nodeHeight: 220 }
             : { nodeWidth: 120, nodeHeight: 210 }
         dataExtra = {
           ...dataExtra,
@@ -889,47 +2147,42 @@ export const useRFStore = create<RFState>((set, get) => ({
           ...(hasNodeHeight ? null : { nodeHeight: defaults.nodeHeight }),
         }
       }
+
+      if (kindValue === 'storyboard') {
+        dataExtra = normalizeStoryboardNodeData(dataExtra as Record<string, unknown>)
+      }
     }
 
-    const node: Node = {
+      const node: Node = {
       id,
       type: type as any,
       position,
-      data: { label: finalLabel, ...dataExtra },
+      ...(parentId ? { parentId } : {}),
+      data: normalizeProductionNodeMetaRecord({ label: finalLabel, ...dataExtra }, { kind: dataExtra.kind ?? type }),
     }
+    const nextNodesRaw = [...s.nodes, enforceNodeSelectability(node)]
+    const nextNodes = ensureParentFirstOrder(nextNodesRaw)
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: [...s.nodes, enforceNodeSelectability(node)], nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
+    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
   }),
-  reset: () => set({ nodes: [], edges: [], nextId: 1 }),
+  reset: () => set({ nodes: [], edges: [], nextId: 1, nextGroupId: 1, lastGroupArrangeDirection: 'grid' }),
   load: (data) => {
     if (!data) return
-    // support optional groups in payload
-    const anyData = data as any
-    const upgradedNodes = (data.nodes || [])
-      .map(upgradeVideoKind)
-      .map(upgradeImageFissionModel)
-      .map(enforceNodeSelectability)
-    const parentNormalizedNodes = normalizeNodesParentId(upgradedNodes)
-    const groupIds = new Set(parentNormalizedNodes.filter(n => n.type === 'groupNode').map(n => n.id))
-    const normalizedNodes = parentNormalizedNodes.map((n) => {
-      const p = (n as any)?.parentId as string | undefined
-      if (!p || !groupIds.has(p)) return n
-      return { ...n, extent: undefined }
-    })
-    const legacyNextGroupId = Array.isArray(anyData.groups) ? anyData.groups.length + 1 : 1
-    const maxGroupNum = normalizedNodes.reduce((acc, n) => {
-      if (n.type !== 'groupNode') return acc
-      const m = /^g(\d+)$/.exec(String(n.id || ''))
-      if (!m) return acc
-      const num = Number(m[1])
-      return Number.isFinite(num) ? Math.max(acc, num) : acc
-    }, 0)
-    set((s) => ({
-      nodes: normalizedNodes,
-      edges: data.edges,
-      nextId: normalizedNodes.length + 1,
-      groups: Array.isArray(anyData.groups) ? anyData.groups : [],
-      nextGroupId: Math.max(legacyNextGroupId, maxGroupNum + 1),
+    const sanitized = sanitizeGraphForCanvas(data)
+    // load and normalize graph payload
+	    const anyData = data as any
+	    const upgradedNodes = (sanitized.nodes || [])
+	      .map(normalizeNodeParentId)
+	      .map(upgradeVideoKind)
+	      .map(upgradeImageFissionModel)
+        .map(normalizeWorkflowNodeMeta)
+	      .map(normalizeProductionNodeMeta)
+	      .map(enforceNodeSelectability)
+	    set((s) => ({
+      nodes: upgradedNodes,
+      edges: sanitized.edges,
+      nextId: upgradedNodes.length + 1,
+      nextGroupId: computeNextGroupId(upgradedNodes),
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }))
@@ -943,24 +2196,28 @@ export const useRFStore = create<RFState>((set, get) => ({
     selectedIds.forEach(id => {
       idsToDelete.add(id)
 
-      // 如果选中的是组节点，添加所有子节点
-      const node = selectedNodes.find(n => n.id === id)
-      if (node?.type === 'groupNode') {
-        const childNodes = s.nodes.filter(n => (n as any).parentId === id)
-        childNodes.forEach(child => idsToDelete.add(child.id))
-      }
-    })
+	      // 如果选中的是组节点，添加所有子节点
+	      const node = selectedNodes.find(n => n.id === id)
+	      if (node?.type === 'groupNode') {
+	        const childNodes = s.nodes.filter(n => getNodeParentId(n) === id)
+	        childNodes.forEach(child => idsToDelete.add(child.id))
+	      }
+	    })
 
-    // 如果选中的是子节点，也检查是否需要删除父节点（如果父节点的所有子节点都被选中）
-    const selectedChildNodes = selectedNodes.filter(n => (n as any).parentId && selectedIds.has((n as any).parentId))
-    selectedChildNodes.forEach(child => {
-      const parentNode = s.nodes.find(n => n.id === (child as any).parentId)
-      if (parentNode && parentNode.type === 'groupNode') {
-        const allChildren = s.nodes.filter(n => (n as any).parentId === parentNode.id)
-        const allChildrenSelected = allChildren.every(child => selectedIds.has(child.id))
+	    // 如果选中的是子节点，也检查是否需要删除父节点（如果父节点的所有子节点都被选中）
+	    const selectedChildNodes = selectedNodes.filter(n => {
+	      const pid = getNodeParentId(n)
+	      return pid != null && selectedIds.has(pid)
+	    })
+	    selectedChildNodes.forEach(child => {
+	      const pid = getNodeParentId(child)
+	      const parentNode = pid ? s.nodes.find(n => n.id === pid) : undefined
+	      if (parentNode && parentNode.type === 'groupNode') {
+	        const allChildren = s.nodes.filter(n => getNodeParentId(n) === parentNode.id)
+	        const allChildrenSelected = allChildren.every(child => selectedIds.has(child.id))
 
-        // 如果所有子节点都被选中，也删除父节点
-        if (allChildrenSelected) {
+	        // 如果所有子节点都被选中，也删除父节点
+	        if (allChildrenSelected) {
           idsToDelete.add(parentNode.id)
         }
       }
@@ -971,9 +2228,10 @@ export const useRFStore = create<RFState>((set, get) => ({
     const remainingEdges = s.edges.filter(e =>
       !idsToDelete.has(e.source) && !idsToDelete.has(e.target)
     )
+    const nextNodes = ensureParentFirstOrder(remainingNodes)
 
     return {
-      nodes: remainingNodes,
+      nodes: nextNodes,
       edges: remainingEdges,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
@@ -984,14 +2242,105 @@ export const useRFStore = create<RFState>((set, get) => ({
     historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
     historyFuture: [],
   })),
-  updateNodeData: (id, patch) => set((s) => ({
-    nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
-    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
-    historyFuture: [],
-  })),
+  updateNodeData: (id, patch) => set((s) => {
+    const normalizedPatch =
+      patch && typeof patch === 'object'
+        ? { ...(patch as Record<string, unknown>) }
+        : {}
+    if (typeof normalizedPatch.kind === 'string') {
+      const normalizedKind = normalizeTaskNodeKind(normalizedPatch.kind)
+      if (normalizedKind) normalizedPatch.kind = normalizedKind
+    }
+    if (Object.keys(normalizedPatch).length === 0) return s
+
+    let changed = false
+    const nextNodes = s.nodes.map((node) => {
+      if (node.id !== id) return node
+      const currentData =
+        node.data && typeof node.data === 'object'
+          ? (node.data as Record<string, unknown>)
+          : {}
+      const currentKind = normalizeTaskNodeKind(typeof currentData.kind === 'string' ? currentData.kind : undefined)
+      const nextData =
+        currentKind === 'storyboard' || normalizeTaskNodeKind(typeof normalizedPatch.kind === 'string' ? normalizedPatch.kind : undefined) === 'storyboard'
+          ? normalizeStoryboardNodeData({
+              ...currentData,
+              ...normalizedPatch,
+              kind: 'storyboard',
+            })
+          : {
+              ...currentData,
+              ...normalizedPatch,
+            }
+      const nextEntries = Object.entries(nextData)
+      for (const [key, value] of nextEntries) {
+        if (!Object.is(currentData[key], value)) {
+          changed = true
+          break
+        }
+      }
+      if (!changed && nextEntries.length !== Object.keys(currentData).length) {
+        changed = true
+      }
+      if (!changed) return node
+      return {
+        ...node,
+        data: nextData,
+      }
+    })
+
+    if (!changed) return s
+
+    return {
+      nodes: nextNodes,
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
   setNodeStatus: (id, status, patch) => {
+    const sanitizedPatch: Record<string, unknown> =
+      patch && typeof patch === 'object'
+        ? { ...(patch as Record<string, unknown>) }
+        : {}
+
+    if ('lastError' in sanitizedPatch) {
+      const message = formatErrorMessage(sanitizedPatch.lastError).trim()
+      sanitizedPatch.lastError = message || undefined
+    }
+
+    // Prevent stale error metadata from leaking into unrelated errors/success states.
+    const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(sanitizedPatch, key)
+    if (status === 'error') {
+      if (!hasOwn('httpStatus')) sanitizedPatch.httpStatus = null
+      if (!hasOwn('isQuotaExceeded')) sanitizedPatch.isQuotaExceeded = false
+    } else {
+      if (!hasOwn('lastError')) sanitizedPatch.lastError = undefined
+      if (!hasOwn('httpStatus')) sanitizedPatch.httpStatus = null
+      if (!hasOwn('isQuotaExceeded')) sanitizedPatch.isQuotaExceeded = false
+    }
     set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status, ...(patch||{}) } } : n))
+      nodes: s.nodes.map((n) => {
+        if (n.id !== id) return n
+        const currentData =
+          n.data && typeof n.data === 'object'
+            ? (n.data as Record<string, unknown>)
+            : {}
+        const nextDataBase: Record<string, unknown> = {
+          ...currentData,
+          status,
+          ...sanitizedPatch,
+        }
+        const nextKind = normalizeTaskNodeKind(typeof nextDataBase.kind === 'string' ? nextDataBase.kind : undefined)
+        return {
+          ...n,
+          data: nextKind === 'storyboard'
+            ? normalizeStoryboardNodeData({
+                ...nextDataBase,
+                kind: 'storyboard',
+              })
+            : nextDataBase,
+        }
+      })
     }))
 
     // 当任务成功完成时，静默保存项目状态
@@ -1007,32 +2356,70 @@ export const useRFStore = create<RFState>((set, get) => ({
   appendLog: (id, line) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, logs: [...((n.data as any)?.logs || []), line] } } : n))
   })),
-  beginRunToken: (id) => set((s) => ({
-    nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, canceled: false } } : n))
-  })),
+  beginRunToken: (id) => {
+    const runToken = genRunToken()
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== id) return n
+        const currentData =
+          n.data && typeof n.data === 'object' && !Array.isArray(n.data)
+            ? (n.data as Record<string, unknown>)
+            : {}
+        return {
+          ...n,
+          data: {
+            ...currentData,
+            canceled: false,
+            runToken,
+            lastError: undefined,
+            lastResult: undefined,
+            httpStatus: null,
+            isQuotaExceeded: false,
+            imageTaskId: '',
+            imageTaskKind: '',
+            videoTaskId: '',
+          },
+        }
+      }),
+    }))
+    return runToken
+  },
   endRunToken: (id) => set((s) => s),
   cancelNode: (id) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, canceled: true } } : n))
   })),
-  isCanceled: (id) => {
+  isCanceled: (id, runToken) => {
     const n = get().nodes.find((x) => x.id === id)
-    return Boolean((n?.data as any)?.canceled)
+    if (!n) return true
+    const canceled = Boolean((n?.data as any)?.canceled)
+    if (canceled) return true
+    if (runToken == null) return false
+    const currentToken = (n?.data as any)?.runToken
+    if (typeof currentToken !== 'string' || !currentToken.trim()) return true
+    return currentToken !== runToken
   },
   runSelected: async () => {
     const s = get()
     const selected = s.nodes.find((n) => n.selected)
     if (!selected) return
-    const kind = (selected.data as any)?.kind as string | undefined
-    if (kind === 'mosaic') {
-      const { runNodeMosaic } = await import('../runner/mosaicRunner')
-      await runNodeMosaic(selected.id, get, set)
-    } else if (kind === 'composeVideo' || kind === 'storyboard' || kind === 'video' || kind === 'tts' || kind === 'subtitleAlign' || kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') {
-      await runNodeRemote(selected.id, get, set)
-    } else {
-      await runNodeMock(selected.id, get, set)
+    const kind = normalizeTaskNodeKind((selected.data as any)?.kind as string | undefined)
+    if (!kind) return
+    const coreType = getTaskNodeCoreType(kind)
+    if (coreType === 'text') return
+    if (coreType === 'image' || coreType === 'video' || coreType === 'storyboard') {
+      await runNodeDagToTarget(selected.id, get, set, { concurrency: 1 })
+      return
     }
+    await runNodeMock(selected.id, get, set)
   },
   runDag: async (concurrency: number) => {
+    const workflowIoValidation = validateWorkflowIoForRun({
+      nodes: get().nodes,
+      edges: get().edges,
+    })
+    if (!workflowIoValidation.ok) {
+      throw new Error(workflowIoValidation.message || '工作流校验失败')
+    }
     await runFlowDag(Math.max(1, Math.min(8, Math.floor(concurrency || 2))), get, set)
   },
   copySelected: () => set((s) => {
@@ -1074,8 +2461,11 @@ export const useRFStore = create<RFState>((set, get) => ({
       }))
       .filter((e) => e.source !== e.target)
 
+    const nextNodesRaw = [...s.nodes, ...newNodes.map(enforceNodeSelectability)]
+    const nextNodes = ensureParentFirstOrder(nextNodesRaw)
+
     return {
-      nodes: [...s.nodes, ...newNodes.map(enforceNodeSelectability)],
+      nodes: nextNodes,
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
@@ -1096,17 +2486,56 @@ export const useRFStore = create<RFState>((set, get) => ({
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
   }),
-  deleteNode: (id) => set((s) => ({
-    nodes: s.nodes.filter(n => n.id !== id),
-    edges: s.edges.filter(e => e.source !== id && e.target !== id),
-    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
-    historyFuture: [],
-  })),
+  deleteNode: (id) => set((s) => {
+    const nextNodesRaw = s.nodes.filter(n => n.id !== id)
+    const nextNodes = ensureParentFirstOrder(nextNodesRaw)
+    return {
+      nodes: nextNodes,
+      edges: s.edges.filter(e => e.source !== id && e.target !== id),
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
   deleteEdge: (id) => set((s) => ({
     edges: s.edges.filter(e => e.id !== id),
     historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
     historyFuture: [],
   })),
+  reorderEdgeForTarget: (edgeId, direction) => set((s) => {
+    const targetEdge = s.edges.find((edge) => edge.id === edgeId)
+    if (!targetEdge) return {}
+
+    const inboundIndices = s.edges
+      .map((edge, index) => ({ edge, index }))
+      .filter(({ edge }) => edge.target === targetEdge.target)
+    if (inboundIndices.length < 2) return {}
+
+    const displayOrdered = inboundIndices.map(({ edge }) => edge).reverse()
+    const currentIndex = displayOrdered.findIndex((edge) => edge.id === edgeId)
+    if (currentIndex < 0) return {}
+
+    const delta = direction === 'left' ? -1 : 1
+    const nextIndex = currentIndex + delta
+    if (nextIndex < 0 || nextIndex >= displayOrdered.length) return {}
+
+    const reorderedDisplay = displayOrdered.slice()
+    const [moved] = reorderedDisplay.splice(currentIndex, 1)
+    if (!moved) return {}
+    reorderedDisplay.splice(nextIndex, 0, moved)
+    const reorderedInbound = reorderedDisplay.reverse()
+
+    const nextEdges = s.edges.slice()
+    inboundIndices.forEach(({ index }, inboundIndex) => {
+      const replacement = reorderedInbound[inboundIndex]
+      if (replacement) nextEdges[index] = replacement
+    })
+
+    return {
+      edges: nextEdges,
+      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
   duplicateNode: (id) => set((s) => {
     const n = s.nodes.find(n => n.id === id)
     if (!n) return {}
@@ -1117,19 +2546,34 @@ export const useRFStore = create<RFState>((set, get) => ({
       position: { x: n.position.x + 24, y: n.position.y + 24 },
       selected: false,
     }
-    return { nodes: [...s.nodes, enforceNodeSelectability(dup)], nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
+    const nextNodesRaw = [...s.nodes, enforceNodeSelectability(dup)]
+    const nextNodes = ensureParentFirstOrder(nextNodesRaw)
+    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
   }),
   pasteFromClipboardAt: (pos) => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
-    const minX = Math.min(...s.clipboard.nodes.map(n => n.position.x))
-    const minY = Math.min(...s.clipboard.nodes.map(n => n.position.y))
-    const shift = { x: pos.x - minX, y: pos.y - minY }
+    const importBounds = getRootImportBounds(s.clipboard.nodes)
+    const anchor = importBounds
+      ? { x: importBounds.x, y: importBounds.y }
+      : { x: 0, y: 0 }
+    const shift = { x: pos.x - anchor.x, y: pos.y - anchor.y }
     const idMap = new Map<string, string>()
     const newNodes: Node[] = s.clipboard.nodes.map((n) => {
       const newId = genNodeId()
       idMap.set(n.id, newId)
-      const upgraded = upgradeVideoKind(n)
-      return enforceNodeSelectability({ ...upgraded, id: newId, selected: false, position: { x: n.position.x + shift.x, y: n.position.y + shift.y } })
+      const upgraded = normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(n)))
+      const oldParentId = getNodeParentId(upgraded)
+      const mappedParentId = oldParentId ? idMap.get(oldParentId) : undefined
+      const basePos = upgraded.position || { x: 0, y: 0 }
+      return enforceNodeSelectability({
+        ...upgraded,
+        id: newId,
+        parentId: mappedParentId,
+        selected: false,
+        position: mappedParentId
+          ? { x: basePos.x, y: basePos.y }
+          : { x: basePos.x + shift.x, y: basePos.y + shift.y },
+      })
     })
     const newEdges: Edge[] = s.clipboard.edges.map((e) => ({
       ...e,
@@ -1138,8 +2582,10 @@ export const useRFStore = create<RFState>((set, get) => ({
       target: idMap.get(e.target) || e.target,
       selected: false,
     }))
+    const nextNodes = ensureParentFirstOrder([...s.nodes, ...newNodes])
+
     return {
-      nodes: [...s.nodes, ...newNodes],
+      nodes: nextNodes,
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
@@ -1147,25 +2593,35 @@ export const useRFStore = create<RFState>((set, get) => ({
     }
   }),
   importWorkflow: (workflowData, position) => set((s) => {
-    if (!workflowData?.nodes?.length) return {}
+    const sanitized = sanitizeGraphForCanvas(workflowData)
+    if (!sanitized.nodes.length) return {}
 
-    // 确定导入位置
-    const pos = position || { x: 100, y: 100 }
-    const minX = Math.min(...workflowData.nodes.map(n => n.position.x))
-    const minY = Math.min(...workflowData.nodes.map(n => n.position.y))
-    const shift = { x: pos.x - minX, y: pos.y - minY }
+    const importBounds = getRootImportBounds(sanitized.nodes)
+    const pos = position || resolveViewportImportPosition(
+      importBounds ? { w: importBounds.w, h: importBounds.h } : undefined,
+    )
+    const anchor = importBounds
+      ? { x: importBounds.x, y: importBounds.y }
+      : { x: 0, y: 0 }
+    const shift = { x: pos.x - anchor.x, y: pos.y - anchor.y }
 
     const idMap = new Map<string, string>()
-    const newNodes: Node[] = workflowData.nodes.map((n) => {
+    const newNodes: Node[] = sanitized.nodes.map((n) => {
       const newId = genNodeId()
       idMap.set(n.id, newId)
-      const upgraded = upgradeVideoKind(n)
+      const upgraded = normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(n)))
+      const oldParentId = getNodeParentId(upgraded)
+      const mappedParentId = oldParentId ? idMap.get(oldParentId) || undefined : undefined
+      const basePos = upgraded.position || { x: 0, y: 0 }
       return enforceNodeSelectability({
         ...upgraded,
         id: newId,
+        parentId: mappedParentId,
         selected: false,
         dragging: false,
-        position: { x: n.position.x + shift.x, y: n.position.y + shift.y },
+        position: mappedParentId
+          ? { x: basePos.x, y: basePos.y }
+          : { x: basePos.x + shift.x, y: basePos.y + shift.y },
         // 清理状态相关的数据
         data: {
           ...upgraded.data,
@@ -1177,7 +2633,7 @@ export const useRFStore = create<RFState>((set, get) => ({
         }
       })
     })
-    const newEdges: Edge[] = workflowData.edges.map((e) => ({
+    const newEdges: Edge[] = sanitized.edges.map((e) => ({
       ...e,
       id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
       source: idMap.get(e.source) || e.source,
@@ -1185,10 +2641,13 @@ export const useRFStore = create<RFState>((set, get) => ({
       selected: false,
       animated: false
     }))
+    const nextNodes = ensureParentFirstOrder([...s.nodes, ...newNodes])
+
     return {
-      nodes: [...s.nodes, ...newNodes],
+      nodes: nextNodes,
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
+      nextGroupId: Math.max(s.nextGroupId, computeNextGroupId([...s.nodes, ...newNodes])),
       historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
@@ -1205,107 +2664,337 @@ export const useRFStore = create<RFState>((set, get) => ({
     nodes: s.nodes.map(n => ({ ...n, selected: n.selectable === false ? false : !n.selected })),
     edges: s.edges.map(e => ({ ...e, selected: !e.selected })),
   })),
+  createScriptBundleFromSelection: (name) => set((s) => {
+    const selectedNodes = s.nodes.filter((node) => node.selected && node.type !== 'groupNode')
+    const textualNodes = selectedNodes.filter((node) => {
+      const kind = getNodeTextField(node, 'kind')
+      return SCRIPT_BUNDLE_KINDS.has(kind) && Boolean(getScriptBundleNodeContent(node))
+    })
+    if (textualNodes.length < 2) return {}
+
+    const orderedNodes = orderScriptBundleNodes(textualNodes, s.edges)
+    const bundlePrompt = buildScriptBundlePrompt(orderedNodes)
+    if (!bundlePrompt.trim()) return {}
+
+    const bundleId = genNodeId()
+    const bundleLabel = typeof name === 'string' && name.trim() ? name.trim() : buildScriptBundleLabel(orderedNodes)
+    const parentIds = new Set(orderedNodes.map((node) => getNodeParentId(node) || ''))
+    const parentId = parentIds.size === 1 ? (Array.from(parentIds)[0] || null) : null
+    const nodesById = new Map(s.nodes.map((node) => [node.id, node] as const))
+    const boxes = orderedNodes.map((node) => {
+      const abs = getNodeAbsPosition(node, nodesById)
+      const size = getNodeSize(node)
+      return {
+        x: abs.x,
+        y: abs.y,
+        width: size.w,
+        height: size.h,
+      }
+    })
+    const minY = Math.min(...boxes.map((box) => box.y))
+    const maxX = Math.max(...boxes.map((box) => box.x + box.width))
+    const parentNode = parentId ? s.nodes.find((node) => node.id === parentId && node.type === 'groupNode') : null
+    const parentAbs = parentNode ? getNodeAbsPosition(parentNode, nodesById) : { x: 0, y: 0 }
+    const preferredAbsPosition = { x: maxX + 96, y: minY }
+    const resolvedPosition = resolveNonOverlappingPosition(
+      s.nodes,
+      { x: preferredAbsPosition.x - parentAbs.x, y: preferredAbsPosition.y - parentAbs.y },
+      { w: 420, h: 240 },
+      parentId,
+    )
+
+    const bundleNode = enforceNodeSelectability({
+      id: bundleId,
+      type: 'taskNode' as const,
+      position: resolvedPosition,
+      ...(parentId ? { parentId } : {}),
+      selected: true,
+      data: {
+        label: bundleLabel,
+        kind: 'text',
+        prompt: bundlePrompt,
+        textHtml: convertScriptBundlePlainTextToHtml(bundlePrompt),
+        bundleMode: 'concat',
+        bundleSourceNodeIds: orderedNodes.map((node) => node.id),
+        bundleSourceLabels: orderedNodes.map((node) => getNodeTextField(node, 'label')),
+        nodeWidth: 420,
+      },
+    } as Node)
+
+    const nextNodesRaw = [
+      ...s.nodes.map((node) => (node.selected ? { ...node, selected: false } : node)),
+      bundleNode,
+    ]
+    const nextEdges = [...s.edges]
+    const existingEdgeIds = new Set(nextEdges.map((edge) => edge.id))
+    for (const sourceNode of orderedNodes) {
+      const edgeId = `xy-edge__${sourceNode.id}-${bundleId}`
+      if (existingEdgeIds.has(edgeId)) continue
+      nextEdges.push({
+        id: edgeId,
+        source: sourceNode.id,
+        target: bundleId,
+        animated: false,
+        type: 'typed',
+        selected: false,
+      })
+      existingEdgeIds.add(edgeId)
+    }
+
+    const nextNodes = ensureParentFirstOrder(nextNodesRaw)
+    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    return {
+      nodes: nextNodes,
+      edges: nextEdges,
+      nextId: s.nextId + 1,
+      historyPast: past,
+      historyFuture: [],
+    }
+  }),
   addGroupForSelection: (name) => set((s) => {
-    const selectedNodes = s.nodes.filter(n => n.selected && n.type !== 'groupNode' && n.type !== 'ioNode')
+    const selectedNodes = s.nodes.filter((n) => n.selected && n.type !== 'groupNode')
     if (selectedNodes.length < 2) return {}
 
-    const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
-    const chains = selectedNodes.map(n => getAncestorChain(n, nodeById))
-    let common = new Set(chains[0] || [])
-    for (let i = 1; i < chains.length; i++) {
-      common = new Set((chains[i] || []).filter(id => common.has(id)))
-    }
-    const commonParentId = (chains[0] || []).find(id => common.has(id)) || null
-    const commonParentAbs = commonParentId ? getNodeAbsPosition(nodeById.get(commonParentId)!, nodeById) : { x: 0, y: 0 }
+    const parentIds = new Set(selectedNodes.map((n) => getNodeParentId(n) || ''))
+    if (parentIds.size !== 1) return {}
 
-    // compute bbox in absolute flow coords
+    const existingGroupId = Array.from(parentIds)[0] || ''
+    if (existingGroupId) {
+      const siblingIds = s.nodes
+        .filter((n) => getNodeParentId(n) === existingGroupId)
+        .map((n) => n.id)
+      const selectedIds = new Set(selectedNodes.map((n) => n.id))
+      if (siblingIds.length === selectedIds.size && siblingIds.every((nodeId) => selectedIds.has(nodeId))) {
+        return {}
+      }
+    }
+
+    const parentKey = Array.from(parentIds)[0] || ''
+    const parentId = parentKey || null
+    const nodesById = new Map(s.nodes.map((n) => [n.id, n] as const))
+    const parentNode = parentId ? nodesById.get(parentId) : null
+    if (parentId && !parentNode) return {}
+
     let minX = Number.POSITIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
     let maxY = Number.NEGATIVE_INFINITY
-    const absById = new Map<string, { x: number; y: number }>()
-    for (const n of selectedNodes) {
-      const abs = getNodeAbsPosition(n, nodeById)
-      absById.set(n.id, abs)
-      const { w, h } = getNodeSizeForLayout(n)
+    const selectedAbsById = new Map<string, { x: number; y: number; w: number; h: number }>()
+
+    for (const node of selectedNodes) {
+      const abs = getNodeAbsPosition(node, nodesById)
+      const { w, h } = getNodeSize(node)
+      selectedAbsById.set(node.id, { x: abs.x, y: abs.y, w, h })
       minX = Math.min(minX, abs.x)
       minY = Math.min(minY, abs.y)
       maxX = Math.max(maxX, abs.x + w)
       maxY = Math.max(maxY, abs.y + h)
     }
+
     if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return {}
 
-    const gid = genGroupId(s.nextGroupId)
-    const groupAbsPos = { x: minX - GROUP_PADDING, y: minY - GROUP_PADDING }
-    const groupSize = {
-      w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
-      h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
-    }
-    const groupNode: Node = {
-      id: gid,
-      type: 'groupNode' as any,
-      position: { x: groupAbsPos.x - commonParentAbs.x, y: groupAbsPos.y - commonParentAbs.y },
-      ...(commonParentId ? { parentId: commonParentId } : null),
-      data: { label: name || '新建组' },
-      style: { width: groupSize.w, height: groupSize.h, zIndex: -10, background: 'transparent' },
-      draggable: true,
-      selectable: true,
+    let nextGroupNo = s.nextGroupId
+    let groupId = genGroupId(nextGroupNo)
+    const existingIds = new Set(s.nodes.map((n) => n.id))
+    while (existingIds.has(groupId)) {
+      nextGroupNo += 1
+      groupId = genGroupId(nextGroupNo)
     }
 
-    // reparent children to this group; convert positions to relative to groupAbsPos
-    const members = new Set(selectedNodes.map(n => n.id))
-    const newNodes: Node[] = s.nodes.map((n) => {
-      if (!members.has(n.id)) return { ...n, selected: false }
-      const abs = absById.get(n.id) || getNodeAbsPosition(n, nodeById)
-      const rel = { x: abs.x - groupAbsPos.x, y: abs.y - groupAbsPos.y }
-      return { ...n, parentId: gid, position: rel, extent: undefined, selected: false }
+    const padding = GROUP_PADDING
+    const groupAbsX = minX - padding
+    const groupAbsY = minY - padding
+    const groupWidth = Math.max(GROUP_MIN_WIDTH, (maxX - minX) + padding * 2)
+    const groupHeight = Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + padding * 2)
+    const parentAbs = parentNode ? getNodeAbsPosition(parentNode, nodesById) : { x: 0, y: 0 }
+    const groupLabel = typeof name === 'string' && name.trim() ? name.trim() : `组 ${nextGroupNo}`
+
+    const groupNode = enforceNodeSelectability({
+      id: groupId,
+      type: 'groupNode' as any,
+      position: { x: groupAbsX - parentAbs.x, y: groupAbsY - parentAbs.y },
+      parentId: parentId || undefined,
+      draggable: true,
+      selectable: true,
+      focusable: true as any,
+      data: {
+        label: groupLabel,
+        isGroup: true,
+      },
+      selected: true,
+      style: {
+        width: groupWidth,
+        height: groupHeight,
+      },
+    } as Node)
+
+    const selectedIds = new Set(selectedNodes.map((n) => n.id))
+    const nextNodes = s.nodes.map((node) => {
+      if (!selectedIds.has(node.id)) {
+        return node.selected ? { ...node, selected: false } : node
+      }
+      const box = selectedAbsById.get(node.id)
+      if (!box) return node
+      const normalized = stripNodePositionInternals(normalizeNodeParentId(node))
+      return enforceNodeSelectability({
+        ...normalized,
+        parentId: groupId,
+        extent: undefined,
+        selected: false,
+        position: {
+          x: box.x - groupAbsX,
+          y: box.y - groupAbsY,
+        },
+      } as Node)
     })
+
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const firstSelectedIndex = s.nodes.findIndex((n) => selectedIds.has(n.id))
+    const insertIndex = firstSelectedIndex >= 0 ? firstSelectedIndex : 0
+    const nextNodesWithGroup = [
+      ...nextNodes.slice(0, insertIndex),
+      groupNode,
+      ...nextNodes.slice(insertIndex),
+    ]
+    const arrangedNodes = autoFitSingleGroupNode(ensureParentFirstOrder(nextNodesWithGroup), groupId, selectedIds)
     return {
-      nodes: [{ ...groupNode, selected: true }, ...newNodes],
-      nextGroupId: s.nextGroupId + 1,
+      nodes: arrangedNodes,
+      nextGroupId: nextGroupNo + 1,
       historyPast: past,
-      historyFuture: []
+      historyFuture: [],
     }
   }),
-  removeGroupById: (id) => set((s) => {
-    // if it's a legacy record, drop it; if there's a group node, ungroup it
-    const hasGroupNode = s.nodes.some(n => n.id === id && n.type === 'groupNode')
-    if (hasGroupNode) {
-      const group = s.nodes.find(n => n.id === id)!
-      const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
-      const groupAbs = getNodeAbsPosition(group, nodeById)
-      const children = s.nodes.filter(n => (n as any).parentId === id)
-      const restored = s.nodes
-        .filter(n => n.id !== id)
-        .map(n => (n as any).parentId === id ? { ...n, parentId: undefined, extent: undefined, position: { x: groupAbs.x + n.position.x, y: groupAbs.y + n.position.y } } : n)
+  createGroupForNodeIds: (nodeIds, name, options) => {
+    let createdGroupId: string | null = null
+    set((s) => {
+      const result = createGroupForNodeIdsInNodes(s.nodes, s.nextGroupId, nodeIds, name, options)
+      if (!result.groupId || result.nodes === s.nodes) return {}
+      createdGroupId = result.groupId
       const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-      return { nodes: restored, historyPast: past, historyFuture: [] }
-    }
+      return {
+        nodes: result.nodes,
+        nextGroupId: result.nextGroupId,
+        historyPast: past,
+        historyFuture: [],
+      }
+    })
+    return createdGroupId
+  },
+  fitGroupToChildren: (groupId, nodeIds) => set((s) => {
+    const childIds = Array.isArray(nodeIds) && nodeIds.length
+      ? new Set(nodeIds.map((id) => String(id || '').trim()).filter(Boolean))
+      : undefined
+    const fitted = autoFitSingleGroupNode(s.nodes, groupId, childIds)
+    if (fitted === s.nodes) return {}
+    return { nodes: fitted }
+  }),
+  removeGroupById: (id) => set((s) => {
+    const group = s.nodes.find((n) => n.id === id && n.type === 'groupNode')
+    if (!group) return {}
+
+    const childIds = new Set(s.nodes.filter((n) => getNodeParentId(n) === id).map((n) => n.id))
+    const idsToDelete = new Set<string>([id, ...childIds])
+    const nextNodes = s.nodes.filter((n) => !idsToDelete.has(n.id))
+    const nextEdges = s.edges.filter((e) => !idsToDelete.has(e.source) && !idsToDelete.has(e.target))
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { groups: s.groups.filter(g => g.id !== id), historyPast: past, historyFuture: [] }
+    return {
+      nodes: nextNodes,
+      edges: nextEdges,
+      historyPast: past,
+      historyFuture: [],
+    }
   }),
   findGroupMatchingSelection: () => {
     const s = get()
-    const selected = s.nodes.filter(n => n.selected).map(n => n.id)
-    if (selected.length < 2) return null
-    return s.groups.find(g => g.nodeIds.length === selected.length && g.nodeIds.every(id => selected.includes(id))) || null
+    const selectedNodes = s.nodes.filter((n) => n.selected && n.type !== 'groupNode')
+    if (!selectedNodes.length) return null
+
+    const parentIds = new Set(selectedNodes.map((n) => getNodeParentId(n) || ''))
+    if (parentIds.size !== 1) return null
+
+    const parentId = Array.from(parentIds)[0] || ''
+    if (!parentId) return null
+
+    const parentGroup = s.nodes.find((n) => n.id === parentId && n.type === 'groupNode')
+    if (!parentGroup) return null
+
+    const childIds = s.nodes.filter((n) => getNodeParentId(n) === parentId).map((n) => n.id)
+    const selectedIds = new Set(selectedNodes.map((n) => n.id))
+    if (childIds.length !== selectedIds.size) return null
+    if (!childIds.every((id) => selectedIds.has(id))) return null
+
+    const groupName = String((parentGroup.data as any)?.label || '').trim() || parentId
+    return {
+      id: parentId,
+      name: groupName,
+      nodeIds: childIds,
+    }
   },
-  renameGroup: (id, name) => set((s) => ({ groups: s.groups.map(g => g.id === id ? { ...g, name } : g) })),
-  ungroupGroupNode: (id) => set((s) => {
-    const group = s.nodes.find(n => n.id === id && n.type === 'groupNode')
-    if (!group) return {}
-    const nodeById = new Map(s.nodes.map(n => [n.id, n] as const))
-    const groupAbs = getNodeAbsPosition(group, nodeById)
-    const children = s.nodes.filter(n => (n as any).parentId === id)
-    const restored = s.nodes
-      .filter(n => n.id !== id)
-      .map(n => (n as any).parentId === id ? { ...n, parentId: undefined, extent: undefined, position: { x: groupAbs.x + n.position.x, y: groupAbs.y + n.position.y } } : n)
-    // select children after ungroup
-    const childIds = new Set(children.map(c => c.id))
+  renameGroup: (id, name) => set((s) => {
+    const group = s.nodes.find((n) => n.id === id && n.type === 'groupNode')
+    const nextName = String(name || '').trim()
+    if (!group || !nextName) return {}
+
+    const nextNodes = s.nodes.map((n) =>
+      n.id === id
+        ? { ...n, data: { ...(n.data || {}), label: nextName } }
+        : n,
+    )
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: restored.map(n => ({ ...n, selected: childIds.has(n.id) })), historyPast: past, historyFuture: [] }
+    return {
+      nodes: nextNodes,
+      historyPast: past,
+      historyFuture: [],
+    }
   }),
+  ungroupGroupNode: (id) => set((s) => {
+    const group = s.nodes.find((n) => n.id === id && n.type === 'groupNode')
+    if (!group) return {}
+
+    const nodesById = new Map(s.nodes.map((n) => [n.id, n] as const))
+    const nextNodes: Node[] = []
+    for (const node of s.nodes) {
+      if (node.id === id) continue
+      if (getNodeParentId(node) !== id) {
+        nextNodes.push(node)
+        continue
+      }
+      const absPos = getNodeAbsPosition(node, nodesById)
+      const normalized = stripNodePositionInternals(normalizeNodeParentId(node))
+      nextNodes.push(enforceNodeSelectability({
+        ...normalized,
+        parentId: undefined,
+        extent: undefined,
+        selected: true,
+        position: { x: absPos.x, y: absPos.y },
+      } as Node))
+    }
+
+    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    return {
+      nodes: nextNodes,
+      historyPast: past,
+      historyFuture: [],
+    }
+  }),
+  arrangeGroupChildren: (groupId, direction, nodeIds) => set((s) => {
+    const arranged = arrangeGroupChildrenInNodes(s.nodes, s.edges, groupId, direction, nodeIds)
+    if (arranged === s.nodes) {
+      if (s.lastGroupArrangeDirection === direction) return {}
+      return { lastGroupArrangeDirection: direction }
+    }
+    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    return {
+      nodes: arranged,
+      historyPast: past,
+      historyFuture: [],
+      lastGroupArrangeDirection: direction,
+    }
+  }),
+  arrangeGroupChildrenByLastDirection: (groupId, nodeIds) => {
+    const s = get()
+    s.arrangeGroupChildren(groupId, s.lastGroupArrangeDirection, nodeIds)
+  },
   formatTree: () => {
     const s = get()
     const sel = s.nodes.filter(n => n.selected)
@@ -1316,12 +3005,12 @@ export const useRFStore = create<RFState>((set, get) => ({
     set((state) => {
       const selected = state.nodes.filter(n => n.selected)
       if (selected.length < 2) return {}
-      const byParent = new Map<string, Node[]>()
-      selected.forEach(n => {
-        const p = ((n as any).parentId as string) || ''
-        if (!byParent.has(p)) byParent.set(p, [])
-        byParent.get(p)!.push(n)
-      })
+	      const byParent = new Map<string, Node[]>()
+	      selected.forEach(n => {
+	        const p = getNodeParentId(n) || ''
+	        if (!byParent.has(p)) byParent.set(p, [])
+	        byParent.get(p)!.push(n)
+	      })
       const selectedIds = new Set(selected.map(n => n.id))
       const edgesBySel = state.edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target))
       const updated = [...state.nodes]
@@ -1349,8 +3038,8 @@ export const useRFStore = create<RFState>((set, get) => ({
   },
   // DAG auto layout (top-down tree style) for the whole graph
   autoLayoutAllDagVertical: () => set((s) => {
-    const byParent = new Map<string, Node[]>()
-    s.nodes.forEach(n => { const p=((n as any).parentId as string)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
+	    const byParent = new Map<string, Node[]>()
+	    s.nodes.forEach(n => { const p=getNodeParentId(n)||''; if(!byParent.has(p)) byParent.set(p, []); byParent.get(p)!.push(n) })
     const updated = [...s.nodes]
     byParent.forEach(nodesInParent => {
       const idSet = new Set(nodesInParent.map(n => n.id))
@@ -1370,11 +3059,11 @@ export const useRFStore = create<RFState>((set, get) => ({
     })
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
-  }),
-  autoLayoutForParent: (parentId) => set((s) => {
-    const nodesInParent = s.nodes.filter(n => (((n as any).parentId as string | undefined) || null) === parentId)
-    if (!nodesInParent.length) return {}
-    const updated = [...s.nodes]
+	  }),
+	  autoLayoutForParent: (parentId) => set((s) => {
+	    const nodesInParent = s.nodes.filter(n => (getNodeParentId(n) || null) === parentId)
+	    if (!nodesInParent.length) return {}
+	    const updated = [...s.nodes]
     const idSet = new Set(nodesInParent.map(n => n.id))
     const edgesInScope = s.edges.filter(e => idSet.has(e.source) && idSet.has(e.target))
     const { positions, sizes } = computeTreeLayout(nodesInParent, edgesInScope, 32, 32)
@@ -1393,31 +3082,21 @@ export const useRFStore = create<RFState>((set, get) => ({
     const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
-  runSelectedGroup: async () => {
-    const s = get()
-    const g = s.nodes.find((n: any) => n.type === 'groupNode' && n.selected)
-    if (!g) return
-    const only = new Set(s.nodes.filter((n: any) => (n as any).parentId === g.id).map((n:any)=>n.id))
-    await runFlowDag(2, get, set, { only })
-  },
-  renameSelectedGroup: () => set((s) => {
-    const g = s.nodes.find((n: any) => n.type === 'groupNode' && n.selected)
-    if (!g) return {}
-    return { nodes: s.nodes.map(n => n.id === g.id ? { ...n, data: { ...(n.data||{}), editing: true } } : n) }
-  }),
 }))
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {
   const state = useRFStore.getState()
   // Never persist `dragHandle`: it can make nodes appear "undraggable" if the selector is missing.
-  const rawNodes = (state.nodes || []).map((n: any) => {
+  const nodes = (state.nodes || []).map((n: any) => {
     if (!n || typeof n !== 'object') return n
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { dragHandle: _dragHandle, ...rest } = n
     return rest
-  }) as Node[]
-  const nodes = normalizeNodesParentId(rawNodes)
-  const payload = JSON.stringify({ nodes, edges: state.edges, groups: state.groups })
+  })
+  const sanitized = sanitizeGraphForCanvas({ nodes: nodes as Node[], edges: state.edges })
+  const payload = JSON.stringify(
+    sanitizeFlowValueForPersistence({ nodes: sanitized.nodes, edges: sanitized.edges }),
+  )
   localStorage.setItem(key, payload)
 }
 
@@ -1425,7 +3104,7 @@ export function restoreFromLocalStorage(key = 'tapcanvas-flow') {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { nodes: Node[]; edges: Edge[]; groups?: GroupRec[] }
+    const parsed = JSON.parse(raw) as { nodes: Node[]; edges: Edge[] }
     // Backward-compat: older saves may contain `dragHandle` which restricts dragging to a selector.
     // Strip it so "dragging a node" always drags the node.
     const nodes = (parsed.nodes || []).map((n: any) => {
@@ -1434,7 +3113,8 @@ export function restoreFromLocalStorage(key = 'tapcanvas-flow') {
       const { dragHandle: _dragHandle, ...rest } = n
       return rest
     }) as Node[]
-    return { ...parsed, nodes: normalizeNodesParentId(nodes) }
+    const sanitized = sanitizeGraphForCanvas({ nodes, edges: parsed.edges || [] })
+    return { ...parsed, nodes: sanitized.nodes, edges: sanitized.edges }
   } catch {
     return null
   }

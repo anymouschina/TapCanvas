@@ -25,7 +25,7 @@ export function useEdgeVisuals(type?: string | null) {
     }
 
     // Match infinite-creative-canvas: subtle, uniform edge stroke.
-    const edgeStroke = isLight ? 'rgba(15,23,42,0.22)' : 'rgba(255,255,255,0.32)'
+    const edgeStroke = isLight ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.32)'
 
     const palette: Record<EdgeKind, { light: string; dark: string }> = {
       image: { light: theme.colors.blue[6], dark: theme.colors.blue[4] },

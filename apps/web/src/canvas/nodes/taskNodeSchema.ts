@@ -1,21 +1,17 @@
-import type { TablerIconsProps } from '@tabler/icons-react'
+import type { ComponentType } from 'react'
+import type { IconProps } from '@tabler/icons-react'
 import {
-  IconMovie,
-  IconVideo,
   IconPhoto,
-  IconPhotoEdit,
-  IconMessages,
-  IconVolume,
-  IconVocabulary,
-  IconUsers,
-  IconBox,
   IconLayoutGrid,
+  IconTypography,
+  IconVideo,
 } from '@tabler/icons-react'
 import { Position } from '@xyflow/react'
 
 export type TaskNodeFeature =
   | 'prompt'
   | 'storyboard'
+  | 'anchorBinding'
   | 'image'
   | 'imageUpload'
   | 'imageResults'
@@ -35,17 +31,18 @@ export type TaskNodeFeature =
   | 'subtitle'
   | 'subflow'
   | 'textResults'
+  | 'storyboardEditor'
 
 export type TaskNodeCategory =
-  | 'composer'
-  | 'storyboard'
+  | 'document'
   | 'video'
   | 'image'
-  | 'audio'
-  | 'subtitle'
-  | 'character'
-  | 'subflow'
+  | 'storyboard'
   | 'generic'
+
+export type TaskNodeKind = 'text' | 'video' | 'image' | 'imageEdit' | 'storyboard'
+
+export type TaskNodeCoreType = 'text' | 'video' | 'image' | 'storyboard'
 
 export type TaskNodeHandleConfig = {
   id: string
@@ -64,79 +61,138 @@ export type TaskNodeHandlesConfig =
     }
 
 export interface TaskNodeSchema {
-  kind: string
+  kind: TaskNodeKind
   category: TaskNodeCategory
-  icon: (props: TablerIconsProps) => JSX.Element
+  icon: ComponentType<IconProps>
   features: TaskNodeFeature[]
   handles?: TaskNodeHandlesConfig
   label?: string
+}
+
+type TaskNodeSchemaDefinition = {
+  coreType: TaskNodeCoreType
+  schema: TaskNodeSchema
+}
+
+export type FeatureOverrideOptions = {
+  enable?: TaskNodeFeature[]
+  disable?: TaskNodeFeature[]
+}
+
+class TaskNodeSchemaKernel {
+  private readonly kindIndex: Map<TaskNodeKind, TaskNodeSchemaDefinition>
+  private readonly coreDefaults: Map<TaskNodeCoreType, TaskNodeSchema>
+
+  constructor(
+    private readonly definitions: TaskNodeSchemaDefinition[],
+    private readonly fallback: TaskNodeSchema,
+  ) {
+    this.kindIndex = new Map(definitions.map((definition) => [definition.schema.kind, definition]))
+    this.coreDefaults = new Map()
+    definitions.forEach((definition) => {
+      if (!this.coreDefaults.has(definition.coreType) && definition.schema.kind === definition.coreType) {
+        this.coreDefaults.set(definition.coreType, definition.schema)
+      }
+    })
+  }
+
+  resolve(kind?: string | null): TaskNodeSchema {
+    const normalized = normalizeTaskNodeKind(kind)
+    if (!normalized) return this.fallback
+    return this.kindIndex.get(normalized)?.schema ?? this.fallback
+  }
+
+  listSchemas(): TaskNodeSchema[] {
+    return this.definitions.map((definition) => definition.schema)
+  }
+
+  getCoreType(kind?: string | null): TaskNodeCoreType {
+    const normalized = normalizeTaskNodeKind(kind)
+    if (!normalized) return 'text'
+    return this.kindIndex.get(normalized)?.coreType ?? 'text'
+  }
+
+  listByCoreType(coreType: TaskNodeCoreType): TaskNodeSchema[] {
+    return this.definitions
+      .filter((definition) => definition.coreType === coreType)
+      .map((definition) => definition.schema)
+  }
+
+  buildCoreSchema(coreType: TaskNodeCoreType, options?: FeatureOverrideOptions): TaskNodeSchema {
+    const base = this.coreDefaults.get(coreType)
+    if (!base) return this.fallback
+
+    const featureSet = new Set<TaskNodeFeature>(base.features)
+    ;(options?.enable || []).forEach((feature) => featureSet.add(feature))
+    ;(options?.disable || []).forEach((feature) => featureSet.delete(feature))
+
+    return {
+      ...base,
+      features: Array.from(featureSet),
+    }
+  }
 }
 
 const TARGET = Position.Left
 const SOURCE = Position.Right
 
 const DEFAULT_SCHEMA: TaskNodeSchema = {
-  kind: 'default',
+  kind: 'text',
   category: 'generic',
-  icon: IconBox,
+  icon: IconTypography,
   features: ['prompt'],
   handles: {
-    targets: [{ id: 'in-any', type: 'any', position: TARGET }],
-    sources: [{ id: 'out-any', type: 'any', position: SOURCE }],
+    sources: [{ id: 'out-text', type: 'text', position: SOURCE }],
   },
-  label: '节点',
+  label: '文本',
 }
 
-const makeComposerHandles = (): TaskNodeHandlesConfig => ({
-  targets: [
-    { id: 'in-image', type: 'image', position: TARGET },
-    { id: 'in-video', type: 'video', position: TARGET },
-    { id: 'in-audio', type: 'audio', position: TARGET },
-    { id: 'in-subtitle', type: 'subtitle', position: TARGET },
-    { id: 'in-character', type: 'character', position: TARGET },
-  ],
-  sources: [{ id: 'out-video', type: 'video', position: SOURCE }],
-})
+const SHARED_IMAGE_FEATURES: TaskNodeFeature[] = [
+  'prompt',
+  'systemPrompt',
+  'anchorBinding',
+  'image',
+  'imageResults',
+  'imageUpload',
+  'reversePrompt',
+  'aspect',
+  'imageSize',
+  'sampleCount',
+  'modelSelect',
+]
 
-const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
-  composeVideo: {
-    kind: 'composeVideo',
-    category: 'composer',
-    icon: IconMovie,
-    label: '文生视频',
-    features: [
-      'prompt',
-      'systemPrompt',
-      'video',
-      'videoResults',
-      'orientation',
-      'duration',
-      'sampleCount',
-      'aspect',
-      'modelSelect',
-      'characterMentions',
-    ],
-    handles: makeComposerHandles(),
+const TASK_NODE_SCHEMAS: Record<TaskNodeKind, TaskNodeSchema> = {
+  text: {
+    kind: 'text',
+    category: 'document',
+    icon: IconTypography,
+    label: '文本',
+    features: ['prompt'],
+    handles: {
+      sources: [{ id: 'out-text', type: 'text', position: SOURCE }],
+    },
   },
-  storyboard: {
-    kind: 'storyboard',
-    category: 'storyboard',
-    icon: IconMovie,
-    label: '分镜',
-    features: [
-      'prompt',
-      'storyboard',
-      'systemPrompt',
-      'video',
-      'videoResults',
-      'orientation',
-      'duration',
-      'sampleCount',
-      'aspect',
-      'modelSelect',
-      'characterMentions',
-    ],
-    handles: makeComposerHandles(),
+  image: {
+    kind: 'image',
+    category: 'image',
+    icon: IconPhoto,
+    label: '图片',
+    features: SHARED_IMAGE_FEATURES,
+    handles: {
+      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
+      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
+    },
+  },
+  imageEdit: {
+    kind: 'imageEdit',
+    category: 'image',
+    icon: IconPhoto,
+    label: '图片编辑',
+    features: SHARED_IMAGE_FEATURES,
+    handles: {
+      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
+      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
+    },
   },
   video: {
     kind: 'video',
@@ -150,130 +206,82 @@ const TASK_NODE_SCHEMAS: Record<string, TaskNodeSchema> = {
       'videoResults',
       'orientation',
       'duration',
+      'sampleCount',
       'aspect',
       'modelSelect',
       'characterMentions',
     ],
     handles: {
-      targets: [
-        { id: 'in-image', type: 'image', position: TARGET },
-        { id: 'in-video', type: 'video', position: TARGET },
-        { id: 'in-character', type: 'character', position: TARGET },
-      ],
+      targets: [{ id: 'in-any', type: 'any', position: TARGET }],
       sources: [{ id: 'out-video', type: 'video', position: SOURCE }],
     },
   },
-  textToImage:{
-    kind: 'textToImage',
-    category: 'image',
-    icon: IconPhoto,
-    label: '图像',
-    features: ['prompt', 'systemPrompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'imageSize', 'sampleCount', 'modelSelect'],
-    handles: {
-      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
-      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  image: {
-    kind: 'image',
-    category: 'image',
-    icon: IconPhoto,
-    label: '图像',
-    features: ['prompt', 'systemPrompt', 'image', 'imageResults', 'imageUpload', 'reversePrompt', 'aspect', 'imageSize', 'sampleCount', 'modelSelect'],
-    handles: {
-      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
-      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  storyboardImage: {
-    kind: 'storyboardImage',
-    category: 'image',
+  storyboard: {
+    kind: 'storyboard',
+    category: 'storyboard',
     icon: IconLayoutGrid,
-    label: '分镜图',
-    features: ['prompt', 'systemPrompt', 'imageResults', 'modelSelect', 'imageSize'],
+    label: '分镜编辑',
+    features: ['storyboardEditor'],
     handles: {
       targets: [{ id: 'in-image', type: 'image', position: TARGET }],
       sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  imageFission: {
-    kind: 'imageFission',
-    category: 'image',
-    icon: IconPhotoEdit,
-    label: '图像裂变',
-    features: [
-      'prompt',
-      'systemPrompt',
-      'image',
-      'imageResults',
-      'imageUpload',
-      'reversePrompt',
-      'aspect',
-      'imageSize',
-      'sampleCount',
-      'modelSelect',
-    ],
-    handles: {
-      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
-      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  mosaic: {
-    kind: 'mosaic',
-    category: 'image',
-    icon: IconLayoutGrid,
-    label: '拼图',
-    // 仅展示拼图结果，不暴露上传/提示词等通用图像功能
-    features: ['imageResults'],
-    handles: {
-      targets: [{ id: 'in-image', type: 'image', position: TARGET }],
-      sources: [{ id: 'out-image', type: 'image', position: SOURCE }],
-    },
-  },
-  tts: {
-    kind: 'tts',
-    category: 'audio',
-    icon: IconVolume,
-    label: '语音',
-    features: ['prompt', 'audio'],
-    handles: {
-      sources: [{ id: 'out-audio', type: 'audio', position: SOURCE }],
-    },
-  },
-  subtitleAlign: {
-    kind: 'subtitleAlign',
-    category: 'subtitle',
-    icon: IconVocabulary,
-    label: '字幕',
-    features: ['prompt', 'subtitle'],
-    handles: {
-      sources: [{ id: 'out-subtitle', type: 'subtitle', position: SOURCE }],
-    },
-  },
-  character: {
-    kind: 'character',
-    category: 'character',
-    icon: IconUsers,
-    label: '角色',
-    features: ['character'],
-    handles: {
-      sources: [{ id: 'out-character', type: 'character', position: SOURCE }],
-    },
-  },
-  subflow: {
-    kind: 'subflow',
-    category: 'subflow',
-    icon: IconBox,
-    features: ['subflow'],
-    handles: {
-      dynamic: true,
     },
   },
 }
 
-export const getTaskNodeSchema = (kind?: string | null): TaskNodeSchema => {
-  if (!kind) return DEFAULT_SCHEMA
-  return TASK_NODE_SCHEMAS[kind] ?? DEFAULT_SCHEMA
+const LEGACY_TASK_NODE_KIND_ALIASES: Record<string, TaskNodeKind> = {
+  text: 'text',
+  noveldoc: 'text',
+  scriptdoc: 'text',
+  storyboardscript: 'text',
+  workflowinput: 'text',
+  workflowoutput: 'text',
+  cameraref: 'text',
+  tts: 'text',
+  subtitlealign: 'text',
+  subflow: 'text',
+
+  image: 'image',
+  imageedit: 'imageEdit',
+  texttoimage: 'image',
+  text_to_image: 'image',
+  storyboardimage: 'image',
+  novelstoryboard: 'image',
+  storyboardshot: 'image',
+  imagefission: 'image',
+  mosaic: 'image',
+
+  video: 'video',
+  composevideo: 'video',
+
+  storyboard: 'storyboard',
+  storyboardedit: 'storyboard',
+  storyboardeditor: 'storyboard',
 }
 
-export const listTaskNodeSchemas = (): TaskNodeSchema[] => Object.values(TASK_NODE_SCHEMAS)
+export const normalizeTaskNodeKind = (kind?: string | null): TaskNodeKind | undefined => {
+  const normalized = String(kind || '').trim()
+  if (!normalized) return undefined
+  return LEGACY_TASK_NODE_KIND_ALIASES[normalized.toLowerCase()]
+}
+
+const TASK_NODE_DEFINITIONS: TaskNodeSchemaDefinition[] = Object.values(TASK_NODE_SCHEMAS).map((schema) => ({
+  coreType: schema.kind === 'imageEdit' ? 'image' : schema.kind,
+  schema,
+}))
+
+export const taskNodeSchemaKernel = new TaskNodeSchemaKernel(TASK_NODE_DEFINITIONS, DEFAULT_SCHEMA)
+
+export const getTaskNodeSchema = (kind?: string | null): TaskNodeSchema => taskNodeSchemaKernel.resolve(kind)
+
+export const getTaskNodeCoreType = (kind?: string | null): TaskNodeCoreType => taskNodeSchemaKernel.getCoreType(kind)
+
+export const buildUnifiedTaskNodeSchema = (
+  coreType: TaskNodeCoreType,
+  options?: FeatureOverrideOptions,
+): TaskNodeSchema => taskNodeSchemaKernel.buildCoreSchema(coreType, options)
+
+export const listTaskNodeSchemas = (): TaskNodeSchema[] => taskNodeSchemaKernel.listSchemas()
+
+export const listTaskNodeSchemasByCoreType = (coreType: TaskNodeCoreType): TaskNodeSchema[] =>
+  taskNodeSchemaKernel.listByCoreType(coreType)

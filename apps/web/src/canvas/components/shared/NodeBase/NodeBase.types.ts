@@ -55,6 +55,19 @@ export interface NodeData {
   isGroup?: boolean;
   /** 分组ID */
   groupId?: string;
+  /** 实验分组ID（A/B 或多分支比较） */
+  experimentGroupId?: string;
+  /** 工作流阶段标签 */
+  workflowStage?:
+    | 'material_ingest'
+    | 'script_breakdown'
+    | 'storyboard_generation'
+    | 'shot_planning'
+    | 'image_generation'
+    | 'video_generation'
+    | 'qc_publish';
+  /** 同分组内迭代标识 */
+  iterationKey?: string;
   /** 其他扩展数据 */
   [key: string]: any;
 }

@@ -1,12 +1,30 @@
 import React from 'react'
-import { Paper, Group, Title, Transition, Button, Stack, Text, Badge, Table, ActionIcon, Tooltip, Loader } from '@mantine/core'
+import { Group, Title, Transition, Button, Stack, Text, Badge, Table, ActionIcon, Tooltip, Loader } from '@mantine/core'
 import { IconRefresh, IconPlayerPlay, IconFileText, IconTarget } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
-import { listWorkflowExecutions, listWorkflowNodeRuns, type WorkflowExecutionDto, type WorkflowNodeRunDto } from '../api/server'
+import {
+  listAgentPipelineRuns,
+  listWorkflowExecutions,
+  listWorkflowNodeRuns,
+  type AgentPipelineRunDto,
+  type AgentPipelineRunStatus,
+  type WorkflowExecutionDto,
+  type WorkflowNodeRunDto,
+} from '../api/server'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
+import { PanelCard } from './PanelCard'
+import { stopPanelWheelPropagation } from './utils/panelWheel'
 
 function statusColor(status: WorkflowExecutionDto['status']): string {
   if (status === 'success') return 'teal'
+  if (status === 'failed') return 'red'
+  if (status === 'running') return 'blue'
+  if (status === 'queued') return 'gray'
+  return 'gray'
+}
+
+function agentStatusColor(status: AgentPipelineRunStatus): string {
+  if (status === 'succeeded') return 'teal'
   if (status === 'failed') return 'red'
   if (status === 'running') return 'blue'
   if (status === 'queued') return 'gray'
@@ -23,16 +41,19 @@ export default function ExecutionPanel(props: {
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const anchorY = useUIStore((s) => s.panelAnchorY)
   const currentFlowId = useUIStore((s) => s.currentFlow.id)
+  const currentProjectId = useUIStore((s) => s.currentProject?.id ?? null)
   const mounted = active === 'runs'
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [items, setItems] = React.useState<WorkflowExecutionDto[]>([])
+  const [agentLoading, setAgentLoading] = React.useState(false)
+  const [agentError, setAgentError] = React.useState<string | null>(null)
+  const [agentItems, setAgentItems] = React.useState<AgentPipelineRunDto[]>([])
   const [failedNodeByExecId, setFailedNodeByExecId] = React.useState<Record<string, { nodeId: string }>>({})
   const [runStatsByExecId, setRunStatsByExecId] = React.useState<Record<string, { total: number; done: number; failed: number }>>({})
   const nodeLabelById = props.nodeLabelById
   const onFocusNode = props.onFocusNode
   const [runStarting, setRunStarting] = React.useState(false)
-
   const load = React.useCallback(async () => {
     if (!currentFlowId) return
     setLoading(true)
@@ -48,6 +69,24 @@ export default function ExecutionPanel(props: {
       setLoading(false)
     }
   }, [currentFlowId])
+
+  const loadAgentRuns = React.useCallback(async () => {
+    if (!currentProjectId) {
+      setAgentItems([])
+      return
+    }
+    setAgentLoading(true)
+    setAgentError(null)
+    try {
+      const list = await listAgentPipelineRuns({ projectId: currentProjectId, limit: 30 })
+      setAgentItems(Array.isArray(list) ? list : [])
+    } catch (e: any) {
+      setAgentError(e?.message || '加载失败')
+      setAgentItems([])
+    } finally {
+      setAgentLoading(false)
+    }
+  }, [currentProjectId])
 
   const ensureFailedNodeCached = React.useCallback(
     async (executionId: string) => {
@@ -111,7 +150,8 @@ export default function ExecutionPanel(props: {
   React.useEffect(() => {
     if (!mounted) return
     void load()
-  }, [mounted, load])
+    void loadAgentRuns()
+  }, [mounted, load, loadAgentRuns])
 
   React.useEffect(() => {
     if (!mounted) return
@@ -130,6 +170,14 @@ export default function ExecutionPanel(props: {
 
   React.useEffect(() => {
     if (!mounted) return
+    const hasActive = agentItems.some((it) => it.status === 'running' || it.status === 'queued')
+    if (!hasActive) return
+    const t = window.setInterval(() => void loadAgentRuns(), 2000)
+    return () => window.clearInterval(t)
+  }, [mounted, agentItems, loadAgentRuns])
+
+  React.useEffect(() => {
+    if (!mounted) return
     const active = items.filter((it) => it.status === 'running' || it.status === 'queued').slice(0, 2)
     if (!active.length) return
     void Promise.allSettled(active.map((it) => ensureRunStatsCached(it.id)))
@@ -144,12 +192,8 @@ export default function ExecutionPanel(props: {
       <Transition className="execution-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div className="execution-panel-transition-inner" style={styles}>
-            <Paper
-              withBorder
-              shadow="md"
-              radius="lg"
+            <PanelCard
               className="glass"
-              p="md"
               style={{
                 width: 520,
                 maxHeight: `${maxHeight}px`,
@@ -159,6 +203,7 @@ export default function ExecutionPanel(props: {
                 flexDirection: 'column',
                 overflow: 'hidden',
               }}
+              onWheelCapture={stopPanelWheelPropagation}
               data-ux-panel
             >
               <div className="execution-panel-arrow panel-arrow" />
@@ -166,7 +211,7 @@ export default function ExecutionPanel(props: {
                 <Group className="execution-panel-title-group" gap="xs">
                   <Title className="execution-panel-title" order={6}>运行记录</Title>
                   <Tooltip className="execution-panel-refresh-tooltip" label="刷新">
-                    <ActionIcon className="execution-panel-refresh-action" size="sm" variant="subtle" aria-label="刷新运行记录" onClick={() => void load()} disabled={loading}>
+                    <ActionIcon className="execution-panel-refresh-action" size="sm" variant="subtle" aria-label="刷新运行记录" onClick={() => { void load(); void loadAgentRuns() }} disabled={loading || agentLoading}>
                       <IconRefresh className="execution-panel-refresh-icon" size={14} />
                     </ActionIcon>
                   </Tooltip>
@@ -197,6 +242,12 @@ export default function ExecutionPanel(props: {
               {!!error && (
                 <Text className="execution-panel-error" size="sm" c="red">
                   {error}
+                </Text>
+              )}
+
+              {!!agentError && (
+                <Text className="execution-panel-agent-error" size="sm" c="red">
+                  {agentError}
                 </Text>
               )}
 
@@ -308,9 +359,71 @@ export default function ExecutionPanel(props: {
                       </Table.Tbody>
                     </Table>
                   )}
+
+                  <Group className="execution-panel-agent-header" justify="space-between" mt="sm">
+                    <Title className="execution-panel-agent-title" order={6}>Agents 生产运行</Title>
+                    <Badge className="execution-panel-agent-mode-badge" size="xs" variant="light" color="blue">
+                      仅保留记录，生产请走 public/chat
+                    </Badge>
+                  </Group>
+
+                  {!currentProjectId && (
+                    <Text className="execution-panel-agent-empty-hint" size="sm" c="dimmed">
+                      先创建/选择项目后，才能启动分镜与生产流程。
+                    </Text>
+                  )}
+
+                  {currentProjectId && !agentItems.length && !agentLoading && (
+                    <Text className="execution-panel-agent-no-items" size="sm" c="dimmed">
+                      暂无生产运行记录
+                    </Text>
+                  )}
+
+                  {!!agentItems.length && (
+                    <Table className="execution-panel-agent-table" striped highlightOnHover verticalSpacing="xs">
+                      <Table.Thead className="execution-panel-agent-table-head">
+                        <Table.Tr className="execution-panel-agent-table-head-row">
+                          <Table.Th className="execution-panel-agent-table-head-cell" style={{ width: 180 }}>任务</Table.Th>
+                          <Table.Th className="execution-panel-agent-table-head-cell" style={{ width: 100 }}>状态</Table.Th>
+                          <Table.Th className="execution-panel-agent-table-head-cell" style={{ width: 90 }}>阶段数</Table.Th>
+                          <Table.Th className="execution-panel-agent-table-head-cell" style={{ width: 170 }}>更新时间</Table.Th>
+                          <Table.Th className="execution-panel-agent-table-head-cell">目标</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody className="execution-panel-agent-table-body">
+                        {agentItems.map((it) => (
+                          <Table.Tr className="execution-panel-agent-table-row" key={it.id}>
+                            <Table.Td className="execution-panel-agent-table-cell">
+                              <Text className="execution-panel-agent-title-text" size="xs" title={it.title} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 170 }}>
+                                {it.title}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td className="execution-panel-agent-table-cell">
+                              <Badge className="execution-panel-agent-status-badge" size="xs" variant="light" color={agentStatusColor(it.status) as any}>
+                                {it.status}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td className="execution-panel-agent-table-cell">
+                              <Text className="execution-panel-agent-stage-count" size="xs" c="dimmed">{Array.isArray(it.stages) ? it.stages.length : 0}</Text>
+                            </Table.Td>
+                            <Table.Td className="execution-panel-agent-table-cell">
+                              <Text className="execution-panel-agent-updated-at" size="xs" c="dimmed">
+                                {new Date(it.updatedAt).toLocaleString()}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td className="execution-panel-agent-table-cell">
+                              <Text className="execution-panel-agent-goal" size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
+                                {it.goal || '—'}
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  )}
                 </Stack>
               </div>
-            </Paper>
+            </PanelCard>
           </div>
         )}
       </Transition>

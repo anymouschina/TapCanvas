@@ -1,11 +1,13 @@
 export const BASE_DURATION_OPTIONS = [
-  { value: '10', label: '10s' },
-  { value: '15', label: '15s' },
+  { value: '5', label: '5s' },
+] as const
+
+export const VEO_DURATION_OPTIONS = [
+  { value: '5', label: '5s' },
 ] as const
 
 export const MINIMAX_DURATION_OPTIONS = [
-  { value: '6', label: '6s' },
-  { value: '10', label: '10s' },
+  { value: '5', label: '5s' },
 ] as const
 
 export const STORYBOARD_DURATION_OPTION = { value: '25', label: '25s' } as const

@@ -6,6 +6,14 @@
     "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@tapcanvas/canvas-plan-protocol": ["../hono-api/src/modules/apiKey/canvasPlanProtocol.ts"],
+      "@tapcanvas/flow-anchor-bindings": ["../hono-api/src/modules/flow/flow.anchor-bindings.ts"],
+      "@tapcanvas/storyboard-selection-protocol": ["../hono-api/src/modules/storyboard/storyboardSelectionProtocol.ts"],
+      "@tapcanvas/image-prompt-spec": ["../../packages/schemas/image-prompt-spec/index.d.ts"],
+      "@tapcanvas/image-view-controls": ["../../packages/schemas/image-view-controls/index.d.ts"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -15,4 +23,3 @@
   "include": ["src", "vite.config.ts"],
   "references": []
 }
-

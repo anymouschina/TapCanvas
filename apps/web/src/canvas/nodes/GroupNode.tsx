@@ -1,107 +1,173 @@
 import React from 'react'
-import type { NodeProps } from '@xyflow/react'
-import { Paper, Group, Button, Divider, Text, TextInput } from '@mantine/core'
-import { useShallow } from 'zustand/react/shallow'
-import { useRFStore, persistToLocalStorage } from '../store'
-import { toast } from '../../ui/toast'
-import { runFlowDag } from '../../runner/dag'
-import { NodeResizer } from '@xyflow/react'
+import type { Node, NodeProps } from '@xyflow/react'
+import { NodeResizeControl } from '@xyflow/react'
+import { IconEdit, IconGripVertical } from '@tabler/icons-react'
+import { useRFStore } from '../store'
 
-type Data = { label?: string; editing?: boolean }
+type GroupNodeData = {
+  label?: string
+}
 
-export default function GroupNode({ id, data, selected }: NodeProps<Data>): JSX.Element {
-  const label = data?.label || '新建组'
-  const childIdTokens = useRFStore(useShallow((s) =>
-    s.nodes
-      .filter((n) => (n as any).parentId === id)
-      .map((n) => n.id),
-  ))
-  const ungroup = useRFStore(s => s.ungroupGroupNode)
-  const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
+type GroupCanvasNode = Node<GroupNodeData, 'groupNode'>
+
+export default function GroupNode({ id, data, selected, dragging }: NodeProps<GroupCanvasNode>): JSX.Element {
+  const label = String(data?.label || '组').trim() || '组'
+  const borderColor = selected ? 'var(--canvas-group-border-selected)' : 'var(--canvas-group-border)'
+  const renameGroup = useRFStore((s) => s.renameGroup)
   const [editing, setEditing] = React.useState(false)
-  const [name, setName] = React.useState(label)
-  React.useEffect(() => { setName(label) }, [label])
-  const updateNodeData = useRFStore(s => s.updateNodeData)
-  React.useEffect(() => {
-    if (data?.editing && !editing) setEditing(true)
-  }, [data?.editing])
+  const [draftLabel, setDraftLabel] = React.useState(label)
 
-  // gather direct children by parentId
-  const childIds = React.useMemo(() => new Set(childIdTokens), [childIdTokens])
+  React.useEffect(() => {
+    if (!editing) setDraftLabel(label)
+  }, [editing, label])
+
+  const submitRename = React.useCallback(() => {
+    const next = draftLabel.trim()
+    if (next && next !== label) {
+      renameGroup(id, next)
+    }
+    setEditing(false)
+  }, [draftLabel, id, label, renameGroup])
 
   return (
-    <div className="group-node" style={{
-      width: '100%',
-      height: '100%',
-      position: 'relative',
-      background: 'var(--canvas-group-bg)',
-      border: selected ? '1.5px solid var(--canvas-group-border-selected)' : '1px solid var(--canvas-group-border)',
-      borderRadius: 12,
-      boxShadow: '0 10px 24px rgba(0,0,0,0.25)',
-      zIndex: 0
-    }}>
-      <NodeResizer className="group-node-resizer" isVisible={selected} minWidth={160} minHeight={90} handleStyle={{ width: 8, height: 8, borderRadius: 2, background: 'var(--canvas-io-handle)', border: '1px solid rgba(255,255,255,.2)' }} lineStyle={{ borderColor: 'var(--canvas-group-border)' }} />
-      {/* Toolbar pinned to top-left of the group (inside the node) */}
-      <Paper className="group-node-toolbar" withBorder shadow="sm" radius="xl" p={4} style={{ position: 'absolute', left: 8, top: -28, pointerEvents: 'auto', whiteSpace: 'nowrap', overflowX: 'auto' }}>
-        <Group className="group-node-toolbar-row" gap={6} style={{ flexWrap: 'nowrap' }}>
+    <div className="tc-group-node" style={{ width: '100%', height: '100%' }}>
+      <div
+        className="tc-group-node__shell"
+        style={{
+          width: '100%',
+          height: '100%',
+          border: `1.5px dashed ${borderColor}`,
+          borderRadius: 12,
+          background: 'var(--canvas-group-bg)',
+          boxShadow: selected ? 'var(--canvas-group-shadow-selected)' : 'var(--canvas-group-shadow)',
+          boxSizing: 'border-box',
+          position: 'relative',
+          transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
+          pointerEvents: 'auto',
+          overflow: 'visible',
+        }}
+      >
+        <div
+          className="tc-group-node__drag-handle"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: -26,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 12,
+            lineHeight: '18px',
+            fontWeight: 600,
+            color: 'var(--canvas-node-subtext)',
+            userSelect: 'none',
+            pointerEvents: 'auto',
+            cursor: dragging ? 'grabbing' : 'grab',
+            maxWidth: 'calc(100% - 8px)',
+            zIndex: 5,
+            padding: '2px 8px',
+            borderRadius: 999,
+            border: `1px solid ${selected ? 'var(--canvas-group-border-selected)' : 'var(--canvas-group-border)'}`,
+            background: 'var(--canvas-group-bg)',
+            boxShadow: selected ? '0 6px 16px rgba(15, 23, 42, 0.14)' : 'none',
+            overflow: 'hidden',
+          }}
+          title="拖这里移动组"
+        >
+          <IconGripVertical size={13} stroke={2} style={{ flex: '0 0 auto', opacity: 0.72 }} />
           {editing ? (
-            <TextInput
-              className="group-node-title-input"
-              size="xs"
+            <input
+              className="tc-group-node__title-input nodrag nopan"
+              value={draftLabel}
               autoFocus
-              value={name}
-              onChange={(e)=>setName(e.currentTarget.value)}
-              onKeyDown={(e)=>{ if (e.key === 'Enter') { updateNodeLabel(id, name.trim() || '新建组'); setEditing(false); updateNodeData(id, { editing: false }) } }}
-              onBlur={()=>{ updateNodeLabel(id, name.trim() || '新建组'); setEditing(false); updateNodeData(id, { editing: false }) }}
-              styles={{ input: { height: 22, paddingTop: 0, paddingBottom: 0 } }}
+              onChange={(e) => setDraftLabel(e.currentTarget.value)}
+              onBlur={submitRename}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  submitRename()
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setDraftLabel(label)
+                  setEditing(false)
+                }
+              }}
+              style={{
+                width: '100%',
+                minWidth: 96,
+                fontSize: 12,
+                lineHeight: '18px',
+                height: 18,
+                fontWeight: 600,
+                color: 'var(--canvas-node-subtext)',
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                padding: 0,
+                margin: 0,
+              }}
             />
           ) : (
-            <Text className="group-node-title" size="xs" c="dimmed" onDoubleClick={()=>{ setEditing(true); updateNodeData(id, { editing: true }) }} title="双击重命名">{label}</Text>
+            <div
+              className="tc-group-node__title-text"
+              style={{
+                minWidth: 0,
+                whiteSpace: 'nowrap',
+                textOverflow: 'ellipsis',
+                overflow: 'hidden',
+              }}
+            >
+              {label}
+            </div>
           )}
-          <Divider className="group-node-divider" orientation="vertical" style={{ height: 16 }} />
-          <Button className="group-node-run" size="xs" color="blue" onClick={async () => {
-            await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds })
-          }}>▶ 一键执行</Button>
-          {/* 服务器持久化：本地保存入口移除，避免与项目保存冲突 */}
-          <Button className="group-node-rename" size="xs" variant="subtle" onClick={()=> setEditing(true)}>重命名</Button>
-          <Button className="group-node-ungroup" size="xs" variant="subtle" color="red" onClick={() => ungroup(id)}>解组</Button>
-          {/* Aggregated status */}
-          <Group className="group-node-summary" gap={4} style={{ flexWrap: 'nowrap' }}>
-            <GroupSummary childIds={childIds} />
-          </Group>
-        </Group>
-      </Paper>
+          {!editing && (
+            <button
+              className="tc-group-node__title-edit nodrag nopan"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setEditing(true)
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 18,
+                height: 18,
+                padding: 0,
+                marginLeft: 2,
+                border: 'none',
+                borderRadius: 999,
+                background: 'transparent',
+                color: 'inherit',
+                cursor: 'pointer',
+                flex: '0 0 auto',
+              }}
+              title="编辑组名"
+            >
+              <IconEdit size={12} stroke={2} />
+            </button>
+          )}
+        </div>
+
+        {selected && !dragging && (
+          <NodeResizeControl
+            className="tc-group-node__resize-control nodrag"
+            position="bottom-right"
+            keepAspectRatio
+            minWidth={GROUP_MIN_WIDTH}
+            minHeight={GROUP_MIN_HEIGHT}
+          >
+            <div className="tc-group-node__resize-handle" />
+          </NodeResizeControl>
+        )}
+      </div>
     </div>
   )
 }
 
-function GroupSummary({ childIds }: { childIds: Set<string> }) {
-  const childStatusTokens = useRFStore(useShallow((s) =>
-    s.nodes
-      .filter((n) => childIds.has(n.id))
-      .map((n) => `${n.id}\u0000${String((n.data as any)?.status || 'idle')}`),
-  ))
-  const total = childStatusTokens.length || 1
-  const counts = childStatusTokens.reduce((acc, token) => {
-    const sepIndex = token.indexOf('\u0000')
-    const st = sepIndex >= 0 ? token.slice(sepIndex + 1) : 'idle'
-    acc[st] = (acc[st] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-  const success = counts['success'] || 0
-  const running = counts['running'] || 0
-  const error = counts['error'] || 0
-  const queued = counts['queued'] || 0
-  const pct = Math.round((success / total) * 100)
-  return (
-    <div className="group-node-summary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <div className="group-node-summary-track" style={{ width: 80, height: 6, background: 'rgba(148,163,184,0.25)', borderRadius: 999, overflow: 'hidden' }}>
-        <div className="group-node-summary-fill" style={{ width: `${pct}%`, height: '100%', background: '#16a34a' }} />
-      </div>
-      <span className="group-node-summary-text" style={{ fontSize: 11, color: '#9ca3af' }}>{success}/{total} 成功</span>
-      {running > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#8b5cf6' }}>运行 {running}</span>}
-      {queued > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#f59e0b' }}>排队 {queued}</span>}
-      {error > 0 && <span className="group-node-summary-text" style={{ fontSize: 11, color: '#ef4444' }}>失败 {error}</span>}
-    </div>
-  )
-}
+const GROUP_MIN_WIDTH = 160
+const GROUP_MIN_HEIGHT = 90

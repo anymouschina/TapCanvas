@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
+import { createPortal } from 'react-dom'
 import {
   ReactFlow,
   Background,
@@ -13,95 +13,404 @@ import {
   EdgeTypes,
   getBezierPath,
   type ConnectionLineComponentProps,
+  type Edge as FlowEdge,
+  type Node as FlowNode,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import TaskNode from './nodes/TaskNode'
-import GroupNode from './nodes/GroupNode'
 import IONode from './nodes/IONode'
+import GroupNode from './nodes/GroupNode'
 import { useRFStore } from './store'
 import { toast } from '../ui/toast'
 import { applyTemplateAt } from '../templates'
-import { Paper, Stack, Button, Divider, Group, Text, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { Paper, Stack, Button, Divider, Group, Text, Modal, TextInput, Textarea, Menu, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { IconBoxMultiple, IconBrackets, IconLayoutGrid, IconLayoutGridAdd, IconPhoto, IconPlayerPlay, IconTypography, IconVideo } from '@tabler/icons-react'
 import { getCurrentLanguage, setLanguage, $, $t } from './i18n'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
 import { useUIStore } from '../ui/uiStore'
 import { runFlowDag } from '../runner/dag'
-import { syncGrsaiImageNodeOnce, syncMiniMaxVideoNodeOnce, syncSora2ApiVideoNodeOnce } from '../runner/remoteRunner'
+import { syncGenericVideoNodeOnce, syncImageNodeOnce } from '../runner/remoteRunner'
 import { useInsertMenuStore } from './insertMenuStore'
-import { uuid } from 'zod/v4'
-import { getQuickStartSampleFlow } from './quickStartSample'
 import { getHandleTypeLabel } from './utils/handleLabels'
-import { isImageEditModel } from '../config/models'
 import { subscribeTaskProgress, type TaskProgressEventMessage } from '../api/taskProgress'
 import { useAuth } from '../auth/store'
-import { uploadServerAssetFile, uploadSoraImage } from '../api/server'
-import { blobToDataUrl, genTaskNodeId } from './nodes/taskNodeHelpers'
+import { createServerAsset, listProjectFlows, listProjects, recoverUploadedServerAssetFile, saveProjectFlow, updateProjectTemplate, upsertProject, uploadServerAssetFile, type ProjectDto } from '../api/server'
+import { genTaskNodeId } from './nodes/taskNodeHelpers'
 import { CANVAS_CONFIG } from './utils/constants'
-import { buildEdgeValidator, isImageKind } from './utils/edgeRules'
+import { buildEdgeValidator } from './utils/edgeRules'
 import { buildCanvasThemeColors } from './utils/canvasTheme'
-import { getTaskNodeSchema, listTaskNodeSchemas } from './nodes/taskNodeSchema'
+import {
+  getTaskNodeCoreType,
+  getTaskNodeSchema,
+  listTaskNodeSchemas,
+  type TaskNodeHandleConfig,
+  type TaskNodeSchema,
+} from './nodes/taskNodeSchema'
 import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'
-
+import { formatErrorMessage } from './utils/formatErrorMessage'
+import { getPointToRectDistance, screenPathIntersectsRect } from './utils/connectionAutoSnap'
+import { getNodeAbsPosition, getNodeSize } from './utils/nodeBounds'
+import { downloadGroupAssets } from './utils/groupAssetDownload'
+import { GroupTemplateModal, type TemplateSaveMode, type TemplateVisibility } from './components/GroupTemplateModal'
+import { extractCanvasGraph, type CanvasImportData } from './utils/serialization'
+import { getTapImageDragPayload } from './dnd/setTapImageDragData'
+import { buildStoryboardEditorPatch, normalizeStoryboardNodeData } from './nodes/taskNode/storyboardEditor'
+import { resourceManager } from '../domain/resource-runtime'
+import { useUploadRuntimeStore } from '../domain/upload-runtime/store/uploadRuntimeStore'
+import { dedupeLocalFiles } from '../utils/localUploadDedup'
+import { CanvasRenderContext } from './CanvasRenderContext'
+import { PanelCard } from '../ui/PanelCard'
 // 限制不同节点类型之间的连接关系；未匹配的类型默认放行，避免阻塞用户操作
 const isValidEdgeByType = buildEdgeValidator()
 
-const nodeTypes: NodeTypes = {
+const NODE_TYPES = Object.freeze({
   taskNode: TaskNode,
-  groupNode: GroupNode,
   ioNode: IONode,
-}
+  groupNode: GroupNode,
+}) as unknown as NodeTypes
 
-const edgeTypes: EdgeTypes = {
+const EDGE_TYPES = Object.freeze({
   typed: TypedEdge,
   orth: OrthTypedEdge,
+}) as unknown as EdgeTypes
+
+const INSERT_MENU_EXCLUDED_KINDS = new Set<string>()
+
+type InsertMenuSchemaCandidate = {
+  schema: TaskNodeSchema
+  targetHandleId: string
 }
 
 const joinClassNames = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' ')
+
+const areStringArraysEqual = (a: string[], b: string[]) => {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+type RFStoreState = ReturnType<typeof useRFStore.getState>
+
+type NodePrimaryImageBinding = {
+  imageUrl: string | null
+  nodeId: string
+}
+
+type SelectedNodeSummary = {
+  id: string
+  kind: string
+  parentId: string
+  prompt: string
+  text: string
+  type: FlowNode['type']
+}
+
+const normalizeImageUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+const resolveNodePrimaryImageUrl = (node: FlowNode): string | null => {
+  if (node.type !== 'taskNode') return null
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const imageResults = Array.isArray(data.imageResults) ? data.imageResults : []
+  const imagePrimaryIndexRaw = typeof data.imagePrimaryIndex === 'number'
+    ? data.imagePrimaryIndex
+    : Number(data.imagePrimaryIndex)
+  const imagePrimaryIndex = Number.isFinite(imagePrimaryIndexRaw)
+    ? Math.max(0, Math.floor(imagePrimaryIndexRaw))
+    : 0
+
+  const preferredResult = imageResults[imagePrimaryIndex]
+  if (preferredResult && typeof preferredResult === 'object') {
+    const preferredUrl = normalizeImageUrl((preferredResult as { url?: unknown }).url)
+    if (preferredUrl) return preferredUrl
+  }
+
+  for (const result of imageResults) {
+    if (!result || typeof result !== 'object') continue
+    const url = normalizeImageUrl((result as { url?: unknown }).url)
+    if (url) return url
+  }
+
+  return normalizeImageUrl(data.imageUrl)
+}
+
+const selectNodePrimaryImageBindings = (state: RFStoreState): NodePrimaryImageBinding[] =>
+  state.nodes.map((node) => ({
+    nodeId: String(node.id),
+    imageUrl: resolveNodePrimaryImageUrl(node as FlowNode),
+  }))
+
+const areNodePrimaryImageBindingsEqual = (a: NodePrimaryImageBinding[], b: NodePrimaryImageBinding[]) => {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index]?.nodeId !== b[index]?.nodeId) return false
+    if (a[index]?.imageUrl !== b[index]?.imageUrl) return false
+  }
+  return true
+}
+
+const selectSelectedNodeIds = (state: RFStoreState): string[] =>
+  state.nodes.reduce<string[]>((acc, node) => {
+    if (node.selected) acc.push(String(node.id))
+    return acc
+  }, [])
+
+const readSelectedNodeSummary = (node: FlowNode): SelectedNodeSummary => {
+  const data = node.data && typeof node.data === 'object'
+    ? node.data as Record<string, unknown>
+    : null
+  return {
+    id: String(node.id),
+    kind: typeof data?.kind === 'string' ? data.kind.trim() : '',
+    parentId: typeof node.parentId === 'string' ? node.parentId.trim() : '',
+    prompt: typeof data?.prompt === 'string' ? data.prompt.trim() : '',
+    text: typeof data?.text === 'string' ? data.text.trim() : '',
+    type: node.type,
+  }
+}
+
+const selectSelectedNodeSummaries = (state: RFStoreState): SelectedNodeSummary[] =>
+  state.nodes.reduce<SelectedNodeSummary[]>((acc, node) => {
+    if (node.selected) acc.push(readSelectedNodeSummary(node as FlowNode))
+    return acc
+  }, [])
+
+const areSelectedNodeSummariesEqual = (a: SelectedNodeSummary[], b: SelectedNodeSummary[]) => {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index]
+    const right = b[index]
+    if (left?.id !== right?.id) return false
+    if (left?.type !== right?.type) return false
+    if (left?.parentId !== right?.parentId) return false
+    if (left?.kind !== right?.kind) return false
+    if (left?.prompt !== right?.prompt) return false
+    if (left?.text !== right?.text) return false
+  }
+  return true
+}
+
+type PrimaryImageDragPayload = {
+  url: string
+  label?: string
+  prompt?: string
+  storyboardScript?: string
+  storyboardShotPrompt?: string
+  storyboardDialogue?: string
+  sourceKind: 'image'
+  sourceNodeId: string
+  sourceIndex: number
+}
+
+const resolveNodePrimaryImagePayload = (node: FlowNode): PrimaryImageDragPayload | null => {
+  if (node.type !== 'taskNode') return null
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const coreType = getTaskNodeCoreType(typeof data.kind === 'string' ? data.kind : undefined)
+  if (coreType !== 'image') return null
+  const imageResults = Array.isArray(data.imageResults) ? data.imageResults : []
+  const imagePrimaryIndexRaw = typeof data.imagePrimaryIndex === 'number'
+    ? data.imagePrimaryIndex
+    : Number(data.imagePrimaryIndex)
+  const imagePrimaryIndex = Number.isFinite(imagePrimaryIndexRaw)
+    ? Math.max(0, Math.floor(imagePrimaryIndexRaw))
+    : 0
+  const result = imageResults[imagePrimaryIndex]
+  const url = resolveNodePrimaryImageUrl(node)
+  if (!url) return null
+  const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : null
+  const pickText = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined
+    const trimmed = value.trim()
+    return trimmed || undefined
+  }
+  return {
+    url,
+    ...(pickText(resultRecord?.title ?? data.label) ? { label: pickText(resultRecord?.title ?? data.label) } : null),
+    ...(pickText(resultRecord?.prompt ?? data.prompt) ? { prompt: pickText(resultRecord?.prompt ?? data.prompt) } : null),
+    ...(pickText(resultRecord?.storyboardScript ?? data.storyboardScript) ? { storyboardScript: pickText(resultRecord?.storyboardScript ?? data.storyboardScript) } : null),
+    ...(pickText(resultRecord?.storyboardShotPrompt ?? data.storyboardShotPrompt) ? { storyboardShotPrompt: pickText(resultRecord?.storyboardShotPrompt ?? data.storyboardShotPrompt) } : null),
+    ...(pickText(resultRecord?.storyboardDialogue ?? data.storyboardDialogue) ? { storyboardDialogue: pickText(resultRecord?.storyboardDialogue ?? data.storyboardDialogue) } : null),
+    sourceKind: 'image',
+    sourceNodeId: String(node.id),
+    sourceIndex: imagePrimaryIndex,
+  }
+}
+
+const isCanvasReferencePickerCandidateNode = (node: FlowNode, targetNodeId: string): boolean => {
+  if (node.id === targetNodeId || node.type !== 'taskNode') return false
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const kind = typeof data.kind === 'string' ? data.kind : undefined
+  return getTaskNodeCoreType(kind) === 'image' && Boolean(resolveNodePrimaryImageUrl(node))
+}
 
 type CanvasInnerProps = {
   className?: string
 }
 
+type CanvasStyle = React.CSSProperties & Record<'--tc-spotlight-grid-color' | '--tc-spotlight-radius', string>
+type CanvasMiniMapProps = React.ComponentProps<typeof MiniMap>
+type CanvasMiniMapClick = NonNullable<CanvasMiniMapProps['onClick']>
+type CanvasMiniMapNodeClick = NonNullable<CanvasMiniMapProps['onNodeClick']>
+
+const CANVAS_CONTEXT_ADDABLE_KINDS = ['text', 'image', 'storyboard', 'video'] as const
+const NODE_VISIBILITY_FILTERS = ['text', 'image', 'storyboard', 'video'] as const
+const HEAVY_SELECTION_DRAG_THRESHOLD = 6
+
+type NodeVisibilityFilter = (typeof NODE_VISIBILITY_FILTERS)[number]
+type NodeVisibilityState = Record<NodeVisibilityFilter, boolean>
+
+type WorkflowNameDialogState = {
+  mode: 'asset' | 'template'
+  groupId: string
+  title: string
+  confirmLabel: string
+  initialName: string
+  initialDescription: string
+  initialCoverUrl: string
+  previewUrl: string | null
+}
+
+const DEFAULT_NODE_VISIBILITY: NodeVisibilityState = {
+  text: true,
+  image: true,
+  storyboard: true,
+  video: true,
+}
+
+type SelectionActionAnchor = {
+  centerX: number
+  selectedCount: number
+  topY: number
+}
+
+const getNodeVisibilityFilter = (node: FlowNode): NodeVisibilityFilter | null => {
+  if (node.type !== 'taskNode') return null
+  const data = node.data
+  if (!data || typeof data !== 'object') return 'text'
+  const kind = typeof (data as Record<string, unknown>).kind === 'string'
+    ? (data as Record<string, unknown>).kind as string
+    : undefined
+  const coreType = getTaskNodeCoreType(kind)
+  if (coreType === 'video') return 'video'
+  if (coreType === 'storyboard') return 'storyboard'
+  if (coreType === 'image') return 'image'
+  return 'text'
+}
+
+const isNodeVisibleByFilter = (node: FlowNode, visibility: NodeVisibilityState): boolean => {
+  const filter = getNodeVisibilityFilter(node)
+  if (!filter) return true
+  return visibility[filter]
+}
+
+const buildNodeVisibilityLabel = (filter: NodeVisibilityFilter): string => {
+  if (filter === 'text') return '文本'
+  if (filter === 'image') return '图片'
+  if (filter === 'storyboard') return '分镜'
+  return '视频'
+}
+
+const getNodeVisibilityIcon = (filter: NodeVisibilityFilter) => {
+  if (filter === 'text') return IconTypography
+  if (filter === 'image') return IconPhoto
+  if (filter === 'storyboard') return IconLayoutGrid
+  return IconVideo
+}
+
+const getStaticTargetHandles = (schema: TaskNodeSchema): TaskNodeHandleConfig[] => {
+  const handles = schema.handles
+  if (!handles || ('dynamic' in handles && handles.dynamic)) return []
+  return Array.isArray(handles.targets) ? handles.targets : []
+}
+
 function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
-  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, load } = useRFStore(useShallow((s) => ({
-    nodes: s.nodes,
-    edges: s.edges,
-    onNodesChange: s.onNodesChange,
-    onEdgesChange: s.onEdgesChange,
-    onConnect: s.onConnect,
-    load: s.load,
-  })))
-  const focusStack = useUIStore(s => s.focusStack)
-  const focusGroupId = focusStack.length ? focusStack[focusStack.length - 1] : null
+  const nodes = useRFStore((s) => s.nodes)
+  const edges = useRFStore((s) => s.edges)
+  const nodePrimaryImageBindings = useRFStore(selectNodePrimaryImageBindings, areNodePrimaryImageBindingsEqual)
+  const selectedNodeIds = useRFStore(selectSelectedNodeIds, areStringArraysEqual)
+  const selectedNodeSummaries = useRFStore(selectSelectedNodeSummaries, areSelectedNodeSummariesEqual)
+  const onNodesChange = useRFStore((s) => s.onNodesChange)
+  const onEdgesChange = useRFStore((s) => s.onEdgesChange)
+  const onConnect = useRFStore((s) => s.onConnect)
+  const load = useRFStore((s) => s.load)
+  const focusedNodeId = useUIStore(s => s.focusedNodeId)
   const viewOnly = useUIStore(s => s.viewOnly)
   const edgeRoute = useUIStore(s => s.edgeRoute)
-  const enterGroupFocus = useUIStore(s => s.enterGroupFocus)
-  const exitGroupFocus = useUIStore(s => s.exitGroupFocus)
-  const exitAllFocus = useUIStore(s => s.exitAllFocus)
+  const currentProject = useUIStore(s => s.currentProject)
+  const setActivePanel = useUIStore(s => s.setActivePanel)
+  const setPanelAnchorY = useUIStore(s => s.setPanelAnchorY)
+  const focusNodeSubgraph = useUIStore(s => s.focusNodeSubgraph)
+  const clearFocusedSubgraph = useUIStore(s => s.clearFocusedSubgraph)
   const setCanvasViewport = useUIStore(s => s.setCanvasViewport)
   const restoreViewport = useUIStore(s => s.restoreViewport)
   const setRestoreViewport = useUIStore(s => s.setRestoreViewport)
+  const canvasReferencePicker = useUIStore((s) => s.canvasReferencePicker)
+  const closeCanvasReferencePicker = useUIStore((s) => s.closeCanvasReferencePicker)
   const deleteNode = useRFStore(s => s.deleteNode)
   const deleteEdge = useRFStore(s => s.deleteEdge)
   const duplicateNode = useRFStore(s => s.duplicateNode)
   const pasteFromClipboardAt = useRFStore(s => s.pasteFromClipboardAt)
   const importWorkflow = useRFStore(s => s.importWorkflow)
+  const addGroupForSelection = useRFStore(s => s.addGroupForSelection)
+  const createScriptBundleFromSelection = useRFStore(s => s.createScriptBundleFromSelection)
+  const ungroupGroupNode = useRFStore(s => s.ungroupGroupNode)
+  const arrangeGroupChildren = useRFStore(s => s.arrangeGroupChildren)
   const formatTree = useRFStore(s => s.formatTree)
   const cancelNode = useRFStore(s => s.cancelNode)
+  const setNodeStatus = useRFStore(s => s.setNodeStatus)
+  const addNode = useRFStore(s => s.addNode)
   const rf = useReactFlow()
   const theme = useMantineTheme()
+  const previousNodeImageMapRef = useRef<Map<string, string | null>>(new Map())
+
+  useEffect(() => {
+    const previousMap = previousNodeImageMapRef.current
+    const nextMap = new Map<string, string | null>()
+    for (const binding of nodePrimaryImageBindings) {
+      nextMap.set(binding.nodeId, binding.imageUrl)
+    }
+    for (const [nodeId, previousUrl] of previousMap.entries()) {
+      if (!nextMap.has(nodeId)) {
+        resourceManager.releaseNodeResources(nodeId)
+        continue
+      }
+      const nextUrl = nextMap.get(nodeId) ?? null
+      if (previousUrl && nextUrl && previousUrl !== nextUrl) {
+        const previousResourceId = resourceManager.buildResourceId({
+          url: previousUrl,
+          kind: 'image',
+          variantKey: 'original',
+        })
+        resourceManager.releaseImage(previousResourceId)
+      }
+    }
+    previousNodeImageMapRef.current = nextMap
+  }, [nodePrimaryImageBindings])
   const { colorScheme } = useMantineColorScheme()
-  const isDarkCanvas = colorScheme === 'dark'
-  const {
-    backgroundGridColor,
-    emptyGuideBackground,
-    emptyGuideTextColor,
-    selectionBorderColor,
-  } = buildCanvasThemeColors(theme, colorScheme)
+  const resolvedColorScheme = colorScheme === 'auto' ? 'dark' : colorScheme
+  const isDarkCanvas = resolvedColorScheme === 'dark'
+  const { backgroundGridColor } = buildCanvasThemeColors(theme, resolvedColorScheme)
+  const spotlightGridColor = isDarkCanvas ? 'rgba(255,255,255,0.82)' : 'rgba(15,23,42,0.58)'
+  const canvasStyle = useMemo<CanvasStyle>(() => ({
+    height: '100%',
+    width: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    '--tc-spotlight-grid-color': spotlightGridColor,
+    '--tc-spotlight-radius': isDarkCanvas ? '180px' : '168px',
+  }), [isDarkCanvas, spotlightGridColor])
   const connectionLineStyle = useMemo(() => ({
-    stroke: isDarkCanvas ? 'rgba(255,255,255,0.32)' : 'rgba(15,23,42,0.22)',
+    stroke: isDarkCanvas ? 'rgba(255,255,255,0.32)' : 'rgba(15,23,42,0.82)',
     strokeWidth: 2,
     strokeLinecap: 'round' as const,
   }), [isDarkCanvas])
@@ -119,25 +428,91 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   const downPos = useRef<{x:number;y:number}|null>(null)
   const timerRef = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
+  const viewportMoving = useStore((state) => state.paneDragging)
+  const [stitchingGroupId, setStitchingGroupId] = useState<string | null>(null)
+  const [runningGroupId, setRunningGroupId] = useState<string | null>(null)
+  const [savingWorkflowGroupId, setSavingWorkflowGroupId] = useState<string | null>(null)
+  const [publishingTemplateGroupId, setPublishingTemplateGroupId] = useState<string | null>(null)
+  const [downloadingGroupAssetsId, setDownloadingGroupAssetsId] = useState<string | null>(null)
+  const [workflowNameDialog, setWorkflowNameDialog] = useState<WorkflowNameDialogState | null>(null)
+  const [workflowNameInput, setWorkflowNameInput] = useState('')
+  const [workflowDescriptionInput, setWorkflowDescriptionInput] = useState('')
+  const [workflowCoverUrlInput, setWorkflowCoverUrlInput] = useState('')
+  const [templateSaveMode, setTemplateSaveMode] = useState<TemplateSaveMode>('create')
+  const [templateVisibility, setTemplateVisibility] = useState<TemplateVisibility>('private')
+  const [templateProjects, setTemplateProjects] = useState<ProjectDto[]>([])
+  const [selectedTemplateProjectId, setSelectedTemplateProjectId] = useState('')
+  const [templateCoverUploading, setTemplateCoverUploading] = useState(false)
   const [currentLang, setCurrentLangState] = useState(getCurrentLanguage())
   const insertMenu = useInsertMenuStore(s => ({ open: s.open, x: s.x, y: s.y, edgeId: s.edgeId, fromNodeId: s.fromNodeId, fromHandle: s.fromHandle }))
   const closeInsertMenu = useInsertMenuStore(s => s.closeMenu)
   const authToken = useAuth(s => s.token)
-  const langGraphChatOpen = useUIStore(s => s.langGraphChatOpen)
+  const templateCoverUploadInputRef = useRef<HTMLInputElement | null>(null)
   const viewOnlyFormattedOnceRef = useRef(false)
   const soraSyncingRef = useRef<Set<string>>(new Set())
-  const minimaxSyncingRef = useRef<Set<string>>(new Set())
-  const grsaiImageSyncingRef = useRef<Set<string>>(new Set())
+  const imageSyncingRef = useRef<Set<string>>(new Set())
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const spotlightFrameRef = useRef<number | null>(null)
+  const spotlightClientPointRef = useRef<{ x: number; y: number } | null>(null)
+  const lastMeasuredCanvasWidthRef = useRef<number | null>(null)
   const initialFitAppliedRef = useRef(false)
   const restoreAppliedRef = useRef(false)
   const lastPointerScreenRef = useRef<{ x: number; y: number } | null>(null)
   const imageUploadInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImageUploadScreenRef = useRef<{ x: number; y: number } | null>(null)
+  const [nodeVisibility, setNodeVisibility] = useState<NodeVisibilityState>(DEFAULT_NODE_VISIBILITY)
 
   usePreventBrowserSwipeNavigation({ rootRef, withinSelector: '.tc-canvas__flow' })
 
   const isImageFile = (file: File) => Boolean(file?.type?.startsWith('image/'))
+
+  const setSpotlightVisible = useCallback((visible: boolean) => {
+    const root = rootRef.current
+    if (!root) return
+    root.style.setProperty('--tc-spotlight-opacity', visible ? '1' : '0')
+  }, [])
+
+  const flushSpotlightPosition = useCallback(() => {
+    spotlightFrameRef.current = null
+    const root = rootRef.current
+    const point = spotlightClientPointRef.current
+    if (!root || !point) return
+    const rect = root.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
+    const localX = Math.max(0, Math.min(rect.width, point.x - rect.left))
+    const localY = Math.max(0, Math.min(rect.height, point.y - rect.top))
+    root.style.setProperty('--tc-spotlight-x', `${Math.round(localX)}px`)
+    root.style.setProperty('--tc-spotlight-y', `${Math.round(localY)}px`)
+  }, [])
+
+  const queueSpotlightPosition = useCallback((clientX: number, clientY: number) => {
+    spotlightClientPointRef.current = { x: clientX, y: clientY }
+    if (spotlightFrameRef.current !== null) return
+    spotlightFrameRef.current = window.requestAnimationFrame(flushSpotlightPosition)
+  }, [flushSpotlightPosition])
+
+  useEffect(() => () => {
+    if (spotlightFrameRef.current !== null) {
+      window.cancelAnimationFrame(spotlightFrameRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    if (viewportMoving) {
+      root.setAttribute('data-canvas-viewport-moving', 'true')
+      setSpotlightVisible(false)
+      resourceManager.setViewportMoving(true)
+    } else {
+      root.removeAttribute('data-canvas-viewport-moving')
+      resourceManager.setViewportMoving(false)
+    }
+    return () => {
+      root.removeAttribute('data-canvas-viewport-moving')
+      resourceManager.setViewportMoving(false)
+    }
+  }, [setSpotlightVisible, viewportMoving])
 
   const deriveLabelFromFileName = (name: string): string => {
     const trimmed = (name || '').trim()
@@ -154,16 +529,21 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const importImagesFromFiles = useCallback(async (files: File[], basePosFlow?: { x: number; y: number }) => {
     if (viewOnly) return
-    if (langGraphChatOpen) return
     const images = (files || []).filter(isImageFile)
     if (!images.length) return
 
+    const deduped = dedupeLocalFiles(images, (file) => deriveLabelFromFileName(file.name))
+    if (deduped.skippedCount > 0) {
+      useUploadRuntimeStore.getState().recordDuplicateBlocked(deduped.skippedCount)
+      toast(`已跳过 ${deduped.skippedCount} 个同批次重复文件`, 'info')
+    }
+
     const MAX_BYTES = 30 * 1024 * 1024
-    const tooLarge = images.filter(f => (typeof f.size === 'number' ? f.size : 0) > MAX_BYTES)
+    const tooLarge = deduped.uniqueFiles.filter((f) => (typeof f.size === 'number' ? f.size : 0) > MAX_BYTES)
     if (tooLarge.length) {
       toast(`有 ${tooLarge.length} 张图片超过 30MB，已跳过`, 'error')
     }
-    const valid = images.filter(f => (typeof f.size === 'number' ? f.size : 0) <= MAX_BYTES)
+    const valid = deduped.uniqueFiles.filter((f) => (typeof f.size === 'number' ? f.size : 0) <= MAX_BYTES)
     if (!valid.length) return
 
     const base = basePosFlow ?? rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
@@ -202,58 +582,42 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
     const { updateNodeData } = useRFStore.getState()
     let successCount = 0
+    let hostingFailedCount = 0
     for (const { id, file, localUrl, label } of prepared) {
-      let localDataUrl: string | undefined
-      try {
-        localDataUrl = await blobToDataUrl(file)
-      } catch {
-        localDataUrl = undefined
-      }
-      if (localDataUrl) {
-        updateNodeData(id, { reverseImageData: localDataUrl })
-      }
-
       try {
         let hostedUrl: string | null = null
         let hostedAssetId: string | null = null
         try {
-          const hosted = await uploadServerAssetFile(file, label)
+          const hosted = await uploadServerAssetFile(file, label, { ownerNodeId: id })
           const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
           if (url) {
             hostedUrl = url
             hostedAssetId = hosted.id
-            successCount += 1
           }
         } catch (error) {
           console.error('Failed to upload image to OSS:', error)
-        }
-
-        let soraResult: any = null
-        try {
-          soraResult = await uploadSoraImage(undefined, file)
-          if (soraResult?.file_id) {
-            successCount += 1
+          const msg = String((error as any)?.message || '').trim()
+          const statusMatch = msg.match(/upload asset failed:\\s*(\\d+)/i)
+          const status = statusMatch && statusMatch[1] ? Number(statusMatch[1]) : NaN
+          const mayHaveSucceeded = !Number.isFinite(status) || status >= 500
+          if (mayHaveSucceeded) {
+            const recovered = await recoverUploadedServerAssetFile(file)
+            const recoveredUrl = typeof recovered?.data?.url === 'string' ? recovered.data.url.trim() : ''
+            if (recovered && recoveredUrl) {
+              hostedUrl = recoveredUrl
+              hostedAssetId = recovered.id
+            }
           }
-        } catch (error) {
-          console.error('Failed to upload image to Sora:', error)
         }
 
-        const soraUrlCandidate =
-          typeof soraResult?.url === 'string'
-            ? soraResult.url
-            : typeof soraResult?.asset_pointer === 'string'
-              ? soraResult.asset_pointer
-              : typeof soraResult?.azure_asset_pointer === 'string'
-                ? soraResult.azure_asset_pointer
-                : ''
-        const bestUrl = hostedUrl || soraUrlCandidate || localUrl
+        if (hostedUrl) successCount += 1
+        else hostingFailedCount += 1
+
+        const bestUrl = hostedUrl || localUrl
 
         updateNodeData(id, {
           imageUrl: bestUrl,
           serverAssetId: hostedAssetId,
-          soraFileId: soraResult?.file_id,
-          assetPointer: soraResult?.asset_pointer,
-          reverseImageData: localDataUrl,
         })
         if (bestUrl !== localUrl) {
           URL.revokeObjectURL(localUrl)
@@ -261,6 +625,14 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       } catch (error) {
         console.error('Failed to process pasted image:', error)
         toast('处理粘贴图片失败，请稍后再试', 'error')
+      }
+    }
+
+    if (hostingFailedCount > 0) {
+      if (successCount > 0) {
+        toast(`有 ${hostingFailedCount} 张图片未能托管到 OSS/R2，已使用本地预览`, 'info')
+      } else {
+        toast('图片已添加到画布，但未能托管到 OSS/R2，将使用本地预览（远程任务需要可访问链接）', 'error')
       }
     }
 
@@ -283,14 +655,13 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         }
       })
     }
-  }, [getFallbackScreenPoint, langGraphChatOpen, rf, viewOnly])
+  }, [getFallbackScreenPoint, rf, viewOnly])
 
   const importImageNodeFromDraggedFrame = useCallback(async (
     payload: { url?: string; remoteUrl?: string | null; time?: number },
     posFlow: { x: number; y: number },
   ) => {
     if (viewOnly) return
-    if (langGraphChatOpen) return
     const remoteUrl = typeof payload?.remoteUrl === 'string' ? payload.remoteUrl.trim() : ''
     const srcUrl = typeof payload?.url === 'string' ? payload.url.trim() : ''
     const preferred = remoteUrl || srcUrl
@@ -378,21 +749,11 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     })
 
     const { updateNodeData } = useRFStore.getState()
-    let localDataUrl: string | undefined
-    try {
-      localDataUrl = await blobToDataUrl(file)
-    } catch {
-      localDataUrl = undefined
-    }
-    if (localDataUrl) {
-      updateNodeData(nodeId, { reverseImageData: localDataUrl })
-    }
-
     try {
       let hostedUrl: string | null = null
       let hostedAssetId: string | null = null
       try {
-        const hosted = await uploadServerAssetFile(file, deriveLabelFromFileName(fileName))
+        const hosted = await uploadServerAssetFile(file, deriveLabelFromFileName(fileName), { ownerNodeId: nodeId })
         const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
         if (url) {
           hostedUrl = url
@@ -402,30 +763,11 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         console.error('Failed to upload frame to OSS:', error)
       }
 
-      let soraResult: any = null
-      try {
-        soraResult = await uploadSoraImage(undefined, file)
-      } catch (error) {
-        console.error('Failed to upload frame to Sora:', error)
-        soraResult = null
-      }
-
-      const soraUrlCandidate =
-        typeof soraResult?.url === 'string'
-          ? soraResult.url
-          : typeof soraResult?.asset_pointer === 'string'
-            ? soraResult.asset_pointer
-            : typeof soraResult?.azure_asset_pointer === 'string'
-              ? soraResult.azure_asset_pointer
-              : ''
-      const bestUrl = hostedUrl || soraUrlCandidate || localUrl
+      const bestUrl = hostedUrl || localUrl
 
       updateNodeData(nodeId, {
         imageUrl: bestUrl,
         serverAssetId: hostedAssetId,
-        soraFileId: soraResult?.file_id,
-        assetPointer: soraResult?.asset_pointer,
-        reverseImageData: localDataUrl,
       })
 
       if (bestUrl !== localUrl) {
@@ -438,7 +780,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       console.error('Failed to process dragged frame:', error)
       toast('处理帧图片失败，请稍后再试', 'error')
     }
-  }, [deriveLabelFromFileName, langGraphChatOpen, viewOnly])
+  }, [deriveLabelFromFileName, viewOnly])
 
   const handleTaskProgress = useCallback((event: TaskProgressEventMessage) => {
     if (!event || !event.nodeId) return
@@ -446,9 +788,10 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const rawProgress = typeof event.progress === 'number' && Number.isFinite(event.progress)
       ? Math.max(0, Math.min(100, Math.round(event.progress)))
       : undefined
-    if (event.message) {
+    const message = formatErrorMessage(event.message).trim()
+    if (message) {
       const label = new Date(event.timestamp ?? Date.now()).toLocaleTimeString()
-      appendLog(event.nodeId, `[${label}] ${event.message}`)
+      appendLog(event.nodeId, `[${label}] ${message}`)
     }
     const progressPatch = rawProgress !== undefined ? { progress: rawProgress } : {}
     switch (event.status) {
@@ -464,7 +807,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       case 'failed':
         setNodeStatus(event.nodeId, 'error', {
           ...progressPatch,
-          lastError: event.message || '任务执行失败',
+          lastError: message || '任务执行失败',
         })
         break
       default:
@@ -500,38 +843,25 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         const nodeId = String(n.id || '')
         if (!nodeId) continue
 
-        if (kind === 'composeVideo' || kind === 'video' || kind === 'storyboard') {
-          const vendorRaw = String(data.videoModelVendor || data.videoVendor || '')
-          const vendor = vendorRaw.toLowerCase() === 'sora' ? 'sora2api' : vendorRaw.toLowerCase()
+        if (kind === 'video') {
+          const vendor = String(data.videoModelVendor || data.videoVendor || '').toLowerCase()
           const taskId = typeof data.videoTaskId === 'string' ? data.videoTaskId.trim() : ''
           if (!taskId) continue
 
-          if (vendor === 'sora2api') {
-            if (!taskId.startsWith('task_')) continue
-            if (soraSyncingRef.current.has(nodeId)) continue
-            soraSyncingRef.current.add(nodeId)
-            void syncSora2ApiVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
-              soraSyncingRef.current.delete(nodeId)
-            })
-            continue
-          }
-
-          if (vendor === 'minimax') {
-            if (minimaxSyncingRef.current.has(nodeId)) continue
-            minimaxSyncingRef.current.add(nodeId)
-            void syncMiniMaxVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
-              minimaxSyncingRef.current.delete(nodeId)
-            })
-          }
+          if (soraSyncingRef.current.has(nodeId)) continue
+          soraSyncingRef.current.add(nodeId)
+          void syncGenericVideoNodeOnce(nodeId, useRFStore.getState).finally(() => {
+            soraSyncingRef.current.delete(nodeId)
+          })
           continue
         }
 
         const imageTaskId = typeof data.imageTaskId === 'string' ? data.imageTaskId.trim() : ''
         if (imageTaskId) {
-          if (grsaiImageSyncingRef.current.has(nodeId)) continue
-          grsaiImageSyncingRef.current.add(nodeId)
-          void syncGrsaiImageNodeOnce(nodeId, useRFStore.getState).finally(() => {
-            grsaiImageSyncingRef.current.delete(nodeId)
+          if (imageSyncingRef.current.has(nodeId)) continue
+          imageSyncingRef.current.add(nodeId)
+          void syncImageNodeOnce(nodeId, useRFStore.getState).finally(() => {
+            imageSyncingRef.current.delete(nodeId)
           })
         }
       }
@@ -549,20 +879,61 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }, [])
 
   useEffect(() => {
+    const root = rootRef.current
+    if (!root || typeof ResizeObserver === 'undefined') return
+
+    const syncViewportWithWidth = (width: number) => {
+      if (!Number.isFinite(width) || width <= 0) return
+      const nextWidth = Math.round(width)
+      const prevWidth = lastMeasuredCanvasWidthRef.current
+      lastMeasuredCanvasWidthRef.current = nextWidth
+      if (prevWidth === null || prevWidth === nextWidth) return
+
+      const viewport = rf.getViewport?.()
+      const zoom = viewport?.zoom
+      if (!viewport || !Number.isFinite(zoom) || zoom <= 0) return
+
+      const deltaWidth = nextWidth - prevWidth
+      const nextViewport = {
+        x: viewport.x + deltaWidth / 2,
+        y: viewport.y,
+        zoom,
+      }
+      rf.setViewport?.(nextViewport, { duration: 220 })
+      setCanvasViewport(nextViewport)
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      syncViewportWithWidth(entry.contentRect.width)
+    })
+
+    observer.observe(root)
+    return () => {
+      observer.disconnect()
+    }
+  }, [rf, setCanvasViewport])
+
+  useEffect(() => {
     ;(window as any).__tcFocusNode = (nodeId: string) => {
       try {
         if (!nodeId) return
         // ensure node is visible
-        useUIStore.getState().exitAllFocus()
+        useUIStore.getState().clearFocusedSubgraph()
 
         useRFStore.setState((s) => ({
           nodes: (s.nodes || []).map((n) => ({ ...n, selected: n.id === nodeId })),
         }))
 
-        const node = useRFStore.getState().nodes.find((n) => n.id === nodeId)
+        const allNodes = useRFStore.getState().nodes || []
+        const node = allNodes.find((n) => n.id === nodeId)
         if (!node) return
-        const x = (node.position?.x ?? 0) + 120
-        const y = (node.position?.y ?? 0) + 70
+        const nodesById = new Map(allNodes.map((n) => [n.id, n] as const))
+        const abs = getNodeAbsPosition(node, nodesById)
+        const size = getNodeSize(node)
+        const x = abs.x + Math.max(1, size.w) / 2
+        const y = abs.y + Math.max(1, size.h) / 2
         rf.setCenter?.(x, y, { zoom: Math.max((rf.getViewport?.().zoom ?? 1), 0.8), duration: 250 })
       } catch {
         // ignore
@@ -666,31 +1037,59 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
       }
     }
     if (tapImageUrl) {
-      let url = ''
-      try {
-        const parsed = JSON.parse(tapImageUrl) as any
-        url = typeof parsed === 'string' ? parsed : (parsed?.url as string) || ''
-      } catch {
-        url = tapImageUrl
-      }
-      const trimmed = typeof url === 'string' ? url.trim() : ''
+      const payload = getTapImageDragPayload(evt.dataTransfer)
+      const trimmed = typeof payload?.url === 'string' ? payload.url.trim() : ''
       if (trimmed) {
         if (trimmed.startsWith('blob:')) {
           void importImageNodeFromDraggedFrame({ url: trimmed, remoteUrl: null }, pos)
           return
         }
         useRFStore.setState((s) => {
-          const id = `${uuid()}${s.nextId}`
+          const trimText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+          const label = trimText(payload?.label) || 'Image'
+          const basePrompt = trimText(payload?.prompt)
+          const shotPrompt = trimText(payload?.storyboardShotPrompt)
+          const script = trimText(payload?.storyboardScript)
+          const dialogue = trimText(payload?.storyboardDialogue)
+          const combinedPrompt = [basePrompt, shotPrompt ? `镜头剧本：${shotPrompt}` : '', dialogue ? `人物台词：${dialogue}` : '']
+            .map((text) => text.trim())
+            .filter(Boolean)
+            .join('\n\n')
+          const nodePrompt = combinedPrompt || basePrompt
+          const sourceKind = trimText(payload?.sourceKind)
+          const sourceNodeId = trimText(payload?.sourceNodeId)
+          const sourceIndexRaw = Number(payload?.sourceIndex)
+          const shotNoRaw = Number(payload?.shotNo)
+          const sourceIndex = Number.isFinite(sourceIndexRaw) ? Math.max(0, Math.trunc(sourceIndexRaw)) : null
+          const shotNo = Number.isFinite(shotNoRaw) ? Math.max(1, Math.trunc(shotNoRaw)) : null
+          const imageResultItem = {
+            url: trimmed,
+            ...(label ? { title: label } : {}),
+            ...(basePrompt ? { prompt: basePrompt } : {}),
+            ...(script ? { storyboardScript: script } : {}),
+            ...(shotPrompt ? { storyboardShotPrompt: shotPrompt } : {}),
+            ...(dialogue ? { storyboardDialogue: dialogue } : {}),
+            ...(shotNo !== null ? { shotNo } : {}),
+          }
+          const id = genTaskNodeId()
           const node = {
             id,
             type: 'taskNode' as const,
             position: pos,
             data: {
-              label: 'Image',
+              label,
               kind: 'image',
               imageUrl: trimmed,
-              imageResults: [{ url: trimmed }],
+              imageResults: [imageResultItem],
               imagePrimaryIndex: 0,
+              ...(nodePrompt ? { prompt: nodePrompt } : {}),
+              ...(script ? { storyboardScript: script } : {}),
+              ...(shotPrompt ? { storyboardShotPrompt: shotPrompt } : {}),
+              ...(dialogue ? { storyboardDialogue: dialogue } : {}),
+              ...(sourceKind ? { dragSourceKind: sourceKind } : {}),
+              ...(sourceNodeId ? { dragSourceNodeId: sourceNodeId } : {}),
+              ...(sourceIndex !== null ? { dragSourceIndex: sourceIndex } : {}),
+              ...(shotNo !== null ? { storyboardShotNo: shotNo } : {}),
               nodeWidth: 120,
               nodeHeight: 210,
             },
@@ -706,20 +1105,18 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }
     if (flowRef) {
       try {
-        const ref = JSON.parse(flowRef) as { id: string; name: string }
-        useRFStore.setState((s) => {
-          const id = `n${s.nextId}`
-          const node = { id, type: 'taskNode' as const, position: pos, data: { label: ref.name, kind: 'subflow', subflowRef: ref.id } }
-          return { nodes: [...s.nodes, node], nextId: s.nextId + 1 }
-        })
-      } catch {}
+        JSON.parse(flowRef) as { id: string; name: string }
+        toast('子流程任务节点已移除，请改用文本/图片/视频节点组合表达流程', 'warning')
+      } catch {
+        toast('子流程数据无效，无法导入', 'error')
+      }
       return
     }
     if (rfdata) {
       const data = JSON.parse(rfdata) as { type: string; label?: string; kind?: string }
       // create node via store but place at computed position
       useRFStore.setState((s) => {
-        const id = `${uuid()}${s.nextId}`
+        const id = genTaskNodeId()
         const node = {
           id,
           type: data.type as any,
@@ -807,23 +1204,10 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const sNode = nodes.find(n => n.id === sourceNodeId)
     const tNode = nodes.find(n => n.id === meta.targetNodeId)
     if (!sNode || !tNode) return false
-
     const sKind = (sNode.data as any)?.kind
     const tKind = (tNode.data as any)?.kind
+    if (String(tKind || '').toLowerCase() === 'text') return false
     if (!isValidEdgeByType(sKind, tKind)) return false
-    if (isImageKind(sKind) && isImageKind(tKind)) {
-      const targetModel = (tNode.data as any)?.imageModel as string | undefined
-      if (!isImageEditModel(targetModel)) {
-        if (!opts?.silent) {
-          const reason = targetModel
-            ? '该节点当前模型不支持图片编辑，请切换至支持图片编辑的模型（如 Nano Banana 系列）'
-            : '请先为目标节点选择支持图片编辑的模型'
-          lastReason.current = reason
-          toast(reason, 'warning')
-        }
-        return false
-      }
-    }
     return true
   }, [createsCycle, edges, nodes])
 
@@ -833,24 +1217,29 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     onConnect({ ...c, type: edgeRoute === 'orth' ? 'orth' : 'typed' })
   }, [edgeRoute, onConnect])
 
-  const onConnectStart = useCallback((_evt: any, params: { nodeId?: string|null; handleId?: string|null; handleType?: 'source'|'target' }) => {
+  const onConnectStart = useCallback((_evt: any, params: { nodeId?: string|null; handleId?: string|null; handleType?: 'source'|'target'|null }) => {
     didConnectRef.current = false
     if (tapConnectSource) {
       setTapConnectSource(null)
     }
     setIsConnecting(true)
     const h = params.handleId || ''
+    const inferredHandleType = params.handleType ?? (
+      h.startsWith('out-') ? 'source'
+      : h.startsWith('in-') ? 'target'
+      : undefined
+    )
     // if source handle like out-image -> type=image
-    if (params.handleType === 'source' && h.startsWith('out-')) {
+    if (inferredHandleType === 'source' && h.startsWith('out-')) {
       setConnectingType(h.slice(4))
-    } else if (params.handleType === 'target' && h.startsWith('in-')) {
+    } else if (inferredHandleType === 'target' && h.startsWith('in-')) {
       setConnectingType(h.slice(3))
     } else {
       setConnectingType(null)
     }
 
     // 记录从哪个节点的哪个端口开始连接，用于松手后弹出插入菜单
-    if (params.handleType === 'source' && params.nodeId) {
+    if (inferredHandleType === 'source' && params.nodeId) {
       connectFromRef.current = { nodeId: params.nodeId, handleId: params.handleId || null }
     } else {
       connectFromRef.current = null
@@ -859,9 +1248,9 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const SNAP_DISTANCE = 96
   const NODE_SNAP_DISTANCE = 200
-  const MIN_ZOOM = 0.02 // 允许比默认多缩小约 6 倍（默认 0.1）
-  const MAX_ZOOM = 2 // 恢复更保守的放大上限
-  const DEFAULT_ZOOM_MULTIPLIER = 0.5 // 默认视图相对 fitView 再缩小 4 倍
+  const MIN_ZOOM = 0.3 // 允许缩小，但避免过度拉远导致节点与连线失去可读性
+  const MAX_ZOOM = 1 // 放大上限保持克制，避免轻易进入“单节点占满屏幕”的状态
+  const DEFAULT_ZOOM_MULTIPLIER = 0.32 // 首屏默认在 fitView 基础上再退一档，优先保证整体结构先可见
 
   const onConnectEnd = useCallback((evt: any) => {
     const from = connectFromRef.current
@@ -931,6 +1320,27 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         if (tryConnectWithHandle(snapTargetRef.current.el)) return true
       }
 
+      const connectionPath = document.querySelector('.tc-connection-line__path')
+      if (connectionPath instanceof SVGPathElement) {
+        const intersectedNodes: { el: HTMLElement; dist: number }[] = []
+        const nodeEls = Array.from(document.querySelectorAll('.react-flow__node')) as HTMLElement[]
+        for (const el of nodeEls) {
+          const nodeId = el.getAttribute('data-id')
+          if (!nodeId || nodeId === from.nodeId) continue
+          const rect = el.getBoundingClientRect()
+          if (rect.width <= 0 || rect.height <= 0) continue
+          if (!screenPathIntersectsRect(connectionPath, rect)) continue
+          intersectedNodes.push({
+            el,
+            dist: getPointToRectDistance(release, rect),
+          })
+        }
+        intersectedNodes.sort((a, b) => a.dist - b.dist)
+        for (const { el } of intersectedNodes) {
+          if (tryConnectViaNode(el)) return true
+        }
+      }
+
       const handles = Array.from(document.querySelectorAll('.react-flow__handle-target'))
         .filter((el) => !(el as HTMLElement).classList.contains('tc-handle--wide')) as HTMLElement[]
       if (!handles.length) return false
@@ -960,9 +1370,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           const nodeId = el.getAttribute('data-id')
           if (!nodeId || nodeId === from.nodeId) continue
           const rect = el.getBoundingClientRect()
-          const dx = Math.max(rect.left - release.x, 0, release.x - rect.right)
-          const dy = Math.max(rect.top - release.y, 0, release.y - rect.bottom)
-          const dist = Math.hypot(dx, dy)
+          const dist = getPointToRectDistance(release, rect)
           if (dist > NODE_SNAP_DISTANCE && !(release.x >= rect.left && release.x <= rect.right && release.y >= rect.top && release.y <= rect.bottom)) continue
           if (!bestNode || dist < bestNode.dist) bestNode = { el, dist }
         }
@@ -997,7 +1405,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   // removed pane mouse handlers (not supported by current reactflow typings). Root listeners are used instead.
 
-  const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
+  const onPaneContextMenu = useCallback((evt: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
     evt.preventDefault()
     if (suppressContextMenuRef.current) {
       suppressContextMenuRef.current = false
@@ -1031,19 +1439,113 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const screenToFlow = useCallback((p: { x: number; y: number }) => rf.screenToFlowPosition ? rf.screenToFlowPosition(p) : p, [rf])
 
+  const createTaskNodeAtMenu = useCallback((kind: string) => {
+    const menuState = menu
+    if (!menuState || menuState.type !== 'canvas') return
+    const normalizedKind = kind === 'character' ? 'image' : kind
+    useRFStore.getState().addNode('taskNode', undefined, {
+      kind: normalizedKind,
+      position: screenToFlow({ x: menuState.x, y: menuState.y }),
+    })
+    setMenu(null)
+  }, [menu, screenToFlow])
+
   const insertMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const onNodeDragStart = useCallback(() => setDragging(true), [])
-  const onNodeDrag = useCallback((_evt: any, node: any) => {
-    // simple align guides to other nodes centers
-    const threshold = 5
-    let vx: number | undefined
-    let hy: number | undefined
-    for (const n of nodes) {
-      if (n.id === node.id) continue
-      if (Math.abs(n.position.x - node.position.x) <= threshold) vx = n.position.x
-      if (Math.abs(n.position.y - node.position.y) <= threshold) hy = n.position.y
+  type DragSnapIndex = { xs: number[]; ys: number[] }
+
+  const dragSnapIndexRef = useRef<DragSnapIndex | null>(null)
+  const dragSnapExcludeKeyRef = useRef<string>('')
+  const dragExcludeIdsRef = useRef<Set<string>>(new Set())
+
+  const buildExcludeIdsForDragStart = (dragNodeId?: string | null) => {
+    const state = useRFStore.getState()
+    const selected = state.nodes.filter(n => n.selected).map(n => n.id)
+    if (selected.length) return new Set(selected)
+    return new Set<string>(dragNodeId ? [dragNodeId] : [])
+  }
+
+  const toStableIdKey = (ids: Set<string>) => {
+    if (!ids.size) return ''
+    return Array.from(ids).sort().join('|')
+  }
+
+  const buildDragSnapIndex = (allNodes: any[], excludeIds: Set<string>): DragSnapIndex => {
+    const xs: number[] = []
+    const ys: number[] = []
+    for (const n of allNodes) {
+      if (!n?.id || excludeIds.has(n.id)) continue
+      const x = Number(n.position?.x)
+      const y = Number(n.position?.y)
+      if (Number.isFinite(x)) xs.push(x)
+      if (Number.isFinite(y)) ys.push(y)
     }
+    xs.sort((a, b) => a - b)
+    ys.sort((a, b) => a - b)
+    return { xs, ys }
+  }
+
+  const setDragSnapIndex = (excludeIds: Set<string>) => {
+    dragExcludeIdsRef.current = excludeIds
+    dragSnapIndexRef.current = buildDragSnapIndex(useRFStore.getState().nodes, excludeIds)
+    dragSnapExcludeKeyRef.current = toStableIdKey(excludeIds)
+  }
+
+  const lowerBound = (sorted: number[], value: number) => {
+    let lo = 0
+    let hi = sorted.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (sorted[mid] < value) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+
+  const findNearestWithin = (sorted: number[], value: number, threshold: number): number | undefined => {
+    if (!sorted.length) return undefined
+    const idx = lowerBound(sorted, value)
+    const candA = idx > 0 ? sorted[idx - 1] : undefined
+    const candB = idx < sorted.length ? sorted[idx] : undefined
+    const da = candA === undefined ? Number.POSITIVE_INFINITY : Math.abs(candA - value)
+    const db = candB === undefined ? Number.POSITIVE_INFINITY : Math.abs(candB - value)
+    const best = da <= db ? candA : candB
+    const dist = da <= db ? da : db
+    return dist <= threshold ? best : undefined
+  }
+
+  const ensureDragSnapIndex = (excludeIds: Set<string>) => {
+    const key = toStableIdKey(excludeIds)
+    if (dragSnapIndexRef.current && dragSnapExcludeKeyRef.current === key) return dragSnapIndexRef.current
+    const next = buildDragSnapIndex(useRFStore.getState().nodes, excludeIds)
+    dragSnapIndexRef.current = next
+    dragSnapExcludeKeyRef.current = key
+    return next
+  }
+
+  const onNodeDragStart = useCallback((_evt: any, node: any) => {
+    setDragging(true)
+    resourceManager.setNodeDragging(true)
+    const id = typeof node?.id === 'string' ? node.id : null
+    const excludeIds = buildExcludeIdsForDragStart(id)
+    setDragSnapIndex(excludeIds)
+  }, [])
+
+  const onNodeDrag = useCallback((_evt: any, node: any) => {
+    // simple align guides to other nodes positions (perf: O(logN) query on a frozen snapshot built at drag start)
+    const threshold = 5
+    const id = typeof node?.id === 'string' ? node.id : null
+    const excludeIds =
+      dragExcludeIdsRef.current.size
+        ? dragExcludeIdsRef.current
+        : new Set<string>(id ? [id] : [])
+    const index = dragSnapIndexRef.current ?? ensureDragSnapIndex(excludeIds)
+
+    const px = Number(node?.position?.x)
+    const py = Number(node?.position?.y)
+    const vx = Number.isFinite(px) ? findNearestWithin(index.xs, px, threshold) : undefined
+    const hy = Number.isFinite(py) ? findNearestWithin(index.ys, py, threshold) : undefined
+
     const prev = lastGuidesRef.current
     if (prev?.vx !== vx || prev?.hy !== hy) {
       const next = { vx, hy }
@@ -1067,35 +1569,195 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         }))
       }
     }
-  }, [nodes])
+  }, [])
 
-  const onNodeDragStop = useCallback(() => {
+  const absorbImageNodeIntoStoryboardCell = useCallback((input: {
+    sourceNodeId: string
+    targetNodeId: string
+    cellIndex: number
+    payload: PrimaryImageDragPayload
+  }) => {
+    const { sourceNodeId, targetNodeId, cellIndex, payload } = input
+    if (!sourceNodeId || !targetNodeId || sourceNodeId === targetNodeId) return
+    useRFStore.setState((state) => {
+      const sourceNode = state.nodes.find((node) => node.id === sourceNodeId)
+      const targetNode = state.nodes.find((node) => node.id === targetNodeId)
+      if (!sourceNode || !targetNode || targetNode.type !== 'taskNode') return {}
+
+      const currentData = targetNode.data && typeof targetNode.data === 'object'
+        ? targetNode.data as Record<string, unknown>
+        : {}
+      const storyboardPatch = buildStoryboardEditorPatch({
+        cells: currentData.storyboardEditorCells,
+        grid: currentData.storyboardEditorGrid,
+        aspect: currentData.storyboardEditorAspect,
+        editMode: currentData.storyboardEditorEditMode,
+        collapsed: currentData.storyboardEditorCollapsed,
+      })
+      if (cellIndex < 0 || cellIndex >= storyboardPatch.storyboardEditorCells.length) return {}
+
+      const nextCells = storyboardPatch.storyboardEditorCells.map((cell, index) => (
+        index === cellIndex
+          ? {
+              ...cell,
+              imageUrl: payload.url,
+              label: payload.label,
+              prompt: payload.prompt,
+              sourceKind: payload.sourceKind,
+              sourceNodeId: payload.sourceNodeId,
+              sourceIndex: payload.sourceIndex,
+              shotNo: payload.sourceIndex + 1,
+            }
+          : cell
+      ))
+
+      const previousSnapshot =
+        typeof structuredClone === 'function'
+          ? structuredClone({ nodes: state.nodes, edges: state.edges }) as { nodes: FlowNode[]; edges: FlowEdge[] }
+          : JSON.parse(JSON.stringify({ nodes: state.nodes, edges: state.edges })) as { nodes: FlowNode[]; edges: FlowEdge[] }
+
+      const nextNodes = state.nodes
+        .filter((node) => node.id !== sourceNodeId)
+        .map((node) => {
+          if (node.id !== targetNodeId) return node
+          const targetData = node.data && typeof node.data === 'object'
+            ? node.data as Record<string, unknown>
+            : {}
+          return {
+            ...node,
+            data: {
+              ...normalizeStoryboardNodeData({
+                ...targetData,
+                storyboardEditorCells: nextCells,
+                kind: 'storyboard',
+              }),
+            },
+          }
+        })
+
+      const nextEdges = state.edges.filter((edge) => edge.source !== sourceNodeId && edge.target !== sourceNodeId)
+      return {
+        nodes: nextNodes,
+        edges: nextEdges,
+        historyPast: [...state.historyPast, previousSnapshot].slice(-50),
+        historyFuture: [],
+      }
+    })
+  }, [])
+
+  const onNodeDragStop = useCallback((evt: MouseEvent | TouchEvent, node: any) => {
+    const sourceNodeId = typeof node?.id === 'string' ? node.id : ''
+    const payload = sourceNodeId ? resolveNodePrimaryImagePayload(node as FlowNode) : null
+    if (payload && evt && 'clientX' in evt && 'clientY' in evt) {
+      const hitCell = Array.from(document.querySelectorAll<HTMLElement>('.tc-storyboard-editor__cell[data-storyboard-node-id][data-cell-index]'))
+        .map((element) => {
+          const rect = element.getBoundingClientRect()
+          const targetNodeId = element.dataset.storyboardNodeId?.trim() || ''
+          const cellIndexRaw = Number(element.dataset.cellIndex)
+          return {
+            targetNodeId,
+            cellIndex: Number.isFinite(cellIndexRaw) ? Math.max(0, Math.floor(cellIndexRaw)) : -1,
+            rect,
+          }
+        })
+        .find((entry) =>
+          entry.targetNodeId &&
+          entry.cellIndex >= 0 &&
+          evt.clientX >= entry.rect.left &&
+          evt.clientX <= entry.rect.right &&
+          evt.clientY >= entry.rect.top &&
+          evt.clientY <= entry.rect.bottom,
+        )
+
+      if (hitCell && hitCell.targetNodeId !== sourceNodeId) {
+        absorbImageNodeIntoStoryboardCell({
+          sourceNodeId,
+          targetNodeId: hitCell.targetNodeId,
+          cellIndex: hitCell.cellIndex,
+          payload,
+        })
+      }
+    }
     lastGuidesRef.current = null
     setGuides(null)
     setDragging(false)
-  }, [])
+    resourceManager.setNodeDragging(false)
+    dragSnapIndexRef.current = null
+    dragSnapExcludeKeyRef.current = ''
+    dragExcludeIdsRef.current = new Set()
+  }, [absorbImageNodeIntoStoryboardCell])
 
-  // Note: group size auto-fits on node changes in the store to keep bounds synced with children.
+  // Note: group size is user-controlled by default; arrange actions may trigger explicit auto-fit.
 
   const handleNodesChange = useCallback((changes: any[]) => {
+    // React Flow may occasionally emit transient `remove` changes during complex drag/update
+    // sequences. We use explicit delete actions elsewhere, so ignore these to prevent accidental loss.
+    const safeChanges = (changes || []).filter((ch) => ch?.type !== 'remove')
+    if (safeChanges.length === 0) return
+
+    // Some drag sequences can emit position changes without an explicit `dragging` flag.
+    // Normalize them while the local drag lifecycle is active so store-side history and
+    // layout logic do not misclassify drag ticks as ordinary position updates.
+    const normalizedChanges = dragging
+      ? safeChanges.map((ch) => {
+        if (ch?.type !== 'position' || !ch?.position || typeof ch?.dragging === 'boolean') return ch
+        return { ...ch, dragging: true }
+      })
+      : safeChanges
+
     const threshold = 6
-    const xs = nodes.map(n => n.position.x)
-    const ys = nodes.map(n => n.position.y)
-    const snapped = changes.map((ch) => {
+    const positionChanges = normalizedChanges.filter((ch) => ch?.type === 'position' && ch?.position)
+    if (positionChanges.length === 0) {
+      onNodesChange(normalizedChanges)
+      return
+    }
+
+    const movedIds = new Set<string>()
+    for (const ch of positionChanges) {
+      const id = typeof ch?.id === 'string' ? ch.id : ''
+      if (id) movedIds.add(id)
+    }
+
+    const draggingTick = positionChanges.some((ch) => (ch as any)?.dragging === true)
+    const index = draggingTick
+      ? (dragSnapIndexRef.current ?? (() => {
+          const excludeIds = movedIds.size ? movedIds : dragExcludeIdsRef.current
+          setDragSnapIndex(excludeIds.size ? excludeIds : new Set())
+          return dragSnapIndexRef.current ?? { xs: [], ys: [] }
+        })())
+      : buildDragSnapIndex(useRFStore.getState().nodes, movedIds)
+
+    const stateNodesById = new Map(useRFStore.getState().nodes.map((n) => [n.id, n] as const))
+    const snapped = normalizedChanges.map((ch) => {
       if (ch.type === 'position' && ch.position) {
-        // try snap x
-        let sx = ch.position.x
-        let sy = ch.position.y
-        let foundX = false
-        let foundY = false
-        for (const x of xs) { if (Math.abs(x - sx) <= threshold) { sx = x; foundX = true; break } }
-        for (const y of ys) { if (Math.abs(y - sy) <= threshold) { sy = y; foundY = true; break } }
+        const node = typeof ch.id === 'string' ? stateNodesById.get(ch.id) : undefined
+        const isGroupNode = node?.type === 'groupNode'
+        const isChildNode = Boolean((node as any)?.parentId)
+        // Group / child dragging should stay stable and not be pulled by global snap anchors.
+        if (isGroupNode || isChildNode) return ch
+        const sx = findNearestWithin(index.xs, Number(ch.position.x), threshold) ?? ch.position.x
+        const sy = findNearestWithin(index.ys, Number(ch.position.y), threshold) ?? ch.position.y
         return { ...ch, position: { x: sx, y: sy } }
       }
       return ch
     })
-    onNodesChange(snapped)
-  }, [nodes, onNodesChange])
+    const compacted = snapped.filter((ch) => {
+      if (ch?.type !== 'position' || !ch?.position) return true
+      const draggingFlag = (ch as any)?.dragging
+      // Keep explicit drag lifecycle changes so store can track boundaries.
+      if (draggingFlag === true || draggingFlag === false) return true
+      const node = typeof ch.id === 'string' ? stateNodesById.get(ch.id) : undefined
+      if (!node) return true
+      const curX = Number(node.position?.x)
+      const curY = Number(node.position?.y)
+      const nextX = Number(ch.position?.x)
+      const nextY = Number(ch.position?.y)
+      if (![curX, curY, nextX, nextY].every((n) => Number.isFinite(n))) return true
+      return Math.abs(curX - nextX) > 0.001 || Math.abs(curY - nextY) > 0.001
+    })
+    if (!compacted.length) return
+    onNodesChange(compacted)
+  }, [dragging, onNodesChange])
 
   const computeBestSnapTarget = useCallback((client: { x: number; y: number }): SnapTarget | null => {
     const from = connectFromRef.current
@@ -1220,31 +1882,35 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const pickDefaultSourceHandle = useCallback((kind?: string | null) => {
     if (!kind) return 'out-any'
-    const k = kind.toLowerCase()
-    if (k === 'image' || k === 'texttoimage' || k === 'storyboardimage' || k === 'imagefission' || k === 'mosaic') return 'out-image'
-    if (k === 'composevideo' || k === 'video' || k === 'storyboard') return 'out-video'
-    if (k === 'tts' || k === 'audio') return 'out-audio'
-    if (k === 'subtitlealign' || k === 'subtitle') return 'out-subtitle'
-    if (k === 'character') return 'out-character'
+    const k = getTaskNodeCoreType(kind)
+    if (k === 'image') return 'out-image'
+    if (k === 'video') return 'out-video'
+    if (k === 'text') return 'out-text'
     return 'out-any'
   }, [])
 
   const pickDefaultTargetHandle = useCallback((targetKind?: string | null, sourceKind?: string | null) => {
-    const tk = (targetKind || '').toLowerCase()
-    const sk = (sourceKind || '').toLowerCase()
-    if (tk === 'composevideo' || tk === 'video' || tk === 'storyboard') {
-      if (sk === 'image' || sk === 'texttoimage') return 'in-image'
-      if (sk === 'character') return 'in-character'
-      if (sk === 'tts' || sk === 'audio') return 'in-audio'
-      if (sk === 'subtitlealign' || sk === 'subtitle') return 'in-subtitle'
-      return 'in-video'
-    }
-    if (tk === 'image' || tk === 'texttoimage' || tk === 'storyboardimage' || tk === 'imagefission' || tk === 'mosaic') return 'in-image'
-    if (tk === 'tts' || tk === 'audio') return 'in-audio'
-    if (tk === 'subtitlealign' || tk === 'subtitle') return 'in-subtitle'
-    if (tk === 'character') return 'in-character'
+    const tk = targetKind ? getTaskNodeCoreType(targetKind) : ''
+    if (tk === 'video') return 'in-any'
+    if (tk === 'image') return 'in-image'
+    if (tk === 'text') return 'in-text'
     return 'in-any'
   }, [])
+
+  const resolveCompatibleTargetHandleId = useCallback((targetKind?: string | null, sourceKind?: string | null) => {
+    const schema = getTaskNodeSchema(targetKind)
+    const targetHandles = getStaticTargetHandles(schema)
+    if (!targetHandles.length) return null
+
+    const preferredHandleId = pickDefaultTargetHandle(schema.kind, sourceKind)
+    const preferredHandle = targetHandles.find((handle) => handle.id === preferredHandleId)
+    if (preferredHandle) return preferredHandle.id
+
+    const anyHandle = targetHandles.find((handle) => String(handle.type || '').toLowerCase() === 'any')
+    if (anyHandle) return anyHandle.id
+
+    return targetHandles[0]?.id ?? null
+  }, [pickDefaultTargetHandle])
 
   const quickConnectNodes = useCallback((sourceId: string, targetId: string, opts?: { showInvalidToast?: boolean }) => {
     const showInvalidToast = opts?.showInvalidToast !== false
@@ -1268,21 +1934,14 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }
     const sKind = (sourceNode.data as any)?.kind
     const tKind = (targetNode.data as any)?.kind
+    if (String(tKind || '').toLowerCase() === 'text') {
+      if (showInvalidToast) toast('文本节点仅支持作为提示词来源，不支持作为目标节点', 'warning')
+      return false
+    }
     if (!isValidEdgeByType(sKind, tKind)) {
       if (showInvalidToast) toast('当前两种节点类型不支持直连', 'warning')
       return false
     }
-    if (isImageKind(sKind) && isImageKind(tKind)) {
-      const targetModel = (targetNode.data as any)?.imageModel as string | undefined
-      if (!isImageEditModel(targetModel)) {
-        const reason = targetModel
-          ? '目标节点的模型不支持图片编辑，请切换至支持的模型后再连线'
-          : '请先为目标节点选择支持图片编辑的模型'
-        if (showInvalidToast) toast(reason, 'warning')
-        return false
-      }
-    }
-
     handleConnect({
       source: sourceId,
       sourceHandle: pickDefaultSourceHandle(sKind),
@@ -1292,8 +1951,26 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     return true
   }, [createsCycle, edges, handleConnect, nodes, pickDefaultSourceHandle, pickDefaultTargetHandle])
 
+  const referencePickerTargetId = canvasReferencePicker?.targetNodeId ?? ''
+  const referencePickerBlockedSourceIds = useMemo(() => {
+    if (!referencePickerTargetId) return new Set<string>()
+    const blocked = new Set<string>(canvasReferencePicker?.blockedSourceNodeIds ?? [])
+    edges.forEach((edge) => {
+      if (edge.target === referencePickerTargetId) blocked.add(edge.source)
+    })
+    return blocked
+  }, [canvasReferencePicker?.blockedSourceNodeIds, edges, referencePickerTargetId])
+
   const onNodeClick = useCallback((evt: React.MouseEvent, node: any) => {
     if (!node?.id) return
+    if (referencePickerTargetId) {
+      if (node.id === referencePickerTargetId) return
+      if (!isCanvasReferencePickerCandidateNode(node as FlowNode, referencePickerTargetId)) return
+      if (referencePickerBlockedSourceIds.has(node.id)) return
+      const connected = quickConnectNodes(String(node.id), referencePickerTargetId, { showInvalidToast: false })
+      if (connected) closeCanvasReferencePicker()
+      return
+    }
     // “点击节点两步连线”容易误触（尤其在刚创建新节点后点击查看参数时）。
     // 仅在按住 Alt/Option 时启用该模式；普通点击将视为取消待连线状态。
     if (!evt.altKey) {
@@ -1317,163 +1994,932 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }
     const kind = String(node?.data?.kind || '').toLowerCase()
     const derivedType =
-      kind === 'image' || kind === 'texttoimage' ? 'image'
-      : kind === 'composevideo' || kind === 'video' || kind === 'storyboard' ? 'video'
-      : kind === 'tts' || kind === 'audio' ? 'audio'
-      : kind === 'subtitlealign' || kind === 'subtitle' ? 'subtitle'
-      : kind === 'character' ? 'character'
+      kind === 'image' ? 'image'
+      : kind === 'video' ? 'video'
+      : kind === 'text' ? 'text'
       : null
     setTapConnectSource({ nodeId: node.id })
     setConnectingType(derivedType)
-  }, [quickConnectNodes, tapConnectSource])
-  // MiniMap drag-to-pan and smart click
-  const minimapDragRef = useRef<{ el: HTMLElement; rect: DOMRect; startPos: { x: number; y: number } }|null>(null)
-  const minimapClickRef = useRef<{ downTime: number; startPos: { x: number; y: number } }|null>(null)
+  }, [closeCanvasReferencePicker, quickConnectNodes, referencePickerBlockedSourceIds, referencePickerTargetId, tapConnectSource])
 
-  // Group overlay computation
-  const selectedNodes = nodes.filter(n=>n.selected)
-  const hasGroupNodeSelected = selectedNodes.some(n => (n as any).type === 'groupNode')
-  const parentIds = new Set(selectedNodes.map(n => ((n as any).parentId as string) || ''))
-  const allInsideSameGroup = selectedNodes.length > 1 && !parentIds.has('') && parentIds.size === 1
-  // Only show pre-group overlay for root-level multi-selection (not when a group is already formed or group node selected)
-  const showPreGroupOverlay = selectedNodes.length > 1 && !hasGroupNodeSelected && !allInsideSameGroup
-  // legacy group match no longer used (compound nodes now)
-  const groups = useRFStore(s => s.groups)
-  const defaultW = 180, defaultH = 96
-  const normalizeKindForRect = (kind: unknown) => String(kind || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-  const parseNumericStyle = (v: unknown) => {
-    if (typeof v === 'number' && Number.isFinite(v)) return v
-    if (typeof v === 'string') {
-      const n = Number.parseFloat(v)
-      if (Number.isFinite(n)) return n
+  const onNodeDoubleClick = useCallback((_evt: React.MouseEvent, node: FlowNode) => {
+    if (!node?.id) return
+    if (node.type === 'groupNode') return
+    focusNodeSubgraph(node.id)
+    setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
+  }, [focusNodeSubgraph, rf])
+  const selectedNonGroupNodes = useMemo(
+    () => selectedNodeSummaries.filter((node) => node.type !== 'groupNode'),
+    [selectedNodeSummaries],
+  )
+  const selectedGroupIds = useMemo(
+    () => selectedNodeSummaries.filter((node) => node.type === 'groupNode').map((node) => node.id),
+    [selectedNodeSummaries],
+  )
+  const selectedNodeCount = selectedNodeIds.length
+  const heavySelectionActive = selectedNodeCount > 1 || selectedGroupIds.length > 0
+  const heavySelectionDragging = dragging && selectedNodeCount >= HEAVY_SELECTION_DRAG_THRESHOLD
+  const shouldHighlightSelectedEdges = selectedNodeCount === 1 && selectedGroupIds.length === 0
+  const canvasRenderContextValue = useMemo(
+    () => ({
+      heavySelectionActive,
+      heavySelectionDragging,
+      selectedNodeCount,
+    }),
+    [heavySelectionActive, heavySelectionDragging, selectedNodeCount],
+  )
+  const canCreateScriptBundleFromSelection = useMemo(() => {
+    if (dragging) return false
+    if (selectedNonGroupNodes.length < 2) return false
+    const textualNodes = selectedNonGroupNodes.filter((node) => node.kind === 'text' && Boolean(node.prompt || node.text))
+    return textualNodes.length >= 2
+  }, [dragging, selectedNonGroupNodes])
+  const canCreateGroupFromSelection = useMemo(() => {
+    if (dragging) return false
+    if (selectedNonGroupNodes.length < 2) return false
+    const parentKeys = new Set(
+      selectedNonGroupNodes.map((node) => node.parentId || ''),
+    )
+    if (parentKeys.size !== 1) return false
+    const parentId = Array.from(parentKeys)[0]
+    if (!parentId) return true
+    const selectedIds = new Set(selectedNonGroupNodes.map((node) => node.id))
+    const childIds = nodes
+      .filter((node) => (typeof node.parentId === 'string' ? node.parentId.trim() : '') === parentId)
+      .map((node) => node.id)
+    if (childIds.length !== selectedIds.size) return true
+    return !childIds.every((id) => selectedIds.has(id))
+  }, [dragging, nodes, selectedNonGroupNodes])
+  const selectionMatchedGroupId = useMemo(() => {
+    if (dragging) return null
+    if (!selectedNonGroupNodes.length) return null
+    const selectedIds = new Set(selectedNonGroupNodes.map((node) => node.id))
+    const parentKeys = new Set(
+      selectedNonGroupNodes.map((node) => node.parentId || ''),
+    )
+    if (parentKeys.size !== 1) return null
+    const parentId = Array.from(parentKeys)[0]
+    if (!parentId) return null
+    const parentNode = nodes.find((node) => node.id === parentId && node.type === 'groupNode')
+    if (!parentNode) return null
+    const childIds = nodes
+      .filter((node) => (typeof node.parentId === 'string' ? node.parentId.trim() : '') === parentId)
+      .map((node) => node.id)
+    if (childIds.length !== selectedIds.size) return null
+    if (!childIds.every((id) => selectedIds.has(id))) return null
+    return parentId
+  }, [dragging, nodes, selectedNonGroupNodes])
+  const canUngroupSelection = selectedGroupIds.length > 0 || Boolean(selectionMatchedGroupId)
+  const runUngroupSelection = useCallback(() => {
+    if (selectedGroupIds.length > 0) {
+      selectedGroupIds.forEach((id) => ungroupGroupNode(id))
+      return
     }
-    return undefined
-  }
-  const getNodeRectSize = (n: any) => {
-    const kind = normalizeKindForRect(n?.data?.kind)
-    const measuredW =
-      (typeof n?.measured?.width === 'number' && Number.isFinite(n.measured.width) && n.measured.width > 0 ? n.measured.width : undefined) ??
-      (typeof n?.width === 'number' && Number.isFinite(n.width) && n.width > 0 ? n.width : undefined)
-    const measuredH =
-      (typeof n?.measured?.height === 'number' && Number.isFinite(n.measured.height) && n.measured.height > 0 ? n.measured.height : undefined) ??
-      (typeof n?.height === 'number' && Number.isFinite(n.height) && n.height > 0 ? n.height : undefined)
-    const w =
-      measuredW ??
-      parseNumericStyle(n?.style?.width) ??
-      parseNumericStyle(n?.data?.nodeWidth) ??
-      defaultW
-    const h =
-      measuredH ??
-      parseNumericStyle(n?.style?.height) ??
-      parseNumericStyle(n?.data?.nodeHeight) ??
-      defaultH
-    return { w, h }
-  }
-  const nodeByIdForRect = useMemo(() => new Map(nodes.map(n => [n.id, n] as const)), [nodes])
-  const getNodeAbsPos = useCallback((n: any): { x: number; y: number } => {
-    const visiting = new Set<string>()
-    const resolve = (node: any): { x: number; y: number } => {
-      const id = String(node?.id || '')
-      if (id) {
-        if (visiting.has(id)) return { x: node?.position?.x || 0, y: node?.position?.y || 0 }
-        visiting.add(id)
-      }
-      const base = { x: node?.position?.x || 0, y: node?.position?.y || 0 }
-      const parentId = node?.parentId as string | undefined
-      if (!parentId) return base
-      const parent = nodeByIdForRect.get(parentId)
-      if (!parent) return base
-      const p = resolve(parent as any)
-      return { x: p.x + base.x, y: p.y + base.y }
+    if (selectionMatchedGroupId) ungroupGroupNode(selectionMatchedGroupId)
+  }, [selectionMatchedGroupId, selectedGroupIds, ungroupGroupNode])
+  const layoutScope = useMemo(() => {
+    if (dragging) return null
+    if (selectedGroupIds.length === 1) {
+      return { groupId: selectedGroupIds[0], nodeIds: undefined as string[] | undefined }
     }
-    return resolve(n)
-  }, [nodeByIdForRect])
-  // selection rect in FLOW coordinates
-  let groupRectFlow: { x: number; y: number; w: number; h: number } | null = null
-  if (showPreGroupOverlay) {
-    const abs = selectedNodes.map(n => {
-      const p = getNodeAbsPos(n as any)
-      const s = getNodeRectSize(n as any)
-      return { x: p.x, y: p.y, w: s.w, h: s.h }
-    })
-    const minX = Math.min(...abs.map(n => n.x))
-    const minY = Math.min(...abs.map(n => n.y))
-    const maxX = Math.max(...abs.map(n => n.x + n.w))
-    const maxY = Math.max(...abs.map(n => n.y + n.h))
-    const padding = 8
-    groupRectFlow = { x: minX - padding, y: minY - padding, w: (maxX - minX) + padding*2, h: (maxY - minY) + padding*2 }
-  }
-
-  // remove legacy persistent outlines: group is now a node (compound parent)
-  const groupOutlines: any[] = []
-
-  // selection partially overlaps existing groups?
-  const selectionPartialOverlaps = useMemo(() => {
-    // 允许跨组打组：选中的节点会从原组中移出并进入新组
-    return false
-  }, [selectedNodes])
-
-  // Apply focus filtering (group focus mode)
-  const focusFiltered = useMemo(() => {
-    if (!focusGroupId) return { nodes, edges }
-    const group = nodes.find(n => n.id === focusGroupId)
-    if (!group) return { nodes, edges }
-    const internalIds = new Set<string>([group.id, ...nodes.filter(n => (n as any).parentId === group.id).map(n => n.id)])
-    const internalNodes = nodes.filter(n => internalIds.has(n.id))
-    const internalEdges = edges.filter(e => internalIds.has(e.source) && internalIds.has(e.target))
-    // Build IO summary nodes and remapped edges for cross-boundary connections
-    const inCross = edges.filter(e => !internalIds.has(e.source) && internalIds.has(e.target))
-    const outCross = edges.filter(e => internalIds.has(e.source) && !internalIds.has(e.target))
-    const inferType = (e: any) => {
-      const sh = e.sourceHandle?.toString() || ''
-      const th = e.targetHandle?.toString() || ''
-      if (sh.startsWith('out-')) return sh.slice(4)
-      if (th.startsWith('in-')) return th.slice(3)
-      return 'any'
-    }
-    const typesIn = Array.from(new Set(inCross.map(inferType)))
-    const typesOut = Array.from(new Set(outCross.map(inferType)))
-    const gWidth = (group as any).width || (group.style as any)?.width || 240
-    const gHeight = (group as any).height || (group.style as any)?.height || 160
-    const inNodeId = `io-in-${group.id}`
-    const outNodeId = `io-out-${group.id}`
-    const ioNodes = [] as any[]
-    const inPos = ((group.data as any)?.ioInPos) as { x:number;y:number } | undefined
-    const outPos = ((group.data as any)?.ioOutPos) as { x:number;y:number } | undefined
-    if (inCross.length) {
-      ioNodes.push({ id: inNodeId, type: 'ioNode' as const, parentId: group.id, draggable: true, position: inPos || { x: 8, y: 8 }, data: { kind: 'io-in', label: $('入口'), types: typesIn } })
-    }
-    if (outCross.length) {
-      const def = { x: Math.max(8, gWidth - 104), y: Math.max(8, gHeight - 36) }
-      ioNodes.push({ id: outNodeId, type: 'ioNode' as const, parentId: group.id, draggable: true, position: outPos || def, data: { kind: 'io-out', label: $('出口'), types: typesOut } })
-    }
-    const remapEdgesIn = inCross.map((e, idx) => ({ id: `ioe-in-${idx}-${e.target}`, source: inNodeId, sourceHandle: `out-${inferType(e)}`, target: e.target, targetHandle: e.targetHandle, type: 'typed' as const, animated: true }))
-    const remapEdgesOut = outCross.map((e, idx) => ({ id: `ioe-out-${e.source}-${idx}`, source: e.source, sourceHandle: e.sourceHandle, target: outNodeId, targetHandle: `in-${inferType(e)}`, type: 'typed' as const, animated: true }))
+    if (selectedNonGroupNodes.length < 2) return null
+    const parentKeys = new Set(
+      selectedNonGroupNodes.map((node) => node.parentId || ''),
+    )
+    if (parentKeys.size !== 1) return null
+    const groupId = Array.from(parentKeys)[0]
+    if (!groupId) return null
+    const group = nodes.find((node) => node.id === groupId && node.type === 'groupNode')
+    if (!group) return null
     return {
-      nodes: [...internalNodes, ...ioNodes],
-      edges: [...internalEdges, ...remapEdgesIn, ...remapEdgesOut],
+      groupId,
+      nodeIds: selectedNonGroupNodes.map((node) => node.id),
     }
-  }, [focusGroupId, nodes, edges])
+  }, [dragging, nodes, selectedGroupIds, selectedNonGroupNodes])
+  const canLayoutSelection = Boolean(layoutScope)
+  const runLayoutSelection = useCallback((direction: 'grid' | 'column' | 'flow') => {
+    if (!layoutScope) return
+    arrangeGroupChildren(layoutScope.groupId, direction, layoutScope.nodeIds)
+  }, [arrangeGroupChildren, layoutScope])
+
+  const canStitchSelectedGroup = useMemo(
+    () => selectedGroupIds.length === 1 && !stitchingGroupId,
+    [selectedGroupIds.length, stitchingGroupId],
+  )
+  const canRunSelectedGroup = useMemo(
+    () => selectedGroupIds.length === 1 && !runningGroupId,
+    [selectedGroupIds.length, runningGroupId],
+  )
+  const canSaveSelectedGroupWorkflow = useMemo(
+    () => selectedGroupIds.length === 1 && !savingWorkflowGroupId,
+    [savingWorkflowGroupId, selectedGroupIds.length],
+  )
+  const canPublishSelectedGroupTemplate = useMemo(
+    () => selectedGroupIds.length === 1 && !publishingTemplateGroupId,
+    [publishingTemplateGroupId, selectedGroupIds.length],
+  )
+  const downloadAssetsGroupId = useMemo(() => {
+    if (selectedGroupIds.length === 1) return selectedGroupIds[0]
+    if (selectionMatchedGroupId) return selectionMatchedGroupId
+    return null
+  }, [selectedGroupIds, selectionMatchedGroupId])
+  const canDownloadSelectedGroupAssets = useMemo(
+    () => Boolean(downloadAssetsGroupId) && downloadingGroupAssetsId === null,
+    [downloadAssetsGroupId, downloadingGroupAssetsId],
+  )
+  const runDownloadSelectedGroupAssets = useCallback(async () => {
+    if (!downloadAssetsGroupId) return
+    if (downloadingGroupAssetsId !== null) return
+
+    const groupNode = nodes.find((n) => n.id === downloadAssetsGroupId && n.type === 'groupNode')
+    const groupData = groupNode?.data && typeof groupNode.data === 'object'
+      ? (groupNode.data as Record<string, unknown>)
+      : null
+    const groupLabel = typeof groupData?.label === 'string' ? groupData.label.trim() : ''
+    const resolvedGroupLabel = groupLabel || `组-${downloadAssetsGroupId}`
+
+    setDownloadingGroupAssetsId(downloadAssetsGroupId)
+    toast('即将触发多文件下载；浏览器可能会提示“允许多个文件下载”', 'info')
+    try {
+      await downloadGroupAssets({
+        nodes,
+        groupId: downloadAssetsGroupId,
+        groupLabel: resolvedGroupLabel,
+      })
+      toast('已触发组内素材下载', 'success')
+    } catch (err) {
+      toast(formatErrorMessage(err), 'error')
+    } finally {
+      setDownloadingGroupAssetsId(null)
+    }
+  }, [downloadAssetsGroupId, downloadingGroupAssetsId, nodes])
+  const hasSelectionOverflowActions = useMemo(
+    () => (
+      canLayoutSelection ||
+      canStitchSelectedGroup ||
+      canSaveSelectedGroupWorkflow ||
+      Boolean(downloadAssetsGroupId)
+    ),
+    [
+      canLayoutSelection,
+      canStitchSelectedGroup,
+      canSaveSelectedGroupWorkflow,
+      downloadAssetsGroupId,
+    ],
+  )
+  const isStitchingSelectedGroup = useMemo(
+    () => selectedGroupIds.length === 1 && stitchingGroupId === selectedGroupIds[0],
+    [selectedGroupIds, stitchingGroupId],
+  )
+  const isRunningSelectedGroup = useMemo(
+    () => selectedGroupIds.length === 1 && runningGroupId === selectedGroupIds[0],
+    [runningGroupId, selectedGroupIds],
+  )
+  const isSavingSelectedGroupWorkflow = useMemo(
+    () => selectedGroupIds.length === 1 && savingWorkflowGroupId === selectedGroupIds[0],
+    [savingWorkflowGroupId, selectedGroupIds],
+  )
+  const isPublishingSelectedGroupTemplate = useMemo(
+    () => selectedGroupIds.length === 1 && publishingTemplateGroupId === selectedGroupIds[0],
+    [publishingTemplateGroupId, selectedGroupIds],
+  )
+
+  const collectGroupTaskNodeIds = useCallback((groupId: string): string[] => {
+    const stateNodes = useRFStore.getState().nodes
+    const nodeById = new Map<string, FlowNode>(stateNodes.map((node) => [String(node.id), node]))
+    const childrenByParent = new Map<string, string[]>()
+
+    for (const node of stateNodes) {
+      const parentId = typeof node.parentId === 'string' ? node.parentId.trim() : ''
+      if (!parentId) continue
+      const list = childrenByParent.get(parentId)
+      if (list) {
+        list.push(String(node.id))
+        continue
+      }
+      childrenByParent.set(parentId, [String(node.id)])
+    }
+
+    const queue: string[] = [groupId]
+    const visited = new Set<string>()
+    const taskIds: string[] = []
+
+    while (queue.length) {
+      const currentGroupId = queue.shift()
+      if (!currentGroupId) continue
+      const childIds = childrenByParent.get(currentGroupId) || []
+      for (const childId of childIds) {
+        if (visited.has(childId)) continue
+        visited.add(childId)
+        const childNode = nodeById.get(childId)
+        if (!childNode) continue
+        if (childNode.type === 'taskNode') taskIds.push(childId)
+        if (childNode.type === 'groupNode') queue.push(childId)
+      }
+    }
+
+    return taskIds
+  }, [])
+
+  const runGroupNodes = useCallback(async (groupId: string) => {
+    if (!groupId || runningGroupId) return
+    const stateNodes = useRFStore.getState().nodes
+    const group = stateNodes.find((n) => n.id === groupId && n.type === 'groupNode')
+    if (!group) {
+      toast('未找到目标分组', 'error')
+      return
+    }
+    const nodeIds = collectGroupTaskNodeIds(groupId)
+    if (!nodeIds.length) {
+      toast('组内没有可执行任务节点', 'info')
+      return
+    }
+    setRunningGroupId(groupId)
+    try {
+      await runFlowDag(1, useRFStore.getState, useRFStore.setState, { only: new Set(nodeIds) })
+      toast(`已触发组内 ${nodeIds.length} 个节点执行`, 'success')
+    } catch (err) {
+      console.error(err)
+      toast('组内一键执行失败', 'error')
+    } finally {
+      setRunningGroupId(null)
+    }
+  }, [collectGroupTaskNodeIds, runningGroupId])
+
+  const collectGroupSubgraph = useCallback((groupId: string): { nodes: any[]; edges: any[]; groupLabel: string } | null => {
+    const state = useRFStore.getState()
+    const stateNodes = state.nodes
+    const stateEdges = state.edges
+    const rootGroup = stateNodes.find((n) => n.id === groupId && n.type === 'groupNode')
+    if (!rootGroup) return null
+
+    const includedNodeIds = new Set<string>([groupId])
+    const queue: string[] = [groupId]
+    while (queue.length) {
+      const current = queue.shift()
+      if (!current) continue
+      for (const node of stateNodes) {
+        const parentId = typeof node.parentId === 'string' ? node.parentId.trim() : ''
+        if (!parentId || parentId !== current || includedNodeIds.has(node.id)) continue
+        includedNodeIds.add(node.id)
+        if (node.type === 'groupNode') queue.push(node.id)
+      }
+    }
+
+    const nodes = stateNodes
+      .filter((node) => includedNodeIds.has(node.id))
+      .map((node) => ({
+        ...node,
+        selected: false,
+        dragging: false,
+      }))
+    const edges = stateEdges
+      .filter((edge) => includedNodeIds.has(edge.source) && includedNodeIds.has(edge.target))
+      .map((edge) => ({
+        ...edge,
+        selected: false,
+        animated: false,
+      }))
+
+    const groupLabel = String((rootGroup.data as any)?.label || groupId).trim() || groupId
+    return { nodes, edges, groupLabel }
+  }, [])
+
+  const resolveSubgraphPreviewImageUrl = useCallback((groupId: string): string | null => {
+    const subgraph = collectGroupSubgraph(groupId)
+    if (!subgraph) return null
+    for (const node of subgraph.nodes) {
+      const imageUrl = resolveNodePrimaryImageUrl(node as FlowNode)
+      if (imageUrl) return imageUrl
+    }
+    return null
+  }, [collectGroupSubgraph])
+
+  const openWorkflowNameDialog = useCallback((state: WorkflowNameDialogState) => {
+    setWorkflowNameDialog(state)
+    setWorkflowNameInput(state.initialName)
+    setWorkflowDescriptionInput(state.initialDescription)
+    setWorkflowCoverUrlInput(state.initialCoverUrl)
+    if (state.mode === 'template') {
+      setTemplateSaveMode('create')
+      setTemplateVisibility('private')
+      setTemplateProjects([])
+      setSelectedTemplateProjectId('')
+    }
+  }, [])
+
+  const closeWorkflowNameDialog = useCallback(() => {
+    setWorkflowNameDialog(null)
+    setWorkflowNameInput('')
+    setWorkflowDescriptionInput('')
+    setWorkflowCoverUrlInput('')
+    setTemplateSaveMode('create')
+    setTemplateVisibility('private')
+    setTemplateProjects([])
+    setSelectedTemplateProjectId('')
+    setTemplateCoverUploading(false)
+  }, [])
+
+  useEffect(() => {
+    if (workflowNameDialog?.mode !== 'template') return
+    let cancelled = false
+
+    void listProjects()
+      .then((projects) => {
+        if (cancelled) return
+        setTemplateProjects(projects)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        console.error('加载模板项目失败:', error)
+        setTemplateProjects([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workflowNameDialog])
+
+  useEffect(() => {
+    if (workflowNameDialog?.mode !== 'template') return
+    if (templateSaveMode !== 'update') return
+    if (!selectedTemplateProjectId && templateProjects.length > 0) {
+      setSelectedTemplateProjectId(templateProjects[0].id)
+      return
+    }
+    const selectedProject = templateProjects.find((project) => project.id === selectedTemplateProjectId) ?? null
+    if (!selectedProject) return
+
+    setWorkflowNameInput((selectedProject.templateTitle || selectedProject.name || '').trim())
+    setWorkflowDescriptionInput((selectedProject.templateDescription || '').trim())
+    setWorkflowCoverUrlInput((selectedProject.templateCoverUrl || '').trim())
+    setTemplateVisibility(selectedProject.isPublic ? 'public' : 'private')
+  }, [selectedTemplateProjectId, templateProjects, templateSaveMode, workflowNameDialog])
+
+  const triggerTemplateCoverUpload = useCallback(() => {
+    if (templateCoverUploading) return
+    templateCoverUploadInputRef.current?.click()
+  }, [templateCoverUploading])
+
+  const handleTemplateCoverUploadInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files || [])
+    event.currentTarget.value = ''
+    const imageFile = files.find((file) => String(file.type || '').startsWith('image/'))
+    if (!imageFile) {
+      toast('请选择图片文件', 'warning')
+      return
+    }
+
+    const uploadProjectId = (() => {
+      if (templateSaveMode === 'update') {
+        const targetId = selectedTemplateProjectId.trim()
+        if (targetId) return targetId
+      }
+      const currentId = String(currentProject?.id || '').trim()
+      return currentId || undefined
+    })()
+
+    setTemplateCoverUploading(true)
+    try {
+      const uploaded = await uploadServerAssetFile(imageFile, imageFile.name, {
+        projectId: uploadProjectId,
+        taskKind: 'image',
+      })
+      const url =
+        String((uploaded as { data?: { url?: unknown } })?.data?.url || '').trim()
+        || String((uploaded as { data?: { imageUrl?: unknown } })?.data?.imageUrl || '').trim()
+        || String((uploaded as { data?: { thumbnailUrl?: unknown } })?.data?.thumbnailUrl || '').trim()
+      if (!url) throw new Error('上传成功但未返回可用图片地址')
+      setWorkflowCoverUrlInput(url)
+      toast('模板封面上传成功', 'success')
+    } catch (error: unknown) {
+      console.error(error)
+      toast(formatErrorMessage(error), 'error')
+    } finally {
+      setTemplateCoverUploading(false)
+    }
+  }, [currentProject?.id, selectedTemplateProjectId, templateSaveMode])
+
+  const saveSelectedGroupAsWorkflowAsset = useCallback(async () => {
+    if (selectedGroupIds.length !== 1) {
+      toast('请先选择一个分组', 'info')
+      return
+    }
+    const groupId = selectedGroupIds[0]
+    const projectId = String(currentProject?.id || '').trim()
+    if (!projectId) {
+      toast('请先选择项目后再保存工作流资产', 'warning')
+      return
+    }
+
+    const subgraph = collectGroupSubgraph(groupId)
+    if (!subgraph || subgraph.nodes.length <= 1) {
+      toast('组内没有可保存的工作流节点', 'warning')
+      return
+    }
+
+    openWorkflowNameDialog({
+      mode: 'asset',
+      groupId,
+      title: '保存为资产',
+      confirmLabel: '保存',
+      initialName: `工作流片段 · ${subgraph.groupLabel}`,
+      initialDescription: '',
+      initialCoverUrl: '',
+      previewUrl: resolveSubgraphPreviewImageUrl(groupId),
+    })
+  }, [collectGroupSubgraph, currentProject?.id, openWorkflowNameDialog, resolveSubgraphPreviewImageUrl, selectedGroupIds])
+
+  const publishSelectedGroupAsTemplate = useCallback(async (explicitGroupId?: string) => {
+    const groupId = explicitGroupId || selectedGroupIds[0]
+    if (!groupId) {
+      toast('请先选择一个分组', 'info')
+      return
+    }
+    const subgraph = collectGroupSubgraph(groupId)
+    if (!subgraph || subgraph.nodes.length <= 1) {
+      toast('组内没有可发布的工作流节点', 'warning')
+      return
+    }
+
+    openWorkflowNameDialog({
+      mode: 'template',
+      groupId,
+      title: '创建模板',
+      confirmLabel: '确认',
+      initialName: `模板 · ${subgraph.groupLabel}`,
+      initialDescription: '',
+      initialCoverUrl: '',
+      previewUrl: resolveSubgraphPreviewImageUrl(groupId),
+    })
+  }, [collectGroupSubgraph, openWorkflowNameDialog, resolveSubgraphPreviewImageUrl, selectedGroupIds])
+
+  const submitWorkflowNameDialog = useCallback(async () => {
+    const dialog = workflowNameDialog
+    if (!dialog) return
+    const name = workflowNameInput.trim()
+    const description = workflowDescriptionInput.trim()
+    if (!name) {
+      toast('请输入名称', 'warning')
+      return
+    }
+
+    const projectId = String(currentProject?.id || '').trim()
+    if (!projectId) {
+      toast('请先选择项目', 'warning')
+      return
+    }
+
+    const subgraph = collectGroupSubgraph(dialog.groupId)
+    if (!subgraph || subgraph.nodes.length <= 1) {
+      toast('组内没有可保存的工作流节点', 'warning')
+      closeWorkflowNameDialog()
+      return
+    }
+
+    if (dialog.mode === 'asset') {
+      const coverUrl = workflowCoverUrlInput.trim() || dialog.previewUrl || ''
+      setSavingWorkflowGroupId(dialog.groupId)
+      try {
+        await createServerAsset({
+          name,
+          projectId,
+          data: {
+            kind: 'workflow',
+            source: 'group_workflow_asset',
+            groupId: dialog.groupId,
+            title: name,
+            description,
+            coverUrl,
+            nodes: subgraph.nodes,
+            edges: subgraph.edges,
+            savedAt: new Date().toISOString(),
+          },
+        })
+        toast('已保存为个人工作流资产', 'success')
+        closeWorkflowNameDialog()
+      } catch (error: unknown) {
+        console.error(error)
+        toast(formatErrorMessage(error), 'error')
+      } finally {
+        setSavingWorkflowGroupId(null)
+      }
+      return
+    }
+
+    setPublishingTemplateGroupId(dialog.groupId)
+    try {
+      const isPublicTemplate = templateVisibility === 'public'
+      const templateCoverUrl = workflowCoverUrlInput.trim() || dialog.previewUrl || ''
+      const targetProjectId = templateSaveMode === 'update'
+        ? selectedTemplateProjectId.trim()
+        : ''
+      if (templateSaveMode === 'update' && !targetProjectId) {
+        toast('请选择要更新的模板', 'warning')
+        return
+      }
+
+      const project = templateSaveMode === 'update'
+        ? await upsertProject({ id: targetProjectId, name })
+        : await upsertProject({ name })
+      const flows = await listProjectFlows(project.id)
+      const targetFlow = flows[0] ?? null
+      await saveProjectFlow({
+        id: targetFlow?.id,
+        projectId: project.id,
+        name,
+        nodes: subgraph.nodes,
+        edges: subgraph.edges,
+      })
+      await updateProjectTemplate(project.id, {
+        templateTitle: name,
+        templateDescription: description,
+        templateCoverUrl,
+        isPublic: isPublicTemplate,
+      })
+      toast(
+        templateSaveMode === 'update'
+          ? `模板已更新为${isPublicTemplate ? '公共' : '私有'}模板`
+          : `已保存为${isPublicTemplate ? '公共' : '私有'}模板`,
+        'success',
+      )
+      closeWorkflowNameDialog()
+    } catch (error: unknown) {
+      console.error(error)
+      toast(formatErrorMessage(error), 'error')
+    } finally {
+      setPublishingTemplateGroupId(null)
+    }
+  }, [
+    closeWorkflowNameDialog,
+    collectGroupSubgraph,
+    currentProject?.id,
+    selectedTemplateProjectId,
+    templateSaveMode,
+    templateVisibility,
+    workflowDescriptionInput,
+    workflowCoverUrlInput,
+    workflowNameDialog,
+    workflowNameInput,
+  ])
+
+  const fetchImageBlob = useCallback(async (url: string): Promise<Blob> => {
+    const direct = await fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit' }).catch(() => null)
+    if (direct && direct.ok) return await direct.blob()
+
+    throw new Error('image-fetch-failed')
+  }, [])
+
+  const loadImageFromBlob = useCallback((blob: Blob): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob)
+    const ImageCtor = (typeof window !== 'undefined' ? window.Image : (globalThis as any)?.Image) as
+      | (new () => HTMLImageElement)
+      | undefined
+    if (typeof ImageCtor !== 'function') {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('image-constructor-unavailable'))
+      return
+    }
+    const img = new ImageCtor()
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('image-decode-failed'))
+    }
+    img.src = objectUrl
+  }), [])
+
+
+
+
+
+
+
+
+  const stitchGroupToLongImage = useCallback(async (groupId: string) => {
+    if (stitchingGroupId) return
+    setStitchingGroupId(groupId)
+    const stateNodes = useRFStore.getState().nodes
+    const group = stateNodes.find((n) => n.id === groupId && n.type === 'groupNode')
+    if (!group) {
+      toast('未找到目标组', 'error')
+      setStitchingGroupId(null)
+      return
+    }
+
+    const children = stateNodes
+      .filter((n) => (n as any)?.parentId === groupId)
+      .sort((a, b) => {
+        const ay = Number(a?.position?.y ?? 0)
+        const by = Number(b?.position?.y ?? 0)
+        if (Math.abs(ay - by) > 1) return ay - by
+        const ax = Number(a?.position?.x ?? 0)
+        const bx = Number(b?.position?.x ?? 0)
+        return ax - bx
+      })
+
+    const imageUrls = children
+      .map((node) => resolveNodePrimaryImageUrl(node as FlowNode))
+      .filter((url): url is string => Boolean(url))
+
+    if (!imageUrls.length) {
+      toast('组内没有可拼接的图片节点', 'info')
+      setStitchingGroupId(null)
+      return
+    }
+
+    try {
+      const images = await Promise.all(
+        imageUrls.map(async (url) => {
+          const blob = await fetchImageBlob(url)
+          const img = await loadImageFromBlob(blob)
+          return img
+        }),
+      )
+      if (!images.length) {
+        toast('未获取到可拼接的图片', 'error')
+        return
+      }
+
+      const maxWidth = Math.max(...images.map((img) => Math.max(1, img.naturalWidth || img.width || 1)))
+      const totalHeight = images.reduce((sum, img) => sum + Math.max(1, img.naturalHeight || img.height || 1), 0)
+      const canvas = document.createElement('canvas')
+      canvas.width = maxWidth
+      canvas.height = Math.max(1, totalHeight)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        toast('创建画布失败', 'error')
+        return
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      let cursorY = 0
+      for (const img of images) {
+        const w = Math.max(1, img.naturalWidth || img.width || 1)
+        const h = Math.max(1, img.naturalHeight || img.height || 1)
+        const x = Math.floor((maxWidth - w) / 2)
+        ctx.drawImage(img, x, cursorY, w, h)
+        cursorY += h
+      }
+
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 0.95))
+      if (!blob) {
+        toast('长图导出失败', 'error')
+        return
+      }
+
+      const href = URL.createObjectURL(blob)
+      const groupLabel = String((group.data as any)?.label || groupId).trim() || groupId
+      const filenameSafe = groupLabel.replace(/[\\/:*?"<>|]+/g, '_')
+      const a = document.createElement('a')
+      a.href = href
+      a.download = `${filenameSafe}-long-${Date.now()}.png`
+      a.rel = 'noopener noreferrer'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(href)
+      toast(`已生成长图（${images.length} 张）`, 'success')
+    } catch (error) {
+      console.error('Failed to stitch group images:', error)
+      toast('生成长图失败，请确认组内图片可访问', 'error')
+    } finally {
+      setStitchingGroupId(null)
+    }
+  }, [fetchImageBlob, loadImageFromBlob, stitchingGroupId])
+
+  const selectionActionAnchor = useMemo<SelectionActionAnchor | null>(() => {
+    if (dragging || viewportMoving) return null
+    const shouldShow = selectedNodeIds.length >= 2 || selectedGroupIds.length >= 1
+    if (!shouldShow) return null
+    const nodesById = new Map(nodes.map((n) => [n.id, n] as const))
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    for (const nodeId of selectedNodeIds) {
+      const node = nodesById.get(nodeId)
+      if (!node) continue
+      const abs = getNodeAbsPosition(node, nodesById)
+      const { w, h } = getNodeSize(node)
+      minX = Math.min(minX, abs.x)
+      minY = Math.min(minY, abs.y)
+      maxX = Math.max(maxX, abs.x + w)
+      maxY = Math.max(maxY, abs.y + h)
+    }
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null
+    return {
+      centerX: (minX + maxX) / 2,
+      selectedCount: selectedNodeIds.length,
+      topY: minY,
+    }
+  }, [dragging, nodes, selectedGroupIds, selectedNodeIds, viewportMoving])
+
+  const focusedNodeSummary = useMemo(() => {
+    if (!focusedNodeId) return null
+    const focusedNode = nodes.find((node) => node.id === focusedNodeId)
+    if (!focusedNode) return null
+    const data = focusedNode.data as Record<string, unknown> | undefined
+    const label =
+      typeof data?.label === 'string' && data.label.trim()
+        ? data.label.trim()
+        : focusedNode.id
+    return { id: focusedNode.id, label }
+  }, [focusedNodeId, nodes])
+
+  // Apply focus filtering (node upstream/downstream subgraph mode)
+  const focusFiltered = useMemo(() => {
+    if (!focusedNodeId) return { nodes, edges }
+    const focusedNode = nodes.find((node) => node.id === focusedNodeId)
+    if (!focusedNode) return { nodes, edges }
+
+    const outgoingBySource = new Map<string, FlowEdge[]>()
+    const incomingByTarget = new Map<string, FlowEdge[]>()
+
+    for (const edge of edges) {
+      const sourceEdges = outgoingBySource.get(edge.source) ?? []
+      sourceEdges.push(edge)
+      outgoingBySource.set(edge.source, sourceEdges)
+
+      const targetEdges = incomingByTarget.get(edge.target) ?? []
+      targetEdges.push(edge)
+      incomingByTarget.set(edge.target, targetEdges)
+    }
+
+    const collectReachableNodeIds = (
+      startId: string,
+      adjacency: Map<string, FlowEdge[]>,
+      getNextId: (edge: FlowEdge) => string,
+    ) => {
+      const visited = new Set<string>([startId])
+      const queue: string[] = [startId]
+      while (queue.length > 0) {
+        const currentId = queue.shift()
+        if (!currentId) break
+        const relatedEdges = adjacency.get(currentId) ?? []
+        for (const edge of relatedEdges) {
+          const nextId = getNextId(edge)
+          if (visited.has(nextId)) continue
+          visited.add(nextId)
+          queue.push(nextId)
+        }
+      }
+      return visited
+    }
+
+    const upstreamIds = collectReachableNodeIds(focusedNodeId, incomingByTarget, (edge) => edge.source)
+    const downstreamIds = collectReachableNodeIds(focusedNodeId, outgoingBySource, (edge) => edge.target)
+    const visibleNodeIds = new Set<string>([...upstreamIds, ...downstreamIds])
+
+    const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
+    for (const nodeId of Array.from(visibleNodeIds)) {
+      let parentId = nodesById.get(nodeId)?.parentId
+      while (typeof parentId === 'string' && parentId.trim()) {
+        visibleNodeIds.add(parentId)
+        parentId = nodesById.get(parentId)?.parentId
+      }
+    }
+
+    return {
+      nodes: nodes.filter((node) => visibleNodeIds.has(node.id)),
+      edges: edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)),
+    }
+  }, [focusedNodeId, nodes, edges])
+
+  const hasVisibilityFilter = useMemo(
+    () => NODE_VISIBILITY_FILTERS.some((filter) => !nodeVisibility[filter]),
+    [nodeVisibility],
+  )
+
+  const styledViewNodes = useMemo(() => {
+    if (dragging && focusedNodeId === null && !hasVisibilityFilter && !viewOnly && !referencePickerTargetId) {
+      return focusFiltered.nodes
+    }
+    return focusFiltered.nodes.map((node) => {
+    const isReferencePickerCandidate = Boolean(
+      referencePickerTargetId && isCanvasReferencePickerCandidateNode(node, referencePickerTargetId),
+    )
+    const isReferencePickerBlocked = isReferencePickerCandidate && referencePickerBlockedSourceIds.has(node.id)
+    const dragHandle = node.type === 'groupNode' ? '.tc-group-node__shell' : node.dragHandle
+    const visible = isNodeVisibleByFilter(node, nodeVisibility)
+    const needsDisplayStyling =
+      focusedNodeId !== null || hasVisibilityFilter || viewOnly || isReferencePickerBlocked
+    if (!needsDisplayStyling) {
+      if (node.type === 'groupNode' && node.dragHandle !== dragHandle) {
+        return {
+          ...node,
+          dragHandle,
+        }
+      }
+      return node
+    }
+
+    if (visible) {
+      return {
+        ...node,
+        dragHandle,
+        draggable: node.type === 'ioNode' ? node.draggable : (!viewOnly && !referencePickerTargetId),
+        selectable: !viewOnly && !referencePickerTargetId,
+        focusable: !viewOnly && !referencePickerTargetId,
+        connectable: !viewOnly && !referencePickerTargetId,
+        style: {
+          ...(node.style || {}),
+          opacity: isReferencePickerBlocked ? 0.3 : 1,
+          filter: isReferencePickerBlocked ? 'grayscale(1) saturate(0.2)' : 'none',
+          transition: 'opacity 160ms ease, filter 160ms ease',
+        },
+      }
+    }
+
+    return {
+      ...node,
+      dragHandle,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      connectable: false,
+      style: {
+        ...(node.style || {}),
+        opacity: 0.12,
+        filter: 'grayscale(1) saturate(0.2)',
+        transition: 'opacity 160ms ease, filter 160ms ease',
+      },
+    }
+    })
+  }, [dragging, focusFiltered.nodes, focusedNodeId, hasVisibilityFilter, nodeVisibility, referencePickerBlockedSourceIds, referencePickerTargetId, viewOnly])
+
+  useEffect(() => {
+    if (!referencePickerTargetId) return
+    const targetExists = nodes.some((node) => node.id === referencePickerTargetId)
+    if (!targetExists) closeCanvasReferencePicker()
+  }, [closeCanvasReferencePicker, nodes, referencePickerTargetId])
 
   // Edge highlight when connected to a selected node
-  const selectedIds = new Set(selectedNodes.map(n=>n.id))
-  const viewEdges = useMemo(() => {
+  const selectedIds = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
+  const dragViewEdges = useMemo(() => {
     const base = focusFiltered.edges
-    const routed = base.map((e: any) => {
-      const t = e.type
-      if (t === 'typed' || t === 'orth') return e
-      return { ...e, type: edgeRoute === 'orth' ? 'orth' : 'typed' }
+    const needsDragRewrite = base.some((edge) => edge.type !== 'typed' || edge.interactionWidth == null)
+    if (!needsDragRewrite) return base
+    return base.map((edge) => ({
+      ...edge,
+      type: 'typed' as const,
+      interactionWidth: edge.interactionWidth ?? 40,
+    }))
+  }, [focusFiltered.edges])
+  const viewEdges = useMemo(() => {
+    if (dragging || viewportMoving) {
+      return dragViewEdges
+    }
+    const base = focusFiltered.edges
+    const displayRouteType: FlowEdge['type'] = edgeRoute === 'orth' ? 'orth' : 'typed'
+    const routed = base.map((edge) => {
+      const nextType = edge.type === 'typed' || edge.type === 'orth'
+        ? displayRouteType
+        : displayRouteType
+      if (edge.type === nextType && edge.interactionWidth != null) {
+        return edge
+      }
+      return {
+        ...edge,
+        type: nextType,
+        interactionWidth: edge.interactionWidth ?? 40,
+      }
     })
-    const withHitbox = (e: any) => ({ ...e, interactionWidth: e.interactionWidth ?? 40 })
-    if (selectedIds.size === 0) return routed.map(withHitbox)
-    return routed.map((e: any) => {
-      const active = selectedIds.has(e.source) || selectedIds.has(e.target)
-      const styled = active
-        ? { ...e, style: { ...(e.style || {}), stroke: '#e5e7eb', opacity: 1 } }
-        : { ...e, style: { ...(e.style || {}), opacity: 0.5 } }
-      return withHitbox(styled)
+    if (!shouldHighlightSelectedEdges && !hasVisibilityFilter) {
+      return routed
+    }
+    const nodesById = new Map(focusFiltered.nodes.map((node) => [node.id, node] as const))
+    const edgeTransition = heavySelectionActive ? 'none' : 'opacity 160ms ease'
+    return routed.map((e) => {
+      const sourceNode = nodesById.get(e.source)
+      const targetNode = nodesById.get(e.target)
+      const sourceVisible = sourceNode ? isNodeVisibleByFilter(sourceNode, nodeVisibility) : true
+      const targetVisible = targetNode ? isNodeVisibleByFilter(targetNode, nodeVisibility) : true
+      const isMuted = !sourceVisible || !targetVisible
+      const active = shouldHighlightSelectedEdges && (selectedIds.has(e.source) || selectedIds.has(e.target))
+      return active
+        ? {
+            ...e,
+            style: {
+              ...(e.style || {}),
+              opacity: isMuted ? 0.08 : 1,
+              stroke: isDarkCanvas ? '#e5e7eb' : '#111827',
+              transition: edgeTransition,
+            },
+          }
+        : {
+            ...e,
+            style: {
+              ...(e.style || {}),
+              opacity: isMuted ? 0.05 : 0.5,
+              transition: edgeTransition,
+            },
+          }
     })
-  }, [edgeRoute, focusFiltered.edges, selectedIds])
+  }, [dragViewEdges, dragging, edgeRoute, focusFiltered.edges, focusFiltered.nodes, hasVisibilityFilter, heavySelectionActive, isDarkCanvas, nodeVisibility, selectedIds, shouldHighlightSelectedEdges, viewportMoving])
 
   // 使用多选拖拽（内置），不自定义组拖拽，避免与画布交互冲突
 
@@ -1488,7 +2934,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
 
   const handleInsertNodeAt = (
     targetKind: string,
-    menuState: { x: number; y: number; fromNodeId?: string; fromHandle?: string | null },
+    menuState: { x: number; y: number; fromNodeId?: string; fromHandle?: string | null; targetHandleId?: string | null },
   ) => {
     const posFlow = screenToFlow({ x: menuState.x, y: menuState.y })
     const upstreamNode = menuState.fromNodeId
@@ -1498,8 +2944,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     const sourceKind = upstreamNode ? ((upstreamNode.data as any)?.kind as string | undefined) : undefined
 
     useRFStore.setState(s => {
-      const before = s.nextId
-      const id = `${uuid()}${before}`
+      const id = genTaskNodeId()
       const schema = getTaskNodeSchema(targetKind)
       const label = schema.label || schema.kind || 'Node'
       const data: any = { label, kind: schema.kind }
@@ -1516,135 +2961,86 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           source: menuState.fromNodeId,
           target: id,
           sourceHandle: fromHandle,
-          targetHandle: pickDefaultTargetHandle(schema.kind, sourceKind),
+          targetHandle: menuState.targetHandleId || pickDefaultTargetHandle(schema.kind, sourceKind),
           type: (edgeRoute === 'orth' ? 'orth' : 'typed') as any,
           animated: false,
         }
         edgesNext = [...edgesNext, edge]
       }
 
-      return { nodes: [...s.nodes, node], edges: edgesNext, nextId: before + 1 }
+      return { nodes: [...s.nodes, node], edges: edgesNext, nextId: s.nextId + 1 }
     })
 
     closeInsertMenu()
   }
 
-  // Find the nearest node to a click position in minimap
-  const findNearestNode = useCallback((clickX: number, clickY: number, minimapRect: DOMRect) => {
-    const defaultW = 180, defaultH = 96
-    if (nodes.length === 0) return null
+  const insertMenuContent = useMemo(() => {
+    if (!insertMenu.open) return null
 
-    // Convert click position to world coordinates
-    const rx = Math.max(0, Math.min(1, clickX / minimapRect.width))
-    const ry = Math.max(0, Math.min(1, clickY / minimapRect.height))
+    const fromNode = nodes.find((node) => node.id === insertMenu.fromNodeId)
+    const fromData = fromNode?.data
+    const fromRecord = fromData && typeof fromData === 'object' ? fromData as Record<string, unknown> : null
+    const fromKind = typeof fromRecord?.kind === 'string' ? fromRecord.kind : undefined
+    const fromLabel = typeof fromRecord?.label === 'string' ? fromRecord.label.trim() : ''
+    const sourceType = parseHandleTypeFromId(insertMenu.fromHandle)
+    const title = fromLabel
+      ? `从「${fromLabel}」继续（${getHandleTypeLabel(sourceType)}）`
+      : `继续（${getHandleTypeLabel(sourceType)}）`
 
-    const minX = Math.min(...nodes.map(n => n.position.x))
-    const minY = Math.min(...nodes.map(n => n.position.y))
-    const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
-    const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
-    const worldX = minX + rx * (maxX - minX)
-    const worldY = minY + ry * (maxY - minY)
+    const schemaCandidates = listTaskNodeSchemas()
+      .map((schema) => {
+        if (INSERT_MENU_EXCLUDED_KINDS.has(schema.kind)) return null
+        if (fromKind && !isValidEdgeByType(fromKind, schema.kind)) return null
+        const targetHandleId = resolveCompatibleTargetHandleId(schema.kind, fromKind)
+        if (!targetHandleId) return null
+        return { schema, targetHandleId }
+      })
+      .filter((candidate): candidate is InsertMenuSchemaCandidate => Boolean(candidate))
+      .sort((a, b) => {
+        const order: Record<string, number> = { image: 10, storyboard: 15, video: 20, document: 30, generic: 100 }
+        const ai = order[a.schema.category] ?? 999
+        const bi = order[b.schema.category] ?? 999
+        if (ai !== bi) return ai - bi
+        return String(a.schema.label || a.schema.kind).localeCompare(String(b.schema.label || b.schema.kind))
+      })
 
-    // Find nearest node
-    let nearestNode = null
-    let minDistance = Infinity
-
-    for (const node of nodes) {
-      const nodeW = ((node as any).width) || defaultW
-      const nodeH = ((node as any).height) || defaultH
-      const nodeCenterX = node.position.x + nodeW / 2
-      const nodeCenterY = node.position.y + nodeH / 2
-
-      const distance = Math.sqrt(Math.pow(worldX - nodeCenterX, 2) + Math.pow(worldY - nodeCenterY, 2))
-
-      if (distance < minDistance) {
-        minDistance = distance
-        nearestNode = node
-      }
+    return {
+      title,
+      schemaCandidates,
     }
+  }, [
+    insertMenu.fromHandle,
+    insertMenu.open,
+    resolveCompatibleTargetHandleId,
+  ])
 
-    // Only return node if click is reasonably close (within 30% of minimap dimensions)
-    const threshold = Math.min(minimapRect.width, minimapRect.height) * 0.3
-    const clickThreshold = (threshold / minimapRect.width) * (maxX - minX)
+  const focusNodeFromMiniMap = useCallback((node: FlowNode) => {
+    useRFStore.setState((state) => ({
+      nodes: state.nodes.map((currentNode) => ({
+        ...currentNode,
+        selected: currentNode.id === node.id,
+      })),
+    }))
+    const nodesById = new Map(useRFStore.getState().nodes.map((currentNode) => [currentNode.id, currentNode] as const))
+    const targetNode = nodesById.get(node.id) ?? node
+    const absolutePosition = getNodeAbsPosition(targetNode, nodesById)
+    const { w, h } = getNodeSize(targetNode)
+    const currentZoom = rf.getViewport?.().zoom ?? 1
+    rf.setCenter?.(absolutePosition.x + w / 2, absolutePosition.y + h / 2, { zoom: currentZoom, duration: 260 })
+  }, [rf])
 
-    return minDistance <= clickThreshold ? nearestNode : null
-  }, [nodes])
+  const handleMiniMapClick = useCallback<CanvasMiniMapClick>((event, position) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const currentZoom = rf.getViewport?.().zoom ?? 1
+    rf.setCenter?.(position.x, position.y, { zoom: currentZoom, duration: 180 })
+  }, [rf])
 
-  const handleRootClick = useCallback((e: React.MouseEvent) => {
-    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
-    if (!el) return
-
-    const rect = el.getBoundingClientRect()
-    const clickX = e.clientX - rect.left
-    const clickY = e.clientY - rect.top
-
-    // Check if this was a quick click (not a drag)
-    if (minimapClickRef.current) {
-      const clickDuration = Date.now() - minimapClickRef.current.downTime
-      const dragDistance = Math.sqrt(
-        Math.pow(clickX - minimapClickRef.current.startPos.x, 2) +
-        Math.pow(clickY - minimapClickRef.current.startPos.y, 2)
-      )
-
-      // If click was quick and minimal movement, treat as smart click
-      if (clickDuration < 200 && dragDistance < 5) {
-        const nearestNode = findNearestNode(clickX, clickY, rect)
-
-        if (nearestNode) {
-          // Select the node and center view on it
-          useRFStore.setState(s => ({
-            nodes: s.nodes.map(n => ({
-              ...n,
-              selected: n.id === nearestNode.id
-            }))
-          }))
-
-          const nodeW = ((nearestNode as any).width) || 180
-          const nodeH = ((nearestNode as any).height) || 96
-          const nodeCenterX = nearestNode.position.x + nodeW / 2
-          const nodeCenterY = nearestNode.position.y + nodeH / 2
-
-          const currentZoom = rf.getViewport?.().zoom ?? 1
-          rf.setCenter?.(nodeCenterX, nodeCenterY, { zoom: currentZoom, duration: 300 })
-        } else {
-          // No node near click, treat as normal view centering
-          const rx = Math.max(0, Math.min(1, clickX / rect.width))
-          const ry = Math.max(0, Math.min(1, clickY / rect.height))
-          const defaultW = 180, defaultH = 96
-          const minX = Math.min(...nodes.map(n => n.position.x))
-          const minY = Math.min(...nodes.map(n => n.position.y))
-          const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
-          const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
-          const worldX = minX + rx * (maxX - minX)
-          const worldY = minY + ry * (maxY - minY)
-          const z = rf.getViewport?.().zoom ?? 1
-          rf.setCenter?.(worldX, worldY, { zoom: z, duration: 200 })
-        }
-      }
-    }
-
-    minimapClickRef.current = null
-    e.stopPropagation()
-    e.preventDefault()
-  }, [nodes, rf, findNearestNode])
-
-  const handleRootMouseDown = useCallback((e: React.MouseEvent) => {
-    const el = (e.target as HTMLElement).closest('.react-flow__minimap') as HTMLElement | null
-    if (!el) return
-
-    const rect = el.getBoundingClientRect()
-    const clickX = e.clientX - rect.left
-    const clickY = e.clientY - rect.top
-
-    // Record click info for distinguishing click vs drag
-    minimapClickRef.current = {
-      downTime: Date.now(),
-      startPos: { x: clickX, y: clickY }
-    }
-
-    // Setup drag reference for pan functionality
-    minimapDragRef.current = { el, rect, startPos: { x: clickX, y: clickY } }
-  }, [])
+  const handleMiniMapNodeClick = useCallback<CanvasMiniMapNodeClick>((event, node) => {
+    event.preventDefault()
+    event.stopPropagation()
+    focusNodeFromMiniMap(node as FlowNode)
+  }, [focusNodeFromMiniMap])
 
   // Right-button drag: use as pan gesture and suppress context menu when dragging.
   useEffect(() => {
@@ -1669,29 +3065,39 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
   }, [])
 
   useEffect(() => {
-    const onMove = (ev: MouseEvent) => {
-      if (!minimapDragRef.current) return
-      const rect = minimapDragRef.current.rect
-      const cx = ev.clientX - rect.left
-      const cy = ev.clientY - rect.top
-      const rx = Math.max(0, Math.min(1, cx / rect.width))
-      const ry = Math.max(0, Math.min(1, cy / rect.height))
-      const defaultW = 180, defaultH = 96
-      if (nodes.length === 0) return
-      const minX = Math.min(...nodes.map(n => n.position.x))
-      const minY = Math.min(...nodes.map(n => n.position.y))
-      const maxX = Math.max(...nodes.map(n => n.position.x + (((n as any).width) || defaultW)))
-      const maxY = Math.max(...nodes.map(n => n.position.y + (((n as any).height) || defaultH)))
-      const worldX = minX + rx * (maxX - minX)
-      const worldY = minY + ry * (maxY - minY)
-      const z = rf.getViewport?.().zoom ?? 1
-      rf.setCenter?.(worldX, worldY, { zoom: z, duration: 0 })
+    const root = rootRef.current
+    if (!root) return
+
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      event.stopPropagation()
     }
-    const onUp = () => { minimapDragRef.current = null }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-  }, [nodes, rf])
+    root.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      root.removeEventListener('wheel', onWheel)
+    }
+  }, [])
+
+  useEffect(() => {
+    const shouldBlockGesture = (target: EventTarget | null) => {
+      if (!(target instanceof Node)) return false
+      const root = rootRef.current
+      return Boolean(root && root.contains(target))
+    }
+    const blockGesture = (event: Event) => {
+      if (!shouldBlockGesture(event.target)) return
+      event.preventDefault()
+    }
+    window.addEventListener('gesturestart', blockGesture, { passive: false } as AddEventListenerOptions)
+    window.addEventListener('gesturechange', blockGesture, { passive: false } as AddEventListenerOptions)
+    window.addEventListener('gestureend', blockGesture, { passive: false } as AddEventListenerOptions)
+    return () => {
+      window.removeEventListener('gesturestart', blockGesture as EventListener)
+      window.removeEventListener('gesturechange', blockGesture as EventListener)
+      window.removeEventListener('gestureend', blockGesture as EventListener)
+    }
+  }, [])
 
   // Share/view-only: format the whole graph once after initial load, and avoid selection side effects.
   useEffect(() => {
@@ -1721,28 +3127,6 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     }))
   }, [edges, nodes, viewOnly])
 
-  // 当研究助手打开时，对当前画布做一次垂直树形布局并聚焦最新节点
-  useEffect(() => {
-    if (viewOnly) return
-    if (!langGraphChatOpen) return
-    const { autoLayoutAllDagVertical } = useRFStore.getState()
-    autoLayoutAllDagVertical()
-    requestAnimationFrame(() => {
-      const { nodes: updatedNodes } = useRFStore.getState()
-      const latest = [...updatedNodes].slice(-1)[0]
-      if (!latest) return
-      const nodeW = ((latest as any).width) || ((latest as any).style?.width) || 220
-      const nodeH = ((latest as any).height) || ((latest as any).style?.height) || 120
-      const centerX = latest.position.x + nodeW / 2
-      const centerY = latest.position.y + nodeH / 2
-      useRFStore.setState(s => ({
-        nodes: s.nodes.map(n => ({ ...n, selected: n.id === latest.id })),
-      }))
-      const z = rf.getViewport?.().zoom || 1
-      rf.setCenter?.(centerX, centerY, { zoom: z, duration: 300 })
-    })
-  }, [langGraphChatOpen, rf, viewOnly])
-
   useEffect(() => {
     if (viewOnly) return
     if (initialFitAppliedRef.current) return
@@ -1766,109 +3150,128 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
     return () => window.removeEventListener('mousedown', onDown, true)
   }, [closeInsertMenu, insertMenu.open])
 
-
   return (
-    <div className={joinClassNames('tc-canvas', className)}
-      style={{ height: '100%', width: '100%', position: 'relative' }}
-      data-connecting={connectingType || ''}
-      data-connecting-active={(isConnecting || !!tapConnectSource) ? 'true' : 'false'}
-      data-dragging={dragging ? 'true' : 'false'}
-      data-tour="canvas"
-      ref={rootRef}
-      onMouseMove={(e) => {
-        lastPointerScreenRef.current = { x: e.clientX, y: e.clientY }
-        if (isConnecting) setMouse({ x: e.clientX, y: e.clientY })
-      }}
-      onDrop={viewOnly ? undefined : onDrop}
-      onDragOver={viewOnly ? undefined : onDragOver}
-      onClick={viewOnly ? undefined : handleRootClick}
-      onMouseDown={viewOnly ? undefined : (e) => {
-        if (e.button === 2) {
-          rightDragRef.current = { startX: e.clientX, startY: e.clientY }
-        }
-        handleRootMouseDown(e)
-      }}
-      onDoubleClick={(e) => {
-        if (viewOnly) return
-        // double-click blank to go up one level in focus mode
-        const target = e.target as HTMLElement
-        if (!target.closest('.react-flow__node') && focusGroupId) {
-          exitGroupFocus()
-          setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
-        }
-      }}
-      onKeyDown={(e) => {
-        if (viewOnly) return
-        // 处理键盘删除事件 - 检查是否在输入框中
-        function isTextInputElement(target: EventTarget | null) {
-          if (!(target instanceof HTMLElement)) return false
-          const tagName = target.tagName
-          if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
-          if (target.getAttribute('contenteditable') === 'true') return true
-          if (target.closest('input') || target.closest('textarea')) return true
-          if (target.closest('[contenteditable="true"]')) return true
-          return false
-        }
+    <CanvasRenderContext.Provider value={canvasRenderContextValue}>
+      <div className={joinClassNames('tc-canvas', className)}
+        style={canvasStyle}
+        data-connecting={connectingType || ''}
+        data-connecting-active={(isConnecting || !!tapConnectSource) ? 'true' : 'false'}
+        data-dragging={dragging ? 'true' : 'false'}
+        data-heavy-selection={heavySelectionActive ? 'true' : 'false'}
+        data-heavy-selection-dragging={heavySelectionDragging ? 'true' : 'false'}
+        data-viewport-moving={viewportMoving ? 'true' : 'false'}
+        data-tour="canvas"
+        ref={rootRef}
+        onMouseEnter={(e) => {
+          queueSpotlightPosition(e.clientX, e.clientY)
+          setSpotlightVisible(true)
+        }}
+        onMouseLeave={() => {
+          setSpotlightVisible(false)
+        }}
+        onMouseMove={(e) => {
+          lastPointerScreenRef.current = { x: e.clientX, y: e.clientY }
+          if (!viewportMoving) {
+            queueSpotlightPosition(e.clientX, e.clientY)
+          }
+          if (isConnecting) setMouse({ x: e.clientX, y: e.clientY })
+        }}
+        onDrop={viewOnly ? undefined : onDrop}
+        onDragOver={viewOnly ? undefined : onDragOver}
+        onMouseDown={viewOnly ? undefined : (e) => {
+          if (e.button === 2) {
+            rightDragRef.current = { startX: e.clientX, startY: e.clientY }
+          }
+        }}
+        onDoubleClick={(e) => {
+          if (viewOnly) return
+          // double-click blank to go up one level in focus mode
+          const target = e.target as HTMLElement
+          if (!target.closest('.react-flow__node') && focusedNodeId) {
+            clearFocusedSubgraph()
+            setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
+          }
+        }}
+        onKeyDown={(e) => {
+          if (viewOnly) return
+          // 处理键盘删除事件 - 检查是否在输入框中
+          function isTextInputElement(target: EventTarget | null) {
+            if (!(target instanceof HTMLElement)) return false
+            const tagName = target.tagName
+            if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
+            if (target.getAttribute('contenteditable') === 'true') return true
+            if (target.closest('input') || target.closest('textarea')) return true
+            if (target.closest('[contenteditable="true"]')) return true
+            return false
+          }
 
-        const focusTarget = document.activeElement as HTMLElement | null
-        const isTextInput = isTextInputElement(e.target) || isTextInputElement(focusTarget)
+          const focusTarget = document.activeElement as HTMLElement | null
+          const isTextInput = isTextInputElement(e.target) || isTextInputElement(focusTarget)
 
-        if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput) {
-          e.preventDefault()
-          useRFStore.getState().removeSelected()
-        }
-      }}
-      tabIndex={0} // 使div可以接收键盘事件
-      onPaste={(e) => {
-        if (viewOnly || langGraphChatOpen) return
-        const isTextInputElement = (target: EventTarget | null) => {
-          if (!(target instanceof HTMLElement)) return false
-          const tagName = target.tagName
-          if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
-          if (target.getAttribute('contenteditable') === 'true') return true
-          if (target.closest('input') || target.closest('textarea')) return true
-          if (target.closest('[contenteditable="true"]')) return true
-          return false
-        }
-        if (isTextInputElement(e.target) || isTextInputElement(document.activeElement)) return
-        const filesFromClipboard: File[] = []
-        const items = Array.from(e.clipboardData?.items || [])
-        for (const item of items) {
-          if (item.kind !== 'file') continue
-          const f = item.getAsFile()
-          if (f && isImageFile(f)) filesFromClipboard.push(f)
-        }
-        const pos = rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
-        let handled = false
-        if (filesFromClipboard.length) {
-          e.preventDefault()
-          e.stopPropagation()
-          ;(window as any).__tcLastImagePasteAt = Date.now()
-          void importImagesFromFiles(filesFromClipboard, pos)
-          toast(`已导入 ${filesFromClipboard.length} 张图片`, 'success')
-          handled = true
-        }
-        const text = e.clipboardData?.getData('text/plain')?.trim()
-        if (text) {
-          try {
-            const data = JSON.parse(text)
-            if (data?.nodes && Array.isArray(data.nodes) && data?.edges && Array.isArray(data.edges)) {
-              e.preventDefault()
-              e.stopPropagation()
-              ;(window as any).__tcLastWorkflowPasteAt = Date.now()
-              importWorkflow(data, pos)
-              toast('已导入工作流', 'success')
-              handled = true
-            }
-          } catch {
-            if (!handled && (text.startsWith('{') || text.startsWith('['))) {
-              toast('剪贴板不是有效的工作流 JSON', 'error')
+          if (e.key === 'Escape' && focusedNodeId && !isTextInput) {
+            e.preventDefault()
+            clearFocusedSubgraph()
+            setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
+            return
+          }
+
+          if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput) {
+            e.preventDefault()
+            useRFStore.getState().removeSelected()
+          }
+        }}
+        tabIndex={0} // 使div可以接收键盘事件
+        onPaste={(e) => {
+          if (viewOnly) return
+          const isTextInputElement = (target: EventTarget | null) => {
+            if (!(target instanceof HTMLElement)) return false
+            const tagName = target.tagName
+            if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
+            if (target.getAttribute('contenteditable') === 'true') return true
+            if (target.closest('input') || target.closest('textarea')) return true
+            if (target.closest('[contenteditable="true"]')) return true
+            return false
+          }
+          if (isTextInputElement(e.target) || isTextInputElement(document.activeElement)) return
+          const filesFromClipboard: File[] = []
+          const items = Array.from(e.clipboardData?.items || [])
+          for (const item of items) {
+            if (item.kind !== 'file') continue
+            const f = item.getAsFile()
+            if (f && isImageFile(f)) filesFromClipboard.push(f)
+          }
+          const pos = rf.screenToFlowPosition(lastPointerScreenRef.current ?? getFallbackScreenPoint())
+          let handled = false
+          if (filesFromClipboard.length) {
+            e.preventDefault()
+            e.stopPropagation()
+            ;(window as any).__tcLastImagePasteAt = Date.now()
+            void importImagesFromFiles(filesFromClipboard, pos)
+            toast(`已导入 ${filesFromClipboard.length} 张图片`, 'success')
+            handled = true
+          }
+          const text = e.clipboardData?.getData('text/plain')?.trim()
+          if (text) {
+            try {
+              const data = JSON.parse(text) as CanvasImportData
+              const extracted = extractCanvasGraph(data)
+              if (extracted?.nodes.length) {
+                e.preventDefault()
+                e.stopPropagation()
+                ;(window as any).__tcLastWorkflowPasteAt = Date.now()
+                importWorkflow(data, pos)
+                toast('已导入工作流', 'success')
+                handled = true
+              }
+            } catch {
+              if (!handled && (text.startsWith('{') || text.startsWith('['))) {
+                toast('剪贴板不是有效的工作流 JSON', 'error')
+              }
             }
           }
-        }
-        if (!handled) return
-      }}
-    >
+          if (!handled) return
+        }}
+      >
       <input className="tc-canvas__image-input"
         ref={imageUploadInputRef}
         type="file"
@@ -1886,7 +3289,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         }}
       />
       <ReactFlow className="tc-canvas__flow"
-        nodes={focusFiltered.nodes}
+        nodes={styledViewNodes}
         edges={viewEdges}
         onNodesChange={viewOnly ? undefined : handleNodesChange}
         onEdgesChange={viewOnly ? undefined : onEdgesChange}
@@ -1903,18 +3306,17 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         onNodeDrag={viewOnly ? undefined : onNodeDrag}
         onNodeDragStop={viewOnly ? undefined : onNodeDragStop}
         onNodeClick={viewOnly ? undefined : onNodeClick}
-        onNodeDoubleClick={(_evt, node) => {
-          if (viewOnly) return
-          if (node?.type === 'groupNode') {
-            useUIStore.getState().enterGroupFocus(node.id)
-            setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
-          }
-        }}
+        onNodeDoubleClick={viewOnly ? undefined : onNodeDoubleClick}
         onMoveEnd={(_evt, vp) => {
           setCanvasViewport(vp)
+          const lastPointer = lastPointerScreenRef.current
+          if (lastPointer) {
+            queueSpotlightPosition(lastPointer.x, lastPointer.y)
+          }
+          setSpotlightVisible(true)
         }}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
+        nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         onInit={onInit}
         selectionOnDrag={!viewOnly}
         // Edit mode: middle-button and right-button drag pan the canvas; left drag keeps selection box.
@@ -1952,149 +3354,406 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
         connectionLineType={ConnectionLineType.SimpleBezier}
         connectionLineStyle={connectionLineStyle}
       >
-        <MiniMap className="tc-canvas__minimap" style={{ width: 160, height: 110 }} />
+        <MiniMap
+          className="tc-canvas__minimap"
+          position="bottom-left"
+          style={{ width: 160, height: 110 }}
+          pannable
+          zoomable={false}
+          onClick={handleMiniMapClick}
+          onNodeClick={handleMiniMapNodeClick}
+        />
         <Controls className="tc-canvas__controls" position="bottom-left" />
-        <Background className="tc-canvas__background" gap={16} size={1} color={backgroundGridColor} />
+        <Background id="tc-canvas-grid-base" className="tc-canvas__background" gap={16} size={1} color={backgroundGridColor} />
+        <Background
+          id="tc-canvas-grid-spotlight"
+          className="tc-canvas__background tc-canvas__background--spotlight"
+          gap={16}
+          size={1}
+          color="var(--tc-spotlight-grid-color)"
+        />
       </ReactFlow>
+      {!viewOnly && (() => {
+        const slot = typeof document !== 'undefined' ? document.getElementById('tc-canvas-visibility-slot') : null
+        const panel = (
+          <PanelCard
+            className="tc-canvas__visibility-panel"
+            padding="compact"
+            style={{
+              position: slot ? 'relative' : 'absolute',
+              right: slot ? undefined : 12,
+              top: slot ? undefined : 12,
+              background: isDarkCanvas ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.82)',
+              borderColor: isDarkCanvas ? 'rgba(148, 163, 184, 0.16)' : 'rgba(15, 23, 42, 0.06)',
+              backdropFilter: 'blur(10px)',
+            }}
+          >
+            <Group className="tc-canvas__visibility-panel-group" gap={4} wrap="nowrap">
+              {NODE_VISIBILITY_FILTERS.map((filter) => {
+                const active = nodeVisibility[filter]
+                const Icon = getNodeVisibilityIcon(filter)
+                return (
+                  <Button
+                    key={filter}
+                    className="tc-canvas__visibility-panel-tag"
+                    size="compact-xs"
+                    radius="xs"
+                    variant="subtle"
+                    leftSection={<Icon className="tc-canvas__visibility-panel-tag-icon" size={12} stroke={1.9} />}
+                    styles={{
+                      root: {
+                        height: 24,
+                        paddingInline: 8,
+                        border: `1px solid ${active
+                          ? (isDarkCanvas ? 'rgba(148, 163, 184, 0.26)' : 'rgba(15, 23, 42, 0.12)')
+                          : 'transparent'}`,
+                        background: active
+                          ? (isDarkCanvas ? 'rgba(51, 65, 85, 0.78)' : 'rgba(248, 250, 252, 0.92)')
+                          : 'transparent',
+                        color: active
+                          ? (isDarkCanvas ? 'rgba(241, 245, 249, 0.96)' : 'rgba(15, 23, 42, 0.92)')
+                          : (isDarkCanvas ? 'rgba(148, 163, 184, 0.46)' : 'rgba(15, 23, 42, 0.38)'),
+                        boxShadow: active ? (isDarkCanvas ? 'inset 0 0 0 1px rgba(255,255,255,0.02)' : 'none') : 'none',
+                        transition: 'all 160ms ease',
+                      },
+                      section: {
+                        marginRight: 4,
+                      },
+                      label: {
+                        fontWeight: 600,
+                        fontSize: 11,
+                        lineHeight: '24px',
+                      },
+                    }}
+                    onClick={() => {
+                      setNodeVisibility((current) => ({ ...current, [filter]: !current[filter] }))
+                    }}
+                  >
+                    {buildNodeVisibilityLabel(filter)}
+                  </Button>
+                )
+              })}
+            </Group>
+          </PanelCard>
+        )
+        return slot ? createPortal(panel, slot) : panel
+      })()}
       {/* Focus mode breadcrumb with hierarchy */}
-      {!viewOnly && focusGroupId && (
-        <Paper className="tc-canvas__breadcrumb" withBorder shadow="sm" radius="xl" p={6} style={{ position: 'absolute', left: 12, top: 12 }}>
-          <Group className="tc-canvas__breadcrumb-group" gap={8} style={{ flexWrap: 'nowrap' }}>
-            {focusStack.map((gid, idx) => {
-              const n = nodes.find(nn => nn.id === gid)
-              const label = (n?.data as any)?.label || $('组')
-              const isLast = idx === focusStack.length - 1
-              return (
-                <Group className="tc-canvas__breadcrumb-item" key={gid} gap={6} style={{ flexWrap: 'nowrap' }}>
-                  <Button className="tc-canvas__breadcrumb-button" size="xs" variant={isLast ? 'filled' : 'subtle'} onClick={() => {
-                    useUIStore.setState(s => ({ focusStack: s.focusStack.slice(0, idx + 1) }))
-                    setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50)
-                  }}>{label}</Button>
-                  {!isLast && <Text className="tc-canvas__breadcrumb-sep" size="sm" c="dimmed">/</Text>}
-                </Group>
-              )
-            })}
-            <Divider className="tc-canvas__breadcrumb-divider" orientation="vertical" style={{ height: 16 }} />
-            <Button className="tc-canvas__breadcrumb-action" size="xs" variant="subtle" onClick={()=>{ exitGroupFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>
-            <Button className="tc-canvas__breadcrumb-action" size="xs" variant="subtle" onClick={()=>{ exitAllFocus(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>
+      {!viewOnly && focusedNodeSummary && (() => {
+        const slot = typeof document !== 'undefined' ? document.getElementById('tc-canvas-breadcrumb-slot') : null
+        const breadcrumb = (
+          <PanelCard
+            className="tc-canvas__breadcrumb"
+            padding="compact"
+            style={{
+              position: slot ? 'relative' : 'absolute',
+              left: slot ? undefined : 12,
+              top: slot ? undefined : 12,
+              zIndex: slot ? undefined : 340,
+              pointerEvents: 'auto',
+            }}
+          >
+            <Group className="tc-canvas__breadcrumb-group" gap={8} style={{ flexWrap: 'nowrap' }}>
+              <Text className="tc-canvas__breadcrumb-label" size="sm" fw={600}>{$('聚焦节点')}:</Text>
+              <Button className="tc-canvas__breadcrumb-button" size="xs" variant="filled">
+                {focusedNodeSummary.label}
+              </Button>
+              <Divider className="tc-canvas__breadcrumb-divider" orientation="vertical" style={{ height: 16 }} />
+              <Button className="tc-canvas__breadcrumb-action" size="xs" variant="subtle" onClick={()=>{ clearFocusedSubgraph(); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>
+            </Group>
+          </PanelCard>
+        )
+        return slot ? createPortal(breadcrumb, slot) : breadcrumb
+      })()}
+      {!viewOnly && referencePickerTargetId && (
+        <PanelCard
+          className="tc-canvas__reference-picker-bar"
+          padding="compact"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: 16,
+            transform: 'translateX(-50%)',
+            zIndex: 340,
+            pointerEvents: 'auto',
+          }}
+        >
+          <Group className="tc-canvas__reference-picker-bar-group" gap={8} wrap="nowrap">
+            <Text className="tc-canvas__reference-picker-bar-title" size="sm" fw={700}>
+              从画布选择参考
+            </Text>
+            <Text className="tc-canvas__reference-picker-bar-meta" size="xs" c="dimmed">
+              点击未连接到当前节点的图片后直接连线
+            </Text>
+            <Divider className="tc-canvas__reference-picker-bar-divider" orientation="vertical" style={{ height: 16 }} />
+            <Button
+              className="tc-canvas__reference-picker-bar-exit"
+              size="xs"
+              variant="subtle"
+              onClick={() => closeCanvasReferencePicker()}
+            >
+              退出
+            </Button>
           </Group>
-        </Paper>
+        </PanelCard>
       )}
-      {/* Empty canvas guide */}
-      {!viewOnly && nodes.length === 0 && (
-        <div className="tc-canvas__empty-guide" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-          <Paper className="tc-canvas__empty-guide-card" withBorder shadow="md" p="md" style={{ pointerEvents: 'auto', background: emptyGuideBackground, color: emptyGuideTextColor }}>
-            <Stack className="tc-canvas__empty-guide-stack" gap={8} style={{ color: emptyGuideTextColor }}>
-              <Text className="tc-canvas__empty-guide-title" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.7 }}>{$('快速开始')}</Text>
-              <Group className="tc-canvas__empty-guide-actions" gap={8} style={{ flexWrap: 'nowrap' }}>
-                <Button
-                  className="tc-canvas__empty-guide-button"
-                  size="sm"
-                  variant="light"
-                  onClick={() => {
-                    const sample = getQuickStartSampleFlow()
-                    load(sample)
-                    setTimeout(() => rf.fitView?.({ padding: 0.2 }), 50)
-                  }}
-                >
-                  {$('创建示例工作流')}
-                </Button>
-                <Button
-                  className="tc-canvas__empty-guide-button"
-                  size="sm"
-                  variant="subtle"
-                  onClick={() => window.open('https://jpcpk71wr7.feishu.cn/wiki/WPDAw408jiQlOxki5seccaLdn9b', '_blank', 'noopener')}
-                >
-                  {$('了解更多')}
-                </Button>
-              </Group>
-              <Text className="tc-canvas__empty-guide-tip" size="xs" c="dimmed" style={{ color: emptyGuideTextColor, opacity: 0.8 }}>提示：框选多个节点后按 ⌘/Ctrl+G 打组，⌘/Ctrl+Enter 一键运行。</Text>
-            </Stack>
-          </Paper>
-        </div>
-      )}
-      {((!viewOnly && !!groupRectFlow) || guides?.vx !== undefined || guides?.hy !== undefined) && (
+      {(guides?.vx !== undefined || guides?.hy !== undefined) && (
         <CanvasViewportOverlays
-          viewOnly={viewOnly}
-          groupRectFlow={groupRectFlow}
-          selectionBorderColor={selectionBorderColor}
           guides={guides}
-          selectionPartialOverlaps={selectionPartialOverlaps}
-          nodes={nodes}
-          edges={edges}
-          onFormatTree={formatTree}
         />
       )}
+      {selectionActionAnchor && !viewOnly && !dragging && !viewportMoving && (
+        <CanvasSelectionActionBar anchor={selectionActionAnchor}>
+          <PanelCard
+            className="tc-canvas__selection-action-bar-card"
+            padding="compact"
+            style={{
+              background: 'rgba(28, 28, 30, 0.94)',
+              borderColor: 'rgba(255,255,255,0.1)',
+              boxShadow: '0 20px 48px rgba(0,0,0,0.32)',
+            }}
+          >
+            <Group className="tc-canvas__selection-action-bar-group" gap={6} style={{ flexWrap: 'nowrap' }}>
+              <Button
+                className="tc-canvas__selection-action-bar-action"
+                size="xs"
+                radius="xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<IconBoxMultiple className="tc-canvas__selection-action-bar-icon" size={14} />}
+                styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+              >
+                {selectionActionAnchor.selectedCount}
+              </Button>
+              {canCreateScriptBundleFromSelection && (
+                <Button
+                  className="tc-canvas__selection-action-bar-action"
+                  size="xs"
+                  radius="xs"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={<IconLayoutGridAdd className="tc-canvas__selection-action-bar-icon" size={14} />}
+                  styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                  onClick={() => createScriptBundleFromSelection()}
+                >
+                  拼接脚本
+                </Button>
+              )}
+              {canCreateGroupFromSelection && (
+                <Button
+                  className="tc-canvas__selection-action-bar-action"
+                  size="xs"
+                  radius="xs"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={<IconLayoutGridAdd className="tc-canvas__selection-action-bar-icon" size={14} />}
+                  styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                  onClick={() => addGroupForSelection()}
+                >
+                  打组
+                </Button>
+              )}
+              {canRunSelectedGroup && (
+                <Button
+                  className="tc-canvas__selection-action-bar-action"
+                  size="xs"
+                  radius="xs"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={<IconPlayerPlay className="tc-canvas__selection-action-bar-icon" size={14} />}
+                  styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                  loading={isRunningSelectedGroup}
+                  disabled={!canRunSelectedGroup}
+                  onClick={() => {
+                    if (selectedGroupIds.length !== 1) return
+                    void runGroupNodes(selectedGroupIds[0])
+                  }}
+                >
+                  {isRunningSelectedGroup ? '执行中…' : '整组执行'}
+                </Button>
+              )}
+              {canPublishSelectedGroupTemplate && (
+                <Button
+                  className="tc-canvas__selection-action-bar-action"
+                  size="xs"
+                  radius="xs"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={<IconLayoutGridAdd className="tc-canvas__selection-action-bar-icon" size={14} />}
+                  styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                  onClick={() => { void publishSelectedGroupAsTemplate() }}
+                >
+                  创建模板
+                </Button>
+              )}
+              {canUngroupSelection && (
+                <Button
+                  className="tc-canvas__selection-action-bar-action"
+                  size="xs"
+                  radius="xs"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={<IconBrackets className="tc-canvas__selection-action-bar-icon" size={14} />}
+                  styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                  onClick={() => runUngroupSelection()}
+                >
+                  解组
+                </Button>
+              )}
+              {hasSelectionOverflowActions && (
+                <Menu shadow="md" width={180} withinPortal position="bottom-end">
+                  <Menu.Target>
+                    <Button
+                      className="tc-canvas__selection-action-bar-action"
+                      size="xs"
+                      radius="xs"
+                      variant="subtle"
+                      color="gray"
+                      styles={{ root: { color: '#f5f5f7', fontWeight: 600 } }}
+                    >
+                      更多
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {canLayoutSelection && (
+                      <>
+                        <Menu.Item onClick={() => runLayoutSelection('grid')}>
+                          紧凑排序
+                        </Menu.Item>
+                        <Menu.Item onClick={() => runLayoutSelection('flow')}>
+                          链路排序
+                        </Menu.Item>
+                        <Menu.Item onClick={() => runLayoutSelection('column')}>
+                          单列排序
+                        </Menu.Item>
+                      </>
+                    )}
+                    {canStitchSelectedGroup && (
+                      <Menu.Item onClick={() => {
+                        if (selectedGroupIds.length !== 1) return
+                        void stitchGroupToLongImage(selectedGroupIds[0])
+                      }}>
+                        {stitchingGroupId ? '生成长图中…' : '生成长图'}
+                      </Menu.Item>
+                    )}
+                    {downloadAssetsGroupId && (
+                      <Menu.Item
+                        disabled={!canDownloadSelectedGroupAssets}
+                        onClick={() => { void runDownloadSelectedGroupAssets() }}
+                      >
+                        {downloadingGroupAssetsId ? '下载中…' : '下载组内素材'}
+                      </Menu.Item>
+                    )}
+                    {canSaveSelectedGroupWorkflow && (
+                      <Menu.Item onClick={() => { void saveSelectedGroupAsWorkflowAsset() }}>
+                        保存为资产
+                      </Menu.Item>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            </Group>
+          </PanelCard>
+        </CanvasSelectionActionBar>
+      )}
       {menu?.show && (
-        <Paper className="tc-canvas__context-menu" withBorder shadow="md" onMouseLeave={() => setMenu(null)} style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 60, minWidth: 200 }}>
+        <PanelCard
+          className="tc-canvas__context-menu"
+          padding="compact"
+          onMouseLeave={() => setMenu(null)}
+          style={{
+            position: 'fixed',
+            left: Math.max(8, Math.min(menu.x, Math.max(8, window.innerWidth - 280))),
+            top: Math.max(8, Math.min(menu.y, Math.max(8, window.innerHeight - 420))),
+            zIndex: 60,
+            minWidth: 220,
+            maxHeight: 'min(72vh, 520px)',
+            overflowY: 'auto',
+          }}
+        >
           <Stack className="tc-canvas__context-menu-stack" gap={4} p="xs">
             {menu.type === 'canvas' && (
               <>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { pasteFromClipboardAt(screenToFlow({ x: menu.x, y: menu.y })); setMenu(null) }}>在此粘贴</Button>
-                <Button
-                  className="tc-canvas__context-menu-action"
-                  variant="subtle"
-                  onClick={() => {
-                    pendingImageUploadScreenRef.current = { x: menu.x, y: menu.y }
-                    imageUploadInputRef.current?.click()
-                    setMenu(null)
-                  }}
-                >
-                  上传图片（可多选）
-                </Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => {
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.accept = '.json'
-                  input.onchange = async (e) => {
-                    const file = (e.target as HTMLInputElement).files?.[0]
-                    if (!file) return
-                    try {
-                      const text = await file.text()
-                      const data = JSON.parse(text)
-                      if (data.nodes && Array.isArray(data.nodes) && data.edges && Array.isArray(data.edges)) {
-                        const pos = screenToFlow({ x: menu.x, y: menu.y })
-                        importWorkflow(data, pos)
-                        setMenu(null)
-                      } else {
-                        alert('无效的工作流格式')
-                      }
-                    } catch (err) {
-                      alert('解析 JSON 失败: ' + (err as Error).message)
-                    }
-                  }
-                  input.click()
-                }}>导入工作流 JSON</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { formatTree(); setMenu(null) }}>{$('格式化')}</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useUIStore.getState().toggleEdgeRoute(); setMenu(null) }}>切换边线（当前：{edgeRoute==='orth'?'正交':'平滑'}）</Button>
-                {focusGroupId && <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { exitGroupFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>上一级</Button>}
-                {focusGroupId && <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useUIStore.getState().exitAllFocus(); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>退出聚焦</Button>}
-                <Divider className="tc-canvas__context-menu-divider" my={2} />
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'image', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建图像</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'imageFission', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建图像裂变</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'storyboardImage', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建分镜图</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'mosaic', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建拼图</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'composeVideo', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建视频</Button>
-                <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().addNode('taskNode', undefined, { kind: 'character', position: screenToFlow({ x: menu.x, y: menu.y }) }); setMenu(null) }}>新建角色</Button>
+                {CANVAS_CONTEXT_ADDABLE_KINDS.map((kind) => {
+                  const schema = getTaskNodeSchema(kind)
+                  return (
+                    <Button
+                      key={kind}
+                      className="tc-canvas__context-menu-action"
+                      variant="subtle"
+                      onClick={() => createTaskNodeAtMenu(kind)}
+                    >
+                      新建{schema.label || kind}
+                    </Button>
+                  )
+                })}
               </>
             )}
             {menu.type === 'node' && menu.id && (() => {
-              const target = nodes.find(n => n.id === menu.id)
-              const isGroup = target?.type === 'groupNode'
-              if (isGroup) {
-                const childIds = new Set(nodes.filter(n => (n as any).parentId === target!.id).map(n=>n.id))
-                return (
-                  <>
-                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={async () => { await runFlowDag(2, useRFStore.getState, useRFStore.setState, { only: childIds }); setMenu(null) }}>运行该组</Button>
-                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().autoLayoutForParent(target!.id); setMenu(null) }}>{$('格式化')}</Button>
-                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { enterGroupFocus(target!.id); setMenu(null); setTimeout(()=> rf.fitView?.({ padding: 0.2 }), 50) }}>进入组</Button>
-                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { useRFStore.getState().renameSelectedGroup(); setMenu(null) }}>重命名</Button>
-                    <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { useRFStore.getState().ungroupGroupNode(target!.id); setMenu(null) }}>解组</Button>
-                  </>
-                )
-              }
+              const menuNode = nodes.find((n) => n.id === menu.id)
+              const nodeIsGroup = menuNode?.type === 'groupNode'
               return (
                 <>
+                  {nodeIsGroup && (
+                    <>
+                      <Button
+                        className="tc-canvas__context-menu-action"
+                        variant="subtle"
+                        loading={runningGroupId === menu.id}
+                        disabled={Boolean(runningGroupId)}
+                        onClick={() => {
+                          void runGroupNodes(menu.id!)
+                          setMenu(null)
+                        }}
+                      >
+                        {runningGroupId === menu.id ? '执行中…' : '一键执行组内节点'}
+                      </Button>
+                      <Button
+                        className="tc-canvas__context-menu-action"
+                        variant="subtle"
+                        loading={stitchingGroupId === menu.id}
+                        disabled={Boolean(stitchingGroupId)}
+                        onClick={() => {
+                          void stitchGroupToLongImage(menu.id!)
+                          setMenu(null)
+                        }}
+                      >
+                        {stitchingGroupId ? '生成中…' : '生成长图'}
+                      </Button>
+                      <Button
+                        className="tc-canvas__context-menu-action"
+                        variant="subtle"
+                        loading={publishingTemplateGroupId === menu.id}
+                        disabled={Boolean(publishingTemplateGroupId)}
+                        onClick={() => {
+                          void publishSelectedGroupAsTemplate(menu.id!)
+                          setMenu(null)
+                        }}
+                      >
+                        {publishingTemplateGroupId === menu.id ? '保存模板中…' : '创建模板'}
+                      </Button>
+                      <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { ungroupGroupNode(menu.id!); setMenu(null) }}>
+                        解组
+                      </Button>
+                      <Divider className="tc-canvas__context-menu-divider" my={2} />
+                    </>
+                  )}
+                  {!nodeIsGroup && canCreateGroupFromSelection && (
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { addGroupForSelection(); setMenu(null) }}>
+                      打组
+                    </Button>
+                  )}
+                  {!nodeIsGroup && canCreateScriptBundleFromSelection && (
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { createScriptBundleFromSelection(); setMenu(null) }}>
+                      拼接脚本
+                    </Button>
+                  )}
+                  {!nodeIsGroup && canUngroupSelection && (
+                    <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { runUngroupSelection(); setMenu(null) }}>
+                      解组
+                    </Button>
+                  )}
+                  {!nodeIsGroup && (canCreateGroupFromSelection || canCreateScriptBundleFromSelection || canUngroupSelection) && <Divider className="tc-canvas__context-menu-divider" my={2} />}
                   <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { duplicateNode(menu.id!); setMenu(null) }}>复制一份</Button>
                   <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { deleteNode(menu.id!); setMenu(null) }}>删除</Button>
                   <Divider className="tc-canvas__context-menu-divider" my={2} />
@@ -2108,7 +3767,7 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
                   >
                     运行该节点
                   </Button>
-                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { cancelNode(menu.id!); setMenu(null) }}>停止该节点</Button>
+                  <Button className="tc-canvas__context-menu-action" variant="subtle" onClick={() => { cancelNode(menu.id!); setNodeStatus(menu.id!, 'error', { progress: 0, lastError: '任务已取消' }); setMenu(null) }}>停止该节点</Button>
                 </>
               )
             })()}
@@ -2116,45 +3775,12 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
               <Button className="tc-canvas__context-menu-action" variant="subtle" color="red" onClick={() => { deleteEdge(menu.id!); setMenu(null) }}>删除连线</Button>
             )}
           </Stack>
-        </Paper>
+        </PanelCard>
       )}
-      {insertMenu.open && (() => {
-        const fromNode = nodes.find(n => n.id === insertMenu.fromNodeId)
-        const fromKind = (fromNode?.data as any)?.kind as string | undefined
-        const fromLabel = (fromNode?.data as any)?.label as string | undefined
-        const sourceType = parseHandleTypeFromId(insertMenu.fromHandle)
-
-        const schemaTargets = listTaskNodeSchemas()
-        const candidates = schemaTargets
-          .filter((schema) => {
-            const handles = schema.handles as any
-            const targetDefs = handles?.dynamic ? [{ type: 'any' }] : (handles?.targets || [])
-            if (!Array.isArray(targetDefs) || targetDefs.length === 0) return false
-            const acceptsType = targetDefs.some((h: any) => {
-              const t = String(h?.type || 'any').toLowerCase()
-              return t === 'any' || t === sourceType
-            })
-            if (!acceptsType) return false
-            if (!fromKind) return true
-            return isValidEdgeByType(fromKind, schema.kind)
-          })
-          .sort((a, b) => {
-            const order: Record<string, number> = { image: 10, video: 20, composer: 30, storyboard: 40, subflow: 90, generic: 100 }
-            const ai = order[a.category] ?? 999
-            const bi = order[b.category] ?? 999
-            if (ai !== bi) return ai - bi
-            return String(a.label || a.kind).localeCompare(String(b.label || b.kind))
-          })
-
-        const title = fromLabel
-          ? `从「${fromLabel}」继续（${getHandleTypeLabel(sourceType)}）`
-          : `继续（${getHandleTypeLabel(sourceType)}）`
-
-        return (
-          <Paper
+      {insertMenuContent && (
+          <PanelCard
             className="tc-canvas__insert-menu"
-            withBorder
-            shadow="md"
+            padding="compact"
             style={{
               position: 'fixed',
               left: insertMenu.x,
@@ -2167,135 +3793,163 @@ function CanvasInner({ className }: CanvasInnerProps): JSX.Element {
           >
             <Stack className="tc-canvas__insert-menu-stack" gap={6} p="xs">
               <Group className="tc-canvas__insert-menu-header" justify="space-between" gap={8} wrap="nowrap">
-                <Text className="tc-canvas__insert-menu-title" size="xs" c="dimmed" lineClamp={1} title={title}>
-                  {title}
+                <Text className="tc-canvas__insert-menu-title" size="xs" c="dimmed" lineClamp={1} title={insertMenuContent.title}>
+                  {insertMenuContent.title}
                 </Text>
                 <Button className="tc-canvas__insert-menu-close" variant="subtle" size="xs" onClick={closeInsertMenu}>
                   关闭
                 </Button>
               </Group>
-              {candidates.length === 0 ? (
+              {insertMenuContent.schemaCandidates.length > 0 && (
+                <>
+                  <Text className="tc-canvas__insert-menu-section" size="xs" c="dimmed">
+                    新建并连接
+                  </Text>
+                  {insertMenuContent.schemaCandidates.map(({ schema, targetHandleId }) => (
+                    <Button
+                      key={schema.kind}
+                      className="tc-canvas__insert-menu-action"
+                      variant="subtle"
+                      size="xs"
+                      onClick={() => {
+                        handleInsertNodeAt(schema.kind, {
+                          x: insertMenu.x,
+                          y: insertMenu.y,
+                          fromNodeId: insertMenu.fromNodeId,
+                          fromHandle: insertMenu.fromHandle,
+                          targetHandleId,
+                        })
+                      }}
+                    >
+                      {schema.label || schema.kind}
+                    </Button>
+                  ))}
+                </>
+              )}
+              {insertMenuContent.schemaCandidates.length === 0 ? (
                 <Text className="tc-canvas__insert-menu-empty" size="xs" c="dimmed">
                   暂无可用选项
                 </Text>
-              ) : (
-                candidates.map((schema) => (
-                  <Button
-                    key={schema.kind}
-                    className="tc-canvas__insert-menu-action"
-                    variant="subtle"
-                    size="xs"
-                    onClick={() => {
-                      handleInsertNodeAt(schema.kind, {
-                        x: insertMenu.x,
-                        y: insertMenu.y,
-                        fromNodeId: insertMenu.fromNodeId,
-                        fromHandle: insertMenu.fromHandle,
-                      })
-                    }}
-                  >
-                    {schema.label || schema.kind}
-                  </Button>
-                ))
-              )}
+              ) : null}
             </Stack>
-          </Paper>
-        )
-      })()}
+          </PanelCard>
+      )}
       {connectingType && (
         <div className="tc-canvas__connecting-tooltip" style={{ position: 'fixed', left: mouse.x + 12, top: mouse.y + 12, pointerEvents: 'none', fontSize: 12, background: 'rgba(17,24,39,.85)', color: '#e5e7eb', padding: '4px 8px', borderRadius: 6 }}>
           {$t('连接类型: {type}，拖到兼容端口', { type: getHandleTypeLabel(connectingType) })}
         </div>
       )}
-    </div>
+      {workflowNameDialog?.mode === 'template' ? (
+        <GroupTemplateModal
+          opened
+          loading={Boolean(publishingTemplateGroupId)}
+          coverUploading={templateCoverUploading}
+          previewUrl={workflowNameDialog.previewUrl}
+          coverUrl={workflowCoverUrlInput}
+          saveMode={templateSaveMode}
+          visibility={templateVisibility}
+          name={workflowNameInput}
+          description={workflowDescriptionInput}
+          templateProjects={templateProjects}
+          selectedTemplateProjectId={selectedTemplateProjectId}
+          onClose={closeWorkflowNameDialog}
+          onSubmit={() => { void submitWorkflowNameDialog() }}
+          onSaveModeChange={(value) => {
+            setTemplateSaveMode(value)
+            if (value === 'create') {
+              setWorkflowNameInput(workflowNameDialog.initialName)
+              setWorkflowDescriptionInput(workflowNameDialog.initialDescription)
+              setWorkflowCoverUrlInput(workflowNameDialog.initialCoverUrl)
+              setTemplateVisibility('private')
+              setSelectedTemplateProjectId('')
+              return
+            }
+            if (templateProjects.length > 0) {
+              setSelectedTemplateProjectId(templateProjects[0].id)
+            }
+          }}
+          onVisibilityChange={setTemplateVisibility}
+          onNameChange={setWorkflowNameInput}
+          onDescriptionChange={setWorkflowDescriptionInput}
+          onSelectedTemplateProjectIdChange={setSelectedTemplateProjectId}
+          onTriggerCoverUpload={triggerTemplateCoverUpload}
+        />
+      ) : (
+        <Modal
+          className="tc-canvas__workflow-name-modal"
+          opened={Boolean(workflowNameDialog)}
+          onClose={closeWorkflowNameDialog}
+          title={workflowNameDialog?.title || '输入名称'}
+          centered
+        >
+          <Stack className="tc-canvas__workflow-name-modal-stack" gap="sm">
+            <TextInput
+              className="tc-canvas__workflow-name-modal-input"
+              label="名称"
+              value={workflowNameInput}
+              onChange={(event) => setWorkflowNameInput(event.currentTarget.value)}
+              placeholder="请输入名称"
+              autoFocus
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault()
+                void submitWorkflowNameDialog()
+              }}
+            />
+            <Textarea
+              className="tc-canvas__workflow-name-modal-description"
+              label="描述"
+              value={workflowDescriptionInput}
+              onChange={(event) => setWorkflowDescriptionInput(event.currentTarget.value)}
+              placeholder="可选：一句话说明这个工作流用途"
+              minRows={2}
+              maxRows={4}
+            />
+            <TextInput
+              className="tc-canvas__workflow-name-modal-cover"
+              label="封面 URL"
+              value={workflowCoverUrlInput}
+              onChange={(event) => setWorkflowCoverUrlInput(event.currentTarget.value)}
+              placeholder="可选：https://..."
+            />
+            <Group className="tc-canvas__workflow-name-modal-actions" justify="flex-end" gap="xs">
+              <Button className="tc-canvas__workflow-name-modal-cancel" variant="subtle" onClick={closeWorkflowNameDialog}>
+                取消
+              </Button>
+              <Button
+                className="tc-canvas__workflow-name-modal-confirm"
+                onClick={() => { void submitWorkflowNameDialog() }}
+                loading={Boolean(savingWorkflowGroupId)}
+              >
+                {workflowNameDialog?.confirmLabel || '确定'}
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
+      <input
+        ref={templateCoverUploadInputRef}
+        className="tc-canvas__template-cover-upload-input"
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleTemplateCoverUploadInputChange}
+      />
+      </div>
+    </CanvasRenderContext.Provider>
   )
 }
 
-type FlowRect = { x: number; y: number; w: number; h: number }
-
 function CanvasViewportOverlays({
-  viewOnly,
-  groupRectFlow,
-  selectionBorderColor,
   guides,
-  selectionPartialOverlaps,
-  nodes,
-  edges,
-  onFormatTree,
 }: {
-  viewOnly: boolean
-  groupRectFlow: FlowRect | null
-  selectionBorderColor: string
   guides: { vx?: number; hy?: number } | null
-  selectionPartialOverlaps: boolean
-  nodes: any[]
-  edges: any[]
-  onFormatTree: () => void
 }): JSX.Element | null {
   const [tx, ty, zoom] = useStore((s) => s.transform)
   const flowToScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * zoom + tx, y: p.y * zoom + ty }), [tx, ty, zoom])
 
   return (
     <>
-      {/* Group visuals moved to a real group node (compound). Legacy overlays removed. */}
-      {!viewOnly && groupRectFlow && (
-        <>
-          {/* Selection outline in screen space to avoid transform artifacts */}
-          <div
-            className="tc-canvas__group-selection"
-            style={{
-              position: 'absolute',
-              left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
-              top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y,
-              width: groupRectFlow.w * (zoom || 1),
-              height: groupRectFlow.h * (zoom || 1),
-              borderRadius: 12,
-              border: `1px dashed ${selectionBorderColor}`,
-              background: 'transparent',
-              pointerEvents: 'none'
-            }}
-          />
-          <Paper
-            className="tc-canvas__group-toolbar glass"
-            withBorder
-            shadow="sm"
-            radius="xl"
-            p={4}
-            style={{
-              position: 'absolute',
-              left: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).x,
-              top: flowToScreen({ x: groupRectFlow.x, y: groupRectFlow.y }).y - 36,
-              pointerEvents: 'auto',
-              whiteSpace: 'nowrap',
-              overflowX: 'auto'
-            }}
-          >
-            <Group className="tc-canvas__group-toolbar-group" gap={6} style={{ flexWrap: 'nowrap' }}>
-              <Text className="tc-canvas__group-toolbar-title" size="xs" c="dimmed">新建组</Text>
-              <Divider className="tc-canvas__group-toolbar-divider" orientation="vertical" style={{ height: 16 }} />
-              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => onFormatTree()}>{$('格式化')}</Button>
-              <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={async () => {
-                const name = prompt('保存为资产名称：')?.trim(); if (!name) return;
-                const sel = nodes.filter(n => n.selected)
-                const setIds = new Set(sel.map(n => n.id))
-                const es = edges.filter(e => setIds.has(e.source) && setIds.has(e.target))
-                const data = { nodes: sel, edges: es }
-                // 资产现在是用户级别的，不需要项目ID
-                const { createServerAsset } = await import('../api/server')
-                const { notifyAssetRefresh } = await import('../ui/assetEvents')
-                await createServerAsset({ name, data })
-                notifyAssetRefresh()
-              }}>生成工作流</Button>
-              {!selectionPartialOverlaps && (
-                <Button className="tc-canvas__group-toolbar-action" size="xs" variant="subtle" onClick={() => {
-                  // 直接打组为父节点
-                  useRFStore.getState().addGroupForSelection(undefined)
-                }}>打组</Button>
-              )}
-            </Group>
-          </Paper>
-        </>
-      )}
       {guides?.vx !== undefined && (
         <div className="tc-canvas__guide-vertical" style={{ position: 'absolute', left: flowToScreen({ x: guides.vx!, y: 0 }).x, top: 0, width: 1, height: '100%', background: 'rgba(59,130,246,.5)' }} />
       )}
@@ -2306,11 +3960,42 @@ function CanvasViewportOverlays({
   )
 }
 
+const CanvasSelectionActionBar = React.memo(function CanvasSelectionActionBar({
+  anchor,
+  children,
+}: {
+  anchor: SelectionActionAnchor
+  children: React.ReactNode
+}): JSX.Element {
+  const [tx, ty, zoom] = useStore((s) => s.transform)
+
+  return (
+    <div
+      className="tc-canvas__selection-action-bar"
+      style={{
+        position: 'absolute',
+        left: anchor.centerX * zoom + tx,
+        top: Math.max(8, anchor.topY * zoom + ty - 44),
+        transform: 'translateX(-50%)',
+        zIndex: 80,
+        pointerEvents: 'auto',
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      role="toolbar"
+      aria-label="框选操作栏"
+    >
+      {children}
+    </div>
+  )
+})
+
 const ReactFlowProviderWithClass =
   ReactFlowProvider as unknown as React.FC<React.PropsWithChildren<{ className?: string }>>
 
 export default function Canvas({ className }: { className?: string }): JSX.Element {
   const innerClassName = ['tc-canvas-inner', className].filter(Boolean).join(' ')
+
   return (
     <ReactFlowProviderWithClass className="tc-canvas-provider">
       <CanvasInner className={innerClassName} />

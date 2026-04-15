@@ -25,6 +25,9 @@ export const TaskAssetSchema = z.object({
 	type: z.enum(["image", "video"]),
 	url: z.string(),
 	thumbnailUrl: z.string().nullable().optional(),
+	assetId: z.string().nullable().optional(),
+	assetRefId: z.string().nullable().optional(),
+	assetName: z.string().nullable().optional(),
 });
 
 export type TaskAssetDto = z.infer<typeof TaskAssetSchema>;
@@ -105,12 +108,17 @@ export type VendorCallLogStatus = z.infer<typeof VendorCallLogStatusSchema>;
 export const VendorCallLogSchema = z.object({
 	vendor: z.string(),
 	taskId: z.string(),
+	userId: z.string(),
+	userLogin: z.string().nullable().optional(),
+	userName: z.string().nullable().optional(),
 	taskKind: z.string().nullable().optional(),
 	status: VendorCallLogStatusSchema,
 	startedAt: z.string().nullable().optional(),
 	finishedAt: z.string().nullable().optional(),
 	durationMs: z.number().nullable().optional(),
 	errorMessage: z.string().nullable().optional(),
+	requestPayload: z.string().nullable().optional(),
+	upstreamResponse: z.string().nullable().optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });

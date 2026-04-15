@@ -23,7 +23,13 @@ flowRouter.get("/", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const projectId = c.req.query("projectId") || undefined;
-	const flows = await listUserFlows(c, userId, projectId);
+	const ownerTypeRaw = c.req.query("ownerType") || undefined;
+	const ownerId = c.req.query("ownerId") || undefined;
+	const ownerType =
+		ownerTypeRaw === "project" || ownerTypeRaw === "chapter" || ownerTypeRaw === "shot"
+			? ownerTypeRaw
+			: undefined;
+	const flows = await listUserFlows(c, userId, projectId, { ownerType, ownerId });
 	return c.json(FlowSchema.array().parse(flows));
 });
 
@@ -46,7 +52,14 @@ flowRouter.post("/", async (c) => {
 			400,
 		);
 	}
-	const flow = await upsertUserFlow(c, userId, parsed.data);
+	const flow = await upsertUserFlow(c, userId, {
+		id: parsed.data.id,
+		name: parsed.data.name,
+		data: parsed.data.data,
+		projectId: parsed.data.projectId,
+		ownerType: parsed.data.ownerType,
+		ownerId: parsed.data.ownerId,
+	});
 	return c.json(FlowSchema.parse(flow));
 });
 
@@ -81,4 +94,3 @@ flowRouter.post("/:id/rollback", async (c) => {
 	const flow = await rollbackUserFlow(c, id, versionId, userId);
 	return c.json(FlowSchema.parse(flow));
 });
-

@@ -1,0 +1,236 @@
+## Host path conventions
+## - Default assumes this file lives at <repo>/apps/hono-api, so shared roots resolve from ../..
+## - For flattened deployments like <root>/hono-api + <root>/packages, set TAPCANVAS_SHARED_ROOT=..
+services:
+  postgres:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tapcanvas}
+      POSTGRES_USER: ${POSTGRES_USER:-tapcanvas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tapcanvas} -d ${POSTGRES_DB:-tapcanvas}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - hono_api_postgres:/var/lib/postgresql/data
+
+  agents-bridge:
+    image: ${TAPCANVAS_AGENTS_BRIDGE_IMAGE:-tapcanvas/agents-bridge:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        PREINSTALL_APP_DEPS: "0"
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+    env_file:
+      - ./.env
+    environment:
+      AGENTS_PROFILE: code
+      AGENTS_API_BASE_URL: ${AGENTS_API_BASE_URL:-https://right.codes/codex/v1}
+      AGENTS_API_STYLE: "responses"
+      AGENTS_STREAM: "true"
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      AGENTS_BRIDGE_BODY_LIMIT_BYTES: "8000000"
+      AGENTS_REQUEST_TIMEOUT_MS: "1800000"
+      AGENTS_RESPONSES_POLL_TIMEOUT_MS: "120000"
+      AGENTS_RESPONSES_POLL_INTERVAL_MS: "1000"
+      AGENTS_RESPONSES_IN_PROGRESS_RETRIES: "5"
+      AGENTS_LLM_DEBUG_LOG: "0"
+      AGENTS_LLM_DEBUG_PAYLOAD: "0"
+      AGENTS_BRIDGE_MAX_CONCURRENCY: "16"
+      AGENTS_DNS_RESULT_ORDER: "ipv4first"
+      AGENTS_REDIS_URL: "redis://redis:6379"
+      AGENTS_SESSION_CACHE_TTL_SECONDS: "600"
+      AGENTS_WORKSPACE_ROOT: /runtime/workspace
+      AGENTS_SKILLS_DIR: skills
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      PNPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      pnpm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    working_dir: /runtime/workspace
+    command: >-
+      sh -lc '
+      mkdir -p /runtime/bootstrap/apps/agents-cli /runtime/bootstrap/packages /runtime/workspace/skills /runtime/workspace/project-data &&
+      cp -R /opt/tapcanvas-src/apps/agents-cli/. /runtime/bootstrap/apps/agents-cli &&
+      if [ -d /opt/tapcanvas-src/packages ]; then
+        cp -R /opt/tapcanvas-src/packages/. /runtime/bootstrap/packages/ || true;
+      fi &&
+      if [ -d /opt/tapcanvas-src/apps/agents-cli/skills ]; then
+        cp -R -n /opt/tapcanvas-src/apps/agents-cli/skills/. /runtime/workspace/skills/ || true;
+      fi &&
+      cd /runtime/bootstrap/apps/agents-cli &&
+      pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} &&
+      ( [ -f node_modules/zod/package.json ] && [ -f node_modules/redis/package.json ] || pnpm install --force --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) &&
+      pnpm build &&
+      node dist/cli/index.js serve --host 0.0.0.0 --port 8799 --body-limit ${AGENTS_BRIDGE_BODY_LIMIT_BYTES:-8000000}
+      '
+    volumes:
+      - ../agents-cli:/opt/tapcanvas-src/apps/agents-cli:ro
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/packages:/opt/tapcanvas-src/packages:ro
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/project-data:/runtime/workspace/project-data
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/project-data:/app/project-data
+      - agents_node_modules:/runtime/bootstrap/apps/agents-cli/node_modules
+      - agents_memory:/runtime/workspace/.agents
+      - agents_runtime_skills:/runtime/workspace/skills
+      - pnpm_store:/app/.pnpm-store
+    tmpfs:
+      - /runtime/bootstrap
+    ports:
+      - "8799:8799"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8799/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        PREINSTALL_APP_DEPS: "0"
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: development
+      PORT: ${PORT:-8788}
+      # Use an in-network DSN for containers. Do not reuse host-localhost DSN here.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      PG_BACKUP_DIR: /app/backups
+      REDIS_URL: redis://redis:6379
+      AUTH_PHONE_OTP_TRACE: "1"
+      AGENTS_BRIDGE_AUTOSTART: "0"
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge:8799
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      AGENTS_BRIDGE_MAX_CONCURRENCY: "16"
+      AGENTS_BRIDGE_DEBUG_LOG: "1"
+      TASK_LOCAL_PROMPT_AGENT_TIMEOUT_MS: "300000"
+      BOOK_DERIVATION_QUEUE_CONCURRENCY: "2"
+      BOOK_DERIVATION_QUEUE_MAX_WAIT_MS: "1800000"
+      BOOK_METADATA_BATCH_CONCURRENCY: "16"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_CONCURRENCY: "3"
+      BOOK_CHARACTER_PROFILE_BATCH_CONCURRENCY: "50"
+      BOOK_CHARACTER_GRAPH_BATCH_CONCURRENCY: "50"
+      BOOK_METADATA_BATCH_MAX_CHARS: "200000"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_MAX_CHARS: "60000"
+      BOOK_METADATA_BATCH_MAX_CHAPTERS: "15"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_MAX_CHAPTERS: "8"
+      BOOK_METADATA_STAGE_WINDOW_CHAPTERS: "100"
+      BOOK_METADATA_INITIAL_CHAPTERS: "100"
+      BOOK_RAW_CHUNK_MAX_BYTES: "10240"
+      BOOK_CHAPTER_SNIPPET_MAX_CHARS: "6000"
+      BOOK_METADATA_ENSURE_WINDOW_SNIPPET_MAX_CHARS: "1800"
+      BOOK_CHARACTER_PROFILE_STAGE_WINDOW_CHAPTERS: "180"
+      BOOK_CHARACTER_GRAPH_STAGE_WINDOW_CHAPTERS: "160"
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      PNPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      pnpm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      PG_BACKUP_KEEP_LATEST: "1"
+    ports:
+      - "${PORT:-8788}:8788"
+    depends_on:
+      agents-bridge:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && ( [ -d node_modules/.pnpm ] && [ -f node_modules/wechatpay-node-v3/package.json ] && [ -f node_modules/undici/package.json ] && [ -f node_modules/@alicloud/dysmsapi20170525/package.json ] && [ -f node_modules/prisma/package.json ] && [ -f node_modules/@prisma/client/package.json ] && [ -f node_modules/jsonrepair/package.json ] || pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) && pnpm db:pg:backup && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm build && exec node dist/main.js"
+    volumes:
+      - .:/app
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/sql:/app/sql:ro
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/packages:/packages:ro
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/project-data:/app/project-data
+      - ../agents-cli:/workspace/apps/agents-cli
+      - hono_api_db_backups:/app/backups
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+
+  redis:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - hono_api_redis:/data
+
+  credit-finalizer-worker:
+    profiles: ["credit-worker"]
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    depends_on:
+      - api
+      - redis
+    env_file:
+      - ./.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm credit-finalizer:worker"
+    volumes:
+      - .:/app
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/packages:/packages:ro
+      - ${TAPCANVAS_SHARED_ROOT:-../..}/project-data:/app/project-data
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+
+volumes:
+  pnpm_store:
+    driver: local
+  hono_api_postgres:
+    driver: local
+  hono_api_db_backups:
+    driver: local
+  api_node_modules:
+    driver: local
+  agents_node_modules:
+    driver: local
+  agents_memory:
+    driver: local
+  agents_runtime_skills:
+    driver: local
+  hono_api_redis:
+    driver: local

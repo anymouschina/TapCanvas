@@ -1,0 +1,27 @@
+{
+  "owner": "icemilo414",
+  "slug": "cognitive-memory",
+  "displayName": "Cognitive Memory",
+  "latest": {
+    "version": "1.0.8",
+    "publishedAt": 1770221460307,
+    "commit": "https://github.com/clawdbot/skills/commit/f3ec3a7f5937aece2925265f92ef33936cc4b136"
+  },
+  "history": [
+    {
+      "version": "1.0.7",
+      "publishedAt": 1770172795380,
+      "commit": "https://github.com/clawdbot/skills/commit/661f182fdd1b59802f83b6736c839b25906ff9b1"
+    },
+    {
+      "version": "1.0.5",
+      "publishedAt": 1770145323090,
+      "commit": "https://github.com/clawdbot/skills/commit/37546190880eb6b317a54f3e18815bae159eba26"
+    },
+    {
+      "version": "1.0.2",
+      "publishedAt": 1770137760498,
+      "commit": "https://github.com/clawdbot/skills/commit/99afa5cb0e11af21ed2986eac628a5cfcad0de85"
+    }
+  ]
+}

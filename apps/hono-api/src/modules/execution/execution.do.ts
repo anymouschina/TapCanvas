@@ -1,6 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import type { WorkerEnv } from "../../types";
-import { queryOne } from "../../db/db";
+import type { PrismaClient, WorkerEnv } from "../../types";
+import { getPrismaClient } from "../../platform/node/prisma";
 import {
 	ensureNodeRuns,
 	insertExecutionEvent,
@@ -69,12 +69,12 @@ function hasCycle(nodeIds: string[], indeg: Record<string, number>, adj: Record<
 	return visited !== nodeIds.length;
 }
 
-async function loadFlowVersionData(db: D1Database, flowVersionId: string): Promise<ReactFlowLike | null> {
-	const row = await queryOne<{ data: string }>(
-		db,
-		`SELECT data FROM flow_versions WHERE id = ?`,
-		[flowVersionId],
-	);
+async function loadFlowVersionData(db: PrismaClient, flowVersionId: string): Promise<ReactFlowLike | null> {
+	void db;
+	const row = await getPrismaClient().flow_versions.findUnique({
+		where: { id: flowVersionId },
+		select: { data: true },
+	});
 	if (!row?.data) return null;
 	try {
 		return JSON.parse(row.data) as ReactFlowLike;
@@ -82,8 +82,6 @@ async function loadFlowVersionData(db: D1Database, flowVersionId: string): Promi
 		return null;
 	}
 }
-
-type D1Database = WorkerEnv["DB"];
 
 export class ExecutionDO {
 	private state: DurableObjectState;
@@ -152,10 +150,14 @@ export class ExecutionDO {
 				nodeId,
 				status: "queued",
 			});
-			await this.env.WORKFLOW_NODE_QUEUE.send({
-				executionId: this.executionId,
-				nodeId,
-			});
+				const workflowNodeQueue = this.env.WORKFLOW_NODE_QUEUE;
+				if (!workflowNodeQueue) {
+					throw new Error("WORKFLOW_NODE_QUEUE binding missing");
+				}
+				await workflowNodeQueue.send({
+					executionId: this.executionId,
+					nodeId,
+				});
 		}
 		await this.saveGraphState(graph);
 	}
@@ -176,18 +178,15 @@ export class ExecutionDO {
 	}
 
 	private async handleStart(): Promise<Response> {
-		const execution = await queryOne<{
-			id: string;
-			flow_version_id: string;
-			status: string;
-			concurrency: number;
-		}>(
-			this.env.DB,
-			`SELECT id, flow_version_id, status, concurrency
-       FROM workflow_executions
-       WHERE id = ?`,
-			[this.executionId],
-		);
+		const execution = await getPrismaClient().workflow_executions.findUnique({
+			where: { id: this.executionId },
+			select: {
+				id: true,
+				flow_version_id: true,
+				status: true,
+				concurrency: true,
+			},
+		});
 		if (!execution) return new Response("Execution not found", { status: 404 });
 		if (execution.status !== "queued") {
 			return new Response("Execution already started", { status: 409 });
@@ -375,4 +374,3 @@ export class ExecutionDO {
 		return new Response("ok");
 	}
 }
-

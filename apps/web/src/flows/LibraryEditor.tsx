@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
+import { ReactFlow, Background, BackgroundVariant, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TaskNode from '../canvas/nodes/TaskNode'
-import { normalizeNodesParentId } from '../canvas/store'
 import { type FlowIO } from './registry'
 import { listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersions, rollbackFlow, type FlowDto } from '../api/server'
 import { Button, Group, Title, TextInput, Stack, Text, Divider, Select, Modal } from '@mantine/core'
@@ -30,7 +29,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
       try {
         const r = await getServerFlow(flowId)
         const data = (r?.data || {}) as any
-        setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
+        setNodes(Array.isArray(data.nodes) ? data.nodes : [])
         setEdges(Array.isArray(data.edges) ? data.edges : [])
         setName(r?.name || '')
         setIo({ inputs: [], outputs: [] })
@@ -59,20 +58,10 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
   }
 
   const saveAs = async () => {
-    // 另存为（创建新ID）
-    const v = validateNoCycle(currentId)
-    if (!v.ok) { alert(v.reason || '存在引用环，请先移除环再另存'); return }
-    if (source === 'local') {
-      const saved = saveFlow({ name, nodes, edges, io })
-      setLocalList(listFlows())
-      setCurrentId(saved.id)
-      alert('已另存为本地工作流: ' + saved.name)
-    } else {
-      const saved = await saveServerFlow({ name, nodes, edges })
-      setServerList(await listServerFlows())
-      setCurrentId(saved.id)
-      alert('已另存为服务端工作流: ' + saved.name)
-    }
+    const saved = await saveServerFlow({ name, nodes, edges })
+    setServerList(await listServerFlows())
+    setCurrentId(saved.id)
+    alert('已另存为服务端工作流: ' + saved.name)
   }
 
   const removeCurrent = async () => {
@@ -87,7 +76,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
     setCurrentId(id)
     const r = await getServerFlow(id)
     const data = (r?.data || {}) as any
-    setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
+    setNodes(Array.isArray(data.nodes) ? data.nodes : [])
     setEdges(Array.isArray(data.edges) ? data.edges : [])
     setName(r?.name || '')
     setIo({ inputs: [], outputs: [] })
@@ -129,9 +118,9 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
                 fitView
                 connectionLineType={ConnectionLineType.SmoothStep}
               >
-                <MiniMap className="tc-library-editor__minimap" />
+                <MiniMap className="tc-library-editor__minimap" position="bottom-left" />
                 <Controls className="tc-library-editor__controls" position="bottom-left" />
-                <Background className="tc-library-editor__background" gap={16} size={1} color="#2a2f3a" variant="dots" />
+                <Background className="tc-library-editor__background" gap={16} size={1} color="#2a2f3a" variant={BackgroundVariant.Dots} />
               </ReactFlow>
             </ReactFlowProvider>
           </div>
@@ -178,7 +167,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
                 await rollbackFlow(currentId, v.id)
                 const r = await getServerFlow(currentId)
                 const data = (r?.data || {}) as any
-                setNodes(normalizeNodesParentId((Array.isArray(data.nodes) ? data.nodes : []) as any))
+                setNodes(Array.isArray(data.nodes) ? data.nodes : [])
                 setEdges(Array.isArray(data.edges) ? data.edges : [])
                 setName(r?.name || '')
                 setShowHistory(false)

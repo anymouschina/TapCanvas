@@ -18,7 +18,7 @@ function inferType(sourceHandle?: string | null, targetHandle?: string | null) {
 }
 
 export default function TypedEdge(props: EdgeProps<any>) {
-  const t = (props.data && (props.data as any).edgeType) || inferType(props.sourceHandle, props.targetHandle)
+  const t = (props.data && (props.data as any).edgeType) || inferType(props.sourceHandleId, props.targetHandleId)
   const { edgeStyle } = useEdgeVisuals(t)
   const deleteEdge = useRFStore(s => s.deleteEdge)
   const viewOnly = useUIStore(s => s.viewOnly)
@@ -45,7 +45,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
         markerStart={props.markerStart}
         interactionWidth={props.interactionWidth}
       />
-      <EdgeLabelRenderer className="typed-edge-label-root">
+      <EdgeLabelRenderer>
         {!viewOnly && showDelete && (
           <div
             className="typed-edge-label"
@@ -60,7 +60,7 @@ export default function TypedEdge(props: EdgeProps<any>) {
             <ActionIcon
               className="typed-edge-delete"
               size="sm"
-              radius="xl"
+              radius="md"
               variant="light"
               color="red"
               aria-label="删除连线"

@@ -1,54 +1,111 @@
 import type { Connection, Node } from '@xyflow/react'
 import { useRFStore } from '../canvas/store'
+import { buildTopLevelGroupReflowPositions } from '../canvas/utils/reflowLayout'
 import { runNodeMock } from '../runner/mockRunner'
-import { runNodeRemote } from '../runner/remoteRunner'
+import { runNodeDagToTarget } from '../runner/dag'
 import { FunctionResult } from './types'
 import { normalizeOrientation } from '../utils/orientation'
 import { generatePrompt, type PromptGeneratePayload } from '../api/server'
 import { useUIStore } from '../ui/uiStore'
+import { normalizeProductionNodeMetaRecord } from '../canvas/productionMeta'
+import { getTaskNodeCoreType, normalizeTaskNodeKind } from '../canvas/nodes/taskNodeSchema'
+import { normalizeStoryboardNodeData } from '../canvas/nodes/taskNode/storyboardEditor'
+import { getDefaultModel } from '../config/models'
 
 /**
  * Canvas操作服务层
  * 将AI Function Calling转换为实际的canvas操作
  */
 
-const REMOTE_RUN_KINDS = new Set([
-  'composeVideo',
-  'storyboard',
-  'video',
-  'tts',
-  'subtitleAlign',
-  'image',
-  'storyboardImage',
-  'imageFission',
-  'textToImage',
-])
+const REMOTE_RUN_KINDS = new Set(['image', 'video', 'storyboard'])
 
-const CREATIVE_PROMPT_KINDS = new Set(['image', 'texttoimage', 'storyboardimage', 'imagefission'])
+const CREATIVE_PROMPT_KINDS = new Set(['image'])
 
-const IMAGE_MODEL_WHITELIST = new Set([
-  'nano-banana',
-  'nano-banana-fast',
-  'nano-banana-pro',
-  'qwen-image-plus',
-  'gemini-2.5-flash-image',
-  'sora-image',
-  'sora-image-landscape',
-  'sora-image-portrait',
-])
+function hasResolvedAssetUrl(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0
+}
 
-const VIDEO_MODEL_WHITELIST = new Set([
-  'sora-2',
-  'sora-2-pro',
-  'MiniMax-Hailuo-02',
-  'I2V-01-Director',
-  'I2V-01-live',
-  'I2V-01',
-  'veo3.1-fast',
-  'veo3.1-pro',
-])
+function hasResolvedAssetList(value: unknown): boolean {
+  return Array.isArray(value) && value.some((item) => {
+    if (!item || typeof item !== 'object') return false
+    const record = item as Record<string, unknown>
+    return typeof record.url === 'string' && record.url.trim().length > 0
+  })
+}
+
+function isReferenceOnlyVisualConfig(config: Record<string, unknown>): boolean {
+  const status = typeof config.status === 'string' ? config.status.trim().toLowerCase() : ''
+  if (status === 'queued' || status === 'running') return false
+  if (hasResolvedAssetUrl(config.imageUrl) || hasResolvedAssetUrl(config.videoUrl) || hasResolvedAssetUrl(config.audioUrl)) {
+    return true
+  }
+  return (
+    hasResolvedAssetList(config.imageResults) ||
+    hasResolvedAssetList(config.videoResults) ||
+    hasResolvedAssetList(config.audioResults) ||
+    hasResolvedAssetList(config.results) ||
+    hasResolvedAssetList(config.assets) ||
+    hasResolvedAssetList(config.outputs)
+  )
+}
+
+function readTrimmedRecordString(record: Record<string, unknown>, key: string): string {
+  const value = record[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
 
 export class CanvasService {
+  private static cloneGraphSnapshot(nodes: Node[], edges: ReturnType<typeof useRFStore.getState>['edges']) {
+    const snapshot = { nodes, edges }
+    if (typeof structuredClone === 'function') {
+      return structuredClone(snapshot) as { nodes: Node[]; edges: ReturnType<typeof useRFStore.getState>['edges'] }
+    }
+    return JSON.parse(JSON.stringify(snapshot)) as { nodes: Node[]; edges: ReturnType<typeof useRFStore.getState>['edges'] }
+  }
+
+  private static normalizeGroupId(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  }
+
+  private static applyTopLevelGroupReflow(groupIds?: string[]): number {
+    let movedCount = 0
+    useRFStore.setState((state) => {
+      const nextPositionById = buildTopLevelGroupReflowPositions(state.nodes, groupIds)
+      if (!nextPositionById.size) return {}
+
+      const previousSnapshot = CanvasService.cloneGraphSnapshot(state.nodes, state.edges)
+
+      const nextNodes = state.nodes.map((node) => {
+          const next = nextPositionById.get(String(node.id))
+          if (!next) return node
+
+          const currentX = Number(node.position?.x ?? 0)
+          const currentY = Number(node.position?.y ?? 0)
+          if (Math.abs(currentX - next.x) <= 1 && Math.abs(currentY - next.y) <= 1) return node
+
+          movedCount += 1
+          const currentNode = node as typeof node & {
+            positionAbsolute?: unknown
+            dragging?: unknown
+          }
+          const { positionAbsolute: _positionAbsolute, dragging: _dragging, ...rest } = currentNode
+          return {
+            ...rest,
+            position: next,
+          }
+        })
+
+      if (movedCount === 0) return {}
+
+      return {
+        nodes: nextNodes,
+        historyPast: [...state.historyPast, previousSnapshot].slice(-50),
+        historyFuture: [],
+      }
+    })
+    return movedCount
+  }
+
   private static resolveNodeId(value: unknown, nodes: Node[]): string | null {
     if (typeof value !== 'string') return null
     const needle = value.trim()
@@ -76,6 +133,7 @@ export class CanvasService {
     label?: string
     config?: Record<string, any> | null
     remixFromNodeId?: string
+    parentId?: string
     position?: { x: number; y: number }
   }): Promise<FunctionResult> {
     try {
@@ -85,24 +143,64 @@ export class CanvasService {
       const { addNode, onConnect } = store
       const normalizedLabel = (params.label || '').trim()
       const normalizedType = (params.type || '').trim().toLowerCase()
+      const configRecord =
+        params.config && typeof params.config === 'object' && !Array.isArray(params.config)
+          ? params.config as Record<string, unknown>
+          : {}
+      const normalizedKind =
+        normalizeTaskNodeKind((params.type || '').trim()) ||
+        normalizeTaskNodeKind(typeof configRecord.kind === 'string' ? configRecord.kind : null)
+      const sourceEntityKey = readTrimmedRecordString(configRecord, 'sourceEntityKey')
+      const sourceProjectId = readTrimmedRecordString(configRecord, 'sourceProjectId')
 
       // 若已有同名同类节点，直接返回，避免重复创建
       if (normalizedLabel) {
-        const existing = store.nodes.find(node => {
-          const dataKind = (node.data as any)?.kind
-          const nodeType = (node.data as any)?.type || (node as any).type
-          return (
-            (node.data as any)?.label === normalizedLabel ||
-            node.id === normalizedLabel
-          ) && (
-            (typeof dataKind === 'string' && dataKind.toLowerCase() === normalizedType) ||
-            (typeof nodeType === 'string' && nodeType.toLowerCase() === normalizedType)
-          )
-        })
-        if (existing) {
-          return {
-            success: true,
-            data: { message: '已存在同名节点，复用现有节点', nodeId: existing.id }
+        if (sourceEntityKey) {
+          const existingByEntityKey = store.nodes.find((node) => {
+            if (node.type !== 'taskNode') return false
+            const record =
+              node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+                ? node.data as Record<string, unknown>
+                : {}
+            if (normalizedKind) {
+              const existingKind = normalizeTaskNodeKind(
+                typeof record.kind === 'string' ? record.kind : null,
+              )
+              if (existingKind !== normalizedKind) return false
+            }
+            if (readTrimmedRecordString(record, 'sourceEntityKey') !== sourceEntityKey) return false
+            if (sourceProjectId && readTrimmedRecordString(record, 'sourceProjectId') !== sourceProjectId) return false
+            return true
+          })
+          if (existingByEntityKey) {
+            return {
+              success: true,
+              data: { message: '已存在同实体节点，复用现有节点', nodeId: existingByEntityKey.id }
+            }
+          }
+        } else {
+          const existing = store.nodes.find(node => {
+            const record =
+              node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+                ? node.data as Record<string, unknown>
+                : {}
+            const labelMatches =
+              readTrimmedRecordString(record, 'label') === normalizedLabel ||
+              node.id === normalizedLabel
+            if (!labelMatches) return false
+            if (normalizedKind) {
+              const existingKind = normalizeTaskNodeKind(
+                typeof record.kind === 'string' ? record.kind : null,
+              )
+              return existingKind === normalizedKind
+            }
+            return String(node.type || '').trim().toLowerCase() === normalizedType
+          })
+          if (existing) {
+            return {
+              success: true,
+              data: { message: '已存在同名节点，复用现有节点', nodeId: existing.id }
+            }
           }
         }
       }
@@ -113,24 +211,16 @@ export class CanvasService {
       const normalized = CanvasService.normalizeNodeParams(params)
       console.debug('[CanvasService] normalized node params', normalized)
 
-      if ((normalized.data as any)?.kind === 'storyboard' || normalized.nodeType === 'storyboard') {
-        return {
-          success: false,
-          error: 'Storyboard 节点暂未开放，请改用 composeVideo 节点生成视频内容'
-        }
-      }
-
       const nodeData = { ...normalized.data }
 
       if (normalized.remixFromNodeId) {
         const remixSource = store.nodes.find(node => node.id === normalized.remixFromNodeId)
-        const remixKind = (remixSource?.data as any)?.kind
+        const remixKind = normalizeTaskNodeKind((remixSource?.data as any)?.kind)
         const remixStatus = (remixSource?.data as any)?.status
-        const supportedKinds = new Set(['composeVideo', 'video', 'storyboard'])
-        if (!remixSource || !supportedKinds.has(remixKind)) {
+        if (!remixSource || remixKind !== 'video') {
           return {
             success: false,
-            error: 'Remix 必须引用一个已有的视频/分镜节点。'
+            error: 'Remix 必须引用一个已有的视频节点。'
           }
         }
         if (remixStatus !== 'success') {
@@ -141,7 +231,7 @@ export class CanvasService {
         }
 
         if (!nodeData.prompt) {
-          const sourcePrompt = (remixSource.data as any)?.videoPrompt || (remixSource.data as any)?.prompt
+          const sourcePrompt = (remixSource.data as any)?.prompt
           if (typeof sourcePrompt === 'string' && sourcePrompt.trim()) {
             nodeData.prompt = sourcePrompt.trim()
           }
@@ -153,6 +243,7 @@ export class CanvasService {
       // 调用store方法创建节点
       addNode(normalized.nodeType, normalized.label, {
         ...nodeData,
+        ...(typeof params.parentId === 'string' && params.parentId.trim() ? { parentId: params.parentId.trim() } : null),
         position,
         autoLabel: !(params.label && params.label.trim()),
       })
@@ -164,10 +255,24 @@ export class CanvasService {
         try {
           const sourceNode = updatedState.nodes.find(node => node.id === normalized.remixFromNodeId)
           if (sourceNode && typeof onConnect === 'function') {
+            const sourceKind = getTaskNodeCoreType(
+              typeof (sourceNode.data as Record<string, unknown> | undefined)?.kind === 'string'
+                ? String((sourceNode.data as Record<string, unknown>).kind)
+                : null,
+            )
+            const sourceHandle =
+              sourceKind === 'video'
+                ? 'out-video'
+                : sourceKind === 'image'
+                  ? 'out-image'
+                  : sourceKind === 'text'
+                    ? 'out-text'
+                    : 'out-any'
             const connection: Connection = {
               source: sourceNode.id,
+              sourceHandle,
               target: newNode.id,
-              targetHandle: 'in-video',
+              targetHandle: 'in-any',
             }
             onConnect(connection)
           }
@@ -223,9 +328,7 @@ export class CanvasService {
       }
       const result = await generatePrompt(payload)
       const nodeType = params.type || 'image'
-      const nodeKind =
-        params.kind ||
-        (inferredWorkflow === 'character_creation' ? 'character' : 'image')
+      const nodeKind = params.kind || 'image'
 
       const createRes = await CanvasService.createNode({
         type: nodeType,
@@ -263,66 +366,46 @@ export class CanvasService {
     remixFromNodeId?: string
   }): { nodeType: string; label: string; data: Record<string, any>; remixFromNodeId?: string } {
     const rawType = (params.type || 'taskNode').trim()
-    const label = params.label?.trim() || CanvasService.defaultLabelForType(rawType)
-
-    // 仅允许 image / textToImage / composeVideo / video，其余节点类型关闭
-    const allowedRawTypes = new Set([
-      'image',
-      'texttoimage',
-      'text_to_image',
-      'textToImage',
-      'storyboardimage',
-      'storyboardImage',
-      'imagefission',
-      'imageFission',
-      'composevideo',
-      'composeVideo',
-      'video',
-    ])
-    if (!allowedRawTypes.has(rawType.toLowerCase())) {
-      throw new Error('当前仅支持 image/textToImage/storyboardImage/imageFission/composeVideo/video 节点')
-    }
-
-    let nodeType = rawType
-    const baseData: Record<string, any> = {}
-
-    const logicalKinds: Record<string, string> = {
-      image: 'image',
-      video: 'composeVideo',
-      composeVideo: 'composeVideo',
-      // 兼容 AI 直接传入内部 kind 名称的情况，例如 type: "textToImage"
-      textToImage: 'textToImage',
-      text_to_image: 'textToImage',
-      storyboardImage: 'storyboardImage',
-      storyboardimage: 'storyboardImage',
-      imageFission: 'imageFission',
-      imagefission: 'imageFission',
-    }
-
-    if (logicalKinds[rawType]) {
-      nodeType = 'taskNode'
-      baseData.kind = logicalKinds[rawType]
-    }
-
     const safeConfig = params.config && typeof params.config === 'object' ? params.config : {}
+    const configRecord = safeConfig as Record<string, unknown>
+    const configKind = typeof configRecord.kind === 'string'
+      ? configRecord.kind
+      : undefined
+    const normalizedKind = normalizeTaskNodeKind(rawType) || normalizeTaskNodeKind(configKind)
+    if (!normalizedKind) {
+      throw new Error('当前 taskNode 只保留 text / image / imageEdit / storyboard / video 五类节点')
+    }
+
+    const label = params.label?.trim() || CanvasService.defaultLabelForType(normalizedKind)
+    const nodeType = 'taskNode'
+    const baseData: Record<string, any> = { kind: normalizedKind }
+
     const { remixFromNodeId: configRemixFromNodeId, ...restConfig } = safeConfig as Record<string, any>
-    const mergedConfig: Record<string, any> = { ...baseData, ...restConfig }
-    const mergedKind = typeof mergedConfig.kind === 'string' ? mergedConfig.kind : baseData.kind
-    if (mergedKind === 'composeVideo' || mergedKind === 'storyboard' || mergedKind === 'video') {
+    const mergedConfig: Record<string, any> = normalizedKind === 'storyboard'
+      ? normalizeStoryboardNodeData({
+          ...baseData,
+          ...restConfig,
+          kind: normalizedKind,
+        })
+      : { ...baseData, ...restConfig, kind: normalizedKind }
+    if (normalizedKind === 'video') {
       mergedConfig.orientation = normalizeOrientation((mergedConfig as any).orientation)
     }
 
-    // 如果是图像类节点且未显式提供 prompt，默认使用标签作为初始提示词，方便前端和 AI 回显
     if (
       !mergedConfig.prompt &&
       typeof label === 'string' &&
       label.trim().length > 0 &&
-      (mergedConfig.kind === 'image' || mergedConfig.kind === 'textToImage')
+      !isReferenceOnlyVisualConfig(mergedConfig as Record<string, unknown>) &&
+      (normalizedKind === 'image' || normalizedKind === 'imageEdit')
     ) {
       mergedConfig.prompt = label.trim()
     }
-    const dataWithPrompt = CanvasService.ensurePromptFields(mergedConfig, baseData.kind)
-    const data = CanvasService.sanitizeModels(baseData.kind, dataWithPrompt)
+    const dataWithPrompt = CanvasService.ensurePromptFields(mergedConfig, normalizedKind)
+    const data = normalizeProductionNodeMetaRecord(
+      CanvasService.sanitizeModels(normalizedKind, dataWithPrompt),
+      { kind: normalizedKind },
+    )
 
     const topLevelRemixId = typeof params.remixFromNodeId === 'string' && params.remixFromNodeId.trim()
       ? params.remixFromNodeId.trim()
@@ -336,33 +419,13 @@ export class CanvasService {
   }
 
   private static defaultLabelForType(type: string) {
-    switch (type) {
-      case 'text':
-        return '文本'
-      case 'image':
-      case 'textToImage':
-      case 'text_to_image':
-        return '图像'
-      case 'storyboardImage':
-      case 'storyboardimage':
-        return '分镜图'
-      case 'imageFission':
-      case 'imagefission':
-        return '图像裂变'
-      case 'video':
-      case 'composeVideo':
-        return '文生视频'
-      case 'storyboard':
-        return '分镜'
-      case 'audio':
-        return '语音'
-      case 'subtitle':
-        return '字幕'
-      case 'character':
-        return '角色'
-      default:
-        return type
-    }
+    const normalizedKind = normalizeTaskNodeKind(type)
+    if (normalizedKind === 'text') return '文本'
+    if (normalizedKind === 'image') return '图片'
+    if (normalizedKind === 'imageEdit') return '图片编辑'
+    if (normalizedKind === 'storyboard') return '分镜编辑'
+    if (normalizedKind === 'video') return '视频'
+    return type
   }
 
   /**
@@ -389,7 +452,9 @@ export class CanvasService {
       }
 
       const normalizedConfig = params.config
-        ? CanvasService.ensurePromptFields({ ...params.config })
+        ? normalizeProductionNodeMetaRecord(CanvasService.ensurePromptFields({ ...params.config }), {
+            kind: params.config.kind,
+          })
         : null
 
       if (normalizedConfig) {
@@ -500,8 +565,8 @@ export class CanvasService {
       onConnect({
         source: sourceNode.id,
         target: targetNode.id,
-        sourceHandle: params.sourceHandle,
-        targetHandle: params.targetHandle
+        sourceHandle: params.sourceHandle ?? null,
+        targetHandle: params.targetHandle ?? null
       })
 
       return {
@@ -696,7 +761,7 @@ export class CanvasService {
       const shouldRunRemote = kind ? REMOTE_RUN_KINDS.has(kind) : false
 
       if (shouldRunRemote) {
-        await runNodeRemote(node.id, get, set)
+        await runNodeDagToTarget(node.id, get, set, { concurrency: 1 })
       } else {
         await runNodeMock(node.id, get, set)
       }
@@ -826,6 +891,88 @@ export class CanvasService {
     }
   }
 
+  static async reflowLayout(params: {
+    scope?: 'canvas' | 'topLevelGroups' | 'group'
+    targetGroupId?: string
+    focusNodeId?: string
+  } = {}): Promise<FunctionResult> {
+    try {
+      const scope = params.scope === 'group' || params.scope === 'topLevelGroups' ? params.scope : 'canvas'
+      const store = useRFStore.getState()
+
+      if (scope === 'group') {
+        const targetGroupId = CanvasService.normalizeGroupId(params.targetGroupId)
+        if (!targetGroupId) {
+          return {
+            success: false,
+            error: '重排 group 布局时必须提供 targetGroupId',
+          }
+        }
+        const groupNode = store.nodes.find((node) => node.id === targetGroupId && node.type === 'groupNode')
+        if (!groupNode) {
+          return {
+            success: false,
+            error: `未找到目标组：${targetGroupId}`,
+          }
+        }
+        store.arrangeGroupChildren(targetGroupId, 'grid')
+        store.fitGroupToChildren(targetGroupId)
+        return {
+          success: true,
+          data: {
+            message: `已重排组 ${targetGroupId} 的内部布局`,
+            scope,
+            targetGroupId,
+          },
+        }
+      }
+
+      if (scope === 'topLevelGroups') {
+        const movedCount = CanvasService.applyTopLevelGroupReflow()
+        return {
+          success: true,
+          data: {
+            message: movedCount > 0 ? `已重排 ${movedCount} 个顶层组的位置` : '顶层组布局已是最新，无需移动',
+            scope,
+            movedCount,
+          },
+        }
+      }
+
+      const { selectAll, autoLayoutAllDagVertical } = store
+      selectAll()
+      autoLayoutAllDagVertical()
+      const movedCount = CanvasService.applyTopLevelGroupReflow()
+
+      const focusId = typeof params.focusNodeId === 'string' && params.focusNodeId.trim() ? params.focusNodeId.trim() : null
+      if (focusId) {
+        useRFStore.setState((state) => ({
+          nodes: state.nodes.map((node) => ({
+            ...node,
+            selected: node.id === focusId,
+          })),
+        }))
+      }
+
+      return {
+        success: true,
+        data: {
+          message: focusId
+            ? `已重排画布并聚焦节点 ${focusId}`
+            : '已重排画布布局',
+          scope,
+          focusNodeId: focusId,
+          movedTopLevelGroupCount: movedCount,
+        },
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '布局重排失败',
+      }
+    }
+  }
+
   /**
    * 获取所有节点
    */
@@ -868,9 +1015,12 @@ export class CanvasService {
 
       // 按标签过滤
       if (params.label) {
-        filteredNodes = filteredNodes.filter(node =>
-          node.data.label.toLowerCase().includes(params.label!.toLowerCase())
-        )
+        const labelNeedle = params.label.toLowerCase()
+        filteredNodes = filteredNodes.filter((node) => {
+          const data = node.data as Record<string, unknown>
+          const labelValue = typeof data.label === 'string' ? data.label : ''
+          return labelValue.toLowerCase().includes(labelNeedle)
+        })
       }
 
       // 按类型过滤
@@ -940,24 +1090,10 @@ export class CanvasService {
     }
   }
 
-  private static ensurePromptFields<T extends Record<string, any>>(data: T, kind?: string): T {
+  private static ensurePromptFields<T extends Record<string, unknown>>(data: T, kind?: string): T {
     if (!data || typeof data !== 'object') return data
-    const prompt =
-      typeof (data as any).prompt === 'string' && (data as any).prompt.trim()
-        ? (data as any).prompt
-        : undefined
-    const videoPrompt =
-      typeof (data as any).videoPrompt === 'string' && (data as any).videoPrompt.trim()
-        ? (data as any).videoPrompt
-        : undefined
-
-    // 仅在 prompt 为空时用 videoPrompt 填充；不再把 prompt 复制到 videoPrompt
-    if (!prompt && videoPrompt) {
-      (data as any).prompt = videoPrompt
-    }
-    // 非视频节点不保留 videoPrompt
-    if (kind !== 'composeVideo' && 'videoPrompt' in (data as any)) {
-      delete (data as any).videoPrompt
+    if ((kind === 'video' || kind === 'composeVideo') && 'videoPrompt' in data) {
+      delete data.videoPrompt
     }
 
     return data
@@ -965,22 +1101,18 @@ export class CanvasService {
 
   private static sanitizeModels(kind: string | undefined, data: Record<string, any>): Record<string, any> {
     const next = { ...data }
-    if (kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') {
-      const model = typeof next.imageModel === 'string' ? next.imageModel : ''
-      if (!IMAGE_MODEL_WHITELIST.has(model)) {
-        next.imageModel = 'nano-banana-fast'
-      }
-      // nano-banana 系列归属 google
-      if (next.imageModel && next.imageModel.toLowerCase().includes('banana')) {
-        next.imageModelVendor = 'google'
-      }
+    if (kind === 'image' || kind === 'imageEdit') {
+      const fallbackModel = getDefaultModel(kind === 'imageEdit' ? 'imageEdit' : 'image')
+      const model =
+        typeof next.imageModel === 'string' && next.imageModel.trim()
+          ? next.imageModel.trim()
+          : fallbackModel
+      next.imageModel = model
+      delete next.imageModelVendor
     }
-    if (kind === 'composeVideo') {
-      const model = typeof next.videoModel === 'string' ? next.videoModel : ''
-      if (!VIDEO_MODEL_WHITELIST.has(model)) {
-        next.videoModel = 'sora-2'
-        next.videoModelVendor = 'openai'
-      }
+    if (kind === 'video' || kind === 'composeVideo') {
+      // 视频模型与厂商来自动态模型目录；此处不再做前端白名单覆盖，
+      // 避免把已展示且已适配的动态模型重写成硬编码默认值。
     }
     return next
   }
@@ -999,6 +1131,8 @@ export const functionHandlers = {
   getNodes: CanvasService.getNodes,
   findNodes: CanvasService.findNodes,
   autoLayout: CanvasService.autoLayout,
+  reflowLayout: CanvasService.reflowLayout,
+  canvas_reflow_layout: CanvasService.reflowLayout,
   runNode: CanvasService.runNode,
   runDag: CanvasService.runDag,
   formatAll: CanvasService.formatAll,

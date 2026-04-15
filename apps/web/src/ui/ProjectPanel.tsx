@@ -1,13 +1,36 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader, Popover, useMantineColorScheme } from '@mantine/core'
+import { Paper, Title, Text, Button, Group, Stack, Transition, Tabs, Badge, ActionIcon, Tooltip, Loader, Popover, Modal, TextInput, Textarea, Select, useMantineColorScheme } from '@mantine/core'
 import { useUIStore } from './uiStore'
-import { listProjects, upsertProject, saveProjectFlow, listPublicProjects, cloneProject, toggleProjectPublic, deleteProject, type ProjectDto } from '../api/server'
-import { useRFStore } from '../canvas/store'
-import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh, IconLink } from '@tabler/icons-react'
+import {
+  deleteDreaminaAccount,
+  deleteDreaminaProjectBinding,
+  getDreaminaProjectBinding,
+  importDreaminaLoginResponse,
+  listDreaminaAccounts,
+  listProjects,
+  listPublicProjects,
+  probeDreaminaAccount,
+  cloneProject,
+  toggleProjectPublic,
+  deleteProject,
+  updateAdminProject,
+  upsertDreaminaAccount,
+  upsertDreaminaProjectBinding,
+  type DreaminaAccountDto,
+  type DreaminaProjectBindingDto,
+  type ProjectDto,
+} from '../api/server'
+import { IconCopy, IconTrash, IconWorld, IconWorldOff, IconRefresh, IconLink, IconPencil } from '@tabler/icons-react'
 import { $, $t } from '../canvas/i18n'
 import { notifications } from '@mantine/notifications'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
+import { useIsAdmin } from '../auth/isAdmin'
+import { confirmLeaveForProjectChange } from './pendingUploadGuard'
+import { stopPanelWheelPropagation } from './utils/panelWheel'
+import { spaNavigate } from '../utils/spaNavigate'
+import { PanelCard } from './PanelCard'
+import { InlinePanel } from './InlinePanel'
 
 export default function ProjectPanel(): JSX.Element | null {
   const active = useUIStore(s => s.activePanel)
@@ -16,6 +39,7 @@ export default function ProjectPanel(): JSX.Element | null {
   const currentProject = useUIStore(s => s.currentProject)
   const setCurrentProject = useUIStore(s => s.setCurrentProject)
   const mounted = active === 'project'
+  const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDarkTheme = colorScheme === 'dark'
   const projectCardBorder = isDarkTheme ? '1px solid rgba(59, 130, 246, 0.1)' : '1px solid rgba(148, 163, 184, 0.35)'
@@ -34,6 +58,30 @@ export default function ProjectPanel(): JSX.Element | null {
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null)
   const [popoverProjectId, setPopoverProjectId] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'my' | 'public'>('my')
+  const [templateEditOpen, setTemplateEditOpen] = React.useState(false)
+  const [templateEditSubmitting, setTemplateEditSubmitting] = React.useState(false)
+  const [editingTemplateProjectId, setEditingTemplateProjectId] = React.useState<string | null>(null)
+  const [editingTemplateTitle, setEditingTemplateTitle] = React.useState('')
+  const [editingTemplateDescription, setEditingTemplateDescription] = React.useState('')
+  const [editingTemplateCoverUrl, setEditingTemplateCoverUrl] = React.useState('')
+  const [dreaminaAccounts, setDreaminaAccounts] = React.useState<DreaminaAccountDto[]>([])
+  const [dreaminaBinding, setDreaminaBinding] = React.useState<DreaminaProjectBindingDto | null>(null)
+  const [dreaminaLoading, setDreaminaLoading] = React.useState(false)
+  const [dreaminaBindingSaving, setDreaminaBindingSaving] = React.useState(false)
+  const [dreaminaAccountModalOpen, setDreaminaAccountModalOpen] = React.useState(false)
+  const [dreaminaSelectedAccountId, setDreaminaSelectedAccountId] = React.useState<string | null>(null)
+  const [dreaminaNewAccountLabel, setDreaminaNewAccountLabel] = React.useState('')
+  const [dreaminaNewAccountCliPath, setDreaminaNewAccountCliPath] = React.useState('')
+  const [dreaminaLoginJson, setDreaminaLoginJson] = React.useState('')
+  const currentProjectId = currentProject?.id ? String(currentProject.id).trim() : ''
+  const selectedDreaminaAccount = React.useMemo(
+    () => dreaminaAccounts.find((account) => account.id === dreaminaSelectedAccountId) || null,
+    [dreaminaAccounts, dreaminaSelectedAccountId],
+  )
+  const boundDreaminaAccount = React.useMemo(
+    () => dreaminaAccounts.find((account) => account.id === dreaminaBinding?.accountId) || null,
+    [dreaminaAccounts, dreaminaBinding?.accountId],
+  )
 
   React.useEffect(() => {
     if (!mounted) return
@@ -53,6 +101,110 @@ export default function ProjectPanel(): JSX.Element | null {
     }
   }, [mounted, activeTab])
 
+  const reloadDreaminaState = React.useCallback(async () => {
+    if (!mounted) return
+    setDreaminaLoading(true)
+    try {
+      const accounts = await listDreaminaAccounts()
+      setDreaminaAccounts(accounts)
+      if (currentProjectId) {
+        const binding = await getDreaminaProjectBinding(currentProjectId)
+        setDreaminaBinding(binding)
+        setDreaminaSelectedAccountId(binding?.accountId || null)
+      } else {
+        setDreaminaBinding(null)
+        setDreaminaSelectedAccountId(null)
+      }
+    } catch (error) {
+      console.error('加载 Dreamina 状态失败:', error)
+      setDreaminaAccounts([])
+      setDreaminaBinding(null)
+    } finally {
+      setDreaminaLoading(false)
+    }
+  }, [mounted, currentProjectId])
+
+  React.useEffect(() => {
+    void reloadDreaminaState()
+  }, [reloadDreaminaState])
+
+  const handleSaveDreaminaBinding = React.useCallback(async () => {
+    if (!currentProjectId) return
+    if (!dreaminaSelectedAccountId) {
+      notifications.show({ title: $('失败'), message: $('请先选择一个 Dreamina 账号'), autoClose: 2000, color: 'red' })
+      return
+    }
+    setDreaminaBindingSaving(true)
+    try {
+      const binding = await upsertDreaminaProjectBinding(currentProjectId, {
+        accountId: dreaminaSelectedAccountId,
+        enabled: true,
+      })
+      setDreaminaBinding(binding)
+      notifications.show({ title: $('成功'), message: $('Dreamina 项目账号已绑定'), autoClose: 2000, color: 'green' })
+    } catch (error) {
+      console.error('保存 Dreamina 绑定失败:', error)
+      notifications.show({ title: $('失败'), message: $('保存 Dreamina 绑定失败'), autoClose: 2500, color: 'red' })
+    } finally {
+      setDreaminaBindingSaving(false)
+    }
+  }, [currentProjectId, dreaminaSelectedAccountId])
+
+  const handleCreateDreaminaAccount = React.useCallback(async () => {
+    const nextLabel = dreaminaNewAccountLabel.trim()
+    if (!nextLabel) {
+      notifications.show({ title: $('失败'), message: $('请先填写账号名称'), autoClose: 2000, color: 'red' })
+      return
+    }
+    try {
+      const account = await upsertDreaminaAccount({
+        label: nextLabel,
+        cliPath: dreaminaNewAccountCliPath.trim() || null,
+      })
+      setDreaminaNewAccountLabel('')
+      setDreaminaNewAccountCliPath('')
+      setDreaminaSelectedAccountId(account.id)
+      await reloadDreaminaState()
+      notifications.show({ title: $('成功'), message: $('Dreamina 账号已创建'), autoClose: 2000, color: 'green' })
+    } catch (error) {
+      console.error('创建 Dreamina 账号失败:', error)
+      notifications.show({ title: $('失败'), message: $('创建 Dreamina 账号失败'), autoClose: 2500, color: 'red' })
+    }
+  }, [dreaminaNewAccountCliPath, dreaminaNewAccountLabel, reloadDreaminaState])
+
+  const handleImportDreaminaLogin = React.useCallback(async () => {
+    if (!dreaminaSelectedAccountId) {
+      notifications.show({ title: $('失败'), message: $('请先选择账号'), autoClose: 2000, color: 'red' })
+      return
+    }
+    const nextJson = dreaminaLoginJson.trim()
+    if (!nextJson) {
+      notifications.show({ title: $('失败'), message: $('请先粘贴登录 JSON'), autoClose: 2000, color: 'red' })
+      return
+    }
+    try {
+      const probe = await importDreaminaLoginResponse(dreaminaSelectedAccountId, nextJson)
+      setDreaminaLoginJson('')
+      await reloadDreaminaState()
+      notifications.show({ title: probe.ok ? $('成功') : $('失败'), message: probe.message, autoClose: 2500, color: probe.ok ? 'green' : 'red' })
+    } catch (error) {
+      console.error('导入 Dreamina 登录态失败:', error)
+      notifications.show({ title: $('失败'), message: $('导入 Dreamina 登录态失败'), autoClose: 2500, color: 'red' })
+    }
+  }, [dreaminaLoginJson, dreaminaSelectedAccountId, reloadDreaminaState])
+
+  const handleProbeDreaminaAccount = React.useCallback(async () => {
+    if (!dreaminaSelectedAccountId) return
+    try {
+      const probe = await probeDreaminaAccount(dreaminaSelectedAccountId)
+      await reloadDreaminaState()
+      notifications.show({ title: probe.ok ? $('成功') : $('失败'), message: probe.message, autoClose: 2500, color: probe.ok ? 'green' : 'red' })
+    } catch (error) {
+      console.error('检查 Dreamina 账号失败:', error)
+      notifications.show({ title: $('失败'), message: $('检查 Dreamina 账号失败'), autoClose: 2500, color: 'red' })
+    }
+  }, [dreaminaSelectedAccountId, reloadDreaminaState])
+
   const handleRefreshPublicProjects = async () => {
     setLoading(true)
     try {
@@ -63,7 +215,7 @@ export default function ProjectPanel(): JSX.Element | null {
         withCloseButton: true,
         autoClose: 4000,
         title: $('成功'),
-        message: $('公开项目已刷新'),
+        message: $('公共模板已刷新'),
         color: 'green',
         icon: <motion.div
           initial={{ scale: 0, rotate: 0 }}
@@ -85,7 +237,7 @@ export default function ProjectPanel(): JSX.Element | null {
         withCloseButton: true,
         autoClose: 4000,
         title: $('失败'),
-        message: $('刷新公开项目失败'),
+        message: $('刷新公共模板失败'),
         color: 'red',
         icon: <motion.div
           initial={{ scale: 0, x: -20 }}
@@ -107,6 +259,7 @@ export default function ProjectPanel(): JSX.Element | null {
 
   const handleCloneProject = async (project: ProjectDto) => {
     try {
+      if (!confirmLeaveForProjectChange({ nextProjectName: project.name || '克隆项目' })) return
       const clonedProject = await cloneProject(project.id, $t('克隆项目 - {{name}}', { name: project.name }))
       setMyProjects(prev => [clonedProject, ...prev])
       notifications.show({
@@ -129,8 +282,10 @@ export default function ProjectPanel(): JSX.Element | null {
           border: '1px solid rgba(34, 197, 94, 0.2)',
         }
       })
-      // 加载克隆项目的工作流
-      // 这里可以添加加载工作流的逻辑
+      if (clonedProject?.id) {
+        setCurrentProject({ id: clonedProject.id, name: clonedProject.name })
+        setActivePanel(null)
+      }
     } catch (error) {
       console.error('克隆项目失败:', error)
       notifications.show({
@@ -295,6 +450,58 @@ export default function ProjectPanel(): JSX.Element | null {
     }
   }
 
+  const handleOpenTemplateEdit = (project: ProjectDto) => {
+    setEditingTemplateProjectId(project.id)
+    setEditingTemplateTitle(String(project.templateTitle || project.name || '').trim())
+    setEditingTemplateDescription(String(project.templateDescription || '').trim())
+    setEditingTemplateCoverUrl(String(project.templateCoverUrl || '').trim())
+    setTemplateEditOpen(true)
+  }
+
+  const handleSaveTemplateEdit = async () => {
+    const projectId = String(editingTemplateProjectId || '').trim()
+    if (!projectId) return
+    const templateTitle = editingTemplateTitle.trim()
+    if (!templateTitle) {
+      notifications.show({ title: $('失败'), message: $('请输入模板标题'), autoClose: 2500, color: 'red' })
+      return
+    }
+    if (!isAdmin) {
+      notifications.show({ title: $('失败'), message: $('仅管理员可编辑公共模板'), autoClose: 2500, color: 'red' })
+      return
+    }
+    if (templateEditSubmitting) return
+    setTemplateEditSubmitting(true)
+    try {
+      const updated = await updateAdminProject(projectId, {
+        templateTitle,
+        templateDescription: editingTemplateDescription.trim(),
+        templateCoverUrl: editingTemplateCoverUrl.trim(),
+      })
+      setPublicProjects((prev) => prev.map((p) => (
+        p.id === updated.id
+          ? {
+              ...p,
+              name: updated.name,
+              isPublic: updated.isPublic,
+              owner: updated.owner || undefined,
+              ownerName: updated.ownerName || undefined,
+              templateTitle: updated.templateTitle || updated.name,
+              templateDescription: updated.templateDescription || undefined,
+              templateCoverUrl: updated.templateCoverUrl || undefined,
+            }
+          : p
+      )))
+      setTemplateEditOpen(false)
+      notifications.show({ title: $('成功'), message: $('公共模板已更新'), autoClose: 2000, color: 'green' })
+    } catch (error) {
+      console.error('更新公共模板失败:', error)
+      notifications.show({ title: $('失败'), message: $('更新公共模板失败'), autoClose: 3000, color: 'red' })
+    } finally {
+      setTemplateEditSubmitting(false)
+    }
+  }
+
   if (!mounted) return null
 
   // 计算安全的最大高度
@@ -305,12 +512,8 @@ export default function ProjectPanel(): JSX.Element | null {
       <Transition className="project-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div className="project-panel-transition-inner" style={styles}>
-            <Paper
-              withBorder
-              shadow="md"
-              radius="lg"
+            <PanelCard
               className="glass"
-              p="md"
               style={{
                 width: 500,
                 maxHeight: `${maxHeight}px`,
@@ -320,6 +523,7 @@ export default function ProjectPanel(): JSX.Element | null {
                 flexDirection: 'column',
                 overflow: 'hidden',
               }}
+              onWheelCapture={stopPanelWheelPropagation}
               data-ux-panel
             >
               <div className="project-panel-arrow panel-arrow" />
@@ -332,25 +536,105 @@ export default function ProjectPanel(): JSX.Element | null {
               >
                 <Group className="project-panel-header" justify="space-between" mb={8}>
                   <Title className="project-panel-title" order={6}>{$('项目')}</Title>
-                  <motion.div className="project-panel-create-motion" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <Button className="project-panel-create-button" size="xs" variant="light" onClick={async () => {
-                      const defaultName = $t('未命名项目 {{time}}', { time: new Date().toLocaleString() })
-                      const p = await upsertProject({ name: defaultName })
-                      setMyProjects(prev => [p, ...prev])
-                      // 创建一个空白工作流并设为当前
-                      const empty = await saveProjectFlow({ projectId: p.id, name: p.name, nodes: [], edges: [] })
-                      useRFStore.setState({ nodes: [], edges: [], nextId: 1 })
-                      setCurrentProject({ id: p.id, name: p.name })
-                      // 关闭面板
-                      setActivePanel(null)
-                    }}>
-                      {$('新建项目')}
+                  <Group className="project-panel-header-actions" gap={8}>
+                    <Button
+                      className="project-panel-header-dreamina-button"
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => setDreaminaAccountModalOpen(true)}
+                    >
+                      {$('Dreamina 账号')}
                     </Button>
-                  </motion.div>
+                    <motion.div className="project-panel-create-motion" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                      <Button className="project-panel-create-button" size="xs" variant="light" onClick={async () => {
+                        if (!confirmLeaveForProjectChange({ nextProjectName: '上传原文创建项目' })) return
+                        setActivePanel(null)
+                        spaNavigate('/projects')
+                      }}>
+                        {$('上传原文')}
+                      </Button>
+                    </motion.div>
+                  </Group>
                 </Group>
               </motion.div>
 
                 <div className="project-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }}>
+                {currentProjectId ? (
+                  <InlinePanel
+                    className="project-panel-dreamina-card"
+                    mb="sm"
+                    style={{
+                      border: projectCardBorder,
+                      background: projectCardBackground,
+                    }}
+                  >
+                    <Stack className="project-panel-dreamina-stack" gap={8}>
+                      <Group className="project-panel-dreamina-header" justify="space-between" align="center">
+                        <div className="project-panel-dreamina-header-text">
+                          <Text className="project-panel-dreamina-title" fw={600} size="sm">Dreamina / 即梦</Text>
+                          <Text className="project-panel-dreamina-subtitle" size="xs" c="dimmed">
+                            {boundDreaminaAccount
+                              ? `当前项目已绑定账号 ${boundDreaminaAccount.label}`
+                              : '当前项目尚未绑定 Dreamina 账号'}
+                          </Text>
+                        </div>
+                        <Group className="project-panel-dreamina-actions" gap={6}>
+                          <Button className="project-panel-dreamina-manage-button" size="compact-xs" variant="light" onClick={() => setDreaminaAccountModalOpen(true)}>
+                            {$('管理账号')}
+                          </Button>
+                          <Button className="project-panel-dreamina-probe-button" size="compact-xs" variant="subtle" onClick={() => void handleProbeDreaminaAccount()} disabled={!dreaminaSelectedAccountId}>
+                            {$('检查')}
+                          </Button>
+                        </Group>
+                      </Group>
+                      <Group className="project-panel-dreamina-binding-row" align="flex-end" gap={8} wrap="nowrap">
+                        <Select
+                          className="project-panel-dreamina-select"
+                          style={{ flex: 1 }}
+                          label={$('项目账号')}
+                          placeholder={dreaminaLoading ? $('加载中...') : $('选择 Dreamina 账号')}
+                          data={dreaminaAccounts.map((account) => ({
+                            value: account.id,
+                            label: `${account.label}${account.lastError ? ' · 未就绪' : ''}`,
+                          }))}
+                          value={dreaminaSelectedAccountId}
+                          onChange={setDreaminaSelectedAccountId}
+                          searchable
+                          clearable
+                        />
+                        <Button
+                          className="project-panel-dreamina-bind-button"
+                          size="sm"
+                          loading={dreaminaBindingSaving}
+                          onClick={() => void handleSaveDreaminaBinding()}
+                        >
+                          {$('保存绑定')}
+                        </Button>
+                        <Button
+                          className="project-panel-dreamina-unbind-button"
+                          size="sm"
+                          variant="subtle"
+                          color="red"
+                          disabled={!dreaminaBinding}
+                          onClick={async () => {
+                            if (!currentProjectId) return
+                            try {
+                              await deleteDreaminaProjectBinding(currentProjectId)
+                              setDreaminaBinding(null)
+                              await reloadDreaminaState()
+                              notifications.show({ title: $('成功'), message: $('Dreamina 项目绑定已移除'), autoClose: 2000, color: 'green' })
+                            } catch (error) {
+                              console.error('删除 Dreamina 项目绑定失败:', error)
+                              notifications.show({ title: $('失败'), message: $('删除 Dreamina 项目绑定失败'), autoClose: 2500, color: 'red' })
+                            }
+                          }}
+                        >
+                          {$('解绑')}
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </InlinePanel>
+                ) : null}
                 <Tabs className="project-panel-tabs" value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
                   <Tabs.List className="project-panel-tab-list">
                     <motion.div
@@ -400,10 +684,10 @@ export default function ProjectPanel(): JSX.Element | null {
                           className="project-panel-tab-label"
                           initial={{ opacity: 0.7 }}
                           animate={activeTab === 'public' ? { opacity: 1, scale: 1.02 } : { opacity: 0.85 }}
-                          whileHover={{ scale: 1.05, color: accentHoverColor }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          {$('公开项目')}
+                        whileHover={{ scale: 1.05, color: accentHoverColor }}
+                        transition={{ duration: 0.2 }}
+                      >
+                          {$('公共模板')}
                         </motion.span>
                       </Tabs.Tab>
                     </motion.div>
@@ -681,6 +965,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                   size="xs"
                                   variant="light"
                                   onClick={async () => {
+                                    if (!confirmLeaveForProjectChange({ nextProjectName: p.name })) return
                                     setCurrentProject({ id: p.id, name: p.name })
                                     setActivePanel(null)
                                   }}
@@ -714,7 +999,7 @@ export default function ProjectPanel(): JSX.Element | null {
                         whileHover={{ scale: 1.02 }}
                         transition={{ duration: 0.2 }}
                       >
-                        <Text className="project-panel-section-title" size="xs" c="dimmed">{$('公开项目')}</Text>
+                        <Text className="project-panel-section-title" size="xs" c="dimmed">{$('公共模板')}</Text>
                       </motion.div>
                       <motion.div
                         className="project-panel-public-icon-motion"
@@ -732,9 +1017,9 @@ export default function ProjectPanel(): JSX.Element | null {
                     transition={{ duration: 0.15 }}
                   >
                     <Group className="project-panel-public-header" justify="space-between" mb={8}>
-                      <Text className="project-panel-public-title" size="sm" fw={500}>{$('社区公开项目')}</Text>
+                      <Text className="project-panel-public-title" size="sm" fw={500}>{$('公共模板')}</Text>
                       <motion.div className="project-panel-public-refresh-motion" whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.96 }}>
-                        <Tooltip className="project-panel-public-refresh-tooltip" label={$('刷新公开项目')}>
+                        <Tooltip className="project-panel-public-refresh-tooltip" label={$('刷新公共模板')}>
                           <ActionIcon
                             className="project-panel-public-refresh-action"
                             size="sm"
@@ -783,7 +1068,7 @@ export default function ProjectPanel(): JSX.Element | null {
                           transition={{ duration: 0.2 }}
                         >
                           <Group className="project-panel-public-empty" justify="center" py="xl">
-                            <Text className="project-panel-public-empty-text" size="sm" c="dimmed">{$('暂无公开项目')}</Text>
+                            <Text className="project-panel-public-empty-text" size="sm" c="dimmed">{$('暂无模板')}</Text>
                           </Group>
                         </motion.div>
                       )}
@@ -829,9 +1114,9 @@ export default function ProjectPanel(): JSX.Element | null {
                                 }}
                               >
                                 <Group className="project-panel-public-card" justify="space-between" p="xs">
-                                  <div className="project-panel-public-card-main" style={{ flex: 1 }}>
+                                  <div className="project-panel-public-card-main" style={{ flex: 1, minWidth: 0 }}>
                                     <Group className="project-panel-public-card-title-row" gap={8}>
-                                      <Text className="project-panel-public-card-title" size="sm">{p.name}</Text>
+                                      <Text className="project-panel-public-card-title" size="sm" lineClamp={1}>{p.templateTitle || p.name}</Text>
                                       <motion.div
                                         className="project-panel-public-badge-motion"
                                         initial={{ scale: 0 }}
@@ -844,22 +1129,48 @@ export default function ProjectPanel(): JSX.Element | null {
                                     {p.ownerName && (
                                       <Text className="project-panel-public-card-owner" size="xs" c="dimmed">{$t('作者：{{name}}', { name: p.ownerName })}</Text>
                                     )}
+                                    {p.templateDescription && (
+                                      <Text className="project-panel-public-card-description" size="xs" c="dimmed" lineClamp={2}>
+                                        {p.templateDescription}
+                                      </Text>
+                                    )}
                                   </div>
-                                  <motion.div
-                                    className="project-panel-public-clone-motion"
-                                    whileHover={{ scale: 1.05 }}
-                                    whileTap={{ scale: 0.95 }}
-                                  >
-                                    <Button
-                                      className="project-panel-public-clone-button"
-                                      size="xs"
-                                      variant="outline"
-                                      leftSection={<IconCopy className="project-panel-public-clone-icon" size={12} />}
-                                      onClick={async () => handleCloneProject(p)}
+                                  <Group className="project-panel-public-actions" gap={6} wrap="nowrap">
+                                    {isAdmin && (
+                                      <motion.div
+                                        className="project-panel-public-edit-motion"
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                      >
+                                        <Tooltip className="project-panel-public-edit-tooltip" label={$('编辑模板信息')} withArrow>
+                                          <ActionIcon
+                                            className="project-panel-public-edit-action"
+                                            size="sm"
+                                            variant="subtle"
+                                            color="blue"
+                                            onClick={() => handleOpenTemplateEdit(p)}
+                                          >
+                                            <IconPencil className="project-panel-public-edit-icon" size={14} />
+                                          </ActionIcon>
+                                        </Tooltip>
+                                      </motion.div>
+                                    )}
+                                    <motion.div
+                                      className="project-panel-public-clone-motion"
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
                                     >
-                                      {$('克隆')}
-                                    </Button>
-                                  </motion.div>
+                                      <Button
+                                        className="project-panel-public-clone-button"
+                                        size="xs"
+                                        variant="outline"
+                                        leftSection={<IconCopy className="project-panel-public-clone-icon" size={12} />}
+                                        onClick={async () => handleCloneProject(p)}
+                                      >
+                                        {$('导入')}
+                                      </Button>
+                                    </motion.div>
+                                  </Group>
                                 </Group>
                               </motion.div>
                             ))}
@@ -871,7 +1182,144 @@ export default function ProjectPanel(): JSX.Element | null {
                 </Tabs.Panel>
                 </Tabs>
                 </div>
-            </Paper>
+              <Modal
+                className="project-panel-dreamina-modal"
+                opened={dreaminaAccountModalOpen}
+                onClose={() => setDreaminaAccountModalOpen(false)}
+                title={$('Dreamina 账号管理')}
+                centered
+                radius="md"
+                size="lg"
+              >
+                <Stack className="project-panel-dreamina-modal-stack" gap="sm">
+                  <TextInput
+                    className="project-panel-dreamina-new-label"
+                    label={$('新账号名称')}
+                    placeholder={$('例如：项目 A 专用即梦')}
+                    value={dreaminaNewAccountLabel}
+                    onChange={(e) => setDreaminaNewAccountLabel(e.currentTarget.value)}
+                  />
+                  <TextInput
+                    className="project-panel-dreamina-cli-path"
+                    label={$('CLI 路径（可选）')}
+                    placeholder="dreamina"
+                    value={dreaminaNewAccountCliPath}
+                    onChange={(e) => setDreaminaNewAccountCliPath(e.currentTarget.value)}
+                  />
+                  <Group className="project-panel-dreamina-create-actions" justify="flex-end">
+                    <Button className="project-panel-dreamina-create-submit" onClick={() => void handleCreateDreaminaAccount()}>
+                      {$('创建账号')}
+                    </Button>
+                  </Group>
+                  <Select
+                    className="project-panel-dreamina-modal-select"
+                    label={$('当前操作账号')}
+                    data={dreaminaAccounts.map((account) => ({
+                      value: account.id,
+                      label: `${account.label}${account.lastError ? ' · 未就绪' : ''}`,
+                    }))}
+                    value={dreaminaSelectedAccountId}
+                    onChange={setDreaminaSelectedAccountId}
+                    searchable
+                    clearable
+                  />
+                  <Textarea
+                    className="project-panel-dreamina-login-json"
+                    label={$('导入登录 JSON')}
+                    placeholder={$('把 dreamina import_login_response 需要的完整 JSON 粘贴到这里')}
+                    value={dreaminaLoginJson}
+                    onChange={(e) => setDreaminaLoginJson(e.currentTarget.value)}
+                    minRows={6}
+                    maxRows={10}
+                  />
+                  <Group className="project-panel-dreamina-modal-actions" justify="space-between" align="center">
+                    <Text className="project-panel-dreamina-modal-tip" size="xs" c="dimmed">
+                      {selectedDreaminaAccount
+                        ? $t('当前账号：{{label}}。支持账号创建、登录态导入、健康检查和删除。', { label: selectedDreaminaAccount.label })
+                        : $('支持账号创建、登录态导入、健康检查和删除。')}
+                    </Text>
+                    <Group className="project-panel-dreamina-modal-buttons" gap={8}>
+                      <Button className="project-panel-dreamina-import-button" variant="light" onClick={() => void handleImportDreaminaLogin()} disabled={!dreaminaSelectedAccountId}>
+                        {$('导入登录态')}
+                      </Button>
+                      <Button className="project-panel-dreamina-probe-button" variant="subtle" onClick={() => void handleProbeDreaminaAccount()} disabled={!dreaminaSelectedAccountId}>
+                        {$('检查账号')}
+                      </Button>
+                      <Button
+                        className="project-panel-dreamina-delete-button"
+                        variant="subtle"
+                        color="red"
+                        disabled={!dreaminaSelectedAccountId}
+                        onClick={async () => {
+                          if (!dreaminaSelectedAccountId) return
+                          if (!window.confirm($('确定删除当前 Dreamina 账号吗？'))) return
+                          try {
+                            await deleteDreaminaAccount(dreaminaSelectedAccountId)
+                            setDreaminaSelectedAccountId(null)
+                            await reloadDreaminaState()
+                            notifications.show({ title: $('成功'), message: $('Dreamina 账号已删除'), autoClose: 2000, color: 'green' })
+                          } catch (error) {
+                            console.error('删除 Dreamina 账号失败:', error)
+                            notifications.show({ title: $('失败'), message: $('删除 Dreamina 账号失败'), autoClose: 2500, color: 'red' })
+                          }
+                        }}
+                      >
+                        {$('删除账号')}
+                      </Button>
+                    </Group>
+                  </Group>
+                </Stack>
+              </Modal>
+              <Modal
+                className="project-panel-template-edit-modal"
+                opened={templateEditOpen}
+                onClose={() => setTemplateEditOpen(false)}
+                title={$('编辑公共模板')}
+                centered
+                radius="md"
+              >
+                <Stack className="project-panel-template-edit-stack" gap="sm">
+                  <TextInput
+                    className="project-panel-template-edit-title"
+                    label={$('模板标题')}
+                    placeholder={$('请输入模板标题')}
+                    value={editingTemplateTitle}
+                    onChange={(e) => setEditingTemplateTitle(e.currentTarget.value)}
+                    maxLength={200}
+                  />
+                  <Textarea
+                    className="project-panel-template-edit-description"
+                    label={$('模板描述')}
+                    placeholder={$('请输入模板描述（可选）')}
+                    value={editingTemplateDescription}
+                    onChange={(e) => setEditingTemplateDescription(e.currentTarget.value)}
+                    minRows={2}
+                    maxRows={4}
+                    maxLength={1000}
+                  />
+                  <TextInput
+                    className="project-panel-template-edit-cover"
+                    label={$('模板封面 URL')}
+                    placeholder="https://..."
+                    value={editingTemplateCoverUrl}
+                    onChange={(e) => setEditingTemplateCoverUrl(e.currentTarget.value)}
+                    maxLength={2000}
+                  />
+                  <Group className="project-panel-template-edit-actions" justify="flex-end" gap={8}>
+                    <Button className="project-panel-template-edit-cancel" variant="subtle" onClick={() => setTemplateEditOpen(false)}>
+                      {$('取消')}
+                    </Button>
+                    <Button
+                      className="project-panel-template-edit-save"
+                      onClick={handleSaveTemplateEdit}
+                      loading={templateEditSubmitting}
+                    >
+                      {$('保存')}
+                    </Button>
+                  </Group>
+                </Stack>
+              </Modal>
+            </PanelCard>
           </div>
         )}
       </Transition>

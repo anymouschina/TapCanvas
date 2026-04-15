@@ -1,0 +1,107 @@
+{
+  "owner": "autogame-17",
+  "slug": "evolver",
+  "displayName": "Evolver",
+  "latest": {
+    "version": "1.14.0",
+    "publishedAt": 1771472925491,
+    "commit": "https://github.com/openclaw/skills/commit/6850dc231439d4194f0daef28ca54f7a7e812c4b"
+  },
+  "history": [
+    {
+      "version": "1.13.0",
+      "publishedAt": 1771155872176,
+      "commit": "https://github.com/openclaw/skills/commit/02aafcce2d53cd58edbc3f275ba3db0d007a2490"
+    },
+    {
+      "version": "1.12.3",
+      "publishedAt": 1771079061392,
+      "commit": "https://github.com/openclaw/skills/commit/c71c00562933f9aae25755d78792f8bc1b776b8e"
+    },
+    {
+      "version": "1.10.12",
+      "publishedAt": 1770976411185,
+      "commit": "https://github.com/openclaw/skills/commit/7441887fd361863ad74db18dd182c79d4fca75bf"
+    },
+    {
+      "version": "1.10.9",
+      "publishedAt": 1770969909380,
+      "commit": "https://github.com/openclaw/skills/commit/4f4fb5067c39a44f919b1b92d5245a0766c98073"
+    },
+    {
+      "version": "1.10.6",
+      "publishedAt": 1770905351087,
+      "commit": "https://github.com/openclaw/skills/commit/051daf985ffdeb00d017010e44fee588d5345762"
+    },
+    {
+      "version": "1.10.5",
+      "publishedAt": 1770828340193,
+      "commit": "https://github.com/openclaw/skills/commit/0f7bb88c20963d1c7998df9190629f9d22bcead2"
+    },
+    {
+      "version": "1.10.1",
+      "publishedAt": 1770769923939,
+      "commit": "https://github.com/openclaw/skills/commit/d42b0aecff30ddc7c42d3e91d0bcf59d148cdb65"
+    },
+    {
+      "version": "1.9.2",
+      "publishedAt": 1770698325560,
+      "commit": "https://github.com/openclaw/skills/commit/41679826b2b9930ba6cf8abd0d5e05a8a0c4aed7"
+    },
+    {
+      "version": "1.8.6",
+      "publishedAt": 1770650521310,
+      "commit": "https://github.com/openclaw/skills/commit/b70f9f526141cf74a00da1b9ee4e9245acc75f18"
+    },
+    {
+      "version": "1.8.4",
+      "publishedAt": 1770641202797,
+      "commit": "https://github.com/openclaw/skills/commit/93c3a0f0e09d2fd71dfc89a1ed2110175611af12"
+    },
+    {
+      "version": "1.8.2",
+      "publishedAt": 1770623720606,
+      "commit": "https://github.com/openclaw/skills/commit/305563055d4c55e752902ea00c40adcb82b3abc3"
+    },
+    {
+      "version": "1.8.1",
+      "publishedAt": 1770623279854,
+      "commit": "https://github.com/openclaw/skills/commit/f70c2eb1737ec24b1c3f8d0c152ddf8a8c3784f5"
+    },
+    {
+      "version": "1.7.3",
+      "publishedAt": 1770562946750,
+      "commit": "https://github.com/openclaw/skills/commit/d26e6523a4c709713a1a544fd717e4bfbf9a593c"
+    },
+    {
+      "version": "1.7.1",
+      "publishedAt": 1770562348370,
+      "commit": "https://github.com/openclaw/skills/commit/13cc46daacdaf1bc0c17616c49b39da2a2f98302"
+    },
+    {
+      "version": "1.6.1",
+      "publishedAt": 1770471394691,
+      "commit": "https://github.com/openclaw/skills/commit/27f006faafe85a52f50ac3bbd4155ff972eb774c"
+    },
+    {
+      "version": "1.4.4",
+      "publishedAt": 1770382881342,
+      "commit": "https://github.com/openclaw/skills/commit/e3fc8ff3c0fc6cc659a06114e6ffc7b342275b15"
+    },
+    {
+      "version": "1.4.2",
+      "publishedAt": 1770343663622,
+      "commit": "https://github.com/clawdbot/skills/commit/7be8e49fcfa44e1637dae447684057a5142a4ceb"
+    },
+    {
+      "version": "1.2.0",
+      "publishedAt": 1770318833377,
+      "commit": "https://github.com/clawdbot/skills/commit/2baf3cdb3d634c4aedef905cc7f5ba1c93679c5c"
+    },
+    {
+      "version": "1.1.0",
+      "publishedAt": 1770128825586,
+      "commit": "https://github.com/clawdbot/skills/commit/816e6b731b31d828abf4926c17df20a7720ffae1"
+    }
+  ]
+}

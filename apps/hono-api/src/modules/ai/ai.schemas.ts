@@ -40,3 +40,47 @@ export const PromptSampleParseRequestSchema = z.object({
 	rawPrompt: z.string(),
 	nodeKind: PromptSampleNodeKindSchema.optional(),
 });
+
+export const LlmNodePresetTypeSchema = z.enum(["text", "image", "video"]);
+
+export const LlmNodePresetSchema = z.object({
+	id: z.string(),
+	title: z.string(),
+	type: LlmNodePresetTypeSchema,
+	prompt: z.string(),
+	description: z.string().optional(),
+	scope: z.enum(["base", "user"]),
+	enabled: z.boolean().optional(),
+	sortOrder: z.number().int().nullable().optional(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export type LlmNodePresetDto = z.infer<typeof LlmNodePresetSchema>;
+
+export const CreateLlmNodePresetRequestSchema = z.object({
+	title: z.string(),
+	type: LlmNodePresetTypeSchema,
+	prompt: z.string(),
+	description: z.string().optional(),
+});
+
+export type CreateLlmNodePresetRequestDto = z.infer<
+	typeof CreateLlmNodePresetRequestSchema
+>;
+
+export const UpsertAdminLlmNodePresetRequestSchema = z
+	.object({
+		id: z.string().optional(),
+		title: z.string(),
+		type: LlmNodePresetTypeSchema,
+		prompt: z.string(),
+		description: z.string().nullable().optional(),
+		enabled: z.boolean().optional(),
+		sortOrder: z.number().int().nullable().optional(),
+	})
+	.strict();
+
+export type UpsertAdminLlmNodePresetRequestDto = z.infer<
+	typeof UpsertAdminLlmNodePresetRequestSchema
+>;

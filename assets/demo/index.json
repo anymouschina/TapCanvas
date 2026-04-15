@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "001",
+      "file": "assets/demo/001.json",
+      "title": "London Subway POV Continuity Workflow",
+      "summary": "A high-density TapCanvas workflow that stabilizes a realistic London subway scene through image-to-image continuity passes before converting approved keyframes into video shots.",
+      "domains": [
+        "storyboard",
+        "image-continuity",
+        "video-from-image",
+        "cinematic-realism"
+      ],
+      "visualTags": [
+        "London subway",
+        "POV",
+        "BBC texture",
+        "low saturation",
+        "handheld documentary"
+      ],
+      "workflowPattern": {
+        "nodeTypes": {
+          "image": 1580,
+          "video": 262,
+          "audio": 1,
+          "comment": 1
+        },
+        "connectionCount": 1510,
+        "primaryChain": [
+          "base frame",
+          "single-variable image edits",
+          "locked keyframe approval",
+          "video generation from approved image"
+        ]
+      },
+      "keyTechniques": [
+        "Lock scene anchors first: environment, subject identity, props, color tone, and camera language.",
+        "Edit one variable at a time while explicitly freezing all other visual facts.",
+        "Use image outputs as direct references for the next shot instead of regenerating from scratch.",
+        "Describe camera position and POV explicitly rather than relying on generic cinematic language.",
+        "In video prompts, constrain motion tightly and forbid accidental actions or scene drift."
+      ],
+      "bestUsedFor": [
+        "multi-shot storyboard development",
+        "character and environment continuity",
+        "POV-heavy suspense scenes",
+        "image-to-video planning with stable visual anchors"
+      ],
+      "cautions": [
+        "Do not treat case-specific nouns as universal rules.",
+        "Reuse the continuity strategy, not the subway setting itself.",
+        "Prefer the extracted analysis file for reasoning before opening the raw workflow JSON."
+      ],
+      "derivedAssets": [
+        "ai-metadata/workflow-patterns/001.analysis.json",
+        "docs/agents/prompt-patterns/tapcanvas-continuity-patterns.md"
+      ]
+    },
+    {
+      "id": "002",
+      "file": "assets/demo/002.json",
+      "title": "纪实感超现实漫剧升级工作流",
+      "summary": "一个混合型 TapCanvas 实验库，适合漫剧创作：先锁定可信的拍摄语法，再在真实世界里植入单一异常元素，并逐步升级揭示，最后进入视频层。",
+      "domains": [
+        "storyboard",
+        "surreal-realism",
+        "ugc-phone-footage",
+        "premise-escalation",
+        "video-from-image"
+      ],
+      "visualTags": [
+        "纪实现实感",
+        "UGC偷拍",
+        "POV",
+        "警示牌",
+        "涩谷",
+        "火星探测车",
+        "单一异常"
+      ],
+      "workflowPattern": {
+        "nodeTypes": {
+          "image": 1580,
+          "video": 262,
+          "audio": 1,
+          "comment": 1
+        },
+        "connectionCount": 1510,
+        "primaryChain": [
+          "锁定拍摄语法",
+          "植入单一异常",
+          "升级机位与景别揭示",
+          "确认稳定揭示帧",
+          "以严格运动约束生成视频"
+        ]
+      },
+      "keyTechniques": [
+        "把拍摄方式本身当作锚点：POV、手机偷拍、俯拍监视、探测车视角、长焦观察视角。",
+        "先在普通真实世界里植入一个不可能元素，再逐步扩展其影响。",
+        "戏剧升级优先通过观察距离、见证者位置和揭示尺度变化来完成，而不是整场景重写。",
+        "通过明确的手持晃动、曝光呼吸、变焦行为和一镜到底约束维持纪实质感。",
+        "只把最清晰、最可读的揭示帧送入视频层，并同时定义允许动作与禁止漂移。"
+      ],
+      "bestUsedFor": [
+        "从单一异常设定出发的漫剧悬疑分镜",
+        "UGC 或纪录片观感的戏剧段落",
+        "从征兆到确认再到后果的揭示阶梯",
+        "既要真实感又要承载超现实创意的分镜设计"
+      ],
+      "cautions": [
+        "不要把伦敦、涩谷、火星等案例地点直接套用到未来任务。",
+        "复用的是升级语法和拍摄语法，不是表层名词。",
+        "推理时优先读取提炼后的 analysis 文件，而不是直接打开原始工作流 JSON。"
+      ],
+      "derivedAssets": [
+        "ai-metadata/workflow-patterns/002.analysis.json"
+      ]
+    },
+    {
+      "id": "003",
+      "file": "assets/demo/003.json",
+      "title": "跨风格镜头改编与动作延展工作流",
+      "summary": "一个以镜头语义锁定为核心的 TapCanvas 工作流：先保住原始构图、人物比例、朝向、光影逻辑和动作节拍，再在真人写实、日系 AAA 游戏 CG、国漫 3D、线稿等视觉域之间迁移，最后把被批准的关键帧扩展为受控动作视频。",
+      "domains": [
+        "storyboard",
+        "style-transfer",
+        "anime-to-live-action",
+        "anime-to-3d-cg",
+        "video-from-image"
+      ],
+      "visualTags": [
+        "写实化改编",
+        "AAA 游戏过场",
+        "国漫 3D",
+        "动作分镜",
+        "固定机位",
+        "镜头语义锁定"
+      ],
+      "workflowPattern": {
+        "nodeTypes": {
+          "image": 550,
+          "video": 32
+        },
+        "connectionCount": 539,
+        "primaryChain": [
+          "锁定原始镜头语义与构图",
+          "在不同视觉风格间迁移同一镜头",
+          "对已锁镜头做局部微调与合成",
+          "挑选稳定关键帧进入视频层",
+          "以固定机位和极小运动预算生成动作镜头"
+        ]
+      },
+      "keyTechniques": [
+        "先锁构图、主体比例、朝向、空间关系和光影逻辑，再谈风格转换。",
+        "把‘真人写实 / AAA 游戏 CG / 国漫 3D / 线稿’当作渲染域切换，而不是重写镜头事实。",
+        "风格稳定后再做局部微调，例如眼部、护额、天气、拼接、换脸或环境补强。",
+        "进入视频层前只选择语义清楚、角色稳定、镜头明确的关键帧。",
+        "视频提示词严格控制机位、景别、动作预算和禁止项，避免二次漂移。"
+      ],
+      "bestUsedFor": [
+        "把动漫截图改编成真人版或高端 3D 版本",
+        "在不重写镜头语义的前提下探索多种视觉风格",
+        "动作戏关键帧设计与图转视频前的风格定稿",
+        "IP 改编、预告片镜头预演和角色跨媒介视觉开发"
+      ],
+      "cautions": [
+        "不要把案例里的具体角色、世界观或 IP 名词直接复用到新任务。",
+        "复用的是‘镜头语义先锁、风格域后切换’的方法，不是案例表层题材。",
+        "推理与写 prompt 时优先读取 analysis 和 pattern 文档，而不是直接吞原始 JSON。"
+      ],
+      "derivedAssets": [
+        "ai-metadata/workflow-patterns/003.analysis.json",
+        "docs/agents/prompt-patterns/tapcanvas-style-adaptation-patterns.md"
+      ]
+    }
+  ]
+}

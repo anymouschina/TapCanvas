@@ -3,10 +3,26 @@
  */
 import { isAnthropicModel } from './modelSource'
 
+export interface ModelOptionPricingSpec {
+  specKey: string
+  cost: number
+  enabled: boolean
+}
+
+export interface ModelOptionPricing {
+  cost: number
+  enabled: boolean
+  specCosts: ReadonlyArray<ModelOptionPricingSpec>
+}
+
 export interface ModelOption {
   value: string
   label: string
   vendor?: string
+  modelKey?: string
+  modelAlias?: string | null
+  meta?: unknown
+  pricing?: ModelOptionPricing
 }
 
 export const TEXT_MODELS: ModelOption[] = [
@@ -24,40 +40,29 @@ export const TEXT_MODELS: ModelOption[] = [
   { value: 'models/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', vendor: 'gemini' },
 ]
 
-const DEFAULT_IMAGE_MODEL_VALUE = 'nano-banana-fast'
+const DEFAULT_IMAGE_MODEL_VALUE = 'gemini-3.1-flash-image-preview'
+const DEFAULT_IMAGE_EDIT_MODEL_VALUE = 'gemini-3.1-flash-image-preview'
 
 export const IMAGE_MODELS: ModelOption[] = [
+  { value: DEFAULT_IMAGE_MODEL_VALUE, label: 'Gemini 3.1 Flash Image Preview', vendor: 'gemini' },
   { value: 'nano-banana', label: 'Nano Banana', vendor: 'gemini' },
-  { value: DEFAULT_IMAGE_MODEL_VALUE, label: 'Nano Banana Fast', vendor: 'gemini' },
+  { value: 'nano-banana-fast', label: 'Nano Banana Fast', vendor: 'gemini' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', vendor: 'gemini' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', vendor: 'gemini' },
   { value: 'qwen-image-plus', label: 'Qwen Image Plus', vendor: 'qwen' },
-  { value: 'sora-image', label: 'Sora Image (GPT Image 1)', vendor: 'sora2api' },
-  { value: 'sora-image-landscape', label: 'Sora Image Landscape', vendor: 'sora2api' },
-  { value: 'sora-image-portrait', label: 'Sora Image Portrait', vendor: 'sora2api' },
 ]
 
 export const VIDEO_MODELS: ModelOption[] = [
-  { value: 'sora-2', label: 'Sora 2', vendor: 'sora2api' },
-  { value: 'sora-2-pro', label: 'Sora 2 Pro', vendor: 'sora2api' },
-  { value: 'MiniMax-Hailuo-02', label: 'Hailuo 02 (MiniMax)', vendor: 'minimax' },
-  { value: 'I2V-01-Director', label: 'I2V-01 Director (MiniMax)', vendor: 'minimax' },
-  { value: 'I2V-01-live', label: 'I2V-01 Live (MiniMax)', vendor: 'minimax' },
-  { value: 'I2V-01', label: 'I2V-01 (MiniMax)', vendor: 'minimax' },
   { value: 'veo3.1-pro', label: 'Veo 3.1 Pro', vendor: 'veo' },
   { value: 'veo3.1-fast', label: 'Veo 3.1 Fast', vendor: 'veo' },
-  // Sora2API OpenAI-compatible: Veo models via /v1/chat/completions (model ids are veo_*)
   { value: 'veo_3_1_i2v_s_fast_fl_landscape', label: 'Veo 3.1 i2v (Fast, FL, Landscape)', vendor: 'veo' },
 ]
 
 export type NodeKind =
   | 'text'
   | 'image'
-  | 'storyboardImage'
-  | 'imageFission'
-  | 'mosaic'
+  | 'imageEdit'
   | 'video'
-  | 'composeVideo'
-  | 'storyboard'
   | 'audio'
   | 'subtitle'
   | 'character'
@@ -65,16 +70,11 @@ export type NodeKind =
 export function getAllowedModelsByKind(kind?: NodeKind): ModelOption[] {
   switch (kind) {
     case 'image':
-    case 'storyboardImage':
-    case 'imageFission':
-    case 'mosaic':
+    case 'imageEdit':
       return IMAGE_MODELS
-    case 'composeVideo':
-    case 'storyboard':
     case 'video':
       return VIDEO_MODELS
     case 'character':
-      return TEXT_MODELS
     case 'text':
     default:
       return TEXT_MODELS
@@ -88,8 +88,11 @@ export function getModelLabel(kind: NodeKind | undefined, modelValue: string): s
 }
 
 export function getDefaultModel(kind?: NodeKind): string {
-  if (kind === 'image' || kind === 'storyboardImage' || kind === 'imageFission') {
+  if (kind === 'image') {
     return DEFAULT_IMAGE_MODEL_VALUE
+  }
+  if (kind === 'imageEdit') {
+    return DEFAULT_IMAGE_EDIT_MODEL_VALUE
   }
   const models = getAllowedModelsByKind(kind)
   return models[0]?.value || TEXT_MODELS[0].value
@@ -113,14 +116,10 @@ export const MODEL_PROVIDER_MAP: Record<string, AIProvider> = {
   'models/gemini-3-pro-preview': 'google',
   'qwen-image-plus': 'openai', // 假设使用OpenAI
   'gemini-2.5-flash-image': 'google',
-  'sora-image': 'openai',
-  'sora-image-landscape': 'openai',
-  'sora-image-portrait': 'openai',
   'nano-banana': 'google',
   'nano-banana-fast': 'google',
   'nano-banana-pro': 'google',
-  'sora-2': 'openai', // 假设使用OpenAI
-  'sora-2-pro': 'openai', // 假设使用OpenAI
+  'gemini-3.1-flash-image-preview': 'google',
   'veo3.1-pro': 'google',
   'veo3.1-fast': 'google',
 }
@@ -129,9 +128,7 @@ const IMAGE_EDIT_MODELS = new Set([
   'nano-banana',
   DEFAULT_IMAGE_MODEL_VALUE,
   'nano-banana-pro',
-  'sora-image',
-  'sora-image-landscape',
-  'sora-image-portrait',
+  DEFAULT_IMAGE_EDIT_MODEL_VALUE,
   'gemini-2.5-flash-image-landscape',
   'gemini-2.5-flash-image-portrait',
   'gemini-3.0-pro-image-landscape',

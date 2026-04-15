@@ -1,0 +1,61 @@
+{
+  "version": "v1",
+  "vendors": [
+    {
+      "vendor": {
+        "key": "sora2api",
+        "name": "Sora2API",
+        "enabled": true,
+        "baseUrlHint": "",
+        "authType": "bearer"
+      },
+      "models": [
+        {
+          "vendorKey": "sora2api",
+          "modelKey": "sora-2",
+          "modelAlias": "sora-2",
+          "labelZh": "Sora 2",
+          "kind": "video",
+          "enabled": true
+        },
+        {
+          "vendorKey": "sora2api",
+          "modelKey": "sora-2-pro",
+          "modelAlias": "sora-2-pro",
+          "labelZh": "Sora 2 Pro",
+          "kind": "video",
+          "enabled": true
+        }
+      ],
+      "mappings": []
+    },
+    {
+      "vendor": {
+        "key": "veo",
+        "name": "Veo",
+        "enabled": false,
+        "baseUrlHint": "",
+        "authType": "bearer"
+      },
+      "models": [
+        {
+          "vendorKey": "veo",
+          "modelKey": "veo3.1-fast",
+          "modelAlias": "veo3.1-fast",
+          "labelZh": "Veo 3.1 Fast",
+          "kind": "video",
+          "enabled": true
+        },
+        {
+          "vendorKey": "veo",
+          "modelKey": "veo3.1-pro",
+          "modelAlias": "veo3.1-pro",
+          "labelZh": "Veo 3.1 Pro",
+          "kind": "video",
+          "enabled": true
+        }
+      ],
+      "mappings": []
+    }
+  ]
+}

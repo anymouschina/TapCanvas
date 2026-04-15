@@ -1,0 +1,28 @@
+{
+  "round": 1,
+  "decision": "pass",
+  "scores": {
+    "feature_completeness": 9,
+    "functionality": 8,
+    "ux_or_design_quality": 9,
+    "code_quality": 8
+  },
+  "hardFailures": [],
+  "findings": [
+    {
+      "severity": "medium",
+      "criterion": "项目构建通过",
+      "evidence": "直接运行 pnpm --filter @tapcanvas/web build 因生产环境禁止 localhost VITE_API_BASE 而失败；在显式设置 ALLOW_LOCALHOST_IN_PROD_BUILD=1 后构建成功，说明失败源于环境门禁而非首页代码。",
+      "repro": [
+        "pnpm --filter @tapcanvas/web build",
+        "ALLOW_LOCALHOST_IN_PROD_BUILD=1 pnpm --filter @tapcanvas/web build"
+      ],
+      "suggestedFix": "在正式验收环境配置非 localhost 的 VITE_API_BASE，或在受控本地验收时显式设置 ALLOW_LOCALHOST_IN_PROD_BUILD=1。"
+    }
+  ],
+  "nextActions": [
+    "若需要，可补充截图验收桌面与移动端视觉效果",
+    "在正式环境变量下再跑一次无 override build"
+  ],
+  "importApproved": true
+}

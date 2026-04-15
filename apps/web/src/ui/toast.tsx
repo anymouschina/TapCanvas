@@ -2,7 +2,8 @@ import React from 'react'
 import { create } from 'zustand'
 import { notifications } from '@mantine/notifications'
 
-type Toast = { id: string; message: string; type?: 'info'|'success'|'error'; ttl?: number }
+type ToastType = 'info' | 'success' | 'error' | 'warning'
+type Toast = { id: string; message: string; type?: ToastType; ttl?: number }
 
 type ToastState = {
   items: Toast[]
@@ -22,8 +23,8 @@ export const useToastStore = create<ToastState>((set, get) => ({
   remove: (id) => set((s) => ({ items: s.items.filter(i => i.id !== id) })),
 }))
 
-export function toast(message: string, type?: 'info'|'success'|'error') {
-  const color = type === 'error' ? 'red' : type === 'success' ? 'teal' : 'gray'
+export function toast(message: string, type?: ToastType) {
+  const color = type === 'error' ? 'red' : type === 'success' ? 'teal' : type === 'warning' ? 'yellow' : 'gray'
   try {
     notifications.show({ message, color })
   } catch {

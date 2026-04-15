@@ -4,8 +4,7 @@
 
 // 节点组件
 export { default as TaskNode } from './TaskNode';
-export { TaskNodeRefactored } from './TaskNode';
-export { default as GroupNode } from './GroupNode';
+export { default as TaskNodeRefactored } from './TaskNode';
 export { default as IONode } from './IONode';
 
 // 节点相关工具函数

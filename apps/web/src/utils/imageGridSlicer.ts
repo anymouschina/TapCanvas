@@ -96,6 +96,75 @@ const loadImageElement = async (objectUrl: string): Promise<HTMLImageElement> =>
   })
 }
 
+type ResolvedSource = {
+  source: CanvasImageSource
+  sourceWidth: number
+  sourceHeight: number
+  cleanup: () => void
+}
+
+async function resolveSourceFromBlob(blob: Blob): Promise<ResolvedSource> {
+  let sourceObjectUrl: string | null = null
+  let sourceBitmap: ImageBitmap | null = null
+
+  try {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        sourceBitmap = await createImageBitmap(blob)
+        return {
+          source: sourceBitmap,
+          sourceWidth: sourceBitmap.width,
+          sourceHeight: sourceBitmap.height,
+          cleanup: () => {
+            if (!sourceBitmap) return
+            try {
+              sourceBitmap.close()
+            } catch {
+              // ignore
+            }
+            sourceBitmap = null
+          },
+        }
+      } catch {
+        sourceBitmap = null
+      }
+    }
+
+    sourceObjectUrl = URL.createObjectURL(blob)
+    const img = await loadImageElement(sourceObjectUrl)
+    return {
+      source: img,
+      sourceWidth: img.naturalWidth,
+      sourceHeight: img.naturalHeight,
+      cleanup: () => {
+        if (!sourceObjectUrl) return
+        try {
+          URL.revokeObjectURL(sourceObjectUrl)
+        } catch {
+          // ignore
+        }
+        sourceObjectUrl = null
+      },
+    }
+  } catch (error) {
+    if (sourceObjectUrl) {
+      try {
+        URL.revokeObjectURL(sourceObjectUrl)
+      } catch {
+        // ignore
+      }
+    }
+    if (sourceBitmap) {
+      try {
+        ;(sourceBitmap as ImageBitmap).close()
+      } catch {
+        // ignore
+      }
+    }
+    throw error
+  }
+}
+
 export async function sliceImageGridToObjectUrls(
   srcUrl: string,
   layout: GridLayout,
@@ -123,31 +192,10 @@ export async function sliceImageGridToObjectUrls(
     throw new Error(`Image too large (${Math.round(byteSize / (1024 * 1024))}MB)`)
   }
 
-  let source: CanvasImageSource | null = null
-  let sourceWidth = 0
-  let sourceHeight = 0
-  let sourceObjectUrl: string | null = null
-  let sourceBitmap: ImageBitmap | null = null
-
+  let releaseSource: (() => void) | null = null
   try {
-    if (typeof createImageBitmap === 'function') {
-      try {
-        sourceBitmap = await createImageBitmap(blob)
-        source = sourceBitmap
-        sourceWidth = sourceBitmap.width
-        sourceHeight = sourceBitmap.height
-      } catch {
-        sourceBitmap = null
-      }
-    }
-
-    if (!source) {
-      sourceObjectUrl = URL.createObjectURL(blob)
-      const img = await loadImageElement(sourceObjectUrl)
-      source = img
-      sourceWidth = img.naturalWidth
-      sourceHeight = img.naturalHeight
-    }
+    const { source, sourceWidth, sourceHeight, cleanup } = await resolveSourceFromBlob(blob)
+    releaseSource = cleanup
 
     if (!sourceWidth || !sourceHeight) {
       throw new Error('Invalid image size')
@@ -189,18 +237,8 @@ export async function sliceImageGridToObjectUrls(
       })
     }
 
-    if (sourceObjectUrl) {
-      URL.revokeObjectURL(sourceObjectUrl)
-      sourceObjectUrl = null
-    }
-    if (sourceBitmap) {
-      try {
-        sourceBitmap.close()
-      } catch {
-        // ignore
-      }
-      sourceBitmap = null
-    }
+    releaseSource()
+    releaseSource = null
 
     const revoke = () => {
       objectUrls.forEach((u) => {
@@ -214,21 +252,10 @@ export async function sliceImageGridToObjectUrls(
 
     return { frames, revoke }
   } catch (error) {
-    if (sourceObjectUrl) {
-      try {
-        URL.revokeObjectURL(sourceObjectUrl)
-      } catch {
-        // ignore
-      }
-    }
-    if (sourceBitmap) {
-      try {
-        sourceBitmap.close()
-      } catch {
-        // ignore
-      }
+    if (releaseSource) {
+      releaseSource()
+      releaseSource = null
     }
     throw error
   }
 }
-

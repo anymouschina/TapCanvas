@@ -1,11 +1,11 @@
 import React from 'react'
-import { Button, Group, Modal, Paper, Stack, Text } from '@mantine/core'
-import { IconMovie, IconVideo } from '@tabler/icons-react'
+import { Button, Group, Modal, Paper, Stack, Text, Tooltip } from '@mantine/core'
+import { IconCheck, IconMovie, IconVideo } from '@tabler/icons-react'
 
 type VideoResult = {
   url: string
-  thumbnailUrl?: string
-  title?: string
+  thumbnailUrl?: string | null
+  title?: string | null
   duration?: number
 }
 
@@ -14,7 +14,9 @@ type VideoResultModalProps = {
   onClose: () => void
   videos: VideoResult[]
   primaryIndex: number
+  adoptedIndex: number | null
   onSelectPrimary: (index: number, url: string) => void
+  onAdopt: (index: number) => void
   onPreview: (video: VideoResult) => void
   galleryCardBackground: string
   mediaFallbackSurface: string
@@ -28,7 +30,9 @@ export function VideoResultModal({
   onClose,
   videos,
   primaryIndex,
+  adoptedIndex,
   onSelectPrimary,
+  onAdopt,
   onPreview,
   galleryCardBackground,
   mediaFallbackSurface,
@@ -92,6 +96,7 @@ export function VideoResultModal({
               >
                 {videos.map((video, idx) => {
                   const isPrimary = idx === primaryIndex
+                  const isAdopted = adoptedIndex !== null && adoptedIndex === idx
                   return (
                     <Paper
                       className="video-result-modal-card"
@@ -100,6 +105,7 @@ export function VideoResultModal({
                       p="xs"
                       style={{
                         background: galleryCardBackground,
+                        boxShadow: isAdopted ? '0 0 0 2px rgba(220,38,38,0.92)' : undefined,
                       }}
                     >
                       <div
@@ -154,9 +160,23 @@ export function VideoResultModal({
                       </div>
                       <Group className="video-result-modal-actions" justify="space-between">
                         <Text className="video-result-modal-label" size="xs" c="dimmed">
-                          {isPrimary ? `主视频 · 第 ${idx + 1} 个` : `第 ${idx + 1} 个`}
+                          {isPrimary
+                            ? `${isAdopted ? '已采纳 · ' : ''}主视频 · 第 ${idx + 1} 个`
+                            : `${isAdopted ? '已采纳 · ' : ''}第 ${idx + 1} 个`}
                         </Text>
                         <Group className="video-result-modal-buttons" gap={4}>
+                          <Tooltip label={isAdopted ? '该视频已采纳' : '采纳该视频'} position="top" withArrow>
+                            <Button
+                              className="video-result-modal-adopt"
+                              size="xs"
+                              variant={isAdopted ? 'filled' : 'subtle'}
+                              color="red"
+                              leftSection={<IconCheck size={12} />}
+                              onClick={() => onAdopt(idx)}
+                            >
+                              采纳
+                            </Button>
+                          </Tooltip>
                           <Button
                             className="video-result-modal-preview"
                             size="xs"

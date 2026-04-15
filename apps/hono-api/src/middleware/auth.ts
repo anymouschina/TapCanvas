@@ -1,8 +1,10 @@
 import type { Next } from "hono";
-import type { AppContext } from "../types";
+import type { AppContext, PrismaClient } from "../types";
 import { getConfig } from "../config";
 import { getCookie } from "hono/cookie";
 import { verifyJwtHS256 } from "../jwt";
+import { getPrismaClient } from "../platform/node/prisma";
+import { resolveLocalDevRole } from "../modules/auth/local-admin";
 
 export type AuthPayload = {
 	sub: string;
@@ -10,9 +12,55 @@ export type AuthPayload = {
 	name?: string;
 	avatarUrl?: string | null;
 	email?: string | null;
+	phone?: string | null;
+	hasPassword?: boolean;
 	role?: string | null;
 	guest?: boolean;
 };
+
+export type UserDbAuthState = {
+	role: string | null;
+	disabled: boolean;
+	deletedAt: string | null;
+	hasPassword: boolean;
+};
+
+function normalizeDbRole(value: unknown): string | null {
+	const r = typeof value === "string" ? value.trim() : "";
+	return r ? r : null;
+}
+
+function normalizeDbDeletedAt(value: unknown): string | null {
+	const s = typeof value === "string" ? value.trim() : "";
+	return s ? s : null;
+}
+
+function normalizeDbDisabled(value: unknown): boolean {
+	return Number(value ?? 0) !== 0;
+}
+
+export async function tryGetUserDbAuthState(
+	db: PrismaClient,
+	userId: string,
+): Promise<UserDbAuthState | null> {
+	void db;
+	const row = await getPrismaClient().users.findUnique({
+		where: { id: userId },
+		select: {
+			role: true,
+			disabled: true,
+			deleted_at: true,
+			password_hash: true,
+		},
+	});
+	if (!row) return null;
+	return {
+		role: normalizeDbRole(row.role),
+		disabled: normalizeDbDisabled(row.disabled),
+		deletedAt: normalizeDbDeletedAt(row.deleted_at),
+		hasPassword: typeof row.password_hash === "string" && row.password_hash.trim().length > 0,
+	};
+}
 
 async function ensureUserRow(c: AppContext, payload: AuthPayload) {
 	const nowIso = new Date().toISOString();
@@ -28,28 +76,36 @@ async function ensureUserRow(c: AppContext, payload: AuthPayload) {
 	const guest = payload.guest ? 1 : 0;
 
 	try {
-		await c.env.DB.prepare(
-			`UPDATE users SET last_seen_at = ?, updated_at = ? WHERE id = ?`,
-		)
-			.bind(nowIso, nowIso, id)
-			.run();
-
-		const exists = await c.env.DB.prepare(
-			`SELECT id FROM users WHERE id = ? LIMIT 1`,
-		)
-			.bind(id)
-			.first<any>();
-
-		if (exists) return;
-
-		await c.env.DB.prepare(
-			`
-      INSERT INTO users (id, login, name, avatar_url, email, role, guest, last_seen_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
-    `,
-		)
-			.bind(id, login, name, avatarUrl, email, guest, nowIso, nowIso, nowIso)
-			.run();
+		const prisma = getPrismaClient();
+		const existing = await prisma.users.findUnique({
+			where: { id },
+			select: { id: true },
+		});
+		if (existing) {
+			await prisma.users.update({
+				where: { id },
+				data: {
+					last_seen_at: nowIso,
+					updated_at: nowIso,
+				},
+			});
+			return;
+		}
+		const role = resolveLocalDevRole(c, payload.role);
+		await prisma.users.create({
+			data: {
+				id,
+				login,
+				name,
+				avatar_url: avatarUrl,
+				email,
+				role,
+				guest,
+				last_seen_at: nowIso,
+				created_at: nowIso,
+				updated_at: nowIso,
+			},
+		});
 	} catch {
 		// Best-effort only: auth should not be blocked by a failed "ensure user" write.
 	}
@@ -95,8 +151,34 @@ export async function authMiddleware(c: AppContext, next: Next) {
 	}
 
 	c.set("userId", resolved.payload.sub);
-	c.set("auth", resolved.payload);
+	c.set("auth", {
+		...resolved.payload,
+		role: resolveLocalDevRole(c, resolved.payload.role),
+	});
 	await ensureUserRow(c, resolved.payload);
+
+	const dbState = await tryGetUserDbAuthState(c.env.DB, resolved.payload.sub);
+	if (dbState) {
+		const nextAuth: AuthPayload = {
+			...resolved.payload,
+			role: resolveLocalDevRole(c, dbState.role),
+			hasPassword: dbState.hasPassword,
+		};
+		c.set("auth", nextAuth);
+		if (dbState.deletedAt) {
+			return c.json({ error: "Account deleted", code: "user_deleted" }, 403);
+		}
+		if (dbState.disabled) {
+			return c.json({ error: "Account disabled", code: "user_disabled" }, 403);
+		}
+	}
+
+	if (!dbState) {
+		c.set("auth", {
+			...resolved.payload,
+			role: resolveLocalDevRole(c, resolved.payload.role),
+		});
+	}
 
 	return next();
 }

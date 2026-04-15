@@ -210,7 +210,7 @@ export const NodeHandles: React.FC<NodeHandlesProps> = ({
       )}
 
       {/* 样式定义 */}
-      <style className="node-handles-style" jsx>{`
+      <style className="node-handles-style">{`
         .node-handles:hover .react-flow__handle {
           transform: translate(-50%, -50%) scale(1.2);
         }

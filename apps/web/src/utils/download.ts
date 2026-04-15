@@ -13,6 +13,22 @@ type DownloadOptions = {
   fallbackTarget?: '_blank' | '_self'
 }
 
+export function appendDownloadSuffix(filename: string, suffix: string | number): string {
+  const trimmed = String(filename || '').trim()
+  const normalizedSuffix = String(suffix || '').trim()
+  if (!trimmed || !normalizedSuffix) return trimmed
+
+  const slashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const dotIndex = trimmed.lastIndexOf('.')
+  const hasExtension = dotIndex > slashIndex && dotIndex < trimmed.length - 1
+
+  if (!hasExtension) {
+    return `${trimmed}-${normalizedSuffix}`
+  }
+
+  return `${trimmed.slice(0, dotIndex)}-${normalizedSuffix}${trimmed.slice(dotIndex)}`
+}
+
 function guessFilenameFromUrl(url: string): string | null {
   try {
     const u = new URL(url)

@@ -6,6 +6,9 @@ export type StoryboardScene = {
   movement?: 'static' | 'push' | 'pull' | 'pan' | 'tilt'
 }
 
+type StoryboardFramingValue = Exclude<StoryboardScene['framing'], undefined>
+type StoryboardMovementValue = Exclude<StoryboardScene['movement'], undefined>
+
 const SCENE_ID_PREFIX = 'scene'
 export const STORYBOARD_DEFAULT_DURATION = 5
 export const STORYBOARD_DURATION_STEP = 0.5
@@ -13,13 +16,13 @@ export const STORYBOARD_MIN_DURATION = 1
 export const STORYBOARD_MAX_DURATION = 60
 export const STORYBOARD_MAX_TOTAL_DURATION = 25
 
-export const STORYBOARD_FRAMING_OPTIONS: { value: StoryboardScene['framing']; label: string }[] = [
+export const STORYBOARD_FRAMING_OPTIONS: { value: StoryboardFramingValue; label: string }[] = [
   { value: 'close', label: '近景' },
   { value: 'medium', label: '中景' },
   { value: 'wide', label: '远景' },
 ]
 
-export const STORYBOARD_MOVEMENT_OPTIONS: { value: StoryboardScene['movement']; label: string }[] = [
+export const STORYBOARD_MOVEMENT_OPTIONS: { value: StoryboardMovementValue; label: string }[] = [
   { value: 'static', label: '静止' },
   { value: 'push', label: '推镜' },
   { value: 'pull', label: '拉镜' },
@@ -102,18 +105,21 @@ export const normalizeStoryboardScenes = (
         ? fallbackText.trim()
         : ''
   if (!source) {
-    return [createScene()]
+    throw new Error('Storyboard scenes source is empty; refusing implicit template scene creation')
   }
   const parsed = parseShotBlocks(source)
   if (parsed.length > 0) return parsed
-  return [createScene({ description: source })]
+  throw new Error('Storyboard text is not parseable into structured shots; refusing implicit template scene creation')
 }
 
 export const serializeStoryboardScenes = (
   scenes: StoryboardScene[],
   options?: { title?: string; notes?: string },
 ): string => {
-  const safeScenes = scenes.length ? scenes : [createScene()]
+  if (!scenes.length) {
+    throw new Error('Cannot serialize empty storyboard scenes')
+  }
+  const safeScenes = scenes
   const lines: string[] = []
   const title = options?.title?.trim()
   if (title) {
@@ -121,7 +127,10 @@ export const serializeStoryboardScenes = (
   }
 
   safeScenes.forEach((scene, index) => {
-    const desc = scene.description.trim() || '待补充镜头描述'
+    const desc = scene.description.trim()
+    if (!desc) {
+      throw new Error(`Storyboard scene description is empty at index=${index}`)
+    }
     lines.push(`Shot ${index + 1}:`)
     lines.push(`duration: ${scene.duration.toFixed(1)}sec`)
     if (scene.framing) {

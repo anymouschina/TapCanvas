@@ -1,5 +1,12 @@
 import { z } from 'zod'
 
+export const textToImageSchema = z.object({
+  prompt: z.string().min(1, '请输入提示词').default(''),
+  steps: z.number().int().min(1).max(100).default(20),
+  seed: z.number().int().optional(),
+  aspect: z.string().default('16:9'),
+})
+export type TextToImage = z.infer<typeof textToImageSchema>
 
 export const composeVideoSchema = z.object({
   storyboard: z.string().min(1, '请输入分镜/脚本'),

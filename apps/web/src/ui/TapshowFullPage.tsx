@@ -15,6 +15,7 @@ import {
   Title,
   Tooltip,
   useMantineColorScheme,
+  Modal,
 } from '@mantine/core'
 import {
   IconArrowLeft,
@@ -27,6 +28,8 @@ import {
   IconRefresh,
   IconSortDescending,
   IconUser,
+  IconMessage2,
+  IconCopy,
 } from '@tabler/icons-react'
 import { getPublicProjectFlows, listPublicAssets, listPublicProjects, type FlowDto, type ProjectDto, type PublicAssetDto } from '../api/server'
 import PreviewModal from './PreviewModal'
@@ -34,6 +37,7 @@ import { useUIStore } from './uiStore'
 import { ToastHost, toast } from './toast'
 import { useIsAdmin } from '../auth/isAdmin'
 import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
+import { navigateBackOr } from '../utils/spaNavigate'
 
 type MediaFilter = 'all' | 'image' | 'video'
 type SortKey = 'createdAt' | 'duration'
@@ -98,10 +102,11 @@ function formatDuration(seconds?: number | null): string | null {
 type TapshowCardProps = {
   asset: PublicAssetDto
   onPreview: (asset: PublicAssetDto) => void
+  onViewPrompt: (asset: PublicAssetDto) => void
   className?: string
 }
 
-function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Element {
+function TapshowCard({ asset, onPreview, onViewPrompt, className }: TapshowCardProps): JSX.Element {
   const isVideo = asset.type === 'video'
   const cover = asset.thumbnailUrl || asset.url
   const label = asset.name || (isVideo ? '视频作品' : '图片作品')
@@ -163,7 +168,7 @@ function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Ele
             <Badge
               className="tapshow-card-badge"
               size="xs"
-              radius="xl"
+              radius="md"
               variant="light"
               color={isVideo ? 'violet' : 'teal'}
               leftSection={isVideo ? <IconPlayerPlay className="tapshow-card-badge-icon" size={12} /> : <IconPhoto className="tapshow-card-badge-icon" size={12} />}
@@ -171,12 +176,12 @@ function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Ele
               {isVideo ? '视频' : '图片'}
             </Badge>
             {asset.modelKey && (
-              <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="outline" color="gray">
+              <Badge className="tapshow-card-badge" size="xs" radius="md" variant="outline" color="gray">
                 {asset.modelKey}
               </Badge>
             )}
             {durationText && (
-              <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="filled" color="dark">
+              <Badge className="tapshow-card-badge" size="xs" radius="md" variant="filled" color="dark">
                 {durationText}
               </Badge>
             )}
@@ -184,7 +189,7 @@ function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Ele
           <ActionIcon
             className="tapshow-card-open"
             size="sm"
-            radius="xl"
+            radius="md"
             variant="subtle"
             aria-label="在新标签页打开"
             onClick={(e) => {
@@ -199,6 +204,21 @@ function TapshowCard({ asset, onPreview, className }: TapshowCardProps): JSX.Ele
           >
             <IconExternalLink className="tapshow-card-open-icon" size={14} />
           </ActionIcon>
+          {asset.prompt && (
+            <ActionIcon
+              className="tapshow-card-open tapshow-card-prompt-open"
+              size="sm"
+              radius="md"
+              variant="subtle"
+              aria-label="查看提示词"
+              onClick={(e) => {
+                e.stopPropagation()
+                onViewPrompt(asset)
+              }}
+            >
+              <IconMessage2 className="tapshow-card-open-icon" size={14} />
+            </ActionIcon>
+          )}
         </div>
       </div>
 
@@ -338,21 +358,21 @@ function PublicProjectCard({ item, onOpen, className }: PublicProjectCardProps):
             <Badge
               className="tapshow-card-badge"
               size="xs"
-              radius="xl"
+              radius="md"
               variant="light"
               color={isVideo ? 'violet' : 'teal'}
               leftSection={isVideo ? <IconPlayerPlay className="tapshow-card-badge-icon" size={12} /> : <IconPhoto className="tapshow-card-badge-icon" size={12} />}
             >
               {isVideo ? '项目视频' : '项目图片'}
             </Badge>
-            <Badge className="tapshow-card-badge" size="xs" radius="xl" variant="outline" color="gray">
+            <Badge className="tapshow-card-badge" size="xs" radius="md" variant="outline" color="gray">
               公开项目
             </Badge>
           </Group>
           <ActionIcon
             className="tapshow-card-open"
             size="sm"
-            radius="xl"
+            radius="md"
             variant="subtle"
             aria-label="打开分享页"
             onClick={(e) => {
@@ -414,6 +434,8 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
   const [sortOrder, setSortOrder] = React.useState<SortOrder>('desc')
   const [visibleCount, setVisibleCount] = React.useState(30)
   const [pendingAssetId, setPendingAssetId] = React.useState<string | null>(() => getActiveAssetIdFromLocation())
+  const [promptModalOpen, setPromptModalOpen] = React.useState(false)
+  const [activePrompt, setActivePrompt] = React.useState<{ title: string; prompt: string } | null>(null)
   const loadMoreRef = React.useRef<HTMLDivElement | null>(null)
 
   const reloadProjects = React.useCallback(async (opts?: { silent?: boolean }) => {
@@ -522,6 +544,29 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
     [openPreview],
   )
 
+  const handleViewPrompt = React.useCallback((asset: PublicAssetDto) => {
+    const prompt = String(asset.prompt || '').trim()
+    if (!prompt) {
+      toast('该作品暂无可展示提示词', 'info')
+      return
+    }
+    const title = String(asset.name || (asset.type === 'video' ? '视频作品' : '图片作品') || 'TapShow 作品').trim()
+    setActivePrompt({ title, prompt })
+    setPromptModalOpen(true)
+  }, [])
+
+  const handleCopyPrompt = React.useCallback(async () => {
+    const prompt = String(activePrompt?.prompt || '').trim()
+    if (!prompt) return
+    try {
+      await navigator.clipboard.writeText(prompt)
+      toast('已复制提示词', 'success')
+    } catch (err) {
+      console.error(err)
+      toast('复制提示词失败，请手动复制', 'error')
+    }
+  }, [activePrompt?.prompt])
+
   React.useEffect(() => {
     if (!pendingAssetId || !sortedAssets.length) return
     const asset = sortedAssets.find((a) => a.id === pendingAssetId)
@@ -536,10 +581,8 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
-    const unsub = useUIStore.subscribe(
-      (state) => state.preview,
-      (preview) => {
-        if (preview) return
+    const unsub = useUIStore.subscribe((state) => {
+      if (state.preview) return
         const path = window.location.pathname || ''
         const parts = path.split('/').filter(Boolean)
         const idx = parts.indexOf('tapshow')
@@ -549,8 +592,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
         if (baseUrl) {
           window.history.replaceState(null, '', baseUrl)
         }
-      },
-    )
+    })
     return () => unsub()
   }, [])
 
@@ -589,11 +631,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
                 size="xs"
                 variant="subtle"
                 leftSection={<IconArrowLeft className="tapshow-fullpage-back-icon" size={14} />}
-                onClick={() => {
-                  if (typeof window !== 'undefined') {
-                    window.location.href = '/'
-                  }
-                }}
+                onClick={() => navigateBackOr('/')}
               >
                 返回 TapCanvas
               </Button>
@@ -725,7 +763,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
               <SegmentedControl
                 className="tapshow-fullpage-filter-media"
                 size="xs"
-                radius="xl"
+                radius="md"
                 value={mediaFilter}
                 onChange={(v) => setMediaFilter(v as MediaFilter)}
                 data={[
@@ -738,7 +776,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
               <SegmentedControl
                 className="tapshow-fullpage-filter-sort"
                 size="xs"
-                radius="xl"
+                radius="md"
                 value={sortKey}
                 onChange={(v) => setSortKey(v as SortKey)}
                 data={[
@@ -750,7 +788,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
               <ActionIcon
                 className="tapshow-fullpage-filter-order"
                 size="sm"
-                radius="xl"
+                radius="md"
                 variant="light"
                 aria-label="切换排序方向"
                 onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
@@ -793,7 +831,7 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
               className="tapshow-grid tapshow-fullpage-grid"
             >
               {visibleAssets.map((asset) => (
-                <TapshowCard key={asset.id} className="tapshow-card--asset" asset={asset} onPreview={handlePreview} />
+                <TapshowCard key={asset.id} className="tapshow-card--asset" asset={asset} onPreview={handlePreview} onViewPrompt={handleViewPrompt} />
               ))}
             </SimpleGrid>
           )}
@@ -814,6 +852,25 @@ function TapshowFullPageInner({ className }: { className?: string }): JSX.Elemen
           )}
         </Box>
       </Container>
+      <Modal
+        className="tapshow-fullpage-prompt-modal"
+        opened={promptModalOpen}
+        onClose={() => setPromptModalOpen(false)}
+        title={`提示词 · ${activePrompt?.title || 'TapShow 作品'}`}
+        size="lg"
+        centered
+      >
+        <Stack className="tapshow-fullpage-prompt-modal-stack" gap="sm">
+          <Group className="tapshow-fullpage-prompt-modal-actions" justify="flex-end">
+            <Button className="tapshow-fullpage-prompt-modal-copy" size="xs" variant="light" leftSection={<IconCopy size={14} />} onClick={() => { void handleCopyPrompt() }}>
+              复制提示词
+            </Button>
+          </Group>
+          <Text className="tapshow-fullpage-prompt-modal-content" size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+            {String(activePrompt?.prompt || '').trim() || '暂无提示词'}
+          </Text>
+        </Stack>
+      </Modal>
     </div>
   )
 }

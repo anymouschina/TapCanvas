@@ -1,29 +1,19 @@
 {
+	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
-		/* Base Options: */
-		"esModuleInterop": true,
-		"skipLibCheck": true,
-		"target": "es2024",
-		"verbatimModuleSyntax": false,
-		"allowJs": true,
-		"resolveJsonModule": true,
-		"moduleDetection": "force",
-		/* Strictness */
-		"noImplicitAny": false,
-		"noImplicitThis": true,
-		"strictNullChecks": false,
+		"target": "ES2022",
+		"module": "CommonJS",
+		"moduleResolution": "Node",
 		"strict": true,
-		"noUncheckedIndexedAccess": true,
-		/* If NOT transpiling with TypeScript: */
-		"moduleResolution": "Bundler",
-		"module": "es2022",
-		"noEmit": true,
-		"lib": ["es2024"],
-		"types": [
-			"node",
-			"service-worker-mock"
-		]
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"emitDecoratorMetadata": true,
+		"experimentalDecorators": true,
+		"outDir": "dist",
+		"rootDir": ".",
+		"types": ["node"]
 	},
-	"exclude": ["node_modules", "dist", "tests"],
-	"include": ["src", "worker-configuration.d.ts"]
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "scripts/**/*.mjs"],
+	"exclude": ["node_modules", "dist"]
 }

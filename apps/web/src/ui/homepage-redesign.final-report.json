@@ -1,0 +1,17 @@
+{
+  "productSpecTitle": "TapCanvas Homepage Redesign",
+  "roundsCompleted": 1,
+  "finalDecision": "pass",
+  "importedFiles": [
+    "apps/web/src/ui/HomePage.tsx",
+    "apps/web/src/ui/homePage.css"
+  ],
+  "unresolvedRisks": [
+    "正式生产构建仍依赖环境变量门禁配置",
+    "当前 evaluator 以代码与构建为主，未包含截图式人工审美复核"
+  ],
+  "recommendedNextTasks": [
+    "在真实部署环境下复跑 build",
+    "如需进一步强化品牌，可继续扩展首页滚动段落，但不属于本次最小范围"
+  ]
+}

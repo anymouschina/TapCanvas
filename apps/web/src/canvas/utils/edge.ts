@@ -14,6 +14,7 @@ export interface EdgeData {
   type?: string;
   label?: string;
   animated?: boolean;
+  branchGroupId?: string;
   style?: React.CSSProperties;
   [key: string]: any;
 }
@@ -44,7 +45,7 @@ export function createEdge(
     sourceHandle,
     targetHandle,
     data: {
-      type: null,
+      type: undefined,
       label: '',
       animated: false,
       ...data,
@@ -357,7 +358,7 @@ export function isEdgeInBounds(
 /**
  * 边样式配置
  */
-export const EdgeStyles = {
+export const EdgeStyles: Record<string, React.CSSProperties> = {
   default: {
     strokeWidth: 2,
     stroke: '#6B7280',
@@ -385,7 +386,7 @@ export const EdgeStyles = {
     stroke: '#10B981',
     fill: 'none',
   },
-} as const;
+};
 
 /**
  * 根据状态获取边样式
@@ -399,7 +400,7 @@ export function getEdgeStyle(
   selected: boolean = false,
   animated: boolean = false
 ): React.CSSProperties {
-  let baseStyle = EdgeStyles.default;
+  let baseStyle: React.CSSProperties = { ...EdgeStyles.default };
 
   if (selected) {
     baseStyle = { ...baseStyle, ...EdgeStyles.selected };

@@ -9,6 +9,8 @@ export const CANVAS_CONFIG = {
   GRID_SIZE: 20,
   NODE_SPACING_X: 200,
   NODE_SPACING_Y: 150,
+  DEFAULT_NODE_WIDTH: 200,
+  DEFAULT_NODE_HEIGHT: 80,
 
   // 拖拽配置
   DRAG_THRESHOLD: 5,
@@ -38,7 +40,13 @@ export const NODE_TYPES = {
 // 节点种类
 export const NODE_KINDS = {
   TEXT: 'text',
+  NOVEL_DOC: 'novelDoc',
+  SCRIPT_DOC: 'scriptDoc',
+  STORYBOARD_SCRIPT: 'storyboardScript',
+  WORKFLOW_INPUT: 'workflowInput',
+  WORKFLOW_OUTPUT: 'workflowOutput',
   IMAGE: 'image',
+  STORYBOARD: 'storyboard',
   VIDEO: 'video',
   AUDIO: 'audio',
   CHARACTER: 'character',

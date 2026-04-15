@@ -1,13 +1,13 @@
-name: Deploy TapCanvas to Cloudflare
+name: Deploy Web to Cloudflare Worker Assets
 
 on:
   push:
     branches:
-      - main
+      - "**"
   workflow_dispatch:
 
 jobs:
-  deploy:
+  deploy-web:
     runs-on: ubuntu-latest
 
     env:
@@ -35,17 +35,10 @@ jobs:
       - name: Build web app
         run: pnpm --filter @tapcanvas/web build
         env:
-          VITE_API_BASE: "https://hono-api.beqlee.icu"
-          VITE_LANGGRAPH_API_URL: "https://ai.beqlee.icu"
-          VITE_LANGGRAPH_API_BASE: "https://ai.beqlee.icu"
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+          VITE_GITHUB_CLIENT_ID: ${{ vars.VITE_GITHUB_CLIENT_ID }}
+          VITE_GITHUB_REDIRECT_URI: ${{ vars.VITE_GITHUB_REDIRECT_URI }}
+          VITE_LANGGRAPH_API_URL: ${{ vars.VITE_LANGGRAPH_API_URL }}
 
-      - name: Deploy web (Cloudflare Pages/Workers)
+      - name: Deploy web to Cloudflare Worker Assets
         run: npx wrangler deploy
-
-      - name: Deploy hono-api (Workers)
-        working-directory: apps/hono-api
-        run: npx wrangler deploy --config wrangler.jsonc
-
-      - name: Deploy ai-fullstack backend (Workers + Containers)
-        working-directory: apps/ai-fullstack/backend
-        run: npx wrangler deploy --config wrangler.jsonc

@@ -1,0 +1,9 @@
+{
+  "maxTurns": 12000,
+  "apiBaseUrl": "https://right.codes/codex/v1",
+  "apiKey": "sk-xx",
+  "maxSubagentDepth": 50,
+  "stream": true,
+  "model": "gpt-5.4",
+  "agentIntro": "你是有用的ai助手，完成用户任务"
+}

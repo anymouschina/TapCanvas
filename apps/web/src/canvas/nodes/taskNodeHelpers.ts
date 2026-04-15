@@ -2,7 +2,6 @@ import type React from 'react'
 import { Position } from '@xyflow/react'
 import type { TaskNodeHandlesConfig } from './taskNodeSchema'
 import type { TaskResultDto } from '../../api/server'
-import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
 
 export const MAX_VEO_REFERENCE_IMAGES = 3
 export const HANDLE_HORIZONTAL_OFFSET = 36
@@ -91,45 +90,6 @@ export const buildHandleStyle = (
   }
 
   return style
-}
-
-export async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const result = reader.result
-      resolve(typeof result === 'string' ? result : '')
-    }
-    reader.onerror = () => reject(new Error('Failed to convert blob to data URL'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-export async function resolveImageForReversePrompt(
-  url: string,
-): Promise<{ imageUrl?: string; imageData?: string }> {
-  const normalized = (url || '').trim()
-  if (!normalized) return {}
-  if (REMOTE_IMAGE_URL_REGEX.test(normalized) || normalized.startsWith('data:')) {
-    return { imageUrl: normalized }
-  }
-  if (normalized.startsWith('blob:')) {
-    try {
-      const res = await fetch(normalized)
-      if (!res.ok) {
-        throw new Error('Failed to fetch blob URL')
-      }
-      const blob = await res.blob()
-      const dataUrl = await blobToDataUrl(blob)
-      if (dataUrl) {
-        return { imageData: dataUrl }
-      }
-    } catch (error) {
-      console.error('resolveImageForReversePrompt: failed to read blob URL', error)
-      return {}
-    }
-  }
-  return {}
 }
 
 export const genTaskNodeId = () => {

@@ -1,10 +1,16 @@
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
+import { getPrismaClient } from "../../platform/node/prisma";
 import {
+	CreateLlmNodePresetRequestSchema,
+	LlmNodePresetSchema,
 	PromptSampleInputSchema,
 	PromptSampleSchema,
+	UpsertAdminLlmNodePresetRequestSchema,
+	type LlmNodePresetDto,
 	type PromptSampleDto,
 } from "./ai.schemas";
+import { isAdminRequest } from "../team/team.service";
 import {
 	PROMPT_SAMPLES,
 	matchPromptSamples,
@@ -26,6 +32,63 @@ type PromptSampleRow = {
 	created_at: string;
 	updated_at: string;
 };
+
+type LlmNodePresetRow = {
+	id: string;
+	owner_id: string | null;
+	scope: string;
+	preset_type: string;
+	title: string;
+	prompt: string;
+	description: string | null;
+	enabled: number;
+	sort_order: number | null;
+	created_at: string;
+	updated_at: string;
+};
+
+const PRESET_SCOPE_USER = "user";
+const PRESET_SCOPE_BASE = "base";
+let llmNodePresetSchemaReady = false;
+
+async function ensureLlmNodePresetSchema(c: AppContext): Promise<void> {
+	void c;
+	if (llmNodePresetSchemaReady) return;
+	llmNodePresetSchemaReady = true;
+}
+
+function normalizeLlmNodePresetType(
+	type?: string | null,
+): "text" | "image" | "video" | undefined {
+	const raw = String(type || "").trim().toLowerCase();
+	if (raw === "text") return "text";
+	if (raw === "image") return "image";
+	if (raw === "video") return "video";
+	return undefined;
+}
+
+function mapLlmNodePresetRow(row: LlmNodePresetRow): LlmNodePresetDto {
+	const type = normalizeLlmNodePresetType(row.preset_type) ?? "text";
+	const scope = row.scope === PRESET_SCOPE_BASE ? PRESET_SCOPE_BASE : PRESET_SCOPE_USER;
+	return LlmNodePresetSchema.parse({
+		id: row.id,
+		title: row.title,
+		type,
+		prompt: row.prompt,
+		description: row.description || undefined,
+		scope,
+		enabled: !!row.enabled,
+		sortOrder: row.sort_order,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	});
+}
+
+function requireAdmin(c: AppContext): void {
+	if (!isAdminRequest(c)) {
+		throw new AppError("Forbidden", { status: 403, code: "forbidden" });
+	}
+}
 
 function normalizePromptSampleKind(
 	kind?: string | null,
@@ -149,24 +212,15 @@ export async function listPromptSamples(
 
 	let customRows: PromptSampleRow[] = [];
 	if (includeCustom) {
-		const sqlParts: string[] = [
-			"SELECT * FROM prompt_samples WHERE user_id = ?",
-		];
-		const bindings: unknown[] = [userId];
-		if (normalizedKind) {
-			sqlParts.push("AND node_kind = ?");
-			bindings.push(normalizedKind);
-		}
-		sqlParts.push("ORDER BY updated_at DESC");
-		sqlParts.push(
-			"LIMIT ?",
-		);
 		const take = normalizedQuery ? 50 : limit * 2;
-		bindings.push(take);
-
-		const stmt = c.env.DB.prepare(sqlParts.join(" "));
-		const { results } = await stmt.bind(...bindings).all<PromptSampleRow>();
-		customRows = results ?? [];
+		customRows = await getPrismaClient().prompt_samples.findMany({
+			where: {
+				user_id: userId,
+				...(normalizedKind ? { node_kind: normalizedKind } : {}),
+			},
+			orderBy: { updated_at: "desc" },
+			take,
+		});
 	}
 
 	const customSamples = customRows.map(mapCustomPromptSample);
@@ -233,34 +287,27 @@ export async function createPromptSample(
 	const nowIso = new Date().toISOString();
 	const id = crypto.randomUUID();
 
-	await c.env.DB.prepare(
-		`INSERT INTO prompt_samples
-     (id, user_id, node_kind, scene, command_type, title, prompt,
-      description, input_hint, output_note, keywords, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-	)
-		.bind(
+	await getPrismaClient().prompt_samples.create({
+		data: {
 			id,
-			userId,
-			nodeKind,
+			user_id: userId,
+			node_kind: nodeKind,
 			scene,
-			commandType,
+			command_type: commandType,
 			title,
 			prompt,
-			parsed.description ?? null,
-			parsed.inputHint ?? null,
-			parsed.outputNote ?? null,
-			JSON.stringify(keywords),
-			nowIso,
-			nowIso,
-		)
-		.run();
+			description: parsed.description ?? null,
+			input_hint: parsed.inputHint ?? null,
+			output_note: parsed.outputNote ?? null,
+			keywords: JSON.stringify(keywords),
+			created_at: nowIso,
+			updated_at: nowIso,
+		},
+	});
 
-	const row = await c.env.DB.prepare(
-		`SELECT * FROM prompt_samples WHERE id = ? AND user_id = ?`,
-	)
-		.bind(id, userId)
-		.first<PromptSampleRow>();
+	const row = await getPrismaClient().prompt_samples.findFirst({
+		where: { id, user_id: userId },
+	});
 	if (!row) {
 		throw new AppError("create prompt sample failed", {
 			status: 500,
@@ -275,22 +322,20 @@ export async function deletePromptSample(
 	userId: string,
 	id: string,
 ) {
-	const existing = await c.env.DB.prepare(
-		`SELECT id FROM prompt_samples WHERE id = ? AND user_id = ?`,
-	)
-		.bind(id, userId)
-		.first<Pick<PromptSampleRow, "id">>();
+	void c;
+	const existing = await getPrismaClient().prompt_samples.findFirst({
+		where: { id, user_id: userId },
+		select: { id: true },
+	});
 	if (!existing) {
 		throw new AppError("未找到该案例或无权删除", {
 			status: 404,
 			code: "prompt_sample_not_found",
 		});
 	}
-	await c.env.DB.prepare(
-		`DELETE FROM prompt_samples WHERE id = ? AND user_id = ?`,
-	)
-		.bind(id, userId)
-		.run();
+	await getPrismaClient().prompt_samples.deleteMany({
+		where: { id, user_id: userId },
+	});
 	return { success: true };
 }
 
@@ -322,5 +367,217 @@ export async function parsePromptSample(
 		inputHint: undefined,
 		outputNote: undefined,
 		keywords: [],
+	});
+}
+
+export async function listLlmNodePresets(
+	c: AppContext,
+	userId: string,
+	input?: { q?: string; type?: string | null },
+): Promise<LlmNodePresetDto[]> {
+	await ensureLlmNodePresetSchema(c);
+	const normalizedType = normalizeLlmNodePresetType(input?.type);
+	const q = String(input?.q || "").trim().toLowerCase();
+	const rows = (await getPrismaClient().llm_node_presets.findMany({
+		where: {
+			enabled: 1,
+			OR: [
+				{ scope: PRESET_SCOPE_BASE, owner_id: null },
+				{ scope: PRESET_SCOPE_USER, owner_id: userId },
+			],
+			...(normalizedType ? { preset_type: normalizedType } : {}),
+		},
+		orderBy: [{ updated_at: "desc" }],
+	}))
+		.sort((a, b) => {
+			const aBase = a.scope === PRESET_SCOPE_BASE ? 0 : 1;
+			const bBase = b.scope === PRESET_SCOPE_BASE ? 0 : 1;
+			if (aBase !== bBase) return aBase - bBase;
+			const aNull = a.sort_order == null ? 1 : 0;
+			const bNull = b.sort_order == null ? 1 : 0;
+			if (aNull !== bNull) return aNull - bNull;
+			if ((a.sort_order ?? 0) !== (b.sort_order ?? 0)) {
+				return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+			}
+			return b.updated_at.localeCompare(a.updated_at);
+		})
+		.map(mapLlmNodePresetRow);
+	if (!q) return rows.slice(0, 80);
+	const filtered = rows.filter((row) => {
+		const title = row.title.toLowerCase();
+		const desc = (row.description || "").toLowerCase();
+		const prompt = row.prompt.toLowerCase();
+		return title.includes(q) || desc.includes(q) || prompt.includes(q);
+	});
+	return filtered.slice(0, 80);
+}
+
+export async function createLlmNodePreset(
+	c: AppContext,
+	userId: string,
+	input: unknown,
+): Promise<LlmNodePresetDto> {
+	await ensureLlmNodePresetSchema(c);
+	const parsed = CreateLlmNodePresetRequestSchema.parse(input);
+	const title = parsed.title.trim();
+	const prompt = parsed.prompt.trim();
+	if (!title || !prompt) {
+		throw new AppError("标题和提示词不能为空", {
+			status: 400,
+			code: "invalid_node_preset",
+		});
+	}
+	const nowIso = new Date().toISOString();
+	const id = crypto.randomUUID();
+	await getPrismaClient().llm_node_presets.create({
+		data: {
+			id,
+			owner_id: userId,
+			scope: PRESET_SCOPE_USER,
+			preset_type: parsed.type,
+			title,
+			prompt,
+			description: parsed.description ?? null,
+			enabled: 1,
+			sort_order: null,
+			created_at: nowIso,
+			updated_at: nowIso,
+		},
+	});
+	const row = await getPrismaClient().llm_node_presets.findFirst({
+		where: { id, owner_id: userId },
+	});
+	if (!row) {
+		throw new AppError("create node preset failed", {
+			status: 500,
+			code: "node_preset_create_failed",
+		});
+	}
+	return mapLlmNodePresetRow(row);
+}
+
+export async function deleteLlmNodePreset(
+	c: AppContext,
+	userId: string,
+	id: string,
+): Promise<void> {
+	await ensureLlmNodePresetSchema(c);
+	const existing = await getPrismaClient().llm_node_presets.findFirst({
+		where: { id, scope: PRESET_SCOPE_USER, owner_id: userId },
+		select: { id: true },
+	});
+	if (!existing) {
+		throw new AppError("未找到该预设或无权删除", {
+			status: 404,
+			code: "node_preset_not_found",
+		});
+	}
+	await getPrismaClient().llm_node_presets.deleteMany({
+		where: { id, scope: PRESET_SCOPE_USER, owner_id: userId },
+	});
+}
+
+export async function listAdminLlmNodePresets(
+	c: AppContext,
+	input?: { type?: string | null },
+): Promise<LlmNodePresetDto[]> {
+	requireAdmin(c);
+	await ensureLlmNodePresetSchema(c);
+	const normalizedType = normalizeLlmNodePresetType(input?.type);
+	const rows = await getPrismaClient().llm_node_presets.findMany({
+		where: {
+			scope: PRESET_SCOPE_BASE,
+			...(normalizedType ? { preset_type: normalizedType } : {}),
+		},
+		orderBy: [{ updated_at: "desc" }],
+	});
+	return rows
+		.sort((a, b) => {
+			const aNull = a.sort_order == null ? 1 : 0;
+			const bNull = b.sort_order == null ? 1 : 0;
+			if (aNull !== bNull) return aNull - bNull;
+			if ((a.sort_order ?? 0) !== (b.sort_order ?? 0)) {
+				return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+			}
+			return b.updated_at.localeCompare(a.updated_at);
+		})
+		.map(mapLlmNodePresetRow);
+}
+
+export async function upsertAdminLlmNodePreset(
+	c: AppContext,
+	input: unknown,
+): Promise<LlmNodePresetDto> {
+	requireAdmin(c);
+	await ensureLlmNodePresetSchema(c);
+	const parsed = UpsertAdminLlmNodePresetRequestSchema.parse(input);
+	const title = parsed.title.trim();
+	const prompt = parsed.prompt.trim();
+	if (!title || !prompt) {
+		throw new AppError("标题和提示词不能为空", {
+			status: 400,
+			code: "invalid_node_preset",
+		});
+	}
+	const nowIso = new Date().toISOString();
+	const id = parsed.id?.trim() || `node_preset_${crypto.randomUUID()}`;
+	const enabled = parsed.enabled === false ? 0 : 1;
+	await getPrismaClient().llm_node_presets.upsert({
+		where: { id },
+		create: {
+			id,
+			owner_id: null,
+			scope: PRESET_SCOPE_BASE,
+			preset_type: parsed.type,
+			title,
+			prompt,
+			description: parsed.description ?? null,
+			enabled,
+			sort_order: parsed.sortOrder ?? null,
+			created_at: nowIso,
+			updated_at: nowIso,
+		},
+		update: {
+			scope: PRESET_SCOPE_BASE,
+			owner_id: null,
+			preset_type: parsed.type,
+			title,
+			prompt,
+			description: parsed.description ?? null,
+			enabled,
+			sort_order: parsed.sortOrder ?? null,
+			updated_at: nowIso,
+		},
+	});
+	const row = await getPrismaClient().llm_node_presets.findFirst({
+		where: { id, scope: PRESET_SCOPE_BASE },
+	});
+	if (!row) {
+		throw new AppError("upsert node preset failed", {
+			status: 500,
+			code: "node_preset_upsert_failed",
+		});
+	}
+	return mapLlmNodePresetRow(row);
+}
+
+export async function deleteAdminLlmNodePreset(
+	c: AppContext,
+	id: string,
+): Promise<void> {
+	requireAdmin(c);
+	await ensureLlmNodePresetSchema(c);
+	const existing = await getPrismaClient().llm_node_presets.findFirst({
+		where: { id, scope: PRESET_SCOPE_BASE },
+		select: { id: true },
+	});
+	if (!existing) {
+		throw new AppError("未找到该基础预设", {
+			status: 404,
+			code: "node_preset_not_found",
+		});
+	}
+	await getPrismaClient().llm_node_presets.deleteMany({
+		where: { id, scope: PRESET_SCOPE_BASE },
 	});
 }

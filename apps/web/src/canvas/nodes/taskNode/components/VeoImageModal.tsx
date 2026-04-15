@@ -1,7 +1,8 @@
 import React from 'react'
-import { ActionIcon, Badge, Button, Group, Modal, Paper, Stack, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Badge, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
 import { IconTrash } from '@tabler/icons-react'
 import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
+import { InlinePanel } from '../../../../ui/InlinePanel'
 
 type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
 
@@ -99,7 +100,7 @@ export function VeoImageModal({
             ) : (
               <Group className="veo-image-modal-reference-list" gap={6} wrap="wrap">
                 {veoReferenceImages.map((url) => (
-                  <Paper className="veo-image-modal-reference-card" key={url} radius="md" p="xs" withBorder style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <InlinePanel className="veo-image-modal-reference-card" key={url} padding="compact" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div
                       className="veo-image-modal-reference-thumb"
                       style={{
@@ -123,7 +124,7 @@ export function VeoImageModal({
                     <ActionIcon className="veo-image-modal-reference-remove" size="xs" variant="subtle" onClick={() => onRemoveReferenceImage(url)}>
                       <IconTrash className="veo-image-modal-reference-remove-icon" size={12} />
                     </ActionIcon>
-                  </Paper>
+                  </InlinePanel>
                 ))}
               </Group>
             )}
@@ -149,7 +150,7 @@ export function VeoImageModal({
               const isImageSource = candidate.sourceType === 'image'
               const borderColor = isFirstFrame || isLastFrame || isSelected ? statusColor : inlineDividerColor
               return (
-                <Paper className="veo-image-modal-candidate-card" key={`${candidate.url}-${candidate.label}`} radius="md" p="xs" withBorder style={{ borderColor }}>
+                <InlinePanel className="veo-image-modal-candidate-card" key={`${candidate.url}-${candidate.label}`} padding="compact" style={{ borderColor }}>
                   <div
                     className="veo-image-modal-candidate-thumb"
                     style={{
@@ -213,7 +214,7 @@ export function VeoImageModal({
                       </Button>
                     )}
                   </Group>
-                </Paper>
+                </InlinePanel>
               )
             })}
           </div>

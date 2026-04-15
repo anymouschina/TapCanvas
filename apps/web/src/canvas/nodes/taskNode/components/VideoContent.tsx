@@ -1,6 +1,6 @@
 import React from 'react'
-import { Button, Group, Text } from '@mantine/core'
-import { IconClock, IconPhotoSearch, IconScissors, IconUserPlus } from '@tabler/icons-react'
+import { Button, Group, Text, Tooltip } from '@mantine/core'
+import { IconCheck, IconClock, IconPhotoSearch, IconScissors } from '@tabler/icons-react'
 import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 
 type FrameSample = {
@@ -10,14 +10,16 @@ type FrameSample = {
 
 type VideoResult = {
   url: string
-  thumbnailUrl?: string
-  title?: string
+  thumbnailUrl?: string | null
+  title?: string | null
   duration?: number
 }
 
 type VideoContentProps = {
   videoResults: VideoResult[]
   videoPrimaryIndex: number
+  adoptedVideoIndex: number | null
+  isPrimaryVideoAdopted: boolean
   videoUrl: string | null
   videoThumbnailUrl?: string | null
   videoTitle?: string | null
@@ -33,14 +35,16 @@ type VideoContentProps = {
   frameCaptureLoading: boolean
   handleCaptureVideoFrames: () => void
   cleanupFrameSamples: () => void
+  onAdoptVideo: (index: number) => void
   onOpenVideoModal: () => void
   onOpenWebCut?: () => void
-  onCreateCharacter?: () => void
 }
 
 export function VideoContent({
   videoResults,
   videoPrimaryIndex,
+  adoptedVideoIndex,
+  isPrimaryVideoAdopted,
   videoUrl,
   videoThumbnailUrl,
   videoTitle,
@@ -56,30 +60,25 @@ export function VideoContent({
   frameCaptureLoading,
   handleCaptureVideoFrames,
   cleanupFrameSamples,
+  onAdoptVideo,
   onOpenVideoModal,
   onOpenWebCut,
-  onCreateCharacter,
 }: VideoContentProps) {
   const didDragFrameRef = React.useRef(false)
   const canClip = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
-  const characterButtonTitle =
-    !canClip
-      ? '暂无可用视频'
-      : !onCreateCharacter
-        ? '仅支持使用 Sora 生成的视频创建角色'
-        : '从当前视频片段创建角色'
   return (
     <div
       className="video-content"
       style={{
-        marginTop: 6,
         width: '100%',
-        minHeight: 160,
+        height: '100%',
+        minHeight: 0,
         borderRadius: 10,
         background: mediaOverlayBackground,
         padding: 8,
         display: 'flex',
         flexDirection: 'column',
+        flex: 1,
         gap: 6,
         color: mediaOverlayText,
       }}
@@ -90,31 +89,34 @@ export function VideoContent({
             ? `共 ${videoResults.length} 个视频${videoPrimaryIndex >= 0 ? ` (主视频: 第 ${videoPrimaryIndex + 1} 个)` : ''}`
             : '视频生成中...'}
         </Text>
-        <Group className="video-content-header-actions" gap={2}>
-          <Button
+	        <Group className="video-content-header-actions" gap={2}>
+            {videoResults[videoPrimaryIndex]?.url && (
+              <Tooltip label={isPrimaryVideoAdopted ? '当前主视频已采纳' : '采纳当前主视频'} position="top" withArrow>
+                <Button
+                  className="video-content-adopt-button"
+                  size="compact-xs"
+                  variant={isPrimaryVideoAdopted ? 'filled' : 'subtle'}
+                  color="red"
+                  onClick={() => onAdoptVideo(videoPrimaryIndex)}
+                  leftSection={<IconCheck className="video-content-adopt-icon" size={12} />}
+                >
+                  采纳
+                </Button>
+              </Tooltip>
+            )}
+	          <Button
             className="video-content-clip-button"
             size="compact-xs"
             variant="subtle"
             disabled={!canClip || !onOpenWebCut}
             onClick={onOpenWebCut}
             leftSection={<IconScissors className="video-content-clip-icon" size={12} />}
-          >
-            剪辑
-          </Button>
-          <Button
-            className="video-content-character-button"
-            size="compact-xs"
-            variant="subtle"
-            disabled={!canClip || !onCreateCharacter}
-            onClick={onCreateCharacter}
-            leftSection={<IconUserPlus className="video-content-character-icon" size={12} />}
-            title={characterButtonTitle}
-          >
-            创建角色
-          </Button>
-          <Button
-            className="video-content-history-button"
-            size="compact-xs"
+	          >
+	            剪辑
+	          </Button>
+	          <Button
+	            className="video-content-history-button"
+	            size="compact-xs"
             variant="subtle"
             onClick={onOpenVideoModal}
             leftSection={<IconClock className="video-content-history-icon" size={12} />}
@@ -156,16 +158,20 @@ export function VideoContent({
           style={{
             borderRadius: 8,
             width: '100%',
-            height: 160,
+            flex: 1,
+            minHeight: 120,
+            height: '100%',
             objectFit: 'cover',
             backgroundColor: videoSurface,
+            boxShadow: isPrimaryVideoAdopted ? '0 0 0 2px rgba(220,38,38,0.92)' : undefined,
           }}
         />
       ) : (
         <div
           className="video-content-placeholder"
           style={{
-            height: 160,
+            flex: 1,
+            minHeight: 120,
             borderRadius: 8,
             display: 'flex',
             alignItems: 'center',
@@ -174,7 +180,7 @@ export function VideoContent({
             fontSize: 12,
           }}
         >
-          等待 Sora 视频生成完成…
+          等待视频生成完成…
         </div>
       )}
 
@@ -217,7 +223,9 @@ export function VideoContent({
                   border: `1px solid ${inlineDividerColor}`,
                   width: '100%',
                   aspectRatio: '4 / 3',
-                  boxShadow: `0 0 0 2px ${rgba(accentPrimary, 0.0)}`,
+                  boxShadow: adoptedVideoIndex !== null && adoptedVideoIndex === videoPrimaryIndex
+                    ? '0 0 0 2px rgba(220,38,38,0.0)'
+                    : `0 0 0 2px ${rgba(accentPrimary, 0.0)}`,
                 }}
               >
                 <img

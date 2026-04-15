@@ -253,7 +253,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
       )}
 
       {/* 样式定义 */}
-      <style className="node-content-style" jsx>{`
+      <style className="node-content-style">{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
