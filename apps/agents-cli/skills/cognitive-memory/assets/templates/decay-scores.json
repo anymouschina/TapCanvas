@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "last_reflection": null,
+  "last_reflection_episode": null,
+  "last_self_image_consolidation": null,
+  "self_awareness_count_since_consolidation": 0,
+  "token_economy": {
+    "baseline": 8000,
+    "totals": {
+      "extra_requested": 0,
+      "extra_granted": 0,
+      "self_penalty": 0,
+      "user_penalty": 0,
+      "user_bonus": 0
+    },
+    "metrics": {
+      "assessment_accuracy": null,
+      "extra_grant_rate": null,
+      "self_penalty_frequency": null
+    },
+    "recent_outcomes": []
+  },
+  "entries": {}
+}

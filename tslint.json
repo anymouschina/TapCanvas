@@ -1,0 +1,17 @@
+{
+  "defaultSeverity": "error",
+  "linterOptions": {
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/dist-tmp/**",
+      "**/.wrangler/**"
+    ]
+  },
+  "rules": {
+    "cyclomatic-complexity": {
+      "severity": "error",
+      "options": 20
+    }
+  }
+}

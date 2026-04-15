@@ -3,31 +3,26 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-TapCanvas deploy helper (Cloudflare Wrangler).
+TapCanvas deploy helper.
 
 Usage:
-  ./scripts/deploy.sh [--web] [--api] [--ai-backend] [--all]
+  ./scripts/deploy.sh [--web] [--all] [--api]
 
 Defaults:
-  --all (deploy web + hono-api + ai-fullstack backend)
+  --web (deploy web to Cloudflare)
 
 Notes:
-  - Uses per-project wrangler config:
-    - web: root `wrangler.toml`/`wrangler.jsonc` (repo root)
-    - api: `apps/hono-api/wrangler.jsonc`
-    - ai backend: `apps/ai-fullstack/backend/wrangler.jsonc`
+  - Uses root wrangler config for web: `wrangler.toml`/`wrangler.jsonc` (repo root)
+  - API has migrated to NestJS (Node.js); Wrangler deploy is no longer applicable.
   - If Wrangler has permission issues writing to user config dirs, this sets XDG_CONFIG_HOME to a local `.xdg/`.
 EOF
 }
 
 want_web=0
 want_api=0
-want_ai_backend=0
 
 if [ $# -eq 0 ]; then
   want_web=1
-  want_api=1
-  want_ai_backend=1
 else
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -37,17 +32,12 @@ else
         ;;
       --all)
         want_web=1
-        want_api=1
-        want_ai_backend=1
         ;;
       --web)
         want_web=1
         ;;
       --api)
         want_api=1
-        ;;
-      --ai-backend|--langgraph)
-        want_ai_backend=1
         ;;
       *)
         echo "Unknown arg: $1" >&2
@@ -71,21 +61,10 @@ deploy_web() {
 }
 
 deploy_api() {
-  echo "[deploy] hono-api (apps/hono-api/wrangler.jsonc)"
-  (
-    cd "$repo_root/apps/hono-api"
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PWD/.xdg}" npx wrangler deploy --config wrangler.jsonc
-  )
-}
-
-deploy_ai_backend() {
-  echo "[deploy] ai-fullstack backend (apps/ai-fullstack/backend/wrangler.jsonc)"
-  (
-    cd "$repo_root/apps/ai-fullstack/backend"
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PWD/.xdg}" npx wrangler deploy --config wrangler.jsonc
-  )
+  echo "[deploy] api"
+  echo "[deploy] API 已迁移到 NestJS(Node.js)，请使用 Docker/你的部署平台部署 apps/hono-api。" >&2
+  return 1
 }
 
 if [ "$want_web" = "1" ]; then deploy_web; fi
 if [ "$want_api" = "1" ]; then deploy_api; fi
-if [ "$want_ai_backend" = "1" ]; then deploy_ai_backend; fi

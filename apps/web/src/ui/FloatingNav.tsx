@@ -1,186 +1,193 @@
 import React from 'react'
-import { ActionIcon, Paper, Stack, Avatar, Badge, useMantineColorScheme, Tooltip } from '@mantine/core'
-import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconSettings, IconMovie, IconChartBar, IconTerminal2 } from '@tabler/icons-react'
+import { ActionIcon, Badge, Stack, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { IconPlus, IconTopologyStar3, IconListDetails, IconHistory, IconFolders, IconMovie, IconChartBar, IconTerminal2, IconLayoutGrid } from '@tabler/icons-react'
 import { useAuth } from '../auth/store'
 import { useIsAdmin } from '../auth/isAdmin'
 import { useUIStore } from './uiStore'
+import { PanelCard } from './PanelCard'
 import { $ } from '../canvas/i18n'
+import { spaNavigate } from '../utils/spaNavigate'
 
-const WriteImage = '/writer.png'
-
-function ImmersiveCreateIcon({ size = 22 }: { size?: number }) {
-  const stroke = 'rgba(245,247,255,0.95)'
-  const glow = 'rgba(122,226,255,0.9)'
-  return (
-    <svg className="floating-nav-immersive-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        className="floating-nav-immersive-icon-path"
-        d="M5.5 7.2c0-1.05.85-1.9 1.9-1.9h7.2c1.05 0 1.9.85 1.9 1.9v6.6c0 1.05-.85 1.9-1.9 1.9H7.4c-1.05 0-1.9-.85-1.9-1.9V7.2Z"
-        stroke={stroke}
-        strokeWidth="1.6"
-        opacity="0.95"
-      />
-      <path
-        className="floating-nav-immersive-icon-path"
-        d="M8.2 12.9c1.25-1.65 2.5-2.25 3.7-1.2 1.25 1.1 2.2.55 3.9-1.25"
-        stroke={glow}
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        className="floating-nav-immersive-icon-path"
-        d="M6.1 18.6c-1.25 0-2.1.95-2.1 2.1 0 .35.28.63.63.63H9.4c.35 0 .63-.28.63-.63 0-1.15-.95-2.1-2.1-2.1H6.1Z"
-        fill={stroke}
-        opacity="0.9"
-      />
-      <path
-        className="floating-nav-immersive-icon-path"
-        d="M17.7 3.8l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55.55-1.25Z"
-        fill={glow}
-        opacity="0.9"
-      />
-    </svg>
-  )
+type FloatingNavItemProps = {
+  label: string
+  icon: React.ReactNode
+  onHover?: (y: number) => void
+  onClick?: () => void
+  badge?: string
+  tooltipLabel?: string
+  active?: boolean
+  activeStyle?: React.CSSProperties
 }
 
-// 添加CSS动画样式
-const animationStyles = `
-  @keyframes bounce-in {
-    0% { transform: scale(1) rotate(0deg); }
-    50% { transform: scale(1.2) rotate(8deg); }
-    100% { transform: scale(1.15) rotate(5deg); }
-  }
-
-  .floating-nav-item {
-    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  }
-
-  .floating-nav-item:hover {
-    animation: bounce-in 0.3s ease-out;
-    transform: scale(1.15) rotate(5deg) !important;
-  }
-
-  .floating-nav-add {
-    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  }
-
-  .floating-nav-add:hover {
-    animation: bounce-in 0.3s ease-out;
-    transform: scale(1.1) rotate(90deg) !important;
-  }
-
-  .floating-nav-avatar {
-    transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  }
-
-  .floating-nav-avatar:hover {
-    animation: bounce-in 0.3s ease-out;
-    transform: scale(1.15) rotate(-5deg) !important;
-  }
-`
+const FloatingNavItem = React.memo(function FloatingNavItem({
+  label,
+  icon,
+  onHover,
+  onClick,
+  badge,
+  tooltipLabel,
+  active = false,
+  activeStyle,
+}: FloatingNavItemProps): JSX.Element {
+  return (
+    <div
+      className="floating-nav-item-wrap"
+      style={{ position: 'relative' }}
+      data-ux-floating
+      onMouseEnter={(e) => {
+        if (!onHover) return
+        const rect = e.currentTarget.getBoundingClientRect()
+        onHover(rect.top + rect.height / 2)
+      }}
+    >
+      <Tooltip
+        className="floating-nav-item-tooltip"
+        label={tooltipLabel}
+        position="right"
+        withArrow
+        disabled={!tooltipLabel}
+      >
+        <ActionIcon
+          className="floating-nav-item"
+          variant="subtle"
+          size={28}
+          radius="md"
+          aria-label={label}
+          onClick={onClick}
+          style={active ? activeStyle : undefined}
+        >
+          {icon}
+        </ActionIcon>
+      </Tooltip>
+      {badge ? (
+        <Badge
+          className="floating-nav-item-badge"
+          color="gray"
+          size="xs"
+          variant="light"
+          style={{ position: 'absolute', top: -6, right: -6, borderRadius: 999 }}
+        >
+          {badge}
+        </Badge>
+      ) : null}
+    </div>
+  )
+})
 
 export default function FloatingNav({ className }: { className?: string }): JSX.Element {
-  const { setActivePanel, setPanelAnchorY, openLangGraphChat } = useUIStore()
+  const activePanel = useUIStore((state) => state.activePanel)
+  const setActivePanel = useUIStore((state) => state.setActivePanel)
+  const setPanelAnchorY = useUIStore((state) => state.setPanelAnchorY)
+  const user = useAuth((state) => state.user)
   const { colorScheme } = useMantineColorScheme()
-  const isDark = colorScheme === 'dark'
-  const addButtonBackground = isDark ? 'rgba(15,23,42,0.85)' : '#ffffff'
-  const addButtonColor = isDark ? '#f8fafc' : '#0b0b0d'
-  const addButtonShadow = isDark ? '0 6px 16px rgba(0,0,0,0.45)' : '0 10px 20px rgba(15,23,42,0.12)'
-
-  // 注入CSS样式
-  React.useEffect(() => {
-    const styleElement = document.createElement('style')
-    styleElement.textContent = animationStyles
-    document.head.appendChild(styleElement)
-
-    return () => {
-      document.head.removeChild(styleElement)
-    }
-  }, [])
+  const isDark = colorScheme !== 'light'
+  const projectGlyph = React.useMemo(() => {
+    const candidate = String(user?.login || 'L').trim().charAt(0).toUpperCase()
+    return candidate || 'L'
+  }, [user?.login])
+  const activeItemBackground = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 24, 39, 0.06)'
+  const activeItemColor = '#f4f4f5'
+  const activeItemBorder = isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(17,24,39,0.14)'
+  const activeItemShadow = isDark ? 'inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 18px rgba(0,0,0,0.28)' : '0 10px 18px rgba(15,23,42,0.14)'
+  const activeItemStyle = React.useMemo<React.CSSProperties>(() => ({
+    background: activeItemBackground,
+    color: activeItemColor,
+    border: activeItemBorder,
+    boxShadow: activeItemShadow,
+  }), [activeItemBackground, activeItemBorder, activeItemShadow])
 
   const isAdmin = useIsAdmin()
   // Removed presence ping heartbeat: Cloudflare Workers does not need keep-alive and this endpoint isn't used elsewhere.
-
-  const Item = ({ label, icon, onHover, badge }: { label: string; icon: React.ReactNode; onHover: (y: number) => void; badge?: string }) => (
-    <div className="floating-nav-item-wrap" style={{ position: 'relative' }} data-ux-floating>
-      <ActionIcon
-        className="floating-nav-item"
-        variant="subtle"
-        size={36}
-        radius="xl"
-        aria-label={label}
-        onMouseEnter={(e) => {
-          const r = e.currentTarget.getBoundingClientRect()
-          onHover(r.top + r.height/2)
-        }}
-      >
-        {icon}
-      </ActionIcon>
-      {badge && (
-        <Badge className="floating-nav-item-badge" color="gray" size="xs" variant="light" style={{ position: 'absolute', top: -6, right: -6, borderRadius: 999 }}>{badge}</Badge>
-      )}
-    </div>
-  )
 
   const navClassName = ['floating-nav', className].filter(Boolean).join(' ')
 
   return (
     <div className={navClassName} style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 300 }} data-ux-floating data-tour="floating-nav">
-      <Paper className="floating-nav-card glass" withBorder shadow="sm" radius="xl" p={6} data-ux-floating>
+      <PanelCard className="floating-nav-card" padding="compact" data-ux-floating>
         <Stack className="floating-nav-stack" align="center" gap={6}>
-          <ActionIcon
+          <Tooltip className="floating-nav-add-tooltip" label={$('添加节点')} position="right" withArrow>
+            <ActionIcon
               className="floating-nav-add"
-              size={40}
+              size={42}
               radius={999}
-              style={{
-                background: addButtonBackground,
-                color: addButtonColor,
-                boxShadow: addButtonShadow,
-              }}
+              aria-label={$('添加节点')}
+              title={$('添加节点')}
+              variant="subtle"
+              data-active={activePanel === 'add' ? 'true' : 'false'}
               onMouseEnter={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 setPanelAnchorY(r.top + r.height/2);
-                setActivePanel('add')
+                if (activePanel !== 'template') setActivePanel('add')
               }}
+              onClick={() => setActivePanel(activePanel === 'add' ? null : 'add')}
               data-ux-floating
               data-tour="add-button">
-              <IconPlus className="floating-nav-add-icon" size={18} />
-            </ActionIcon>
-          <div className="floating-nav-spacer" style={{ height: 6 }} />
-          <Item label={$('项目')} icon={<IconFolders className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('project') }} />
-                    <Tooltip className="floating-nav-immersive-tooltip" label="沉浸式创作" position="right" withArrow>
-            <ActionIcon
-              className="floating-nav-immersive"
-              variant="light"
-              size={36}
-              radius="xl"
-              aria-label="沉浸式创作（小T）"
-              style={{
-                background: 'linear-gradient(135deg, rgba(92,122,255,0.22), rgba(122,226,255,0.16))',
-                border: '1px solid rgba(255,255,255,0.10)',
-                boxShadow: '0 10px 22px rgba(0,0,0,0.22)',
-              }}
-              onClick={() => {
-                setActivePanel(null)
-                openLangGraphChat()
-              }}
-              data-tour="immersive-create"
-            >
-              <img className="floating-nav-immersive-img" src={WriteImage} style={{width:'36px',height:'36px'}} alt="" />
+              <IconPlus className="floating-nav-add-icon" size={22} stroke={2.2} />
             </ActionIcon>
           </Tooltip>
-          <Item label={$('工作流')} icon={<IconTopologyStar3 className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('template') }} />
-          <Item label={$('我的资产')} icon={<IconListDetails className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }} />
-          <Item label={$('TapShow')} icon={<IconMovie className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }} />
-          <Item label={$('运行记录')} icon={<IconTerminal2 className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('runs') }} />
+          <div className="floating-nav-divider" />
+          <FloatingNavItem
+            label={$('项目')}
+            icon={<IconFolders className="floating-nav-item-icon" size={18} />}
+            tooltipLabel="项目管理"
+            onHover={() => { setActivePanel(null) }}
+            onClick={() => { setActivePanel(null); spaNavigate('/projects') }}
+            active={false}
+            activeStyle={activeItemStyle}
+          />
+          <FloatingNavItem
+            label={$('工作流')}
+            icon={<IconTopologyStar3 className="floating-nav-item-icon" size={18} />}
+            onHover={(y) => {
+              setPanelAnchorY(y)
+              setActivePanel('template')
+            }}
+            onClick={() => {
+              setActivePanel(activePanel === 'template' ? null : 'template')
+            }}
+            active={activePanel === 'template'}
+            activeStyle={activeItemStyle}
+          />
+          <FloatingNavItem
+            label={$('我的资产')}
+            icon={<IconListDetails className="floating-nav-item-icon" size={18} />}
+            onHover={(y) => { setPanelAnchorY(y); setActivePanel('assets') }}
+            active={activePanel === 'assets'}
+            activeStyle={activeItemStyle}
+          />
+          <FloatingNavItem
+            label={$('漫剧工作台')}
+            icon={<IconLayoutGrid className="floating-nav-item-icon" size={18} />}
+            tooltipLabel="画布内分镜工作台"
+            onClick={() => {
+              setActivePanel(activePanel === 'nanoComic' ? null : 'nanoComic')
+            }}
+            active={activePanel === 'nanoComic'}
+            activeStyle={activeItemStyle}
+          />
+          <FloatingNavItem
+            label={$('TapShow')}
+            icon={<IconMovie className="floating-nav-item-icon" size={18} />}
+            onHover={(y) => { setPanelAnchorY(y); setActivePanel('tapshow') }}
+            active={activePanel === 'tapshow'}
+            activeStyle={activeItemStyle}
+          />
+          <FloatingNavItem
+            label={$('运行记录')}
+            icon={<IconTerminal2 className="floating-nav-item-icon" size={18} />}
+            onHover={(y) => { setPanelAnchorY(y); setActivePanel('runs') }}
+            active={activePanel === 'runs'}
+            activeStyle={activeItemStyle}
+          />
           {isAdmin && (
             <Tooltip className="floating-nav-admin-tooltip" label={$('看板（仅管理员）')} position="right" withArrow>
               <ActionIcon
                 className="floating-nav-item"
                 variant="subtle"
-                size={36}
-                radius="xl"
+                size={28}
+                radius="md"
                 aria-label="看板"
+                style={activePanel === 'models' ? activeItemStyle : undefined}
                 onClick={() => {
                   try {
                     const url = new URL(window.location.href)
@@ -197,37 +204,31 @@ export default function FloatingNav({ className }: { className?: string }): JSX.
               </ActionIcon>
             </Tooltip>
           )}
-          <Item label={$('模型配置')} icon={<IconSettings className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('models') }} />
-          <Item label={$('历史记录')} icon={<IconHistory className="floating-nav-item-icon" size={18} />} onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }} />
-
-          {/* <Item label="图片编辑" icon={<IconPhotoEdit size={18} />}  badge="Beta" /> */}
-          {/* <Item label="标尺" icon={<IconRuler size={18} />}  /> */}
-          {/* <Item label="帮助" icon={<IconHelpCircle size={18} />}  /> */}
-          <div className="floating-nav-spacer" style={{ height: 8 }} />
-          {(() => {
-            const user = useAuth.getState().user
-            return (
-              <Avatar
-                size={30}
-                radius={999}
-                src={user?.avatarUrl}
-                alt={user?.login || 'user'}
-                className="floating-nav-avatar"
-                style={{
-                  cursor: 'pointer'
-                }}
-                onMouseEnter={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  useUIStore.getState().setPanelAnchorY(r.top + r.height/2);
-                  useUIStore.getState().setActivePanel('account')
-                }}
-                data-ux-floating>
-                {user?.login?.[0]?.toUpperCase() || 'U'}
-              </Avatar>
-            )
-          })()}
+          <FloatingNavItem
+            label={$('历史记录')}
+            icon={<IconHistory className="floating-nav-item-icon" size={18} />}
+            onHover={(y) => { setPanelAnchorY(y); setActivePanel('history') }}
+            active={activePanel === 'history'}
+            activeStyle={activeItemStyle}
+          />
+          <div className="floating-nav-divider floating-nav-divider--bottom" />
+          <button
+            type="button"
+            className="floating-nav-glyph"
+            aria-label={user?.login || 'account'}
+            onMouseEnter={(e) => {
+              const r = e.currentTarget.getBoundingClientRect()
+              useUIStore.getState().setPanelAnchorY(r.top + r.height / 2)
+              useUIStore.getState().setActivePanel('account')
+            }}
+            onClick={() => setActivePanel(activePanel === 'account' ? null : 'account')}
+            data-active={activePanel === 'account' ? 'true' : 'false'}
+            data-ux-floating
+          >
+            <span className="floating-nav-glyph-text">{projectGlyph}</span>
+          </button>
         </Stack>
-      </Paper>
+      </PanelCard>
     </div>
   )
 }

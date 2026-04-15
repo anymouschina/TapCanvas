@@ -4,7 +4,8 @@
  */
 
 import { VALIDATION, NODE_TYPES, NODE_KINDS, ERROR_MESSAGES } from './constants';
-import type { NodeData, EdgeData } from '../components/shared/NodeBase/NodeBase.types';
+import type { NodeData } from '../components/shared/NodeBase/NodeBase.types';
+import type { EdgeData } from './edge';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -186,10 +187,11 @@ export function isValidConnectionType(sourceType: string, targetType: string): b
   const compatibilityMatrix: Record<string, string[]> = {
     text: ['subtitle'],
     subtitle: ['video'],
+    storyboard: ['image', 'video'],
     image: ['video'],
     audio: ['video'],
     video: [],
-    any: ['text', 'image', 'video', 'audio', 'subtitle'],
+    any: ['text', 'image', 'storyboard', 'video', 'audio', 'subtitle'],
   };
 
   return compatibilityMatrix[sourceType]?.includes(targetType) || false;
@@ -243,20 +245,40 @@ export function validateGraph(
     warnings.push(`Found ${isolatedNodes.length} isolated node(s): ${isolatedNodes.map(n => n.id).join(', ')}`);
   }
 
-  // 检查组节点的子节点
-  const groupNodes = nodes.filter(n => n.type === 'groupNode');
-  groupNodes.forEach(groupNode => {
-    if (groupNode.data?.childNodeIds) {
-      groupNode.data.childNodeIds.forEach((childId: string) => {
-        if (!nodeIds.has(childId)) {
-          errors.push(`Group node ${groupNode.id} references non-existent child node: ${childId}`);
-        }
-      });
+  // 检查组关系（以 parentId 为唯一事实源）
+  const groupNodes = nodes.filter(n => n.type === NODE_TYPES.GROUP);
+  const groupIds = new Set(groupNodes.map((n) => n.id));
+  const groupChildrenCount = new Map<string, number>();
 
-      // 检查组的子节点数量限制
-      if (groupNode.data.childNodeIds.length > VALIDATION.MAX_NODES_PER_GROUP) {
-        errors.push(`Group node ${groupNode.id} has too many child nodes (max ${VALIDATION.MAX_NODES_PER_GROUP})`);
-      }
+  nodes.forEach((node) => {
+    const rawParentId =
+      typeof node?.parentId === 'string'
+        ? node.parentId
+        : typeof node?.parentNode === 'string'
+          ? node.parentNode
+          : '';
+    const parentId = rawParentId.trim();
+    if (!parentId) return;
+
+    if (parentId === node.id) {
+      errors.push(`Node ${node.id} cannot reference itself as parent`);
+      return;
+    }
+    if (!nodeIds.has(parentId)) {
+      errors.push(`Node ${node.id} references non-existent parent node: ${parentId}`);
+      return;
+    }
+    if (!groupIds.has(parentId)) {
+      errors.push(`Node ${node.id} has non-group parent: ${parentId}`);
+      return;
+    }
+
+    groupChildrenCount.set(parentId, (groupChildrenCount.get(parentId) || 0) + 1);
+  });
+
+  groupChildrenCount.forEach((count, groupId) => {
+    if (count > VALIDATION.MAX_NODES_PER_GROUP) {
+      errors.push(`Group node ${groupId} has too many child nodes (max ${VALIDATION.MAX_NODES_PER_GROUP})`);
     }
   });
 

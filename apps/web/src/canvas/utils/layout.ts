@@ -11,6 +11,7 @@ import type { Node, Edge } from '@xyflow/react';
  */
 export interface LayoutConfig {
   nodeSpacingX: number;
+  nodeSpacingY: number;
   levelSpacing: number;
   alignX?: 'left' | 'center' | 'right';
   alignY?: 'top' | 'center' | 'bottom';
@@ -30,6 +31,7 @@ export interface LayoutResult {
  */
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   nodeSpacingX: CANVAS_CONFIG.NODE_SPACING_X,
+  nodeSpacingY: CANVAS_CONFIG.NODE_SPACING_Y,
   levelSpacing: CANVAS_CONFIG.NODE_SPACING_Y * 2,
   alignX: 'center',
   alignY: 'center',

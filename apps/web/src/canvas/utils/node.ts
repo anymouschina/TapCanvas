@@ -15,6 +15,16 @@ export interface NodeData {
   label: string;
   kind: string;
   config: Record<string, any>;
+  experimentGroupId?: string;
+  workflowStage?:
+    | 'material_ingest'
+    | 'script_breakdown'
+    | 'storyboard_generation'
+    | 'shot_planning'
+    | 'image_generation'
+    | 'video_generation'
+    | 'qc_publish';
+  iterationKey?: string;
   progress?: number | null;
   status?: string | null;
   inputs?: string[];
@@ -187,8 +197,16 @@ export function getNodeInputTypes(node: Node<NodeData>): string[] {
 
   switch (kind) {
     case NODE_KINDS.TEXT:
+    case NODE_KINDS.NOVEL_DOC:
+    case NODE_KINDS.SCRIPT_DOC:
+    case NODE_KINDS.STORYBOARD_SCRIPT:
       return ['text'];
+    case NODE_KINDS.WORKFLOW_INPUT:
+      return [];
+    case NODE_KINDS.WORKFLOW_OUTPUT:
+      return ['any'];
     case NODE_KINDS.IMAGE:
+    case NODE_KINDS.STORYBOARD:
       return ['image'];
     case NODE_KINDS.VIDEO:
       return ['video'];
@@ -213,8 +231,16 @@ export function getNodeOutputTypes(node: Node<NodeData>): string[] {
 
   switch (kind) {
     case NODE_KINDS.TEXT:
+    case NODE_KINDS.NOVEL_DOC:
+    case NODE_KINDS.SCRIPT_DOC:
+    case NODE_KINDS.STORYBOARD_SCRIPT:
       return ['text'];
+    case NODE_KINDS.WORKFLOW_INPUT:
+      return ['any'];
+    case NODE_KINDS.WORKFLOW_OUTPUT:
+      return [];
     case NODE_KINDS.IMAGE:
+    case NODE_KINDS.STORYBOARD:
       return ['image'];
     case NODE_KINDS.VIDEO:
       return ['video'];

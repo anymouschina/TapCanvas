@@ -39,6 +39,19 @@ function isInternalApiRequest(input: Parameters<typeof window.fetch>[0]): boolea
   return false
 }
 
+function isPublicApiRequest(input: Parameters<typeof window.fetch>[0]): boolean {
+  const raw = getRequestUrl(input)
+  if (!raw) return false
+  if (raw.startsWith('/public/')) return true
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : undefined
+    const parsed = new URL(raw, base)
+    return parsed.pathname.startsWith('/public/')
+  } catch {
+    return false
+  }
+}
+
 function handleUnauthorized() {
   const { token, clear } = useAuth.getState()
   if (!token) return
@@ -57,7 +70,9 @@ export function installAuth401Interceptor() {
   ;(window as any)[FETCH_INTERCEPTOR_FLAG] = true
   window.fetch = (async (...args: Parameters<typeof window.fetch>): Promise<Response> => {
     const response = await originalFetch(...args)
-    if (response.status === 401 && isInternalApiRequest(args[0])) {
+    // /public/* may fail with upstream vendor auth (not user session expiry).
+    // Do not clear current canvas login for those errors.
+    if (response.status === 401 && isInternalApiRequest(args[0]) && !isPublicApiRequest(args[0])) {
       handleUnauthorized()
     }
     return response

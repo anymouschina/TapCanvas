@@ -6,7 +6,12 @@
     "dev": "vite",
     "build": "vite build --mode production",
     "preview": "vite preview",
-    "test": "echo 'No tests yet' && exit 0",
+    "smoke:project-chapter-ui": "node ./scripts/project-chapter-ui-smoke.mjs",
+    "smoke:project-chapter-production": "node ./scripts/project-chapter-production-smoke.mjs",
+    "test": "vitest run --config _test/vitest.config.ts",
+    "test:watch": "vitest --config _test/vitest.config.ts",
+    "test:coverage": "vitest run --coverage --config _test/vitest.config.ts",
+    "test:e2e": "playwright test --config _test/playwright.config.ts",
     "meta:update": "node ./scripts/meta-update.mjs",
     "meta:describe": "node \"${CODEX_HOME:-$HOME/.codex}/Skills/ai-metadata-sync/scripts/describe-files.mjs\"",
     "meta:sync": "node \"${CODEX_HOME:-$HOME/.codex}/Skills/ai-metadata-sync/scripts/sync-repo.mjs\""
@@ -17,11 +22,9 @@
     "@ai-sdk/openai": "^2.0.69",
     "@ai-sdk/react": "^2.0.97",
     "@hookform/resolvers": "^3.9.0",
-    "@langchain/core": "0.3.5",
-    "@langchain/langgraph-sdk": "^0.0.74",
     "@mantine/core": "^7.13.1",
     "@mantine/hooks": "^7.13.1",
-    "@mantine/modals": "^8.3.8",
+    "@mantine/modals": "^7.13.1",
     "@mantine/notifications": "^7.13.1",
     "@tabler/icons-react": "^3.19.0",
     "@webav/av-cliper": "^1.2.7",
@@ -34,14 +37,21 @@
     "react-hook-form": "^7.53.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.6",
+    "three": "^0.183.2",
     "zod": "^3.25.76",
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^1.6.1",
+    "jsdom": "^24.0.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.8"
+    "vite": "^5.4.8",
+    "vitest": "^1.2.2"
   }
 }

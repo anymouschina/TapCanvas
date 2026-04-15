@@ -1,0 +1,368 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "storyboard-director-schema.v1.1",
+  "title": "Storyboard Director Schema v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "chapter",
+    "globalStyle",
+    "modelingSpec",
+    "stopMotionSpec",
+    "atmosphereSpec",
+    "cast",
+    "relationshipGraph",
+    "shots"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "storyboard-director/v1.1"
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bookTitle", "chapterTitle", "sourceSpan"],
+      "properties": {
+        "bookTitle": { "type": "string", "minLength": 1 },
+        "chapterTitle": { "type": "string", "minLength": 1 },
+        "sourceSpan": { "type": "string", "minLength": 1 }
+      }
+    },
+    "globalStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["genre", "visualTone", "palette", "aspectRatio", "fps"],
+      "properties": {
+        "genre": { "type": "string", "minLength": 1 },
+        "visualTone": { "type": "string", "minLength": 1 },
+        "palette": { "type": "string", "minLength": 1 },
+        "aspectRatio": { "type": "string", "minLength": 1 },
+        "fps": { "type": "integer", "minimum": 12, "maximum": 120 }
+      }
+    },
+    "modelingSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unitScale", "topologyDetail", "materialStyle", "textureAging", "clothBehavior"],
+      "properties": {
+        "unitScale": { "type": "string", "minLength": 1 },
+        "topologyDetail": { "type": "string", "minLength": 1 },
+        "materialStyle": { "type": "string", "minLength": 1 },
+        "textureAging": { "type": "string", "minLength": 1 },
+        "clothBehavior": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stopMotionSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fpsBase", "cadence", "microJitterPx", "holdFrames", "imperfectionPolicy"],
+      "properties": {
+        "fpsBase": { "type": "integer", "minimum": 6, "maximum": 120 },
+        "cadence": { "type": "string", "enum": ["onOnes", "onTwos", "onThrees"] },
+        "microJitterPx": { "type": "number", "minimum": 0, "maximum": 5 },
+        "holdFrames": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 1, "maximum": 24 }
+        },
+        "imperfectionPolicy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "atmosphereSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tensionLevel",
+        "airDensity",
+        "humidityCue",
+        "windVector",
+        "particleType",
+        "soundProxySources"
+      ],
+      "properties": {
+        "tensionLevel": { "type": "number", "minimum": 0, "maximum": 1 },
+        "airDensity": { "type": "string", "minLength": 1 },
+        "humidityCue": { "type": "string", "minLength": 1 },
+        "windVector": { "type": "string", "minLength": 1 },
+        "particleType": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "soundProxySources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "cast": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "anchorTraits"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "anchorTraits": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "relationshipGraph": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "relationType", "intensity", "state"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "relationType": { "type": "string", "minLength": 1 },
+          "intensity": { "type": "number", "minimum": 0, "maximum": 1 },
+          "state": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "shots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "shotId",
+          "durationSec",
+          "narrativeGoal",
+          "subjectAnchors",
+          "crowdRelations",
+          "scene",
+          "rigAndPose",
+          "camera",
+          "lighting",
+          "actionChain",
+          "composition",
+          "dramaticBeat",
+          "performance",
+          "continuity",
+          "continuityLocks",
+          "readabilityChecks",
+          "failureRisks",
+          "negativeConstraints",
+          "prompt"
+        ],
+        "properties": {
+          "shotId": { "type": "string", "pattern": "^SHOT_[0-9]{2,}$" },
+          "durationSec": { "type": "number", "exclusiveMinimum": 0 },
+          "narrativeGoal": { "type": "string", "minLength": 1 },
+          "subjectAnchors": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "crowdRelations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["group", "relationToSubject", "blocking", "distance"],
+              "properties": {
+                "group": { "type": "string", "minLength": 1 },
+                "relationToSubject": { "type": "string", "minLength": 1 },
+                "blocking": { "type": "string", "minLength": 1 },
+                "distance": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "scene": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["location", "timeOfDay", "weather", "environmentDetails"],
+            "properties": {
+              "location": { "type": "string", "minLength": 1 },
+              "timeOfDay": { "type": "string", "minLength": 1 },
+              "weather": { "type": "string", "minLength": 1 },
+              "environmentDetails": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "rigAndPose": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["centerOfMass", "limbConstraints", "forbiddenPoses", "keyPoseNotes"],
+            "properties": {
+              "centerOfMass": { "type": "string", "minLength": 1 },
+              "limbConstraints": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "forbiddenPoses": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "keyPoseNotes": { "type": "string", "minLength": 1 }
+            }
+          },
+          "camera": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["shotSize", "angle", "height", "lensMm", "shutterAngleDeg", "movement", "focusTarget"],
+            "properties": {
+              "shotSize": { "type": "string", "minLength": 1 },
+              "angle": { "type": "string", "minLength": 1 },
+              "height": { "type": "string", "minLength": 1 },
+              "lensMm": { "type": "number", "minimum": 8, "maximum": 600 },
+              "shutterAngleDeg": { "type": "number", "minimum": 1, "maximum": 360 },
+              "movement": { "type": "string", "minLength": 1 },
+              "focusTarget": { "type": "string", "minLength": 1 }
+            }
+          },
+          "lighting": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "keyDirection",
+              "keyAngleDeg",
+              "colorTempK",
+              "contrastRatio",
+              "fillStyle",
+              "rimLight"
+            ],
+            "properties": {
+              "keyDirection": { "type": "string", "minLength": 1 },
+              "keyAngleDeg": { "type": "number", "minimum": 0, "maximum": 180 },
+              "colorTempK": { "type": "integer", "minimum": 1000, "maximum": 20000 },
+              "contrastRatio": { "type": "string", "minLength": 1 },
+              "fillStyle": { "type": "string", "minLength": 1 },
+              "rimLight": { "type": "string", "minLength": 1 }
+            }
+          },
+          "actionChain": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "composition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["foreground", "midground", "background", "spatialRule"],
+            "properties": {
+              "foreground": { "type": "string", "minLength": 1 },
+              "midground": { "type": "string", "minLength": 1 },
+              "background": { "type": "string", "minLength": 1 },
+              "spatialRule": { "type": "string", "minLength": 1 }
+            }
+          },
+          "dramaticBeat": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["before", "during", "after"],
+            "properties": {
+              "before": { "type": "string", "minLength": 1 },
+              "during": { "type": "string", "minLength": 1 },
+              "after": { "type": "string", "minLength": 1 }
+            }
+          },
+          "performance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["emotion", "microExpression", "bodyLanguage"],
+            "properties": {
+              "emotion": { "type": "string", "minLength": 1 },
+              "microExpression": { "type": "string", "minLength": 1 },
+              "bodyLanguage": { "type": "string", "minLength": 1 }
+            }
+          },
+          "continuity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fromPrev", "persistentAnchors", "forbiddenDrifts"],
+            "properties": {
+              "fromPrev": { "type": "string", "minLength": 1 },
+              "persistentAnchors": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "forbiddenDrifts": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "continuityLocks": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identityLock", "propLock", "spaceLock", "lightLock"],
+            "properties": {
+              "identityLock": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "propLock": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "spaceLock": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "lightLock": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "readabilityChecks": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["subjectReadable", "relationshipReadable", "lightingConsistent"],
+            "properties": {
+              "subjectReadable": { "type": "boolean" },
+              "relationshipReadable": { "type": "boolean" },
+              "lightingConsistent": { "type": "boolean" }
+            }
+          },
+          "failureRisks": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "negativeConstraints": {
+            "type": "array",
+            "minItems": 2,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "prompt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cn"],
+            "properties": {
+              "cn": { "type": "string", "minLength": 1 },
+              "enOptional": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

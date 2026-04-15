@@ -1,7 +1,8 @@
 import React from 'react'
-import { Badge, Button, CopyButton, Group, Paper, Stack, Text, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { Badge, Button, CopyButton, Group, Stack, Text, Tooltip, useMantineColorScheme } from '@mantine/core'
 import { IconCheck, IconCopy } from '@tabler/icons-react'
 import { VIDEO_REALISM_RULES, VIDEO_REALISM_PROMPT_SNIPPET } from '../../../creative/videoRealism'
+import { PanelCard } from '../../../ui/PanelCard'
 
 export type VideoRealismTipsProps = {
   onInsertSnippet?: (snippet: string) => void
@@ -16,12 +17,8 @@ export function VideoRealismTips({ onInsertSnippet }: VideoRealismTipsProps) {
   }, [onInsertSnippet])
 
   return (
-    <Paper
+    <PanelCard
       className="video-realism-tips"
-      shadow="sm"
-      radius="md"
-      withBorder
-      p="sm"
       style={{
         background: isDark ? 'rgba(15, 23, 42, 0.35)' : 'rgba(241, 245, 249, 0.85)',
         borderColor: isDark ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.4)',
@@ -73,6 +70,6 @@ export function VideoRealismTips({ onInsertSnippet }: VideoRealismTipsProps) {
           </Group>
         ))}
       </Stack>
-    </Paper>
+    </PanelCard>
   )
 }

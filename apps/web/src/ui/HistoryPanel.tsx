@@ -1,18 +1,22 @@
 import React from 'react'
-import { Paper, Group, Title, Transition, Button, Stack, Text } from '@mantine/core'
+import { Group, Title, Transition, Button, Stack, Text } from '@mantine/core'
 import { useUIStore } from './uiStore'
 import { getServerFlow, listFlowVersions, rollbackFlow } from '../api/server'
-import { normalizeNodesParentId, useRFStore } from '../canvas/store'
+import { useRFStore } from '../canvas/store'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
+import { PanelCard } from './PanelCard'
+import { stopPanelWheelPropagation } from './utils/panelWheel'
 
 export default function HistoryPanel(): JSX.Element | null {
   const active = useUIStore((s) => s.activePanel)
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const anchorY = useUIStore((s) => s.panelAnchorY)
-  const { currentFlow, setCurrentFlow, setDirty } = useUIStore()
-  const setNodesAndEdges = useRFStore(() => (nodes: any[], edges: any[]) => {
+  const currentFlow = useUIStore((s) => s.currentFlow)
+  const setCurrentFlow = useUIStore((s) => s.setCurrentFlow)
+  const setDirty = useUIStore((s) => s.setDirty)
+  const setNodesAndEdges = React.useCallback((nodes: ReturnType<typeof useRFStore.getState>['nodes'], edges: ReturnType<typeof useRFStore.getState>['edges']) => {
     useRFStore.setState({ nodes, edges })
-  })
+  }, [])
   const mounted = active === 'history'
   const [versions, setVersions] = React.useState<Array<{ id: string; createdAt: string; name: string }>>([])
 
@@ -33,12 +37,8 @@ export default function HistoryPanel(): JSX.Element | null {
       <Transition className="history-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div className="history-panel-transition-inner" style={styles}>
-            <Paper
-              withBorder
-              shadow="md"
-              radius="lg"
+            <PanelCard
               className="glass"
-              p="md"
               style={{
                 width: 420,
                 maxHeight: `${maxHeight}px`,
@@ -48,6 +48,7 @@ export default function HistoryPanel(): JSX.Element | null {
                 flexDirection: 'column',
                 overflow: 'hidden',
               }}
+              onWheelCapture={stopPanelWheelPropagation}
               data-ux-panel
             >
               <div className="history-panel-arrow panel-arrow" />
@@ -81,7 +82,7 @@ export default function HistoryPanel(): JSX.Element | null {
                         const data: any = r?.data || {}
                         const nodes = Array.isArray(data.nodes) ? data.nodes : []
                         const edges = Array.isArray(data.edges) ? data.edges : []
-                        setNodesAndEdges(normalizeNodesParentId(nodes as any), edges)
+                        setNodesAndEdges(nodes, edges)
                         setCurrentFlow({ name: r.name })
                         setDirty(false)
                         setActivePanel(null)
@@ -93,7 +94,7 @@ export default function HistoryPanel(): JSX.Element | null {
                 ))}
               </Stack>
               </div>
-            </Paper>
+            </PanelCard>
           </div>
         )}
       </Transition>

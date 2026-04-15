@@ -1,0 +1,44 @@
+{
+  "title": "TapCanvas Homepage Redesign",
+  "problem": "现有首页记忆点弱，更像通用 SaaS hero，无法体现创作工具入口的大胆气质。",
+  "userOutcomes": [
+    "访客第一眼感知到 TapCanvas 是偏创作与生成的工具入口",
+    "首页具备强记忆点、非保守构图与清晰可读的核心信息",
+    "移动端仍能快速理解并进入画布"
+  ],
+  "scope": {
+    "mustHave": [
+      "仅修改首页相关实现",
+      "优先修改 HomePage.tsx 与 homePage.css",
+      "明显摆脱通用 hero / 紫色渐变 / 白卡片堆叠风格",
+      "保留进入画布的明确 CTA",
+      "保证移动端可用",
+      "每个 JSX 标签带描述性 className"
+    ],
+    "shouldHave": [
+      "通过戏剧化排版和空间形成单屏记忆点",
+      "用内容表达创作流程，而非企业式卖点列表"
+    ],
+    "outOfScope": [
+      "修改首页以外路由和业务逻辑",
+      "引入新依赖",
+      "新增向后兼容分支"
+    ]
+  },
+  "acceptanceThemes": [
+    "feature_completeness",
+    "functionality",
+    "ux_or_design_quality",
+    "code_quality"
+  ],
+  "constraints": [
+    "禁止 any",
+    "禁止保守 SaaS 风格",
+    "禁止 AI slop 风格",
+    "需要最终运行 pnpm --filter @tapcanvas/web build"
+  ],
+  "risks": [
+    "过于激进导致可读性下降",
+    "移动端布局在大字号下失衡"
+  ]
+}

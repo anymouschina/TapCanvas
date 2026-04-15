@@ -39,7 +39,7 @@ export function GenerationOverlay({ visible, status, progress }: GenerationOverl
             className="tc-task-node__gen-overlay-progress"
             value={pct ?? 0}
             size="sm"
-            radius="xl"
+            radius="md"
             styles={{
               root: { background: 'rgba(255,255,255,0.10)' },
               section: { transition: 'width 180ms ease' },

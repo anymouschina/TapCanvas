@@ -8,7 +8,7 @@ export interface TaskProgressEventMessage {
   vendor?: string
   status: TaskStatus
   progress?: number
-  message?: string
+  message?: unknown
   assets?: TaskAssetDto[]
   raw?: any
   timestamp?: number

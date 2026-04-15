@@ -1,5 +1,5 @@
-import type { D1Database } from "../../types";
-import { queryAll, queryOne, execute } from "../../db/db";
+import type { PrismaClient } from "../../types";
+import { getPrismaClient } from "../../platform/node/prisma";
 import type { FlowDto } from "./flow.schemas";
 
 export type FlowRow = {
@@ -21,69 +21,101 @@ export type FlowVersionRow = {
 	created_at: string;
 };
 
-export function mapFlowRowToDto(row: FlowRow): FlowDto {
-	let data: unknown = null;
+function parseFlowData(raw: string): unknown {
 	try {
-		data = JSON.parse(row.data);
+		return JSON.parse(raw);
 	} catch {
-		data = null;
+		return null;
 	}
+}
+
+function readFlowOwnerMeta(value: unknown): {
+	ownerType: "project" | "chapter" | "shot" | null;
+	ownerId: string | null;
+} {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return { ownerType: null, ownerId: null };
+	}
+	const record = value as Record<string, unknown>;
+	const meta = record.__tapcanvasFlowOwner;
+	if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+		return { ownerType: null, ownerId: null };
+	}
+	const ownerRecord = meta as Record<string, unknown>;
+	const ownerType =
+		ownerRecord.ownerType === "project" || ownerRecord.ownerType === "chapter" || ownerRecord.ownerType === "shot"
+			? ownerRecord.ownerType
+			: null;
+	const ownerId =
+		typeof ownerRecord.ownerId === "string" && ownerRecord.ownerId.trim()
+			? ownerRecord.ownerId.trim()
+			: null;
+	return { ownerType, ownerId };
+}
+
+export function mapFlowRowToDto(row: FlowRow): FlowDto {
+	const data = parseFlowData(row.data);
+	const ownerMeta = readFlowOwnerMeta(data);
 	return {
 		id: row.id,
 		name: row.name,
 		data,
+		ownerType: ownerMeta.ownerType,
+		ownerId: ownerMeta.ownerId,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
 }
 
 export async function listFlowsByOwner(
-	db: D1Database,
+	db: PrismaClient,
 	ownerId: string,
 	projectId?: string,
 ): Promise<FlowRow[]> {
-	const params: unknown[] = [ownerId];
-	let sql =
-		"SELECT id, name, data, owner_id, project_id, created_at, updated_at FROM flows WHERE owner_id = ?";
-	if (projectId) {
-		sql += " AND project_id = ?";
-		params.push(projectId);
-	}
-	sql += " ORDER BY updated_at DESC";
-
-	return queryAll<FlowRow>(db, sql, params);
+	void db;
+	return getPrismaClient().flows.findMany({
+		where: {
+			owner_id: ownerId,
+			...(projectId ? { project_id: projectId } : {}),
+		},
+		orderBy: { updated_at: "desc" },
+	});
 }
 
 export async function listFlowsByProject(
-	db: D1Database,
+	db: PrismaClient,
 	projectId: string,
 ): Promise<FlowRow[]> {
-	return queryAll<FlowRow>(
-		db,
-		`SELECT id, name, data, owner_id, project_id, created_at, updated_at
-     FROM flows
-     WHERE project_id = ?
-     ORDER BY updated_at DESC`,
-		[projectId],
-	);
+	void db;
+	return getPrismaClient().flows.findMany({
+		where: { project_id: projectId },
+		orderBy: { updated_at: "desc" },
+	});
 }
 
 export async function getFlowForOwner(
-	db: D1Database,
+	db: PrismaClient,
 	id: string,
 	ownerId: string,
 ): Promise<FlowRow | null> {
-	return queryOne<FlowRow>(
-		db,
-		`SELECT id, name, data, owner_id, project_id, created_at, updated_at
-     FROM flows
-     WHERE id = ? AND owner_id = ?`,
-		[id, ownerId],
-	);
+	void db;
+	return getPrismaClient().flows.findFirst({
+		where: { id, owner_id: ownerId },
+	});
+}
+
+export async function getFlowByIdUnsafe(
+	db: PrismaClient,
+	id: string,
+): Promise<FlowRow | null> {
+	void db;
+	return getPrismaClient().flows.findFirst({
+		where: { id },
+	});
 }
 
 export async function createFlow(
-	db: D1Database,
+	db: PrismaClient,
 	params: {
 		id: string;
 		name: string;
@@ -93,13 +125,19 @@ export async function createFlow(
 		nowIso: string;
 	},
 ): Promise<FlowRow> {
+	void db;
 	const { id, name, data, ownerId, projectId, nowIso } = params;
-	await execute(
-		db,
-		`INSERT INTO flows (id, name, data, owner_id, project_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		[id, name, data, ownerId, projectId ?? null, nowIso, nowIso],
-	);
+	await getPrismaClient().flows.create({
+		data: {
+			id,
+			name,
+			data,
+			owner_id: ownerId,
+			project_id: projectId ?? null,
+			created_at: nowIso,
+			updated_at: nowIso,
+		},
+	});
 	const row = await getFlowForOwner(db, id, ownerId);
 	if (!row) {
 		throw new Error("Failed to load created flow");
@@ -108,7 +146,7 @@ export async function createFlow(
 }
 
 export async function updateFlow(
-	db: D1Database,
+	db: PrismaClient,
 	params: {
 		id: string;
 		name: string;
@@ -118,44 +156,58 @@ export async function updateFlow(
 		nowIso: string;
 	},
 ): Promise<FlowRow | null> {
+	void db;
 	const { id, name, data, ownerId, projectId, nowIso } = params;
-	await execute(
-		db,
-		`UPDATE flows
-     SET name = ?, data = ?, owner_id = ?, project_id = ?, updated_at = ?
-     WHERE id = ? AND owner_id = ?`,
-		[
+	await getPrismaClient().flows.updateMany({
+		where: { id, owner_id: ownerId },
+		data: {
 			name,
 			data,
-			ownerId,
-			projectId ?? null,
-			nowIso,
-			id,
-			ownerId,
-		],
-	);
+			owner_id: ownerId,
+			project_id: projectId ?? null,
+			updated_at: nowIso,
+		},
+	});
 	return getFlowForOwner(db, id, ownerId);
 }
 
+export async function updateFlowByIdUnsafe(
+	db: PrismaClient,
+	params: {
+		id: string;
+		name: string;
+		data: string;
+		nowIso: string;
+	},
+): Promise<FlowRow | null> {
+	void db;
+	const { id, name, data, nowIso } = params;
+	await getPrismaClient().flows.updateMany({
+		where: { id },
+		data: {
+			name,
+			data,
+			updated_at: nowIso,
+		},
+	});
+	return getFlowByIdUnsafe(db, id);
+}
+
 export async function deleteFlowById(
-	db: D1Database,
+	db: PrismaClient,
 	id: string,
 	ownerId: string,
 ): Promise<void> {
-	await execute(
-		db,
-		`DELETE FROM flow_versions WHERE flow_id = ?`,
-		[id],
-	);
-	await execute(
-		db,
-		`DELETE FROM flows WHERE id = ? AND owner_id = ?`,
-		[id, ownerId],
-	);
+	void db;
+	const prisma = getPrismaClient();
+	await prisma.$transaction([
+		prisma.flow_versions.deleteMany({ where: { flow_id: id } }),
+		prisma.flows.deleteMany({ where: { id, owner_id: ownerId } }),
+	]);
 }
 
 export async function createFlowVersion(
-	db: D1Database,
+	db: PrismaClient,
 	params: {
 		id: string;
 		flowId: string;
@@ -165,40 +217,38 @@ export async function createFlowVersion(
 		nowIso: string;
 	},
 ): Promise<void> {
+	void db;
 	const { id, flowId, name, data, userId, nowIso } = params;
-	await execute(
-		db,
-		`INSERT INTO flow_versions (id, flow_id, name, data, user_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-		[id, flowId, name, data, userId, nowIso],
-	);
+	await getPrismaClient().flow_versions.create({
+		data: {
+			id,
+			flow_id: flowId,
+			name,
+			data,
+			user_id: userId,
+			created_at: nowIso,
+		},
+	});
 }
 
 export async function listFlowVersions(
-	db: D1Database,
+	db: PrismaClient,
 	flowId: string,
 ): Promise<FlowVersionRow[]> {
-	return queryAll<FlowVersionRow>(
-		db,
-		`SELECT id, flow_id, name, data, user_id, created_at
-     FROM flow_versions
-     WHERE flow_id = ?
-     ORDER BY created_at DESC`,
-		[flowId],
-	);
+	void db;
+	return getPrismaClient().flow_versions.findMany({
+		where: { flow_id: flowId },
+		orderBy: { created_at: "desc" },
+	});
 }
 
 export async function getFlowVersion(
-	db: D1Database,
+	db: PrismaClient,
 	versionId: string,
 	flowId: string,
 ): Promise<FlowVersionRow | null> {
-	return queryOne<FlowVersionRow>(
-		db,
-		`SELECT id, flow_id, name, data, user_id, created_at
-     FROM flow_versions
-     WHERE id = ? AND flow_id = ?`,
-		[versionId, flowId],
-	);
+	void db;
+	return getPrismaClient().flow_versions.findFirst({
+		where: { id: versionId, flow_id: flowId },
+	});
 }
-

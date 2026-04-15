@@ -4,11 +4,20 @@ import { setCookie } from "hono/cookie";
 import {
 	AuthResponseSchema,
 	GithubExchangeRequestSchema,
-	GuestLoginRequestSchema,
+	PhoneLoginRequestSchema,
+	PhonePasswordLoginRequestSchema,
+	PhoneVerifyRequestSchema,
+	SetPasswordRequestSchema,
 } from "./auth.schemas";
-import { exchangeGithubCode, createGuestUser } from "./auth.service";
+import {
+	exchangeGithubCode,
+	loginWithPhonePassword,
+	requestPhoneLoginCode,
+	setPasswordForAuthenticatedUser,
+	verifyPhoneLoginCode,
+} from "./auth.service";
 import { getConfig } from "../../config";
-import { resolveAuth, type AuthPayload } from "../../middleware/auth";
+import { authMiddleware, resolveAuth, type AuthPayload } from "../../middleware/auth";
 
 export const authRouter = new Hono<AppEnv>();
 
@@ -180,16 +189,114 @@ authRouter.post("/github/exchange", async (c) => {
 });
 
 authRouter.post("/guest", async (c) => {
+	return c.json(
+		{
+			success: false,
+			error: "游客模式已下线，请使用 GitHub 或手机号登录",
+			code: "guest_login_disabled",
+		},
+		410,
+	);
+});
+
+authRouter.post("/email/request", async (c) => {
+	return c.json(
+		{
+			success: false,
+			error: "邮箱登录已下线，请使用 GitHub 或手机号登录",
+			code: "email_login_disabled",
+		},
+		410,
+	);
+});
+
+authRouter.post("/email/verify", async (c) => {
+	return c.json(
+		{
+			success: false,
+			error: "邮箱登录已下线，请使用 GitHub 或手机号登录",
+			code: "email_login_disabled",
+		},
+		410,
+	);
+});
+
+authRouter.post("/phone/request", async (c) => {
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = GuestLoginRequestSchema.safeParse(body);
+	const parsed = PhoneLoginRequestSchema.safeParse(body);
 	if (!parsed.success) {
 		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
+			{ success: false, error: "请求参数不合法", issues: parsed.error.issues },
 			400,
 		);
 	}
 
-	const result = await createGuestUser(c, parsed.data.nickname);
+	const result = await requestPhoneLoginCode(c, parsed.data.phone);
+	if (result instanceof Response) return result;
+	return c.json({ success: true, ...result });
+});
+
+authRouter.post("/phone/verify", async (c) => {
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = PhoneVerifyRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ success: false, error: "请求参数不合法", issues: parsed.error.issues },
+			400,
+		);
+	}
+
+	const result = await verifyPhoneLoginCode(
+		c,
+		parsed.data.phone,
+		parsed.data.code,
+	);
+
+	// verifyPhoneLoginCode may return a Hono Response on error
+	if (result instanceof Response) {
+		return result;
+	}
+
+	const validated = AuthResponseSchema.parse(result);
+	attachAuthCookie(c, validated.token);
+	return c.json(validated);
+});
+
+authRouter.post("/phone/password-login", async (c) => {
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = PhonePasswordLoginRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ success: false, error: "请求参数不合法", issues: parsed.error.issues },
+			400,
+		);
+	}
+
+	const result = await loginWithPhonePassword(
+		c,
+		parsed.data.phone,
+		parsed.data.password,
+	);
+	if (result instanceof Response) return result;
+
+	const validated = AuthResponseSchema.parse(result);
+	attachAuthCookie(c, validated.token);
+	return c.json(validated);
+});
+
+authRouter.post("/password/set", authMiddleware, async (c) => {
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = SetPasswordRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json(
+			{ success: false, error: "请求参数不合法", issues: parsed.error.issues },
+			400,
+		);
+	}
+
+	const result = await setPasswordForAuthenticatedUser(c, parsed.data.password);
+	if (result instanceof Response) return result;
+
 	const validated = AuthResponseSchema.parse(result);
 	attachAuthCookie(c, validated.token);
 	return c.json(validated);

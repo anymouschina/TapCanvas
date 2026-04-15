@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../../types";
+import { AppError } from "../../middleware/error";
 import { authMiddleware } from "../../middleware/auth";
 import {
 	RunTaskRequestSchema,
@@ -11,14 +12,12 @@ import {
 	VendorCallLogStatusSchema,
 	VendorCallLogSchema,
 } from "./task.schemas";
+import { upsertTaskResult } from "./task-result.repo";
 import {
-	fetchSora2ApiTaskResult,
+	fetchApimartTaskResult,
 	fetchGrsaiDrawTaskResult,
-	fetchMiniMaxTaskResult,
-	fetchVeoTaskResult,
-	runMiniMaxVideoTask,
-	runSora2ApiVideoTask,
-	runVeoVideoTask,
+	fetchMappedTaskResultForVendor,
+	enqueueStoredTaskForVendor,
 	runGenericTaskForVendor,
 } from "./task.service";
 import type { TaskProgressSnapshotDto } from "./task.schemas";
@@ -28,11 +27,76 @@ import {
 	type TaskProgressSubscriber,
 	getPendingTaskSnapshots,
 } from "./task.progress";
-import { listVendorCallLogsForUser } from "./vendor-call-logs.repo";
+import { listVendorCallLogs } from "./vendor-call-logs.repo";
+import { fetchTaskResultForPolling } from "./task.polling";
+import { maybeWrapSyncImageResultAsStoredTask } from "./task.task-store-wrap";
 
 export const taskRouter = new Hono<AppEnv>();
 
 taskRouter.use("*", authMiddleware);
+
+function isLocalDevRequest(c: any): boolean {
+	try {
+		const url = new URL(c.req.url);
+		const host = url.hostname;
+		return (
+			host === "localhost" ||
+			host === "127.0.0.1" ||
+			host === "0.0.0.0" ||
+			host === "::1"
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isAdminRequest(c: any): boolean {
+	if (isLocalDevRequest(c)) return true;
+	const auth = c.get("auth") as { role?: string | null } | undefined;
+	return auth?.role === "admin";
+}
+
+type FetchTaskResultRequestDto = ReturnType<
+	typeof FetchTaskResultRequestSchema.parse
+>;
+
+async function parseFetchTaskResultBody(
+	c: any,
+): Promise<
+	| { ok: true; data: FetchTaskResultRequestDto }
+	| { ok: false; response: Response }
+> {
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = FetchTaskResultRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			response: c.json(
+				{ error: "Invalid request body", issues: parsed.error.issues },
+				400,
+			),
+		};
+	}
+	return { ok: true, data: parsed.data };
+}
+
+function registerVendorResultRoute(
+	path: string,
+	handler: (
+		c: any,
+		userId: string,
+		body: FetchTaskResultRequestDto,
+	) => Promise<unknown>,
+) {
+	taskRouter.post(path, async (c) => {
+		const userId = c.get("userId");
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		const parsed = await parseFetchTaskResultBody(c);
+		if (!parsed.ok) return parsed.response;
+		const result = await handler(c, userId, parsed.data);
+		return c.json(TaskResultSchema.parse(result));
+	});
+}
 
 // POST /tasks - unified vendor-based tasks
 taskRouter.post("/", async (c) => {
@@ -65,46 +129,53 @@ taskRouter.post("/", async (c) => {
 	const vendor = payload.vendor.trim().toLowerCase();
 	const req = payload.request;
 
-	let result;
-	if (vendor === "veo") {
-		if (req.kind !== "text_to_video") {
-			return c.json(
-				{
-					error: "veo only supports text_to_video tasks",
-					code: "invalid_task_kind",
-				},
-				400,
-			);
+	const isGeminiImageTask =
+		(vendor === "gemini" || vendor === "google") &&
+		(req.kind === "text_to_image" || req.kind === "image_edit");
+	const isDreaminaAsyncTask =
+		(vendor === "dreamina-cli" || vendor === "dreamina") &&
+		(req.kind === "text_to_image" || req.kind === "text_to_video");
+	const shouldUseTaskStore = isGeminiImageTask || isDreaminaAsyncTask;
+	let result = shouldUseTaskStore
+		? await enqueueStoredTaskForVendor(c as any, userId, vendor, req)
+		: await runGenericTaskForVendor(c, userId, vendor, req);
+
+	result = await maybeWrapSyncImageResultAsStoredTask(c as any, userId, {
+		vendor,
+		requestKind: req.kind,
+		result: result as any,
+	});
+
+	// Persist final result so callers can safely poll /tasks/result even for sync vendors.
+	try {
+		const taskId =
+			typeof result?.id === "string"
+				? result.id.trim()
+				: String(result?.id || "").trim();
+		const status =
+			typeof result?.status === "string" ? result.status.trim() : "";
+		const kind =
+			typeof result?.kind === "string"
+				? result.kind.trim()
+				: String(req.kind || "").trim();
+		if (taskId && kind && (status === "succeeded" || status === "failed")) {
+			const nowIso = new Date().toISOString();
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor,
+				kind,
+				status,
+				result,
+				completedAt: nowIso,
+				nowIso,
+			});
 		}
-		result = await runVeoVideoTask(c, userId, req);
-	} else if (vendor === "minimax") {
-		if (req.kind !== "text_to_video") {
-			return c.json(
-				{
-					error: "minimax only supports text_to_video tasks",
-					code: "invalid_task_kind",
-				},
-				400,
-			);
-		}
-		result = await runMiniMaxVideoTask(c, userId, req);
-	} else if (vendor === "sora2api") {
-		if (req.kind === "text_to_video") {
-			result = await runSora2ApiVideoTask(c, userId, req);
-		} else if (req.kind === "text_to_image" || req.kind === "image_edit") {
-			// sora2api image tasks are handled by generic runner (chat/completions proxy)
-			result = await runGenericTaskForVendor(c, userId, vendor, req);
-		} else {
-			return c.json(
-				{
-					error: "sora2api only supports text_to_video/text_to_image/image_edit tasks",
-					code: "invalid_task_kind",
-				},
-				400,
-			);
-		}
-	} else {
-		result = await runGenericTaskForVendor(c, userId, vendor, req);
+	} catch (err: any) {
+		console.warn(
+			"[task-store] persist task result failed",
+			err?.message || err,
+		);
 	}
 
 	return c.json(TaskResultSchema.parse(result));
@@ -193,12 +264,22 @@ taskRouter.get("/pending", async (c) => {
 taskRouter.get("/logs", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const isAdmin = isAdminRequest(c);
 
 	const limitRaw = c.req.query("limit");
 	const parsedLimit = Number(limitRaw ?? 50);
 	const limit = Number.isFinite(parsedLimit)
 		? Math.max(1, Math.min(200, Math.floor(parsedLimit)))
 		: 50;
+
+	const queryUserIdRaw = c.req.query("userId");
+	const queryUserId =
+		typeof queryUserIdRaw === "string" && queryUserIdRaw.trim()
+			? queryUserIdRaw.trim()
+			: null;
+	if (!isAdmin && queryUserId && queryUserId !== userId) {
+		return c.json({ error: "Forbidden" }, 403);
+	}
 
 	const before = c.req.query("before") || null;
 	const vendor = c.req.query("vendor") || null;
@@ -212,8 +293,11 @@ taskRouter.get("/logs", async (c) => {
 
 	const taskKind = c.req.query("taskKind") || null;
 
+	const targetUserId = isAdmin ? queryUserId : userId;
+
 	// Fetch one extra row to detect "hasMore"
-	const rows = await listVendorCallLogsForUser(c.env.DB, userId, {
+	const rows = await listVendorCallLogs(c.env.DB, {
+		userId: targetUserId,
 		limit: limit + 1,
 		before,
 		vendor,
@@ -226,7 +310,15 @@ taskRouter.get("/logs", async (c) => {
 	const items = sliced.map((r) =>
 		VendorCallLogSchema.parse({
 			vendor: r.vendor,
-			taskId: r.task_id,
+			taskId:
+				typeof r.task_id === "string" && r.task_id.trim()
+					? r.task_id
+					: typeof r.row_id === "number" && Number.isFinite(r.row_id)
+					? `row_${r.row_id}`
+					: `missing_${String(r.vendor || "unknown")}_${String(r.created_at || "")}`,
+			userId: r.user_id,
+			userLogin: r.user_login ?? null,
+			userName: r.user_name ?? null,
 			taskKind: r.task_kind ?? null,
 			status: r.status,
 			startedAt: r.started_at ?? null,
@@ -236,6 +328,10 @@ taskRouter.get("/logs", async (c) => {
 					? Math.round(r.duration_ms)
 					: null,
 			errorMessage: r.error_message ?? null,
+			requestPayload:
+				typeof r.request_json === "string" ? r.request_json : null,
+			upstreamResponse:
+				typeof r.response_json === "string" ? r.response_json : null,
 			createdAt: r.created_at,
 			updatedAt: r.updated_at,
 		}),
@@ -253,90 +349,57 @@ taskRouter.get("/logs", async (c) => {
 	);
 });
 
-taskRouter.post("/veo/result", async (c) => {
+// POST /tasks/result - unified task polling endpoint (prefers stored results)
+taskRouter.post("/result", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = FetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
-	const result = await fetchVeoTaskResult(c, userId, parsed.data.taskId);
-	return c.json(TaskResultSchema.parse(result));
-});
+	const parsed = await parseFetchTaskResultBody(c);
+	if (!parsed.ok) return parsed.response;
 
-taskRouter.post("/sora2api/result", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = FetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
-	const result = await fetchSora2ApiTaskResult(
-		c,
-		userId,
-		parsed.data.taskId,
-		parsed.data.prompt ?? null,
-	);
-	return c.json(TaskResultSchema.parse(result));
-});
-
-taskRouter.post("/minimax/result", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = FetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
-	const result = await fetchMiniMaxTaskResult(
-		c,
-		userId,
-		parsed.data.taskId,
-	);
-	return c.json(TaskResultSchema.parse(result));
-});
-
-taskRouter.post("/grsai/result", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = FetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
-	const result = await fetchGrsaiDrawTaskResult(c, userId, parsed.data.taskId, {
+	const outcome = await fetchTaskResultForPolling(c as any, userId, {
+		taskId: parsed.data.taskId,
 		taskKind: parsed.data.taskKind ?? null,
-		promptFromClient: parsed.data.prompt ?? null,
+		prompt: typeof parsed.data.prompt === "string" ? parsed.data.prompt : null,
+		mode: "internal",
 	});
-	return c.json(TaskResultSchema.parse(result));
+	if (outcome.ok) return c.json(outcome.result);
+	return c.json((outcome as any).body, (outcome as any).status);
 });
+
+registerVendorResultRoute("/veo/result", async (c, userId, body) => {
+	const result = await fetchMappedTaskResultForVendor(c, userId, "veo", {
+		taskId: body.taskId,
+		taskKind: (body.taskKind as any) ?? null,
+		kindHint: "video",
+		promptFromClient: body.prompt ?? null,
+	});
+	if (result) return result;
+	throw new AppError("厂商 veo 未配置可用的视频结果映射（model_catalog_mappings）", {
+		status: 400,
+		code: "mapping_not_configured",
+		details: { vendor: "veo", taskKind: body.taskKind ?? "text_to_video" },
+	});
+});
+
+registerVendorResultRoute("/apimart/result", (c, userId, body) =>
+	fetchApimartTaskResult(c, userId, body.taskId, body.prompt ?? null, {
+		taskKind: (body.taskKind as any) ?? null,
+	}),
+);
+
+registerVendorResultRoute("/grsai/result", (c, userId, body) =>
+	fetchGrsaiDrawTaskResult(c, userId, body.taskId, {
+		taskKind: body.taskKind ?? null,
+		promptFromClient: body.prompt ?? null,
+	}),
+);
 
 // POST /tasks/gemini/result - alias for Gemini image tasks (Banana/grsai draw result polling)
 taskRouter.post("/gemini/result", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = FetchTaskResultRequestSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json(
-			{ error: "Invalid request body", issues: parsed.error.issues },
-			400,
-		);
-	}
+	const parsed = await parseFetchTaskResultBody(c);
+	if (!parsed.ok) return parsed.response;
 
 	const taskKind = parsed.data.taskKind ?? null;
 	if (taskKind && taskKind !== "text_to_image" && taskKind !== "image_edit") {

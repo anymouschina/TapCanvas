@@ -36,6 +36,7 @@ export async function captureFramesAtTimes(
 
   const revokeObjectUrl = source.type === 'file' ? URL.createObjectURL(source.file) : null
   video.src = source.type === 'file' ? revokeObjectUrl! : source.url
+  video.load()
 
   const frames: CapturedFrame[] = []
   try {
@@ -52,6 +53,8 @@ export async function captureFramesAtTimes(
       height: video.videoHeight,
     }
 
+    await waitForFrameData(video)
+
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
@@ -62,8 +65,13 @@ export async function captureFramesAtTimes(
     const quality = options?.quality ?? 0.9
 
     for (const t of times) {
-      // Clamp to duration range
-      const target = Math.max(0, Math.min(t, meta.duration || t))
+      // Avoid seeking to the exact tail frame; many browsers never settle there.
+      const safeDuration = Number.isFinite(meta.duration) && meta.duration > 0
+        ? Math.max(0, meta.duration - 0.05)
+        : null
+      const target = safeDuration === null
+        ? Math.max(0, t)
+        : Math.max(0, Math.min(t, safeDuration))
       await seekVideo(video, target)
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const blob = await new Promise<Blob>((resolve, reject) => {
@@ -94,19 +102,69 @@ export async function captureFramesAtTimes(
   }
 }
 
-async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
-  const hasRequestVideoFrameCallback = typeof (video as any).requestVideoFrameCallback === 'function'
-  const epsilon = 0.01
-  const isSameTime = Math.abs((video.currentTime || 0) - time) < epsilon
+async function waitForFrameData(video: HTMLVideoElement): Promise<void> {
+  if (video.readyState >= 2) return
 
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     let done = false
     const timeout = window.setTimeout(() => {
       if (done) return
       done = true
       cleanup()
-      reject(new Error('Seek timeout'))
-    }, 2500)
+      reject(new Error(`Initial frame timeout (readyState=${video.readyState})`))
+    }, 5000)
+
+    const cleanup = () => {
+      window.clearTimeout(timeout)
+      video.removeEventListener('loadeddata', onReady)
+      video.removeEventListener('error', onError)
+    }
+
+    const finish = () => {
+      if (done) return
+      done = true
+      cleanup()
+      resolve()
+    }
+
+    const onReady = () => {
+      if (video.readyState < 2) return
+      finish()
+    }
+
+    const onError = () => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(new Error('Initial frame load failed'))
+    }
+
+    video.addEventListener('loadeddata', onReady, { once: true })
+    video.addEventListener('error', onError, { once: true })
+
+    if (video.readyState >= 2) {
+      finish()
+    }
+  })
+}
+
+async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
+  const epsilon = 0.01
+  const isCloseEnough = () => Math.abs((video.currentTime || 0) - time) < epsilon
+
+  return new Promise((resolve, reject) => {
+    if (isCloseEnough() && video.readyState >= 2) {
+      resolve()
+      return
+    }
+
+    let done = false
+    const timeout = window.setTimeout(() => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(new Error(`Seek timeout at ${time.toFixed(2)}s`))
+    }, 5000)
     const cleanup = () => {
       window.clearTimeout(timeout)
       video.removeEventListener('seeked', onSeeked)
@@ -126,17 +184,12 @@ async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
       reject(new Error('Seek failed'))
     }
     const onLoadedData = () => {
-      if (!isSameTime) return
+      if (!isCloseEnough()) return
       finish()
     }
     const onSeeked = () => {
-      if (!hasRequestVideoFrameCallback) {
-        finish()
-        return
-      }
-      ;(video as any).requestVideoFrameCallback(() => {
-        finish()
-      })
+      if (!isCloseEnough()) return
+      finish()
     }
 
     video.addEventListener('seeked', onSeeked, { once: true })
@@ -150,14 +203,8 @@ async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
     }
 
     // Some browsers don't fire `seeked` when seeking to the current time (e.g. 0s on first load).
-    if (isSameTime) {
-      if (hasRequestVideoFrameCallback) {
-        ;(video as any).requestVideoFrameCallback(() => {
-          finish()
-        })
-      } else if (video.readyState >= 2) {
-        finish()
-      }
+    if (isCloseEnough() && video.readyState >= 2) {
+      finish()
     }
   })
 }

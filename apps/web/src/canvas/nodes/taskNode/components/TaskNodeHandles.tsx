@@ -12,6 +12,8 @@ type TaskNodeHandlesProps = {
   defaultInputType: string
   defaultOutputType: string
   wideHandleBase: React.CSSProperties
+  showHandles?: boolean
+  showWideHandles?: boolean
 }
 
 export function TaskNodeHandles({
@@ -21,7 +23,10 @@ export function TaskNodeHandles({
   defaultInputType,
   defaultOutputType,
   wideHandleBase,
+  showHandles = true,
+  showWideHandles = true,
 }: TaskNodeHandlesProps) {
+  if (!showHandles) return null
   return (
     <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {targets.map((h) => {
@@ -60,28 +65,32 @@ export function TaskNodeHandles({
           />
         )
       })}
-      <Handle
-        id={`in-${defaultInputType}-wide`}
-        className="tc-handle tc-handle--wide"
-        type="target"
-        position={Position.Left}
-        style={{ ...wideHandleBase, left: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(-50%, -50%)' }}
-        data-handle-type={defaultInputType}
-        data-handle-position="left"
-        title={`输入: ${getHandleTypeLabel(defaultInputType)}`}
-        aria-label={`输入: ${getHandleTypeLabel(defaultInputType)}`}
-      />
-      <Handle
-        id={`out-${defaultOutputType}-wide`}
-        className="tc-handle tc-handle--wide"
-        type="source"
-        position={Position.Right}
-        style={{ ...wideHandleBase, right: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(50%, -50%)' }}
-        data-handle-type={defaultOutputType}
-        data-handle-position="right"
-        title={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
-        aria-label={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
-      />
+      {showWideHandles && (
+        <>
+          <Handle
+            id={`in-${defaultInputType}-wide`}
+            className="tc-handle tc-handle--wide"
+            type="target"
+            position={Position.Left}
+            style={{ ...wideHandleBase, left: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(-50%, -50%)' }}
+            data-handle-type={defaultInputType}
+            data-handle-position="left"
+            title={`输入: ${getHandleTypeLabel(defaultInputType)}`}
+            aria-label={`输入: ${getHandleTypeLabel(defaultInputType)}`}
+          />
+          <Handle
+            id={`out-${defaultOutputType}-wide`}
+            className="tc-handle tc-handle--wide"
+            type="source"
+            position={Position.Right}
+            style={{ ...wideHandleBase, right: -HANDLE_HORIZONTAL_OFFSET, transform: 'translate(50%, -50%)' }}
+            data-handle-type={defaultOutputType}
+            data-handle-position="right"
+            title={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
+            aria-label={`输出: ${getHandleTypeLabel(defaultOutputType)}`}
+          />
+        </>
+      )}
     </div>
   )
 }

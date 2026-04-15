@@ -1,0 +1,31 @@
+{
+  "name": "agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agents": "dist/cli/index.js"
+  },
+  "scripts": {
+    "prebuild": "node scripts/clean-dist.mjs",
+    "dev": "node --loader ts-node/esm src/cli/index.ts",
+    "dev:watch": "node --watch --watch-path=src --watch-path=skills --loader ts-node/esm src/cli/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node scripts/run-tests.mjs",
+    "watch": "node scripts/watch.mjs",
+    "start": "node dist/cli/index.js",
+    "postbuild": "node scripts/sync-global-config.mjs",
+    "postinstall": "node scripts/sync-global-config.mjs"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "redis": "^4.7.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

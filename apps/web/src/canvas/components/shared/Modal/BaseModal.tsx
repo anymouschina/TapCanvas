@@ -5,7 +5,7 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom';
-import { $, $t } from '../../i18n';
+import { $, $t } from '../../../i18n';
 
 export interface BaseModalProps {
   /** 是否显示 */
@@ -332,7 +332,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
         )}
 
         {/* 加载动画样式 */}
-        <style className="base-modal__style" jsx>{`
+        <style className="base-modal__style">{`
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }

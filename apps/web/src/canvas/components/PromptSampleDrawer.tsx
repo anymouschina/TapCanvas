@@ -6,7 +6,6 @@ import {
   Drawer,
   Group,
   Loader,
-  Paper,
   ScrollArea,
   Select,
   Stack,
@@ -16,6 +15,8 @@ import {
   Textarea,
 } from '@mantine/core'
 import { IconPlus, IconSearch, IconTrash, IconWand } from '@tabler/icons-react'
+import { InlinePanel } from '../../ui/InlinePanel'
+import { PanelCard } from '../../ui/PanelCard'
 import {
   createPromptSample,
   deletePromptSample,
@@ -40,8 +41,8 @@ const nodeKindLabel: Record<PromptSampleDto['nodeKind'], string> = {
 
 const normalizeKindForRequest = (kind?: string) => {
   if (!kind) return undefined
-  if (kind === 'image' || kind === 'textToImage' || kind === 'storyboardImage' || kind === 'imageFission') return 'image'
-  if (kind === 'composeVideo' || kind === 'video') return 'composeVideo'
+  if (kind === 'image' || kind === 'imageEdit') return 'image'
+  if (kind === 'video') return 'composeVideo'
   if (kind === 'storyboard') return 'storyboard'
   return undefined
 }
@@ -308,31 +309,27 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
             )}
 
             {!officialLoading && officialError && (
-              <Paper className="prompt-sample-drawer__error" withBorder p="md">
+              <InlinePanel className="prompt-sample-drawer__error">
                 <Text className="prompt-sample-drawer__error-text" size="sm" c="red.5">
                   {officialError}
                 </Text>
-              </Paper>
+              </InlinePanel>
             )}
 
             {!officialLoading && !officialError && (
               <ScrollArea className="prompt-sample-drawer__scroll" h="70vh" type="always">
                 <Stack className="prompt-sample-drawer__list" gap="sm">
                   {officialSamples.length === 0 && (
-                    <Paper className="prompt-sample-drawer__empty" withBorder p="md">
+                    <InlinePanel className="prompt-sample-drawer__empty">
                       <Text className="prompt-sample-drawer__empty-text" size="sm" c="dimmed">
                         暂无匹配的案例，可以尝试其他关键字。
                       </Text>
-                    </Paper>
+                    </InlinePanel>
                   )}
                   {officialSamples.map((sample) => (
-                    <Paper
+                    <PanelCard
                       className="prompt-sample-drawer__sample-card"
                       key={sample.id}
-                      withBorder
-                      radius="md"
-                      p="md"
-                      shadow="xs"
                     >
                       <Stack className="prompt-sample-drawer__sample-stack" gap={4}>
                         <Group className="prompt-sample-drawer__sample-header" justify="space-between" align="flex-start">
@@ -389,7 +386,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                           </Button>
                         </Group>
                       </Stack>
-                    </Paper>
+                    </PanelCard>
                   ))}
                 </Stack>
               </ScrollArea>
@@ -399,7 +396,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
           <Tabs.Panel className="prompt-sample-drawer__tabs-panel" value="custom" pt="sm">
             <ScrollArea className="prompt-sample-drawer__scroll" h="70vh" type="always">
               <Stack className="prompt-sample-drawer__list" gap="sm">
-                <Paper className="prompt-sample-drawer__custom-form" withBorder p="md" radius="md" shadow="xs">
+                <PanelCard className="prompt-sample-drawer__custom-form">
                   <Stack className="prompt-sample-drawer__custom-form-stack" gap="xs">
                     <Group className="prompt-sample-drawer__custom-form-header" justify="space-between" align="center">
                       <Text className="prompt-sample-drawer__custom-form-title" fw={600}>
@@ -514,7 +511,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                       </Button>
                     </Group>
                   </Stack>
-                </Paper>
+                </PanelCard>
 
                 {customLoading && (
                   <Group className="prompt-sample-drawer__custom-loading" justify="center" py="md">
@@ -526,29 +523,25 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                 )}
 
                 {!customLoading && customError && (
-                  <Paper className="prompt-sample-drawer__custom-error-card" withBorder p="md">
+                  <InlinePanel className="prompt-sample-drawer__custom-error-card">
                     <Text className="prompt-sample-drawer__custom-error-text" size="sm" c="red.5">
                       {customError}
                     </Text>
-                  </Paper>
+                  </InlinePanel>
                 )}
 
                 {!customLoading && !customError && customSamples.length === 0 && (
-                  <Paper className="prompt-sample-drawer__custom-empty" withBorder p="md" radius="md">
+                  <InlinePanel className="prompt-sample-drawer__custom-empty">
                     <Text className="prompt-sample-drawer__custom-empty-text" size="sm" c="dimmed">
                       暂无自定义案例，填写上方表单即可创建。
                     </Text>
-                  </Paper>
+                  </InlinePanel>
                 )}
 
                 {!customLoading && !customError && customSamples.map((sample) => (
-                  <Paper
+                  <PanelCard
                     className="prompt-sample-drawer__custom-card"
                     key={sample.id}
-                    withBorder
-                    radius="md"
-                    p="md"
-                    shadow="xs"
                   >
                     <Stack className="prompt-sample-drawer__custom-card-stack" gap={4}>
                       <Group className="prompt-sample-drawer__custom-card-header" justify="space-between" align="flex-start">
@@ -626,7 +619,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
                         </Button>
                       </Group>
                     </Stack>
-                  </Paper>
+                  </PanelCard>
                 ))}
               </Stack>
             </ScrollArea>

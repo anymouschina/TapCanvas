@@ -5,7 +5,6 @@ import {
   Button,
   Group,
   Modal,
-  Paper,
   ScrollArea,
   Select,
   Stack,
@@ -16,6 +15,8 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { IconEdit, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react'
+import { InlinePanel } from '../../ui/InlinePanel'
+import { PanelCard } from '../../ui/PanelCard'
 import { useSystemPromptPresets, type SystemPromptScope } from '../systemPromptPresets'
 
 type PanelProps = {
@@ -144,11 +145,8 @@ export function SystemPromptPanel({ className, target, enabled, value, onEnabled
   )
 
   return (
-    <Paper
+    <PanelCard
       className={['system-prompt-panel', className].filter(Boolean).join(' ')}
-      withBorder
-      radius="md"
-      p="sm"
       mt="sm"
     >
       <Group className="system-prompt-panel-header" justify="space-between" align="center">
@@ -255,7 +253,7 @@ export function SystemPromptPanel({ className, target, enabled, value, onEnabled
           <ScrollArea.Autosize className="system-prompt-panel-modal-list" mah={260} type="hover">
             <Stack className="system-prompt-panel-modal-list-stack" gap="sm">
               {filteredPresets.map((preset) => (
-                <Paper className="system-prompt-panel-modal-card" key={preset.id} withBorder radius="md" p="sm">
+                <InlinePanel className="system-prompt-panel-modal-card" key={preset.id}>
                   <Group className="system-prompt-panel-modal-card-header" justify="space-between" align="flex-start">
                     <div className="system-prompt-panel-modal-card-info">
                       <Group className="system-prompt-panel-modal-card-title" gap={6} align="center">
@@ -319,7 +317,7 @@ export function SystemPromptPanel({ className, target, enabled, value, onEnabled
                   <Text className="system-prompt-panel-modal-card-content" size="xs" c="dimmed" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
                     {preset.content}
                   </Text>
-                </Paper>
+                </InlinePanel>
               ))}
               {filteredPresets.length === 0 && (
                 <Text className="system-prompt-panel-modal-empty" size="xs" c="dimmed">
@@ -369,7 +367,7 @@ export function SystemPromptPanel({ className, target, enabled, value, onEnabled
               </Text>
             )}
             <Group className="system-prompt-panel-modal-footer" justify="flex-end">
-              <Button className="system-prompt-panel-modal-reset" size="xs" variant="light" onClick={resetForm}>
+              <Button className="system-prompt-panel-modal-reset" size="xs" variant="light" onClick={() => resetForm()}>
                 清空
               </Button>
               <Button className="system-prompt-panel-modal-save" size="xs" leftSection={<IconPlus className="system-prompt-panel-modal-save-icon" size={14} />} onClick={handleSavePreset}>
@@ -379,6 +377,6 @@ export function SystemPromptPanel({ className, target, enabled, value, onEnabled
           </Stack>
         </Stack>
       </Modal>
-    </Paper>
+    </PanelCard>
   )
 }

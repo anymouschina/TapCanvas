@@ -1,6 +1,7 @@
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
+import { getPrismaClient } from "../../platform/node/prisma";
 import {
 	getEndpointById,
 	getProxyConfigRow,
@@ -499,7 +500,7 @@ export async function importModelConfig(
 		errors: [] as string[],
 	};
 
-	const db = c.env.DB;
+	const prisma = getPrismaClient();
 
 	for (const providerData of data.providers) {
 		try {
@@ -512,14 +513,13 @@ export async function importModelConfig(
 				continue;
 			}
 
-			const existing = await db
-				.prepare(
-					`SELECT * FROM model_providers
-           WHERE owner_id = ? AND name = ? AND vendor = ?
-           LIMIT 1`,
-				)
-				.bind(userId, name, vendor)
-				.first<ProviderRow>();
+			const existing = await prisma.model_providers.findFirst({
+				where: {
+					owner_id: userId,
+					name,
+					vendor,
+				},
+			});
 
 			let providerId: string;
 			const nowIso = new Date().toISOString();
@@ -531,14 +531,14 @@ export async function importModelConfig(
 					existing.base_url !== nextBase ||
 					(existing.shared_base_url === 1) !== nextShared
 				) {
-					await db
-						.prepare(
-							`UPDATE model_providers
-               SET base_url = ?, shared_base_url = ?, updated_at = ?
-               WHERE id = ?`,
-						)
-						.bind(nextBase, nextShared ? 1 : 0, nowIso, existing.id)
-						.run();
+					await prisma.model_providers.update({
+						where: { id: existing.id },
+						data: {
+							base_url: nextBase,
+							shared_base_url: nextShared ? 1 : 0,
+							updated_at: nowIso,
+						},
+					});
 					result.imported.providers += 1;
 				} else {
 					result.skipped.providers += 1;
@@ -546,23 +546,18 @@ export async function importModelConfig(
 				providerId = existing.id;
 			} else {
 				const id = crypto.randomUUID();
-				await db
-					.prepare(
-						`INSERT INTO model_providers
-             (id, name, vendor, base_url, shared_base_url, owner_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-					)
-					.bind(
+				await prisma.model_providers.create({
+					data: {
 						id,
 						name,
 						vendor,
-						nextBase,
-						nextShared ? 1 : 0,
-						userId,
-						nowIso,
-						nowIso,
-					)
-					.run();
+						base_url: nextBase,
+						shared_base_url: nextShared ? 1 : 0,
+						owner_id: userId,
+						created_at: nowIso,
+						updated_at: nowIso,
+					},
+				});
 				providerId = id;
 				result.imported.providers += 1;
 			}
@@ -570,37 +565,33 @@ export async function importModelConfig(
 			// Import tokens
 			for (const tokenData of providerData.tokens) {
 				try {
-					const existingToken = await db
-						.prepare(
-							`SELECT * FROM model_tokens
-               WHERE provider_id = ? AND user_id = ? AND label = ?
-               LIMIT 1`,
-						)
-						.bind(providerId, userId, tokenData.label)
-						.first<TokenRow>();
+					const existingToken = await prisma.model_tokens.findFirst({
+						where: {
+							provider_id: providerId,
+							user_id: userId,
+							label: tokenData.label,
+						},
+					});
 
 					if (!existingToken) {
 						const tokenNow = new Date().toISOString();
-						await db
-							.prepare(
-								`INSERT INTO model_tokens
-                 (id, provider_id, label, secret_token, user_agent, user_id, enabled, shared,
-                  shared_failure_count, shared_last_failure_at, shared_disabled_until, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
-							)
-							.bind(
-								crypto.randomUUID(),
-								providerId,
-								tokenData.label,
-								tokenData.secretToken,
-								tokenData.userAgent ?? null,
-								userId,
-								tokenData.enabled ? 1 : 0,
-								tokenData.shared ? 1 : 0,
-								tokenNow,
-								tokenNow,
-							)
-							.run();
+						await prisma.model_tokens.create({
+							data: {
+								id: crypto.randomUUID(),
+								provider_id: providerId,
+								label: tokenData.label,
+								secret_token: tokenData.secretToken,
+								user_agent: tokenData.userAgent ?? null,
+								user_id: userId,
+								enabled: tokenData.enabled ? 1 : 0,
+								shared: tokenData.shared ? 1 : 0,
+								shared_failure_count: 0,
+								shared_last_failure_at: null,
+								shared_disabled_until: null,
+								created_at: tokenNow,
+								updated_at: tokenNow,
+							},
+						});
 						result.imported.tokens += 1;
 					} else {
 						result.skipped.tokens += 1;
@@ -617,14 +608,12 @@ export async function importModelConfig(
 			// Import endpoints
 			for (const endpointData of providerData.endpoints) {
 				try {
-					const existingEndpoint = await db
-						.prepare(
-							`SELECT * FROM model_endpoints
-               WHERE provider_id = ? AND key = ?
-               LIMIT 1`,
-						)
-						.bind(providerId, endpointData.key)
-						.first<EndpointRow>();
+					const existingEndpoint = await prisma.model_endpoints.findFirst({
+						where: {
+							provider_id: providerId,
+							key: endpointData.key,
+						},
+					});
 
 					const endpointNow = new Date().toISOString();
 					const input = {
@@ -667,39 +656,40 @@ export async function listAvailableModels(
 		: undefined;
 	const targetVendors = vendor ? [vendor] : ["openai", "anthropic"];
 
-	const placeholders = targetVendors.map(() => "?").join(", ");
-	const providers = await c.env.DB.prepare(
-		`SELECT * FROM model_providers WHERE owner_id = ? AND vendor IN (${placeholders}) ORDER BY created_at ASC`,
-	)
-		.bind(userId, ...targetVendors)
-		.all<ProviderRow>()
-		.then((r) => r.results || []);
+	const prisma = getPrismaClient();
+	const providers = await prisma.model_providers.findMany({
+		where: {
+			owner_id: userId,
+			vendor: { in: targetVendors },
+		},
+		orderBy: { created_at: "asc" },
+	});
 
 	const contexts: Array<{ provider: ProviderRow; apiKey: string }> = [];
 
 	const findBestTokenForProvider = async (
 		providerId: string,
 	): Promise<TokenRow | null> => {
-		const ownedRows = await c.env.DB.prepare(
-			`SELECT * FROM model_tokens
-       WHERE provider_id = ? AND user_id = ? AND enabled = 1
-       ORDER BY created_at ASC LIMIT 1`,
-		)
-			.bind(providerId, userId)
-			.all<TokenRow>();
-		const owned = (ownedRows.results || [])[0];
+		const owned = await prisma.model_tokens.findFirst({
+			where: { provider_id: providerId, user_id: userId, enabled: 1 },
+			orderBy: { created_at: "asc" },
+		});
 		if (owned) return owned;
 
 		const nowIso = new Date().toISOString();
-		const sharedRows = await c.env.DB.prepare(
-			`SELECT * FROM model_tokens
-       WHERE provider_id = ? AND shared = 1 AND enabled = 1
-         AND (shared_disabled_until IS NULL OR shared_disabled_until < ?)
-       ORDER BY updated_at ASC LIMIT 1`,
-		)
-			.bind(providerId, nowIso)
-			.all<TokenRow>();
-		return (sharedRows.results || [])[0] ?? null;
+		const shared = await prisma.model_tokens.findFirst({
+			where: {
+				provider_id: providerId,
+				shared: 1,
+				enabled: 1,
+				OR: [
+					{ shared_disabled_until: null },
+					{ shared_disabled_until: { lt: nowIso } },
+				],
+			},
+			orderBy: { updated_at: "asc" },
+		});
+		return shared ?? null;
 	};
 
 	for (const provider of providers) {
@@ -718,13 +708,15 @@ export async function listAvailableModels(
 		if (sharedBaseCache.has(vend)) {
 			return sharedBaseCache.get(vend) ?? null;
 		}
-		const row = await c.env.DB.prepare(
-			`SELECT base_url FROM model_providers
-       WHERE vendor = ? AND shared_base_url = 1 AND base_url IS NOT NULL
-       ORDER BY updated_at DESC LIMIT 1`,
-		)
-			.bind(vend)
-			.first<{ base_url: string | null }>();
+		const row = await prisma.model_providers.findFirst({
+			where: {
+				vendor: vend,
+				shared_base_url: 1,
+				base_url: { not: null },
+			},
+			orderBy: { updated_at: "desc" },
+			select: { base_url: true },
+		});
 		const base = row?.base_url ?? null;
 		sharedBaseCache.set(vend, base);
 		return base;
@@ -767,7 +759,7 @@ export async function listAvailableModels(
 		if (!url) continue;
 
 		let resp: Response;
-		let data: any = null;
+		let data: unknown = null;
 		try {
 			const headers: Record<string, string> = {
 				Authorization: `Bearer ${context.apiKey}`,
@@ -798,26 +790,31 @@ export async function listAvailableModels(
 			continue;
 		}
 
-		const items: any[] = Array.isArray(data?.data)
-			? data.data
+		const dataObject: { data?: unknown } | null =
+			typeof data === "object" && data !== null
+				? (data as { data?: unknown })
+				: null;
+		const items: unknown[] = Array.isArray(dataObject?.data)
+			? dataObject.data
 			: Array.isArray(data)
 				? data
 				: [];
 
 		for (const item of items) {
-			if (!item || typeof item.id !== "string") continue;
-			if (results.has(item.id)) continue;
+			if (!item || typeof item !== "object") continue;
+			const modelRecord = item as { id?: unknown; display_name?: unknown };
+			if (typeof modelRecord.id !== "string") continue;
+			if (results.has(modelRecord.id)) continue;
 			const label =
-				typeof item.display_name === "string" &&
-				item.display_name.trim()
-					? item.display_name.trim()
-					: item.id;
-			const dto = AvailableModelSchema.parse({
-				value: item.id,
+				typeof modelRecord.display_name === "string" &&
+				modelRecord.display_name.trim()
+					? modelRecord.display_name.trim()
+					: modelRecord.id;
+			results.set(modelRecord.id, {
+				value: modelRecord.id,
 				label,
 				vendor: vendorName,
 			});
-			results.set(dto.value, dto);
 		}
 	}
 

@@ -4,6 +4,8 @@ export const FlowSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	data: z.unknown(),
+	ownerType: z.enum(["project", "chapter", "shot"]).nullable().optional(),
+	ownerId: z.string().nullable().optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
@@ -15,6 +17,8 @@ export const UpsertFlowSchema = z.object({
 	name: z.string().min(1),
 	data: z.unknown(),
 	projectId: z.string().nullable().optional(),
+	ownerType: z.enum(["project", "chapter", "shot"]).optional(),
+	ownerId: z.string().min(1).optional(),
 });
 
 export const FlowVersionSchema = z.object({
@@ -22,4 +26,3 @@ export const FlowVersionSchema = z.object({
 	name: z.string(),
 	createdAt: z.string(),
 });
-

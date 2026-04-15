@@ -1,5 +1,5 @@
-import type { D1Database } from "../../types";
-import { execute, queryAll, queryOne } from "../../db/db";
+import type { PrismaClient } from "../../types";
+import { getPrismaClient } from "../../platform/node/prisma";
 
 export type ApiKeyRow = {
 	id: string;
@@ -15,65 +15,60 @@ export type ApiKeyRow = {
 };
 
 export async function listApiKeysForOwner(
-	db: D1Database,
+	db: PrismaClient,
 	ownerId: string,
 ): Promise<ApiKeyRow[]> {
-	return queryAll<ApiKeyRow>(
-		db,
-		`SELECT * FROM api_keys WHERE owner_id = ? ORDER BY created_at DESC`,
-		[ownerId],
-	);
+	void db;
+	return getPrismaClient().api_keys.findMany({
+		where: { owner_id: ownerId },
+		orderBy: { created_at: "desc" },
+	});
 }
 
 export async function getApiKeyByIdForOwner(
-	db: D1Database,
+	db: PrismaClient,
 	id: string,
 	ownerId: string,
 ): Promise<ApiKeyRow | null> {
-	return queryOne<ApiKeyRow>(
-		db,
-		`SELECT * FROM api_keys WHERE id = ? AND owner_id = ?`,
-		[id, ownerId],
-	);
+	void db;
+	return getPrismaClient().api_keys.findFirst({
+		where: { id, owner_id: ownerId },
+	});
 }
 
 export async function getApiKeyByHash(
-	db: D1Database,
+	db: PrismaClient,
 	keyHash: string,
-): Promise<ApiKeyRow | null> {
-	return queryOne<ApiKeyRow>(
-		db,
-		`SELECT * FROM api_keys WHERE key_hash = ? LIMIT 1`,
-		[keyHash],
-	);
+) {
+	void db;
+	return getPrismaClient().api_keys.findUnique({
+		where: { key_hash: keyHash },
+	});
 }
 
 export async function insertApiKeyRow(
-	db: D1Database,
+	db: PrismaClient,
 	row: ApiKeyRow,
 ): Promise<void> {
-	await execute(
-		db,
-		`INSERT INTO api_keys
-     (id, owner_id, label, key_prefix, key_hash, allowed_origins, enabled, last_used_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		[
-			row.id,
-			row.owner_id,
-			row.label,
-			row.key_prefix,
-			row.key_hash,
-			row.allowed_origins,
-			row.enabled,
-			row.last_used_at,
-			row.created_at,
-			row.updated_at,
-		],
-	);
+	void db;
+	await getPrismaClient().api_keys.create({
+		data: {
+			id: row.id,
+			owner_id: row.owner_id,
+			label: row.label,
+			key_prefix: row.key_prefix,
+			key_hash: row.key_hash,
+			allowed_origins: row.allowed_origins,
+			enabled: row.enabled,
+			last_used_at: row.last_used_at,
+			created_at: row.created_at,
+			updated_at: row.updated_at,
+		},
+	});
 }
 
 export async function updateApiKeyRow(
-	db: D1Database,
+	db: PrismaClient,
 	ownerId: string,
 	id: string,
 	input: {
@@ -83,25 +78,22 @@ export async function updateApiKeyRow(
 	},
 	nowIso: string,
 ): Promise<ApiKeyRow> {
+	void db;
+	const prisma = getPrismaClient();
 	const existing = await getApiKeyByIdForOwner(db, id, ownerId);
 	if (!existing) {
 		throw new Error("api key not found or unauthorized");
 	}
 
-	await execute(
-		db,
-		`UPDATE api_keys
-     SET label = ?, allowed_origins = ?, enabled = ?, updated_at = ?
-     WHERE id = ? AND owner_id = ?`,
-		[
-			input.label,
-			input.allowedOriginsJson,
-			input.enabled ? 1 : 0,
-			nowIso,
-			id,
-			ownerId,
-		],
-	);
+	await prisma.api_keys.update({
+		where: { id },
+		data: {
+			label: input.label,
+			allowed_origins: input.allowedOriginsJson,
+			enabled: input.enabled ? 1 : 0,
+			updated_at: nowIso,
+		},
+	});
 
 	const row = await getApiKeyByIdForOwner(db, id, ownerId);
 	if (!row) throw new Error("api key update failed");
@@ -109,29 +101,26 @@ export async function updateApiKeyRow(
 }
 
 export async function deleteApiKeyRow(
-	db: D1Database,
+	db: PrismaClient,
 	ownerId: string,
 	id: string,
 ): Promise<void> {
+	void db;
 	const existing = await getApiKeyByIdForOwner(db, id, ownerId);
 	if (!existing) {
 		throw new Error("api key not found or unauthorized");
 	}
-	await execute(db, `DELETE FROM api_keys WHERE id = ? AND owner_id = ?`, [
-		id,
-		ownerId,
-	]);
+	await getPrismaClient().api_keys.delete({ where: { id } });
 }
 
 export async function touchApiKeyLastUsedAt(
-	db: D1Database,
+	db: PrismaClient,
 	id: string,
 	nowIso: string,
 ): Promise<void> {
-	await execute(
-		db,
-		`UPDATE api_keys SET last_used_at = ? WHERE id = ?`,
-		[nowIso, id],
-	);
+	void db;
+	await getPrismaClient().api_keys.update({
+		where: { id },
+		data: { last_used_at: nowIso },
+	});
 }
-

@@ -1,6 +1,5 @@
 import React from 'react'
 import {
-  Paper,
   Group,
   Title,
   Transition,
@@ -8,8 +7,6 @@ import {
   Stack,
   Text,
   ActionIcon,
-  SimpleGrid,
-  Card,
   Image,
   Loader,
   Center,
@@ -17,15 +14,18 @@ import {
   Tooltip,
   SegmentedControl,
   useMantineColorScheme,
+  Modal,
 } from '@mantine/core'
-import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus, IconExternalLink } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus, IconExternalLink, IconMessage2 } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
 import { listPublicAssets, type PublicAssetDto } from '../api/server'
 import { toast } from './toast'
+import { PanelCard } from './PanelCard'
 import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 import { useRFStore } from '../canvas/store'
 import { useAuth } from '../auth/store'
+import { stopPanelWheelPropagation } from './utils/panelWheel'
 
 function formatDate(ts: string) {
   const date = new Date(ts)
@@ -54,6 +54,8 @@ export default function TapshowPanel(): JSX.Element | null {
   const [refreshing, setRefreshing] = React.useState(false)
   const [mediaFilter, setMediaFilter] = React.useState<'all' | 'image' | 'video'>('all')
   const [visibleCount, setVisibleCount] = React.useState(10)
+  const [promptModalOpen, setPromptModalOpen] = React.useState(false)
+  const [activePrompt, setActivePrompt] = React.useState<{ title: string; prompt: string } | null>(null)
 
   const webcutUrl = React.useMemo(() => {
     const raw = import.meta.env.VITE_WEBCUT_URL
@@ -105,6 +107,13 @@ export default function TapshowPanel(): JSX.Element | null {
     () => filteredAssets.slice(0, Math.max(10, visibleCount)),
     [filteredAssets, visibleCount],
   )
+  const flowColumns = React.useMemo(() => {
+    const columns: PublicAssetDto[][] = [[], []]
+    visibleAssets.forEach((asset, index) => {
+      columns[index % columns.length].push(asset)
+    })
+    return columns
+  }, [visibleAssets])
 
   React.useEffect(() => {
     // 重置可见数量，避免切换过滤后停在列表末尾
@@ -131,6 +140,29 @@ export default function TapshowPanel(): JSX.Element | null {
     }
   }
 
+  const handleViewPrompt = React.useCallback((asset: PublicAssetDto) => {
+    const prompt = String(asset.prompt || '').trim()
+    if (!prompt) {
+      toast('该作品暂无可展示提示词', 'info')
+      return
+    }
+    const title = String(asset.name || (asset.type === 'video' ? '视频作品' : '图片作品') || 'TapShow 作品').trim()
+    setActivePrompt({ title, prompt })
+    setPromptModalOpen(true)
+  }, [])
+
+  const handleCopyPrompt = React.useCallback(async () => {
+    const prompt = String(activePrompt?.prompt || '').trim()
+    if (!prompt) return
+    try {
+      await navigator.clipboard.writeText(prompt)
+      toast('已复制提示词', 'success')
+    } catch (err) {
+      console.error(err)
+      toast('复制提示词失败，请手动复制', 'error')
+    }
+  }, [activePrompt?.prompt])
+
   const handleRefresh = () => {
     setRefreshing(true)
     reloadAssets()
@@ -145,12 +177,8 @@ export default function TapshowPanel(): JSX.Element | null {
       <Transition className="tapshow-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div className="tapshow-panel-transition-inner" style={styles}>
-            <Paper
-              withBorder
-              shadow="md"
-              radius="lg"
+            <PanelCard
               className="glass"
-              p="md"
               style={{
                 width: 660,
                 maxHeight: `${maxHeight}px`,
@@ -160,6 +188,7 @@ export default function TapshowPanel(): JSX.Element | null {
                 flexDirection: 'column',
                 overflow: 'hidden',
               }}
+              onWheelCapture={stopPanelWheelPropagation}
               data-ux-panel
             >
               <div className="tapshow-panel-arrow panel-arrow" />
@@ -172,7 +201,7 @@ export default function TapshowPanel(): JSX.Element | null {
                 <Stack className="tapshow-panel-header-info" gap={2}>
                   <Title className="tapshow-panel-title" order={6}>TapShow</Title>
                   <Text className="tapshow-panel-subtitle" size="xs" c="dimmed">
-                    展示所有通过 TapCanvas OSS 托管的公开图片 / 视频作品
+                    展示公开图片 / 视频作品，不再限定为当前 publicBase 托管地址
                   </Text>
                 </Stack>
                 <Group className="tapshow-panel-header-actions" gap="xs">
@@ -242,7 +271,7 @@ export default function TapshowPanel(): JSX.Element | null {
                   <>
                     {!hasAnyAssets && !loading && (
                       <Text className="tapshow-panel-empty" size="xs" c="dimmed">
-                        暂无公开作品。使用支持图片 / 视频生成的节点并启用 OSS 托管后，作品会自动出现在这里。
+                        暂无公开作品。只要资产记录里带有图片 / 视频类型和 URL，就会出现在这里。
                       </Text>
                     )}
                     {hasAnyAssets && (
@@ -253,7 +282,7 @@ export default function TapshowPanel(): JSX.Element | null {
                         <SegmentedControl
                           className="tapshow-panel-filter-control"
                           size="sm"
-                          radius="xl"
+                          radius="md"
                           variant="filled"
                           color={isDark ? 'blue' : 'dark'}
                           value={mediaFilter}
@@ -272,13 +301,27 @@ export default function TapshowPanel(): JSX.Element | null {
                       </Text>
                     )}
                     {visibleAssets.length > 0 && (
-                      <SimpleGrid className="tapshow-panel-grid" cols={{ base: 1, sm: 2 }} spacing="sm">
-                        {visibleAssets.map((asset) => {
+                      <div
+                        className="tapshow-panel-grid"
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                          gap: 'var(--mantine-spacing-sm)',
+                          alignItems: 'start',
+                        }}
+                      >
+                        {flowColumns.map((columnAssets, columnIndex) => (
+                          <Stack className="tapshow-panel-grid-column" key={`tapshow-column-${columnIndex}`} gap="sm">
+                            {columnAssets.map((asset) => {
                           const isVideo = asset.type === 'video'
                           const cover = asset.thumbnailUrl || asset.url
                           const label = asset.name || (isVideo ? '视频资产' : '图片资产')
                           return (
-                            <Card className="tapshow-panel-card" key={asset.id} withBorder radius="md" shadow="sm">
+                            <PanelCard
+                              className="tapshow-panel-card"
+                              key={asset.id}
+                              padding="compact"
+                            >
                               {isVideo ? (
                                 asset.url ? (
                                   <div
@@ -309,8 +352,6 @@ export default function TapshowPanel(): JSX.Element | null {
                                     style={{
                                       height: 160,
                                       borderRadius: 8,
-                                      background:
-                                        'linear-gradient(135deg, rgba(15,23,42,0.9), rgba(37,99,235,0.7))',
                                     }}
                                   />
                                 )
@@ -331,12 +372,10 @@ export default function TapshowPanel(): JSX.Element | null {
                                   style={{
                                     height: 160,
                                     borderRadius: 8,
-                                    background:
-                                      'linear-gradient(135deg, rgba(15,23,42,0.9), rgba(37,99,235,0.7))',
                                   }}
                                 />
                               )}
-                              <Stack className="tapshow-panel-card-body" gap={6} mt="sm">
+                              <Stack className="tapshow-panel-card-body" gap={6} mt="sm" px="sm" pb={asset.url ? 'xs' : 0}>
                                 <Group className="tapshow-panel-card-badges" gap="xs">
                                   <Badge
                                     className="tapshow-panel-card-type"
@@ -376,6 +415,18 @@ export default function TapshowPanel(): JSX.Element | null {
                                   {formatDate(asset.createdAt)}
                                 </Text>
                                 <Group className="tapshow-panel-card-actions" justify="flex-end" gap={4}>
+                                  {asset.prompt && (
+                                    <Tooltip className="tapshow-panel-card-prompt-tooltip" label="查看提示词" withArrow>
+                                      <ActionIcon
+                                        className="tapshow-panel-card-prompt-action"
+                                        size="sm"
+                                        variant="subtle"
+                                        onClick={() => handleViewPrompt(asset)}
+                                      >
+                                        <IconMessage2 className="tapshow-panel-card-prompt-icon" size={16} />
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  )}
                                   {asset.url && (
                                     <Tooltip className="tapshow-panel-card-preview-tooltip" label="预览" withArrow>
                                       <ActionIcon
@@ -439,18 +490,39 @@ export default function TapshowPanel(): JSX.Element | null {
                                   )}
                                 </Group>
                               </Stack>
-                            </Card>
+                            </PanelCard>
                           )
-                        })}
-                      </SimpleGrid>
+                            })}
+                          </Stack>
+                        ))}
+                      </div>
                     )}
                   </>
                 )}
               </div>
-            </Paper>
+            </PanelCard>
           </div>
         )}
       </Transition>
+      <Modal
+        className="tapshow-panel-prompt-modal"
+        opened={promptModalOpen}
+        onClose={() => setPromptModalOpen(false)}
+        title={`提示词 · ${activePrompt?.title || 'TapShow 作品'}`}
+        size="lg"
+        centered
+      >
+        <Stack className="tapshow-panel-prompt-modal-stack" gap="sm">
+          <Group className="tapshow-panel-prompt-modal-actions" justify="flex-end">
+            <Button className="tapshow-panel-prompt-modal-copy" size="xs" variant="light" leftSection={<IconCopy size={14} />} onClick={() => { void handleCopyPrompt() }}>
+              复制提示词
+            </Button>
+          </Group>
+          <Text className="tapshow-panel-prompt-modal-content" size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+            {String(activePrompt?.prompt || '').trim() || '暂无提示词'}
+          </Text>
+        </Stack>
+      </Modal>
     </div>
   )
 }

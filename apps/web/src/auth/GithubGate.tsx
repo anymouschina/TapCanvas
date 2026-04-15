@@ -1,16 +1,27 @@
 import React from 'react'
-import { Button, Paper, Group, Title, Text, Stack, Tooltip } from '@mantine/core'
-import { useAuth, type User } from './store'
-import { exchangeGithub, createGuestSession } from '../api/server'
+import { Anchor, Button, Divider, Group, Title, Text, Stack, Tooltip, TextInput, PasswordInput } from '@mantine/core'
+import { loginWithPhonePassword, exchangeGithub, requestPhoneLoginCode, verifyPhoneLogin } from '../api/server'
 import { toast } from '../ui/toast'
+import { markPasswordSetupGuidePending } from './passwordSetupGuide'
+import { useAuth, type User } from './store'
+import { GITHUB_OAUTH_CALLBACK_PATH, STUDIO_PATH } from '../utils/appRoutes'
+import { PanelCard } from '../ui/PanelCard'
 
-const CLIENT_ID =
-  (import.meta as any).env?.VITE_GITHUB_CLIENT_ID || ''
-const REDIRECT_URI =
-  (import.meta as any).env?.VITE_GITHUB_REDIRECT_URI ||
-  'http://localhost:5173/oauth/github'
+type ViteEnvShape = ImportMeta & {
+  env?: {
+    VITE_GITHUB_CLIENT_ID?: string
+    VITE_GITHUB_REDIRECT_URI?: string
+  }
+}
 
+const viteEnv = (import.meta as ViteEnvShape).env
+const CLIENT_ID = viteEnv?.VITE_GITHUB_CLIENT_ID || ''
+const REDIRECT_URI = viteEnv?.VITE_GITHUB_REDIRECT_URI || ''
 const REDIRECT_STORAGE_KEY = 'tapcanvas_login_redirect'
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
+}
 
 function normalizeRedirect(raw: string | null): string | null {
   if (!raw || typeof window === 'undefined') return null
@@ -28,14 +39,27 @@ function normalizeRedirect(raw: string | null): string | null {
 function parseStateRedirect(state: string | null): string | null {
   if (!state) return null
   try {
-    const parsed = JSON.parse(atob(state))
-    if (parsed && typeof parsed.redirect === 'string') {
+    const parsed = JSON.parse(atob(state)) as { redirect?: string }
+    if (typeof parsed.redirect === 'string') {
       return normalizeRedirect(parsed.redirect)
     }
   } catch {
     return null
   }
   return null
+}
+
+function readCurrentPageRedirect(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const url = new URL(window.location.href)
+    if (url.pathname === GITHUB_OAUTH_CALLBACK_PATH) return null
+    url.searchParams.delete('tap_token')
+    url.searchParams.delete('tap_user')
+    return normalizeRedirect(url.toString())
+  } catch {
+    return null
+  }
 }
 
 function captureRedirectFromLocation(): string | null {
@@ -80,9 +104,15 @@ function buildAuthState(target: string | null): string | undefined {
 function appendAuthToRedirect(target: string, token: string, user: User | null | undefined): string | null {
   try {
     const url = new URL(target)
-    url.searchParams.set('tap_token', token)
-    if (user) {
-      url.searchParams.set('tap_user', JSON.stringify(user))
+    url.searchParams.delete('tap_token')
+    url.searchParams.delete('tap_user')
+    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+    const isSameOrigin = Boolean(currentOrigin) && url.origin === currentOrigin
+    if (!isSameOrigin) {
+      url.searchParams.set('tap_token', token)
+      if (user) {
+        url.searchParams.set('tap_user', JSON.stringify(user))
+      }
     }
     return url.toString()
   } catch {
@@ -95,27 +125,33 @@ function buildAuthUrl(state?: string) {
   if (state) params.set('state', state)
   return `https://github.com/login/oauth/authorize?${params.toString()}`
 }
-function buildGuideUrl(){
-   return `https://ai.feishu.cn/wiki/YZWhw4w2FiO02LkqYosc4NY5nSh`
+
+function buildGuideUrl() {
+  return 'https://ai.feishu.cn/wiki/YZWhw4w2FiO02LkqYosc4NY5nSh'
 }
 
 export default function GithubGate({ children, className }: { children: React.ReactNode; className?: string }) {
-  const token = useAuth(s => s.token)
-  const user = useAuth(s => s.user)
-  const setAuth = useAuth(s => s.setAuth)
-  const [guestLoading, setGuestLoading] = React.useState(false)
-  const githubEnabled = Boolean(String(CLIENT_ID || '').trim())
+  const token = useAuth((state) => state.token)
+  const user = useAuth((state) => state.user)
+  const setAuth = useAuth((state) => state.setAuth)
+  const [otpSendLoading, setOtpSendLoading] = React.useState(false)
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = React.useState(0)
+  const [otpVerifyLoading, setOtpVerifyLoading] = React.useState(false)
+  const [passwordLoginLoading, setPasswordLoginLoading] = React.useState(false)
+  const [phone, setPhone] = React.useState('')
+  const [otpCode, setOtpCode] = React.useState('')
+  const [password, setPassword] = React.useState('')
+  const phoneInputRef = React.useRef<HTMLInputElement | null>(null)
+  const otpInputRef = React.useRef<HTMLInputElement | null>(null)
+  const githubEnabled = Boolean(String(CLIENT_ID || '').trim() && String(REDIRECT_URI || '').trim())
   const redirectingRef = React.useRef(false)
   const [hasRedirect, setHasRedirect] = React.useState(() => !!readStoredRedirect())
 
-  React.useEffect(() => {
-    const stored = captureRedirectFromLocation()
-    if (stored) {
-      setHasRedirect(true)
+  const completeLogin = React.useCallback((authToken: string, authUser: User) => {
+    setAuth(authToken, authUser)
+    if (authUser.phone && authUser.hasPassword === false) {
+      markPasswordSetupGuidePending(authUser.phone)
     }
-  }, [])
-
-  const redirectIfNeeded = React.useCallback((authToken: string, authUser: User | null | undefined) => {
     if (redirectingRef.current) return
     const target = readStoredRedirect()
     if (!target) {
@@ -131,70 +167,169 @@ export default function GithubGate({ children, className }: { children: React.Re
     redirectingRef.current = true
     clearStoredRedirect()
     window.location.href = next
-  }, [setHasRedirect])
+  }, [setAuth])
 
   React.useEffect(() => {
-    const u = new URL(window.location.href)
-    if (u.pathname === '/oauth/github' && u.searchParams.get('code')) {
+    const stored = captureRedirectFromLocation()
+    if (stored) {
+      setHasRedirect(true)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.pathname === GITHUB_OAUTH_CALLBACK_PATH && url.searchParams.get('code')) {
       if (!githubEnabled) {
-        toast('当前环境未配置 GitHub OAuth，建议使用游客模式登录', 'error')
+        toast('当前环境未配置 GitHub OAuth，请使用手机号登录', 'error')
         return
       }
       const stored = captureRedirectFromLocation()
       if (stored) {
         setHasRedirect(true)
       }
-      const code = u.searchParams.get('code')!
-      // clean url
-      window.history.replaceState({}, '', '/')
-      // exchange
+      const code = url.searchParams.get('code')
+      if (!code) return
+      window.history.replaceState({}, '', STUDIO_PATH)
       exchangeGithub(code)
-        .then(({ token: t, user: uinfo }) => {
-          setAuth(t, uinfo)
-          redirectIfNeeded(t, uinfo)
+        .then(({ token: authToken, user: authUser }) => {
+          completeLogin(authToken, authUser)
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           console.error('GitHub exchange failed', error)
-          toast('GitHub 登录失败，请改用游客模式或检查后端 GitHub 配置', 'error')
+          toast('GitHub 登录失败，请改用手机号登录或检查后端 GitHub 配置', 'error')
         })
     }
-  }, [setAuth, redirectIfNeeded, githubEnabled])
+  }, [completeLogin, githubEnabled])
 
   React.useEffect(() => {
-    if (token && hasRedirect) {
-      redirectIfNeeded(token, user)
+    if (!token || !hasRedirect || !user) return
+    const target = readStoredRedirect()
+    if (!target) {
+      setHasRedirect(false)
+      return
     }
-  }, [token, user, hasRedirect, redirectIfNeeded])
+    const next = appendAuthToRedirect(target, token, user)
+    if (!next) {
+      clearStoredRedirect()
+      setHasRedirect(false)
+      return
+    }
+    redirectingRef.current = true
+    clearStoredRedirect()
+    window.location.href = next
+  }, [hasRedirect, token, user])
 
-  const handleGuestLogin = React.useCallback(async () => {
-    if (guestLoading) return
-    setGuestLoading(true)
-    try {
-      const { token: t, user } = await createGuestSession()
-      setAuth(t, user)
-      redirectIfNeeded(t, user)
-    } catch (error) {
-      console.error('Guest login failed', error)
-      toast('游客模式登录失败，请稍后再试', 'error')
-    } finally {
-      setGuestLoading(false)
+  React.useEffect(() => {
+    if (otpCooldownSeconds <= 0) return
+    const timer = window.setInterval(() => {
+      setOtpCooldownSeconds((current) => (current > 0 ? current - 1 : 0))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [otpCooldownSeconds])
+
+  const handleOtpSendCode = React.useCallback(async () => {
+    const latestPhone = phoneInputRef.current?.value ?? phone
+    const normalizedPhone = String(latestPhone || '').trim()
+
+    if (!normalizedPhone) {
+      toast('请输入手机号', 'error')
+      return
     }
-  }, [guestLoading, setAuth, redirectIfNeeded])
+    if (otpCooldownSeconds > 0) {
+      toast(`请在 ${otpCooldownSeconds}s 后重试`, 'info')
+      return
+    }
+    if (otpSendLoading) return
+
+    setOtpSendLoading(true)
+    try {
+      const result = await requestPhoneLoginCode(normalizedPhone)
+      setOtpCooldownSeconds(60)
+      if (result.delivery === 'debug' && result.devCode) {
+        toast(`开发环境验证码：${result.devCode}`, 'info')
+      } else {
+        toast('验证码已发送，请查收短信', 'success')
+      }
+    } catch (error) {
+      console.error('OTP code request failed', error)
+      toast(getErrorMessage(error, '验证码发送失败，请稍后再试'), 'error')
+    } finally {
+      setOtpSendLoading(false)
+    }
+  }, [otpCooldownSeconds, otpSendLoading, phone])
+
+  const handleOtpLogin = React.useCallback(async () => {
+    const latestPhone = phoneInputRef.current?.value ?? phone
+    const latestCode = otpInputRef.current?.value ?? otpCode
+    const normalizedPhone = String(latestPhone || '').trim()
+    const normalizedCode = String(latestCode || '').trim()
+
+    if (!normalizedPhone) {
+      toast('请输入手机号', 'error')
+      return
+    }
+    if (!normalizedCode) {
+      toast('请输入验证码', 'error')
+      return
+    }
+    if (otpVerifyLoading) return
+
+    setOtpVerifyLoading(true)
+    try {
+      const { token: authToken, user: authUser } = await verifyPhoneLogin(normalizedPhone, normalizedCode)
+      completeLogin(authToken, authUser)
+    } catch (error) {
+      console.error('OTP login failed', error)
+      toast(getErrorMessage(error, '验证码登录失败，请稍后再试'), 'error')
+    } finally {
+      setOtpVerifyLoading(false)
+    }
+  }, [completeLogin, otpCode, otpVerifyLoading, phone])
+
+  const handlePhonePasswordLogin = React.useCallback(async () => {
+    const normalizedPhone = String(phoneInputRef.current?.value ?? phone).trim()
+    const normalizedPassword = String(password || '').trim()
+
+    if (!normalizedPhone) {
+      toast('请输入手机号', 'error')
+      return
+    }
+    if (!normalizedPassword) {
+      toast('请输入密码', 'error')
+      return
+    }
+    if (passwordLoginLoading) return
+
+    setPasswordLoginLoading(true)
+    try {
+      const { token: authToken, user: authUser } = await loginWithPhonePassword(normalizedPhone, normalizedPassword)
+      completeLogin(authToken, authUser)
+    } catch (error) {
+      console.error('Phone password login failed', error)
+      toast(getErrorMessage(error, '手机号密码登录失败，请稍后再试'), 'error')
+    } finally {
+      setPasswordLoginLoading(false)
+    }
+  }, [completeLogin, password, passwordLoginLoading, phone])
 
   const handleGithubLogin = React.useCallback(() => {
     if (!githubEnabled) {
       toast('当前环境未配置 GitHub OAuth（缺少 VITE_GITHUB_CLIENT_ID）', 'error')
       return
     }
-    const redirectTarget = readStoredRedirect() || captureRedirectFromLocation()
+    const redirectTarget = readStoredRedirect() || captureRedirectFromLocation() || readCurrentPageRedirect()
     if (redirectTarget) {
+      sessionStorage.setItem(REDIRECT_STORAGE_KEY, redirectTarget)
       setHasRedirect(true)
     }
     const state = buildAuthState(redirectTarget || null)
     window.location.href = buildAuthUrl(state)
-  }, [setHasRedirect, githubEnabled])
+  }, [githubEnabled])
 
   const gateClassName = ['github-gate', className].filter(Boolean).join(' ')
+  const normalizedPhone = String(phone || '').trim()
+  const normalizedCode = String(otpCode || '').trim()
+  const normalizedPassword = String(password || '').trim()
 
   if (token) {
     return (
@@ -206,20 +341,114 @@ export default function GithubGate({ children, className }: { children: React.Re
 
   return (
     <div className={gateClassName} style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Paper className="github-gate-card" withBorder shadow="md" p="lg" radius="md" style={{ width: 420, textAlign: 'center' }}>
-        <Title className="github-gate-title" order={4} mb="sm">登录 TapCanvas</Title>
-        <Text className="github-gate-subtitle" c="dimmed" size="sm" mb="md">使用 GitHub 账号登录后方可使用</Text>
-        <Stack className="github-gate-actions" gap="sm">
-          <Group className="github-gate-actions-row" justify="center" gap="sm">
-            <Button className="github-gate-guide" onClick={() => { window.location.href = buildGuideUrl() }}>使用指引</Button>
-            <Tooltip className="github-gate-github-tooltip" label={githubEnabled ? '' : '未配置 VITE_GITHUB_CLIENT_ID，已禁用 GitHub 登录'} disabled={githubEnabled}>
-              <Button className="github-gate-github" onClick={handleGithubLogin} disabled={!githubEnabled}>使用 GitHub 登录</Button>
-            </Tooltip>
-          </Group>
-          <Button className="github-gate-guest" variant="default" loading={guestLoading} onClick={handleGuestLogin}>游客模式体验</Button>
-          <Text className="github-gate-hint" size="xs" c="dimmed">无需 GitHub，系统会自动创建临时账号，数据仅保存在当前浏览器。</Text>
+      <PanelCard className="github-gate-card" padding="comfortable" style={{ width: 'min(460px, calc(100vw - 32px))' }}>
+        <Stack className="github-gate-content" gap="md">
+          <Stack className="github-gate-heading" gap={2}>
+            <Title className="github-gate-title" order={4} ta="center">登录 TapCanvas</Title>
+            <Text className="github-gate-subtitle" c="dimmed" size="sm" ta="center">
+              使用 GitHub / 手机验证码 / 手机号密码 登录后方可使用
+            </Text>
+            <Group className="github-gate-guide-row" justify="center" gap={6}>
+              <Text className="github-gate-guide-prefix" size="xs" c="dimmed">不知道怎么用？</Text>
+              <Anchor className="github-gate-guide-link" size="xs" href={buildGuideUrl()} target="_blank" rel="noreferrer">
+                查看使用指引
+              </Anchor>
+            </Group>
+          </Stack>
+
+          <Tooltip className="github-gate-github-tooltip" label={githubEnabled ? '' : '未配置 VITE_GITHUB_CLIENT_ID / VITE_GITHUB_REDIRECT_URI，已禁用 GitHub 登录'} disabled={githubEnabled}>
+            <Button className="github-gate-github" fullWidth onClick={handleGithubLogin} disabled={!githubEnabled}>
+              使用 GitHub 登录
+            </Button>
+          </Tooltip>
+
+          <Divider className="github-gate-divider" label="或使用手机号" labelPosition="center" />
+
+          <Stack className="github-gate-phone-auth" gap="sm">
+            <TextInput
+              className="github-gate-phone-input"
+              ref={phoneInputRef}
+              label="手机号"
+              placeholder="+86 13800000000"
+              value={phone}
+              onChange={(event) => setPhone(event.currentTarget.value)}
+              autoComplete="tel"
+              type="tel"
+              inputMode="tel"
+              rightSection={(
+                <Button
+                  className="github-gate-otp-send"
+                  size="xs"
+                  variant="subtle"
+                  loading={otpSendLoading}
+                  disabled={!normalizedPhone || otpSendLoading || otpCooldownSeconds > 0}
+                  onClick={() => void handleOtpSendCode()}
+                >
+                  {otpCooldownSeconds > 0 ? `${otpCooldownSeconds}s` : '获取验证码'}
+                </Button>
+              )}
+              rightSectionWidth={110}
+              rightSectionPointerEvents="all"
+            />
+
+            <TextInput
+              className="github-gate-otp-code"
+              ref={otpInputRef}
+              label="验证码登录"
+              placeholder="6 位验证码"
+              value={otpCode}
+              onChange={(event) => setOtpCode(event.currentTarget.value)}
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              maxLength={6}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void handleOtpLogin()
+                }
+              }}
+            />
+
+            <Button
+              className="github-gate-otp-login"
+              fullWidth
+              loading={otpVerifyLoading}
+              disabled={!normalizedPhone || !normalizedCode || otpVerifyLoading}
+              onClick={() => void handleOtpLogin()}
+            >
+              手机验证码登录
+            </Button>
+            <Text className="github-gate-otp-hint" size="xs" c="dimmed">验证码 10 分钟内有效。若未设置密码，登录后会引导你完成设置。</Text>
+          </Stack>
+
+          <Divider className="github-gate-divider github-gate-divider--password" label="或使用密码" labelPosition="center" />
+
+          <Stack className="github-gate-password-auth" gap="sm">
+            <PasswordInput
+              className="github-gate-password-input"
+              label="密码登录"
+              placeholder="输入登录密码"
+              value={password}
+              onChange={(event) => setPassword(event.currentTarget.value)}
+              autoComplete="current-password"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void handlePhonePasswordLogin()
+                }
+              }}
+            />
+            <Button
+              className="github-gate-password-login"
+              fullWidth
+              loading={passwordLoginLoading}
+              disabled={!normalizedPhone || !normalizedPassword || passwordLoginLoading}
+              onClick={() => void handlePhonePasswordLogin()}
+            >
+              手机号 + 密码登录
+            </Button>
+            <Text className="github-gate-password-hint" size="xs" c="dimmed">首次没有密码时，请先使用验证码登录一次。</Text>
+          </Stack>
         </Stack>
-      </Paper>
+      </PanelCard>
     </div>
   )
 }

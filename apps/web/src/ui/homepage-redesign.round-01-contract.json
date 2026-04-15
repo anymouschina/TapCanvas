@@ -1,0 +1,54 @@
+{
+  "round": 1,
+  "goal": "交付一个具备强记忆点、偏创作工具入口气质的首页首屏，并通过 web build。",
+  "ownedTasks": ["homepage-redesign"],
+  "deliverables": [
+    "改造后的 HomePage.tsx",
+    "改造后的 homePage.css",
+    "build 验证结果"
+  ],
+  "verificationPlan": [
+    {
+      "criterion": "首页首屏存在非通用 hero 的明确记忆点构图",
+      "howToCheck": "审查 JSX 结构与 CSS，确认存在戏剧化排版/动态编排/创作工具语义区块，而非单标题+副标题+按钮",
+      "hardFail": true
+    },
+    {
+      "criterion": "视觉语义更像创作工具入口，而非保守 SaaS 官网",
+      "howToCheck": "审查文案与模块命名，确认包含创作流程、场景、画布入口表达，而非企业式功能卡片",
+      "hardFail": true
+    },
+    {
+      "criterion": "未出现默认紫色渐变、白卡片堆叠、平庸按钮英雄区",
+      "howToCheck": "审查 CSS 主视觉色彩、层次与 CTA 表现",
+      "hardFail": true
+    },
+    {
+      "criterion": "移动端可用",
+      "howToCheck": "审查响应式断点与窄屏布局规则",
+      "hardFail": true
+    },
+    {
+      "criterion": "代码遵守仓库规则",
+      "howToCheck": "确认无 any、无兼容分支、每个 JSX 标签有描述性 className",
+      "hardFail": true
+    },
+    {
+      "criterion": "项目构建通过",
+      "howToCheck": "运行 pnpm --filter @tapcanvas/web build",
+      "hardFail": true
+    }
+  ],
+  "nonGoals": [
+    "重构全站视觉系统",
+    "增加首页以下长页内容"
+  ],
+  "handoffPaths": [
+    "apps/web/src/ui/HomePage.tsx",
+    "apps/web/src/ui/homePage.css"
+  ],
+  "notes": [
+    "优先在单屏内建立记忆点",
+    "CTA 保持清晰且可点击"
+  ]
+}

@@ -5,24 +5,116 @@
 
 import { STORAGE_KEYS } from './constants';
 import type { Node, Edge } from '@xyflow/react';
+import { sanitizeFlowValueForPersistence } from './persistenceSanitizer'
+
+export type CanvasViewport = { x: number; y: number; zoom: number }
+
+type CanvasMetadata = {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  author?: string;
+}
 
 export interface SerializedCanvas {
   version: string;
   timestamp: number;
   nodes: Node[];
   edges: Edge[];
-  metadata?: {
-    title?: string;
-    description?: string;
-    tags?: string[];
-    author?: string;
-  };
+  viewport?: CanvasViewport | null;
+  metadata?: CanvasMetadata;
+}
+
+export type CanvasImportData = {
+  version?: string;
+  timestamp?: number;
+  nodes?: Node[];
+  edges?: Edge[];
+  connections?: Edge[];
+  viewport?: CanvasViewport | null;
+  metadata?: CanvasMetadata;
+  data?: CanvasImportData | null;
 }
 
 export interface SerializationOptions {
   includeMetadata?: boolean;
   compress?: boolean;
   excludeCircular?: boolean;
+  viewport?: CanvasViewport | null;
+  metadata?: SerializedCanvas['metadata'];
+}
+
+type ExtractedCanvasGraph = {
+  version?: string;
+  timestamp?: number;
+  nodes: Node[];
+  edges: Edge[];
+  viewport?: CanvasViewport | null;
+  metadata?: CanvasMetadata;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function readCanvasRoot(value: unknown): CanvasImportData | null {
+  if (!isRecord(value)) return null
+
+  if (Array.isArray(value.nodes) || Array.isArray(value.edges) || Array.isArray(value.connections)) {
+    return value as CanvasImportData
+  }
+
+  return readCanvasRoot(value.data)
+}
+
+function readViewport(value: unknown): CanvasViewport | null | undefined {
+  if (value === null) return null
+  if (!isRecord(value)) return undefined
+
+  const x = typeof value.x === 'number' && Number.isFinite(value.x) ? value.x : null
+  const y = typeof value.y === 'number' && Number.isFinite(value.y) ? value.y : null
+  const zoom = typeof value.zoom === 'number' && Number.isFinite(value.zoom) ? value.zoom : null
+
+  if (x === null || y === null || zoom === null) return undefined
+  return { x, y, zoom }
+}
+
+function readMetadata(value: unknown): CanvasMetadata | undefined {
+  if (!isRecord(value)) return undefined
+
+  const tags = Array.isArray(value.tags)
+    ? value.tags.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : undefined
+
+  return {
+    ...(typeof value.title === 'string' ? { title: value.title } : {}),
+    ...(typeof value.description === 'string' ? { description: value.description } : {}),
+    ...(typeof value.author === 'string' ? { author: value.author } : {}),
+    ...(tags ? { tags } : {}),
+  }
+}
+
+export function extractCanvasGraph(input: unknown): ExtractedCanvasGraph | null {
+  const root = readCanvasRoot(input)
+  if (!root) return null
+
+  const nodes = Array.isArray(root.nodes) ? root.nodes : []
+  const edges = Array.isArray(root.edges)
+    ? root.edges
+    : Array.isArray(root.connections)
+      ? root.connections
+      : []
+
+  if (!nodes.length && !edges.length) return null
+
+  return {
+    ...(typeof root.version === 'string' ? { version: root.version } : {}),
+    ...(typeof root.timestamp === 'number' && Number.isFinite(root.timestamp) ? { timestamp: root.timestamp } : {}),
+    nodes,
+    edges,
+    ...(typeof root.viewport !== 'undefined' ? { viewport: readViewport(root.viewport) } : {}),
+    ...(typeof root.metadata !== 'undefined' ? { metadata: readMetadata(root.metadata) } : {}),
+  }
 }
 
 /**
@@ -37,7 +129,13 @@ export function serializeCanvas(
   edges: Edge[],
   options: SerializationOptions = {}
 ): string {
-  const { includeMetadata = true, compress = false, excludeCircular = true } = options;
+  const {
+    includeMetadata = true,
+    compress = false,
+    excludeCircular = true,
+    viewport,
+    metadata: metadataOverride,
+  } = options;
 
   try {
     const data: SerializedCanvas = {
@@ -47,16 +145,22 @@ export function serializeCanvas(
       edges: excludeCircular ? sanitizeEdges(edges) : edges,
     };
 
+    if (typeof viewport !== 'undefined') {
+      data.viewport = viewport
+    }
+
     if (includeMetadata) {
       data.metadata = {
         title: 'Untitled Canvas',
         description: 'Created with TapCanvas',
         tags: [],
         author: 'User',
+        ...(metadataOverride || {}),
       };
     }
 
-    const jsonString = JSON.stringify(data, null, compress ? 0 : 2);
+    const persistedData = sanitizeFlowValueForPersistence(data)
+    const jsonString = JSON.stringify(persistedData, null, compress ? 0 : 2);
 
     if (compress) {
       return compressString(jsonString);
@@ -78,7 +182,20 @@ export function deserializeCanvas(jsonString: string): SerializedCanvas {
     // 检查是否为压缩格式
     const decompressedString = isCompressed(jsonString) ? decompressString(jsonString) : jsonString;
 
-    const data = JSON.parse(decompressedString) as SerializedCanvas;
+    const parsed = JSON.parse(decompressedString) as unknown
+    const extracted = extractCanvasGraph(parsed)
+    if (!extracted) {
+      throw new Error('Invalid canvas data format')
+    }
+
+    const data: SerializedCanvas = {
+      version: extracted.version || '1.0.0',
+      timestamp: extracted.timestamp ?? Date.now(),
+      nodes: extracted.nodes,
+      edges: extracted.edges,
+      ...(typeof extracted.viewport !== 'undefined' ? { viewport: extracted.viewport } : {}),
+      ...(typeof extracted.metadata !== 'undefined' ? { metadata: extracted.metadata } : {}),
+    }
 
     // 验证数据格式
     if (!validateSerializedData(data)) {
@@ -200,6 +317,9 @@ export function sanitizeNodes(nodes: Node[]): Node[] {
         label: node.data.label,
         kind: node.data.kind,
         config: node.data.config || {},
+        experimentGroupId: node.data.experimentGroupId,
+        workflowStage: node.data.workflowStage,
+        iterationKey: node.data.iterationKey,
         // 移除运行时状态
         progress: undefined,
         status: undefined,

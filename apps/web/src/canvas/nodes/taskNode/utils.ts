@@ -13,3 +13,25 @@ export const normalizeClipRange = (val: unknown): { start: number; end: number }
   if (end <= start) return null
   return { start, end }
 }
+
+export const syncDraftWithExternalValue = (input: {
+  previousExternalValue: string
+  nextExternalValue: string
+  currentDraft: string
+}) => {
+  if (input.previousExternalValue === input.nextExternalValue) {
+    return input.currentDraft
+  }
+  return input.nextExternalValue
+}
+
+export const pickOnlyBookId = (books: ReadonlyArray<{ bookId?: string | null }>) => {
+  const uniqueBookIds = Array.from(
+    new Set(
+      books
+        .map((book) => (typeof book.bookId === 'string' ? book.bookId.trim() : ''))
+        .filter(Boolean),
+    ),
+  )
+  return uniqueBookIds.length === 1 ? uniqueBookIds[0] : ''
+}

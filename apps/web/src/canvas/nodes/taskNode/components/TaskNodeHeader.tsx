@@ -1,9 +1,10 @@
 import React from 'react'
-import { ActionIcon, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Badge, Text, TextInput } from '@mantine/core'
+import type { IconProps } from '@tabler/icons-react'
 import { IconBrush } from '@tabler/icons-react'
 
 type TaskNodeHeaderProps = {
-  NodeIcon: (props: { size?: number; className?: string }) => JSX.Element
+  NodeIcon: React.ComponentType<IconProps>
   editing: boolean
   labelDraft: string
   currentLabel: string
@@ -18,11 +19,17 @@ type TaskNodeHeaderProps = {
   showMeta?: boolean
   showIcon?: boolean
   showStatus?: boolean
+  isNew?: boolean
+  metaBadges?: Array<{
+    label: string
+    color: string
+    variant?: 'light' | 'outline' | 'filled'
+  }>
   onLabelDraftChange: (value: string) => void
   onCommitLabel: () => void
   onCancelEdit: () => void
   onStartEdit: () => void
-  labelInputRef: React.RefObject<HTMLInputElement | null>
+  labelInputRef: React.Ref<HTMLInputElement>
 }
 
 export function TaskNodeHeader({
@@ -41,6 +48,8 @@ export function TaskNodeHeader({
   showMeta = true,
   showIcon = true,
   showStatus = true,
+  isNew = false,
+  metaBadges = [],
   onLabelDraftChange,
   onCommitLabel,
   onCancelEdit,
@@ -69,6 +78,27 @@ export function TaskNodeHeader({
           >
             <NodeIcon className="task-node-header-icon-svg" size={18} />
           </div>
+        )}
+        <Text
+          className="task-node-header-compact-title"
+          size="sm"
+          fw={600}
+          style={{
+            color: nodeShellText,
+            lineHeight: 1.2,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minWidth: 0,
+          }}
+          title={currentLabel}
+        >
+          {currentLabel}
+        </Text>
+        {isNew && (
+          <Badge className="task-node-header-new-badge" size="xs" radius="md" color="pink" variant="light">
+            新建
+          </Badge>
         )}
       </div>
     )
@@ -139,6 +169,11 @@ export function TaskNodeHeader({
                 >
                   {currentLabel}
                 </Text>
+                {isNew && (
+                  <Badge className="task-node-header-new-badge" size="xs" radius="md" color="pink" variant="light">
+                    新建
+                  </Badge>
+                )}
                 <ActionIcon className="task-node-header-rename" size="sm" variant="subtle" color="gray" title="重命名" onClick={onStartEdit}>
                   <IconBrush className="task-node-header-rename-icon" size={12} />
                 </ActionIcon>
@@ -146,6 +181,25 @@ export function TaskNodeHeader({
               <Text className="task-node-header-subtitle" size="xs" c="dimmed" style={{ marginTop: 2 }}>
                 {subtitle}
               </Text>
+              {metaBadges.length > 0 && (
+                <div
+                  className="task-node-header-meta-badges"
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}
+                >
+                  {metaBadges.map((badge) => (
+                    <Badge
+                      key={`${badge.label}-${badge.color}`}
+                      className="task-node-header-meta-badge"
+                      size="xs"
+                      radius="md"
+                      color={badge.color}
+                      variant={badge.variant || 'light'}
+                    >
+                      {badge.label}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>

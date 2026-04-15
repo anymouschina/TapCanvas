@@ -1,5 +1,6 @@
 import type { ThinkingEvent, PlanUpdatePayload, QaGuardrailPayload } from '../types/canvas-intelligence'
 import { API_BASE } from './server'
+import { createSseEventParser } from './sse'
 
 export interface ToolEventMessage {
   type: 'tool-call' | 'tool-result'
@@ -65,31 +66,30 @@ export function subscribeToolEvents({ url, token, onEvent, onOpen, onError }: Su
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
-    let buffer = ''
+    const parser = createSseEventParser()
 
     try {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let separatorIndex = buffer.indexOf('\n\n')
-        while (separatorIndex !== -1) {
-          const rawChunk = buffer.slice(0, separatorIndex)
-          buffer = buffer.slice(separatorIndex + 2)
-          const cleaned = rawChunk.replace(/\r/g, '')
-          const dataLines = cleaned
-            .split('\n')
-            .filter(line => line.startsWith('data:'))
-            .map(line => line.slice(5).trim())
-          if (dataLines.length) {
-            const payload = dataLines.join('\n')
-            try {
-              onEvent(JSON.parse(payload))
-            } catch (err) {
-              console.warn('[toolEvents] invalid payload', err)
-            }
+        const events = parser.push(decoder.decode(value, { stream: true }))
+        for (const event of events) {
+          const payload = String(event.data || '').trim()
+          if (!payload) continue
+          try {
+            onEvent(JSON.parse(payload) as ToolEventMessage)
+          } catch (err) {
+            console.warn('[toolEvents] invalid payload', err, payload.slice(0, 200))
           }
-          separatorIndex = buffer.indexOf('\n\n')
+        }
+      }
+      for (const event of parser.finish()) {
+        const payload = String(event.data || '').trim()
+        if (!payload) continue
+        try {
+          onEvent(JSON.parse(payload) as ToolEventMessage)
+        } catch (err) {
+          console.warn('[toolEvents] invalid payload', err, payload.slice(0, 200))
         }
       }
     } finally {
@@ -110,10 +110,12 @@ export function subscribeToolEvents({ url, token, onEvent, onOpen, onError }: Su
 const TOOL_NAME_TO_EVENT: Record<string, string> = {
   canvas_node_operation: 'canvas_node.operation',
   canvas_layout_apply: 'canvas.layout.apply',
+  canvas_reflow_layout: 'canvas.layout.apply',
   canvas_optimization_analyze: 'canvas.optimization.analyze',
   canvas_view_navigate: 'canvas.view.navigate',
   canvas_connection_operation: 'canvas.connection.operation',
   project_operation: 'project.operation',
+  reflowLayout: 'canvas.layout.apply',
   // legacy dotted tool names
   'canvas.node.operation': 'canvas_node.operation',
   'canvas.layout.apply': 'canvas_layout.apply',

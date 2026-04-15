@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import type { AppEnv } from "../../types";
+import type { AppEnv, DurableObjectNamespace } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { getFlowForOwner } from "../flow/flow.repo";
 import { createFlowVersion } from "../flow/flow.repo";
@@ -17,6 +17,25 @@ import {
 import { RunFlowExecutionRequestSchema } from "./execution.schemas";
 
 export const executionRouter = new Hono<AppEnv>();
+
+function hasWorkflowOutputNode(flowData: unknown): boolean {
+	if (!flowData || typeof flowData !== "object") return false;
+	const rawNodes = (flowData as { nodes?: unknown }).nodes;
+	if (!Array.isArray(rawNodes)) return false;
+	return rawNodes.some((node) => {
+		if (!node || typeof node !== "object") return false;
+		const type = typeof (node as { type?: unknown }).type === "string"
+			? ((node as { type?: string }).type || "").trim()
+			: "";
+		if (type !== "taskNode") return false;
+		const data = (node as { data?: unknown }).data;
+		if (!data || typeof data !== "object") return false;
+		const kind = typeof (data as { kind?: unknown }).kind === "string"
+			? ((data as { kind?: string }).kind || "").trim()
+			: "";
+		return kind === "workflowOutput";
+	});
+}
 
 executionRouter.use("*", authMiddleware);
 
@@ -49,6 +68,12 @@ executionRouter.post("/run", async (c) => {
 	const flowId = parsed.data.flowId;
 	const flow = await getFlowForOwner(c.env.DB, flowId, userId);
 	if (!flow) return c.json({ error: "Flow not found" }, 404);
+	if (!hasWorkflowOutputNode(flow.data)) {
+		return c.json(
+			{ error: "Workflow requires at least one workflowOutput node" },
+			400,
+		);
+	}
 
 	const nowIso = new Date().toISOString();
 	const flowVersionId = crypto.randomUUID();
@@ -120,7 +145,7 @@ executionRouter.get("/:id/node-runs", async (c) => {
 	return c.json(rows.map(mapNodeRunRow));
 });
 
-// SSE stream for execution logs (D1-backed; resumable via `?after=<seq>`)
+// SSE stream for execution logs (DB-backed; resumable via `?after=<seq>`)
 executionRouter.get("/:id/events", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);

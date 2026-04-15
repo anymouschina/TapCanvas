@@ -1,32 +1,22 @@
 import React from 'react'
 import type { TaskNodeFeature } from '../taskNodeSchema'
 import type { TaskNodeFeatureFlags } from './features'
-import { CharacterContent } from './components/CharacterContent'
-import { MosaicContent } from './components/MosaicContent'
 import { ImageContent } from './components/ImageContent'
-import { StoryboardImageContent } from './components/StoryboardImageContent'
+import { StoryboardEditorContent } from './components/StoryboardEditorContent'
 
 export type FeatureRendererContext = {
-  nodeKind?: string
   featureFlags: TaskNodeFeatureFlags
-  isMosaicNode: boolean
   videoContent: React.ReactNode | null
-  characterProps: React.ComponentProps<typeof CharacterContent> | null
-  mosaicProps: React.ComponentProps<typeof MosaicContent>
   imageProps: React.ComponentProps<typeof ImageContent>
-  storyboardImageProps: React.ComponentProps<typeof StoryboardImageContent>
+  storyboardEditorProps: React.ComponentProps<typeof StoryboardEditorContent>
 }
 
 type Renderer = (ctx: FeatureRendererContext) => React.ReactNode
 
 const featureRenderers: Partial<Record<TaskNodeFeature, Renderer>> = {
-  character: (ctx) => (ctx.characterProps ? <CharacterContent {...ctx.characterProps} /> : null),
-  image: (ctx) => {
-    if (ctx.isMosaicNode) return <MosaicContent {...ctx.mosaicProps} />
-    if (ctx.nodeKind === 'storyboardImage') return <StoryboardImageContent {...ctx.storyboardImageProps} />
-    return <ImageContent {...ctx.imageProps} />
-  },
+  image: (ctx) => <ImageContent {...ctx.imageProps} />,
   video: (ctx) => ctx.videoContent,
+  storyboardEditor: (ctx) => <StoryboardEditorContent {...ctx.storyboardEditorProps} />,
 }
 
 export const renderFeatureBlocks = (features: TaskNodeFeature[], ctx: FeatureRendererContext) => {

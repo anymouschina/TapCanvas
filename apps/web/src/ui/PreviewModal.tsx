@@ -2,11 +2,14 @@ import React, { useEffect } from 'react'
 import { ActionIcon, Group, Paper, Title, Portal } from '@mantine/core'
 import { IconX, IconDownload } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
-import { downloadUrl } from '../utils/download'
+import { appendDownloadSuffix, downloadUrl } from '../utils/download'
+import { useImageResource } from '../domain/resource-runtime'
 
 export default function PreviewModal({ className }: { className?: string }): JSX.Element | null {
   const preview = useUIStore(s => s.preview)
   const close = useUIStore(s => s.closePreview)
+  const previewUrl = preview?.url ?? null
+  const previewKind = preview?.kind ?? null
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
@@ -14,12 +17,21 @@ export default function PreviewModal({ className }: { className?: string }): JSX
     return () => window.removeEventListener('keydown', onKey)
   }, [close])
 
+  const previewImageResource = useImageResource({
+    url: previewKind === 'image' ? previewUrl : null,
+    kind: 'preview',
+    variantKey: 'original',
+    priority: 'critical',
+    ownerSurface: 'preview-modal',
+    ownerRequestKey: `preview-modal:${previewUrl ?? 'none'}`,
+    enabled: previewKind === 'image' && Boolean(previewUrl),
+  })
   if (!preview) return null
   const { url, kind, name } = preview
   const download = () => {
     void downloadUrl({
       url,
-      filename: name || `tapcanvas-${kind}-${Date.now()}`,
+      filename: name ? appendDownloadSuffix(name, Date.now()) : `tapcanvas-${kind}-${Date.now()}`,
       preferBlob: true,
       fallbackTarget: '_blank',
     })
@@ -74,7 +86,7 @@ export default function PreviewModal({ className }: { className?: string }): JSX
             {kind === 'image' && (
               <img
                 className="preview-modal-image"
-                src={url}
+                src={previewImageResource.renderUrl || url}
                 alt={name || 'preview'}
                 style={{
                   maxWidth: '92vw',

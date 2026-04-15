@@ -4,7 +4,7 @@
  */
 
 import { CANVAS_CONFIG, HANDLE_PREFIXES } from './constants';
-import type { Node, Edge, Position } from '@xyflow/react';
+import type { Node, Edge, XYPosition } from '@xyflow/react';
 
 /**
  * 生成唯一ID
@@ -162,7 +162,7 @@ export function canConnect(
  * @param p2 点2
  * @returns 距离
  */
-export function calculateDistance(p1: Position, p2: Position): number {
+export function calculateDistance(p1: XYPosition, p2: XYPosition): number {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   return Math.sqrt(dx * dx + dy * dy);
@@ -175,7 +175,7 @@ export function calculateDistance(p1: Position, p2: Position): number {
  * @returns 是否在矩形内
  */
 export function isPointInRect(
-  point: Position,
+  point: XYPosition,
   rect: { x: number; y: number; width: number; height: number }
 ): boolean {
   return (
@@ -212,9 +212,9 @@ export function isNodeInSelectionArea(
  * @returns 对齐后的位置
  */
 export function snapToGrid(
-  position: Position,
+  position: XYPosition,
   gridSize: number = CANVAS_CONFIG.GRID_SIZE
-): Position {
+): XYPosition {
   return {
     x: Math.round(position.x / gridSize) * gridSize,
     y: Math.round(position.y / gridSize) * gridSize,
@@ -326,7 +326,7 @@ export function findExitNodes(nodes: Node[], edges: Edge[]): Node[] {
  * @param pos2 位置2
  * @returns 中点位置
  */
-export function getMidpoint(pos1: Position, pos2: Position): Position {
+export function getMidpoint(pos1: XYPosition, pos2: XYPosition): XYPosition {
   return {
     x: (pos1.x + pos2.x) / 2,
     y: (pos1.y + pos2.y) / 2,
@@ -340,9 +340,9 @@ export function getMidpoint(pos1: Position, pos2: Position): Position {
  * @returns 相对坐标
  */
 export function toRelativeCoordinates(
-  absolutePosition: Position,
-  canvasOrigin: Position = { x: 0, y: 0 }
-): Position {
+  absolutePosition: XYPosition,
+  canvasOrigin: XYPosition = { x: 0, y: 0 }
+): XYPosition {
   return {
     x: absolutePosition.x - canvasOrigin.x,
     y: absolutePosition.y - canvasOrigin.y,
@@ -356,9 +356,9 @@ export function toRelativeCoordinates(
  * @returns 画布坐标
  */
 export function toAbsoluteCoordinates(
-  relativePosition: Position,
-  canvasOrigin: Position = { x: 0, y: 0 }
-): Position {
+  relativePosition: XYPosition,
+  canvasOrigin: XYPosition = { x: 0, y: 0 }
+): XYPosition {
   return {
     x: relativePosition.x + canvasOrigin.x,
     y: relativePosition.y + canvasOrigin.y,
@@ -382,10 +382,11 @@ export function isValidConnectionType(sourceType: string, targetType: string): b
   const compatibilityMatrix: Record<string, string[]> = {
     text: ['subtitle'],
     subtitle: ['video'],
+    storyboard: ['image', 'video'],
     image: ['video'],
     audio: ['video'],
     video: [],
-    any: ['text', 'image', 'video', 'audio', 'subtitle'],
+    any: ['text', 'image', 'storyboard', 'video', 'audio', 'subtitle'],
   };
 
   return compatibilityMatrix[sourceType]?.includes(targetType) || false;

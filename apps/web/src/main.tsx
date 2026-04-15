@@ -1,14 +1,14 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import { MantineProvider, MantineThemeProvider, localStorageColorSchemeManager, useMantineColorScheme, createTheme, type MantineColorScheme } from '@mantine/core'
+import { MantineProvider, MantineThemeProvider, localStorageColorSchemeManager, useMantineColorScheme, type MantineColorScheme } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './dark.css'
 import './light.css'
 import { installAuth401Interceptor } from './auth/fetch401Interceptor'
-import { LangGraphChatOverlay } from './ai/langgraph-chat/LangGraphChatOverlay'
+import { buildTapCanvasTheme } from './theme/tapCanvasTheme'
 
 const COLOR_SCHEME_STORAGE_KEY = 'tapcanvas-color-scheme'
 const DEFAULT_COLOR_SCHEME: MantineColorScheme = 'dark'
@@ -30,18 +30,9 @@ function primeColorSchemeAttribute() {
 primeColorSchemeAttribute()
 installAuth401Interceptor()
 
-const baseTheme = {
-  defaultRadius: 'sm',
-  fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji'
-}
-
 function DynamicThemeProvider({ children }: { children: React.ReactNode }) {
   const { colorScheme } = useMantineColorScheme()
-  const theme = React.useMemo(() => createTheme({
-    ...baseTheme,
-    primaryColor: colorScheme === 'dark' ? 'gray' : 'dark',
-    primaryShade: { light: 6, dark: 4 }
-  }), [colorScheme])
+  const theme = React.useMemo(() => buildTapCanvasTheme(colorScheme), [colorScheme])
 
   return <MantineThemeProvider theme={theme}>{children}</MantineThemeProvider>
 }
@@ -56,7 +47,6 @@ root.render(
       <DynamicThemeProvider>
         <Notifications position="top-right" zIndex={2000} />
         <App />
-        <LangGraphChatOverlay />
       </DynamicThemeProvider>
     </MantineProvider>
   </React.StrictMode>

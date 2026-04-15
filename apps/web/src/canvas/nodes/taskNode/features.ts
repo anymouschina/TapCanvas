@@ -6,7 +6,7 @@ export type TaskNodeFeatureFlags = {
   isComposerNode: boolean
   isMosaicNode: boolean
   hasPrompt: boolean
-  hasStoryboardEditor: boolean
+  hasAnchorBinding: boolean
   hasSystemPrompt: boolean
   hasModelSelect: boolean
   hasSampleCount: boolean
@@ -24,20 +24,21 @@ export type TaskNodeFeatureFlags = {
   hasSubtitle: boolean
   hasCharacter: boolean
   hasTextResults: boolean
+  hasStoryboardEditor: boolean
   supportsSubflowHandles: boolean
 }
 
 export const buildTaskNodeFeatureFlags = (
   schema: TaskNodeSchema,
-  kind?: string | null,
+  _kind?: string | null,
 ): TaskNodeFeatureFlags => {
   const featureSet = new Set<TaskNodeFeature>(schema.features)
-  const isStoryboardNode = schema.category === 'storyboard'
-  const isComposerNode = schema.category === 'composer' || isStoryboardNode
-  const isMosaicNode = kind === 'mosaic'
+  const isStoryboardNode = false
+  const isComposerNode = schema.kind === 'video'
+  const isMosaicNode = false
 
   const hasPrompt = featureSet.has('prompt') || featureSet.has('storyboard')
-  const hasStoryboardEditor = featureSet.has('storyboard')
+  const hasAnchorBinding = featureSet.has('anchorBinding')
   const hasSystemPrompt = featureSet.has('systemPrompt')
   const hasModelSelect = featureSet.has('modelSelect')
   const hasSampleCount = featureSet.has('sampleCount')
@@ -46,19 +47,20 @@ export const buildTaskNodeFeatureFlags = (
   const hasOrientation = featureSet.has('orientation')
   const hasDuration = featureSet.has('duration')
   const hasTextResults = featureSet.has('textResults')
+  const hasStoryboardEditor = featureSet.has('storyboardEditor')
 
   const hasImageResults = featureSet.has('imageResults')
-  const hasImage = hasImageResults || featureSet.has('image') || schema.category === 'image'
+  const hasImage = hasImageResults || featureSet.has('image') || schema.category === 'image' || schema.category === 'storyboard'
   const hasImageUpload = featureSet.has('imageUpload')
   const hasReversePrompt = featureSet.has('reversePrompt')
 
   const hasVideoResults = featureSet.has('videoResults')
   const hasVideo = hasVideoResults || featureSet.has('video') || schema.category === 'video'
-  const hasAudio = featureSet.has('audio') || schema.category === 'audio'
-  const hasSubtitle = featureSet.has('subtitle') || schema.category === 'subtitle'
-  const hasCharacter = featureSet.has('character') || schema.category === 'character'
+  const hasAudio = featureSet.has('audio')
+  const hasSubtitle = featureSet.has('subtitle')
+  const hasCharacter = featureSet.has('character')
 
-  const supportsSubflowHandles = featureSet.has('subflow')
+  const supportsSubflowHandles = false
 
   return {
     featureSet,
@@ -66,7 +68,7 @@ export const buildTaskNodeFeatureFlags = (
     isComposerNode,
     isMosaicNode,
     hasPrompt,
-    hasStoryboardEditor,
+    hasAnchorBinding,
     hasSystemPrompt,
     hasModelSelect,
     hasSampleCount,
@@ -84,6 +86,7 @@ export const buildTaskNodeFeatureFlags = (
     hasSubtitle,
     hasCharacter,
     hasTextResults,
+    hasStoryboardEditor,
     supportsSubflowHandles,
   }
 }

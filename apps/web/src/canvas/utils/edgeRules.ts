@@ -1,27 +1,23 @@
+import { getTaskNodeCoreType } from '../nodes/taskNodeSchema'
+
 type EdgeRuleMap = Record<string, string[]>
 
 const defaultEdgeRules: EdgeRuleMap = {
-  textToImage: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission'],
-  image: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission'],
-  storyboardImage: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission'],
-  imageFission: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission'],
-  video: ['composeVideo', 'storyboard', 'video'],
-  composeVideo: ['composeVideo', 'storyboard', 'video'],
-  storyboard: ['composeVideo', 'storyboard', 'video'],
-  tts: ['composeVideo', 'storyboard', 'video'],
-  subtitleAlign: ['composeVideo', 'video', 'storyboard'],
-  character: ['composeVideo', 'storyboard', 'video', 'character'],
-  subflow: ['composeVideo', 'storyboard', 'video', 'image', 'storyboardImage', 'imageFission', 'character', 'subflow'],
+  text: ['image', 'video'],
+  image: ['image', 'storyboard', 'video'],
+  storyboard: ['image', 'video'],
+  video: ['video'],
 }
 
 export const buildEdgeValidator =
   (rules: EdgeRuleMap = defaultEdgeRules) =>
   (sourceKind?: string | null, targetKind?: string | null) => {
     if (!sourceKind || !targetKind) return true
-    const targets = rules[sourceKind]
+    const normalizedSourceKind = getTaskNodeCoreType(sourceKind)
+    const normalizedTargetKind = getTaskNodeCoreType(targetKind)
+    const targets = rules[normalizedSourceKind]
     if (!targets) return true
-    return targets.includes(targetKind)
+    return targets.includes(normalizedTargetKind)
   }
 
-export const isImageKind = (kind?: string | null) =>
-  kind === 'image' || kind === 'textToImage' || kind === 'mosaic' || kind === 'storyboardImage' || kind === 'imageFission'
+export const isImageKind = (kind?: string | null) => getTaskNodeCoreType(kind) === 'image'

@@ -1,14 +1,17 @@
 import React from 'react'
 import { Paper, Text } from '@mantine/core'
+import { formatErrorMessage } from '../../../utils/formatErrorMessage'
 
 type StatusBannerProps = {
   status: string
-  lastError?: string | null
+  lastError?: unknown
   httpStatus?: number | null
 }
 
 export function StatusBanner({ status, lastError, httpStatus }: StatusBannerProps) {
-  if (!(status === 'error' && lastError)) return null
+  const message = formatErrorMessage(lastError).trim()
+  void httpStatus
+  if (!(status === 'error' && message)) return null
   return (
     <Paper
       className="task-node-status-banner"
@@ -25,13 +28,8 @@ export function StatusBanner({ status, lastError, httpStatus }: StatusBannerProp
         执行错误
       </Text>
       <Text className="task-node-status-banner__message" size="xs" c="red.3" mt={4} style={{ wordBreak: 'break-word' }}>
-        {lastError}
+        {message}
       </Text>
-      {httpStatus === 429 && (
-        <Text className="task-node-status-banner__hint" size="xs" c="red.2" mt={4} style={{ fontStyle: 'italic' }}>
-          💡 提示：API 配额已用尽，请稍后重试或升级您的服务计划
-        </Text>
-      )}
     </Paper>
   )
 }

@@ -5,6 +5,7 @@ import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react'
 import { useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { useEdgeVisuals } from './useEdgeVisuals'
+import { getNodeAbsPosition, getNodeSize } from '../utils/nodeBounds'
 
 function inferType(sourceHandle?: string | null, targetHandle?: string | null) {
   if (sourceHandle && sourceHandle.startsWith('out-')) return sourceHandle.slice(4)
@@ -51,14 +52,21 @@ function orthPathAvoid(sx: number, sy: number, tx: number, ty: number, obstacles
 }
 
 export default function OrthTypedEdge(props: EdgeProps<any>) {
-  const t = (props.data && (props.data as any).edgeType) || inferType(props.sourceHandle, props.targetHandle)
+  const t = (props.data && (props.data as any).edgeType) || inferType(props.sourceHandleId, props.targetHandleId)
   const { edgeStyle } = useEdgeVisuals(t)
   const nodes = useRFStore(s => s.nodes)
   const deleteEdge = useRFStore(s => s.deleteEdge)
   const viewOnly = useUIStore(s => s.viewOnly)
   const showDelete = useUIStore(s => s.hoveredEdgeId === props.id) || props.selected
   const defaultW = 180, defaultH = 96
-  const obstacles = nodes.map((n: any) => ({ x: n.positionAbsolute?.x ?? n.position.x, y: n.positionAbsolute?.y ?? n.position.y, w: n.width || defaultW, h: n.height || defaultH, id: n.id }))
+  const obstacles = React.useMemo(() => {
+    const nodesById = new Map(nodes.map((n) => [n.id, n] as const))
+    return nodes.map((n: any) => {
+      const pos = getNodeAbsPosition(n as any, nodesById as any)
+      const { w, h } = getNodeSize(n as any, { w: defaultW, h: defaultH })
+      return { x: pos.x, y: pos.y, w, h, id: n.id }
+    })
+  }, [defaultH, defaultW, nodes])
   // Adjust Y near source/target to avoid horizontal overlap with obstacles (except endpoints)
   const ignore = new Set([props.source, props.target])
   const intersectsH = (y: number, x1: number, x2: number) => {
@@ -90,7 +98,7 @@ export default function OrthTypedEdge(props: EdgeProps<any>) {
         markerStart={props.markerStart}
         interactionWidth={props.interactionWidth}
       />
-      <EdgeLabelRenderer className="orth-typed-edge-label-root">
+      <EdgeLabelRenderer>
         {!viewOnly && showDelete && (
           <div
             className="orth-typed-edge-label"
@@ -105,7 +113,7 @@ export default function OrthTypedEdge(props: EdgeProps<any>) {
             <ActionIcon
               className="orth-typed-edge-delete"
               size="sm"
-              radius="xl"
+              radius="md"
               variant="light"
               color="red"
               aria-label="删除连线"

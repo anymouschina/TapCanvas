@@ -24,8 +24,20 @@ export * from './layout';
 // 几何计算
 export * from './geometry';
 
-// 验证工具
-export * from './validation';
+// 验证工具（排除与 ./canvas 重名的 isValidConnectionType）
+export {
+  validateNodeData,
+  validateEdgeData,
+  validateConnection,
+  validateGraph,
+  validateFileType,
+  validateEmail,
+  validateURL,
+  validateJSON,
+  validateStringLength,
+  validateNumberRange,
+} from './validation';
+export type { ValidationResult } from './validation';
 
 // 序列化工具
 export * from './serialization';

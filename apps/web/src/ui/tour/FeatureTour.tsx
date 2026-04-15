@@ -1,6 +1,7 @@
 import React from 'react'
-import { Portal, Paper, Title, Text, Group, Button } from '@mantine/core'
+import { Portal, Title, Text, Group, Button } from '@mantine/core'
 import { $ } from '../../canvas/i18n'
+import { PanelCard } from '../PanelCard'
 
 export type FeatureTourStep = {
   id: string
@@ -213,7 +214,7 @@ export function FeatureTour(props: {
             width: 360,
           }}
         >
-          <Paper className="feature-tour-card glass" withBorder shadow="xl" radius="lg" p="md" style={{ pointerEvents: 'auto' }}>
+          <PanelCard className="feature-tour-card glass" style={{ pointerEvents: 'auto' }}>
             <Group className="feature-tour-card-header" justify="space-between" align="flex-start" gap="sm" mb={6}>
               <div className="feature-tour-card-title" style={{ minWidth: 0 }}>
                 <Title className="feature-tour-title" order={6} style={{ lineHeight: 1.2 }}>
@@ -247,7 +248,7 @@ export function FeatureTour(props: {
                 {isLast ? $('完成') : $('下一个')}
               </Button>
             </Group>
-          </Paper>
+          </PanelCard>
         </div>
       </div>
     </Portal>

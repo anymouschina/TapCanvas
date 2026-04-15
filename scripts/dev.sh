@@ -6,17 +6,16 @@ usage() {
 TapCanvas one-click dev launcher.
 
 Local (recommended for fastest HMR):
-  ./scripts/dev.sh local [--install] [--all] [--webcut] [--langgraph] [--ai-backend]
+  ./scripts/dev.sh local [--install] [--webcut]
 
 Docker Compose (HMR via bind mount; slower, but closer to prod):
-  ./scripts/dev.sh docker [--langgraph] [--build]
+  ./scripts/dev.sh docker [--build]
 
 Examples:
   ./scripts/dev.sh local --install
-  ./scripts/dev.sh local --all
-  ./scripts/dev.sh local --langgraph
+  ./scripts/dev.sh local --webcut
   ./scripts/dev.sh docker
-  ./scripts/dev.sh docker --langgraph
+  ./scripts/dev.sh docker --build
 EOF
 }
 
@@ -83,16 +82,11 @@ case "$cmd" in
     ;;
   local)
     install=0
-    start_langgraph=0
-    start_ai_backend=0
     start_webcut=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --install) install=1 ;;
-        --all) start_langgraph=1; start_ai_backend=1; start_webcut=1 ;;
         --webcut) start_webcut=1 ;;
-        --langgraph) start_langgraph=1 ;;
-        --ai-backend) start_ai_backend=1 ;;
         *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
       esac
       shift
@@ -102,33 +96,20 @@ case "$cmd" in
       pnpm -w install
     fi
 
-    langgraph_url=""
-    langgraph_mode="off"
-
-    if [ "$start_langgraph" = "1" ]; then
-      if [ -f "apps/ai-fullstack/backend/scripts/dev-langgraph.sh" ] && [ -f "apps/ai-fullstack/backend/.venv/bin/langgraph" ]; then
-        langgraph_mode="local"
-        langgraph_url="http://localhost:8123"
-      else
-        langgraph_mode="docker"
-        langgraph_url="http://localhost:8123"
-        echo "[dev.sh] Starting LangGraph services via docker compose profile 'langgraph'..." >&2
-        compose --profile langgraph up -d langgraph-redis langgraph-postgres langgraph-api
-        echo "[dev.sh] LangGraph should be available at ${langgraph_url}" >&2
-      fi
-    fi
-
     inferred_web_github_client_id=""
     if [ -z "${VITE_GITHUB_CLIENT_ID:-}" ]; then
       if ! has_env_key "apps/web/.env" "VITE_GITHUB_CLIENT_ID" \
         && ! has_env_key "apps/web/.env.local" "VITE_GITHUB_CLIENT_ID" \
         && ! has_env_key "apps/web/.env.development" "VITE_GITHUB_CLIENT_ID" \
         && ! has_env_key "apps/web/.env.development.local" "VITE_GITHUB_CLIENT_ID"; then
-        inferred_web_github_client_id="$(read_env_value "apps/hono-api/.dev.vars" "GITHUB_CLIENT_ID" || true)"
+        inferred_web_github_client_id="$(read_env_value "apps/hono-api/.env" "GITHUB_CLIENT_ID" || true)"
+        if [ -z "$inferred_web_github_client_id" ]; then
+          inferred_web_github_client_id="$(read_env_value "apps/hono-api/.dev.vars" "GITHUB_CLIENT_ID" || true)"
+        fi
         if [ -z "$inferred_web_github_client_id" ]; then
           echo "[dev.sh] Note: GitHub login is disabled unless you set VITE_GITHUB_CLIENT_ID in apps/web/.env(.local)." >&2
         else
-          echo "[dev.sh] Using apps/hono-api/.dev.vars GITHUB_CLIENT_ID as VITE_GITHUB_CLIENT_ID for web dev." >&2
+          echo "[dev.sh] Using apps/hono-api (.env/.dev.vars) GITHUB_CLIENT_ID as VITE_GITHUB_CLIENT_ID for web dev." >&2
         fi
       fi
     fi
@@ -145,22 +126,6 @@ case "$cmd" in
     (cd apps/hono-api && pnpm dev) &
     pids+=("$!")
 
-    if [ "$start_ai_backend" = "1" ]; then
-      if [ -f "apps/ai-fullstack/backend/scripts/dev-uvicorn.sh" ] && [ -f "apps/ai-fullstack/backend/.venv/bin/python" ]; then
-        (cd apps/ai-fullstack/backend && bash ./scripts/dev-uvicorn.sh) &
-        pids+=("$!")
-        echo "[dev.sh] ai-fullstack backend (uvicorn) on http://localhost:8080" >&2
-      else
-        echo "[dev.sh] Skip ai-backend: missing apps/ai-fullstack/backend/.venv or scripts/dev-uvicorn.sh" >&2
-      fi
-    fi
-
-    if [ "$start_langgraph" = "1" ] && [ "$langgraph_mode" = "local" ]; then
-      (cd apps/ai-fullstack/backend && LANGGRAPH_PORT=8123 bash ./scripts/dev-langgraph.sh) &
-      pids+=("$!")
-      echo "[dev.sh] LangGraph dev on ${langgraph_url}" >&2
-    fi
-
     if [ "$start_webcut" = "1" ]; then
       if [ -f "apps/webcut-main/package.json" ]; then
         (cd apps/webcut-main && pnpm dev:app --host 0.0.0.0 --port 5174) &
@@ -173,39 +138,12 @@ case "$cmd" in
 
     (
       cd apps/web
-      extra_vite_env=()
-      if [ "$start_langgraph" = "1" ]; then
-        # If you opt into starting LangGraph, force-enable it for this web dev process
-        # unless the user explicitly set VITE_LANGGRAPH_ENABLED in the shell.
-        if [ -z "${VITE_LANGGRAPH_ENABLED:-}" ]; then
-          extra_vite_env+=(VITE_LANGGRAPH_ENABLED="1")
-        fi
-
-        # Force the correct local URL so Vite proxy points to the LangGraph instance
-        # started by this script, even if apps/web/.env contains a stale value.
-        if [ -z "${VITE_LANGGRAPH_API_URL:-}" ] && [ -n "${langgraph_url:-}" ]; then
-          extra_vite_env+=(VITE_LANGGRAPH_API_URL="$langgraph_url")
-        fi
-      fi
-
       if [ -n "${VITE_GITHUB_CLIENT_ID:-}" ]; then
-        if [ "${#extra_vite_env[@]}" -gt 0 ]; then
-          env "${extra_vite_env[@]}" pnpm dev
-        else
-          pnpm dev
-        fi
+        pnpm dev
       elif [ -n "$inferred_web_github_client_id" ]; then
-        if [ "${#extra_vite_env[@]}" -gt 0 ]; then
-          env VITE_GITHUB_CLIENT_ID="$inferred_web_github_client_id" "${extra_vite_env[@]}" pnpm dev
-        else
-          env VITE_GITHUB_CLIENT_ID="$inferred_web_github_client_id" pnpm dev
-        fi
+        env VITE_GITHUB_CLIENT_ID="$inferred_web_github_client_id" pnpm dev
       else
-        if [ "${#extra_vite_env[@]}" -gt 0 ]; then
-          env "${extra_vite_env[@]}" pnpm dev
-        else
-          pnpm dev
-        fi
+        pnpm dev
       fi
     ) &
     pids+=("$!")
@@ -213,11 +151,9 @@ case "$cmd" in
     wait
     ;;
   docker)
-    with_langgraph=0
     build=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --langgraph) with_langgraph=1 ;;
         --build) build=1 ;;
         *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
       esac
@@ -225,9 +161,6 @@ case "$cmd" in
     done
 
     args=(up)
-    if [ "$with_langgraph" = "1" ]; then
-      args+=(--profile langgraph)
-    fi
     args+=(-d)
     if [ "$build" = "1" ]; then
       args+=(--build)
@@ -236,9 +169,6 @@ case "$cmd" in
     compose "${args[@]}"
     echo "Web: http://localhost:5173"
     echo "API: http://localhost:8788"
-    if [ "$with_langgraph" = "1" ]; then
-      echo "LangGraph: http://localhost:8123"
-    fi
     ;;
   *)
     echo "Unknown command: $cmd" >&2

@@ -4,7 +4,9 @@ import { Handle, Position } from '@xyflow/react'
 
 type Data = { label?: string; kind: 'io-in' | 'io-out'; types?: string[] }
 
-export default function IONode({ data, selected }: NodeProps<Data>): JSX.Element {
+export default function IONode(props: NodeProps): JSX.Element {
+  const { selected } = props
+  const data = (props.data || {}) as Data
   const isIn = data.kind === 'io-in'
   const types = Array.isArray(data.types) && data.types.length ? data.types : ['any']
   const bg = 'var(--canvas-io-bg)'
@@ -31,7 +33,7 @@ export default function IONode({ data, selected }: NodeProps<Data>): JSX.Element
       paddingTop: 4,
     }}>
       <div className="io-node-label" style={{ position: 'absolute', top: 4, left: 6, fontSize: 10, color: 'var(--canvas-node-subtext)' }}>{isIn ? '入口' : '出口'}</div>
-      {types.map((t, idx) => {
+      {types.map((t: string, idx: number) => {
         const top = paddingY + idx * itemH
         return isIn ? (
           <Handle className="io-node-handle io-node-handle--out" key={t} id={`out-${t}`} type="source" position={Position.Right} style={{ top, right: -6, width: 8, height: 8, background: 'var(--canvas-io-handle)' }} />
