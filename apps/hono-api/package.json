@@ -9,6 +9,7 @@
 		"build": "node scripts/build.mjs",
 		"import:ai-character-library": "node scripts/import-ai-character-library.mjs",
 		"prisma:generate": "prisma generate",
+		"postinstall": "prisma generate",
 		"db:pg:backup": "node scripts/backup-postgres.mjs",
 		"db:pg:schema": "node scripts/bootstrap-postgres-schema.mjs",
 		"db:pg:seed-patches": "node scripts/seed-postgres-patches.mjs",

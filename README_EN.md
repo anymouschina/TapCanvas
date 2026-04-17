@@ -33,6 +33,8 @@ pnpm dev:web
 pnpm dev:api
 ```
 
+`pnpm install` now bootstraps the workspace and generates the Prisma client for `apps/hono-api` automatically. If your environment hits file watcher limits with `pnpm dev:api`, use `pnpm dev:api:stable`.
+
 ### One-command full stack (Docker)
 
 ```bash

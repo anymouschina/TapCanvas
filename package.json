@@ -1,0 +1,22 @@
+{
+  "name": "tapcanvas-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.8.1",
+  "scripts": {
+    "dev": "./scripts/dev.sh local",
+    "dev:web": "pnpm --filter @tapcanvas/web dev",
+    "dev:api": "pnpm --filter @tapcanvas/api dev",
+    "dev:api:stable": "pnpm --filter @tapcanvas/api dev:stable",
+    "dev:agents": "pnpm --filter agents dev",
+    "build": "pnpm run build:web && pnpm run build:api && pnpm run build:agents",
+    "build:web": "pnpm --filter @tapcanvas/web build",
+    "build:api": "pnpm --filter @tapcanvas/api build",
+    "build:agents": "pnpm --filter agents build",
+    "test": "pnpm run test:web && pnpm run test:api && pnpm run test:agents",
+    "test:web": "pnpm --filter @tapcanvas/web test",
+    "test:api": "pnpm --filter @tapcanvas/api test",
+    "test:agents": "pnpm --filter agents test",
+    "compose:up": "docker compose up -d",
+    "compose:down": "docker compose down"
+  }
+}
