@@ -76,7 +76,6 @@ export async function refineStructuredImagePrompt(
     throw new Error('请先登录后再试')
   }
 
-  const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
   const extraSystemPrompt = readTrimmedString(input.systemPrompt)
   const anchorLines = buildLockedAnchorLines(input.productionMetadata)
   const negativePrompt = readTrimmedString(input.negativePrompt)
@@ -116,8 +115,6 @@ export async function refineStructuredImagePrompt(
     .join('\n\n')
 
   const taskRes = await runPublicTask(apiKey, {
-    vendor: 'auto',
-    ...(vendorCandidates.length > 0 ? { vendorCandidates } : {}),
     request: {
       kind: 'prompt_refine',
       prompt: promptText,

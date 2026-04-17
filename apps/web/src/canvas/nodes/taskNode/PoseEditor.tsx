@@ -611,11 +611,8 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
         toast('请先登录后再试', 'error')
         return
       }
-      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const persist = ui.assetPersistenceEnabled
       const taskRes = await runPublicTask(apiKey, {
-        vendor: 'auto',
-        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
         kind: 'image_to_prompt',
           prompt: '请从输入图像中智能、全面地提取视觉风格信息，并将结果以严格有效的 JSON 格式输出。字段数量不做限制，可根据图像特征灵活增减，但需保持结构清晰、语义明确、分类合理。以下为建议的通用结构，请在此基础上根据实际情况动态调整、增删字段。',
@@ -650,8 +647,6 @@ export function usePoseEditor(options: UsePoseEditorOptions) {
           ].join('\n')
 
       const refineRes = await runPublicTask(apiKey, {
-        vendor: 'auto',
-        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'prompt_refine',
           prompt: refinePrompt,

@@ -1735,11 +1735,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       if (resolved.assetId) {
         updateNodeData(id, { imageUrl: resolved.url, serverAssetId: resolved.assetId })
       }
-      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const persist = ui.assetPersistenceEnabled
       const taskRes = await runPublicTask(apiKey, {
-        vendor: 'auto',
-        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'image_to_prompt',
           prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
@@ -3127,7 +3124,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
               toast('请先登录后再试', 'error')
               return
             }
-            const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
             const persist = ui.assetPersistenceEnabled
             const resolvedImageModel = await resolveExecutableImageModel({
               kind: 'imageEdit',
@@ -3200,8 +3196,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
 
             if (!nextUrl) {
               const taskRes = await runPublicTask(apiKey, {
-                vendor: 'auto',
-                ...(vendorCandidates.length ? { vendorCandidates } : {}),
                 request: {
                   kind: 'image_edit',
                   prompt: internalImageEditPrompt,
@@ -6545,13 +6539,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         toast('请先登录后再试', 'error')
         return
       }
-      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const persist = ui.assetPersistenceEnabled
       const forceUnifiedSkill = kind === 'novelStoryboard'
       const promptRefineModelAlias = resolvePromptRefineModelAlias()
       const taskRes = await runPublicTask(apiKey, {
-        vendor: forceUnifiedSkill ? 'agents' : 'auto',
-        ...(!forceUnifiedSkill && vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'prompt_refine',
           prompt: promptText,
@@ -6661,12 +6652,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         toast('请先登录后再试', 'error')
         return
       }
-      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const persist = ui.assetPersistenceEnabled
       const promptRefineModelAlias = resolvePromptRefineModelAlias()
       const taskRes = await runPublicTask(apiKey, {
-        vendor: 'auto',
-        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'prompt_refine',
           prompt: promptText,
@@ -6768,11 +6756,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         toast('请先登录后再试', 'error')
         return
       }
-      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const promptRefineModelAlias = resolvePromptRefineModelAlias()
       const taskRes = await runPublicTask(apiKey, {
-        vendor: 'auto',
-        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'prompt_refine',
           prompt: promptText,
@@ -6858,11 +6843,8 @@ const rewritePromptWithCharacters = React.useCallback(
     if (!apiKey && !token) {
       throw new Error('未登录：请先登录后再试')
     }
-    const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
     const persist = ui.assetPersistenceEnabled
     const taskRes = await runPublicTask(apiKey, {
-      vendor: 'auto',
-      ...(vendorCandidates.length ? { vendorCandidates } : {}),
       request: {
         kind: 'prompt_refine',
         prompt: instructions,
