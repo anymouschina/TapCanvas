@@ -1072,18 +1072,14 @@ function isRunTokenActive(getState: Getter, id: string, runToken: string): boole
   return readNodeRunToken(getState, id) === runToken
 }
 
-function requirePublicApiRuntime(): { apiKey: string; vendorCandidates?: string[] } {
+function requirePublicApiRuntime(): { apiKey: string } {
   const ui = useUIStore.getState() as any
   const apiKey = typeof ui?.publicApiKey === 'string' ? ui.publicApiKey.trim() : ''
   const token = getAuthToken()
   if (!apiKey && !token) {
     throw new Error('未登录：请先登录后再试')
   }
-  const candidates = Array.isArray(ui?.publicVendorCandidates) ? ui.publicVendorCandidates : []
-  const vendorCandidates = candidates
-    .map((v: any) => (typeof v === 'string' ? v.trim() : ''))
-    .filter(Boolean)
-  return { apiKey, ...(vendorCandidates.length ? { vendorCandidates } : {}) }
+  return { apiKey }
 }
 
 const TASK_LOG_REQUEST_MAX_CHARS = 12000
@@ -1191,17 +1187,9 @@ function appendRequestPayloadLog(input: {
   }
 }
 
-async function runTaskByVendor(vendor: string, request: TaskRequestDto): Promise<TaskResultDto> {
-  const normalizedVendor = String(vendor || '').trim()
-  if (!normalizedVendor) {
-    throw new Error('vendor is required')
-  }
-  const { apiKey, vendorCandidates } = requirePublicApiRuntime()
-  const res = await runPublicTask(apiKey, {
-    vendor: normalizedVendor,
-    ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
-    request,
-  })
+async function runAutoTask(request: TaskRequestDto): Promise<TaskResultDto> {
+  const { apiKey } = requirePublicApiRuntime()
+  const res = await runPublicTask(apiKey, { request })
   return res.result
 }
 
@@ -1247,7 +1235,6 @@ function beginPendingRequestProgress(
 async function runTaskByVendorWithPendingProgress(
   ctx: Pick<RunnerContext, 'id' | 'setNodeStatus' | 'isCanceled'>,
   options: {
-    vendor: string
     request: TaskRequestDto
     startProgress: number
     maxProgress: number
@@ -1264,7 +1251,7 @@ async function runTaskByVendorWithPendingProgress(
     stepMs: options.stepMs,
   })
   try {
-    const result = await runTaskByVendor(options.vendor, options.request)
+    const result = await runAutoTask(options.request)
     return {
       result,
       requestProgress: stopProgress(),
@@ -1275,20 +1262,13 @@ async function runTaskByVendorWithPendingProgress(
   }
 }
 
-async function runChatByVendor(vendor: string, payload: {
+async function runAutoChat(payload: {
   prompt: string
   systemPrompt?: string
   modelAlias?: string
   referenceImages?: string[]
 }): Promise<TaskResultDto> {
-  const normalizedVendor = String(vendor || '').trim()
-  if (!normalizedVendor) {
-    throw new Error('vendor is required')
-  }
-  const { vendorCandidates } = requirePublicApiRuntime()
   const res = await agentsChat({
-    vendor: normalizedVendor,
-    ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
     prompt: payload.prompt,
     ...(payload.systemPrompt ? { systemPrompt: payload.systemPrompt } : {}),
     ...(payload.modelAlias ? { modelAlias: payload.modelAlias } : {}),
@@ -1324,13 +1304,10 @@ async function fetchTaskResult(
   taskId: string,
   taskKind?: TaskKind,
   prompt?: string | null,
-  vendor?: string | null,
 ): Promise<TaskResultDto> {
   const { apiKey } = requirePublicApiRuntime()
-  const normalizedVendor = String(vendor || '').trim() || 'auto'
   const res = await fetchPublicTaskResult(apiKey, {
     taskId: taskId.trim(),
-    vendor: normalizedVendor,
     ...(taskKind ? { taskKind } : {}),
     ...(typeof prompt === 'string' ? { prompt } : {}),
   })
@@ -1413,7 +1390,7 @@ async function pollTaskResultUntilDone(
 
     let snapshot: TaskResultDto
     try {
-      snapshot = await fetchTaskResult(options.taskId, options.taskKind, options.prompt, options.vendor)
+      snapshot = await fetchTaskResult(options.taskId, options.taskKind, options.prompt)
     } catch (err: any) {
       const msg = err?.message || '查询任务进度失败'
       appendLog(id, `[${nowLabel()}] error: ${msg}`)
@@ -2658,7 +2635,6 @@ function parseInitialProgress(rawData: any): number {
 
 type GenericVideoTaskOptions = {
   prompt: string
-  vendor: string
   model: string
   aspectRatio: string
   orientation: Orientation
@@ -2676,7 +2652,6 @@ type GenericVideoTaskOptions = {
 }
 
 type PreparedVideoTaskInput = {
-  videoVendor: string
   videoModelValue: string
   finalPrompt: string
   videoDurationSeconds: number
@@ -2697,15 +2672,11 @@ type PreparedVideoTaskInput = {
   remixTargetId: string | null
 }
 
-function resolveVideoVendor(input: { data: any; videoModelValue?: string }): string {
-  const explicitVendor = normalizeVideoVendor((input.data as any)?.videoModelVendor)
-  if (explicitVendor) return explicitVendor
+function assertVideoModelConfigured(input: { data: any; videoModelValue?: string }): void {
   const model = String(input.videoModelValue || (input.data as any)?.videoModel || '').trim().toLowerCase()
   if (!model) {
     throw new Error('视频模型未配置：请先在「系统管理 → 模型管理（Model Catalog）→ 模型（video）」启用至少 1 个视频模型，并在节点中选择。')
   }
-  if (model.startsWith('veo')) return 'veo'
-  return model
 }
 
 function resolveVideoDurationSeconds(input: {
@@ -2736,7 +2707,7 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
     typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim() ? (data as any).aspect.trim() : '16:9'
   const videoModelValue =
     typeof (data as any)?.videoModel === 'string' ? String((data as any).videoModel).trim() : ''
-  const videoVendor = resolveVideoVendor({ data })
+  assertVideoModelConfigured({ data, videoModelValue })
   const videoDurationSeconds = resolveVideoDurationSeconds({
     data,
     isStoryboard: kind === 'storyboard',
@@ -2794,14 +2765,14 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
 
   if (autoReferenceImages.length > 2) {
     try {
-      const mergedReferenceSheet = await uploadMergedReferenceSheet({
-        id,
-        entries: referenceEntries,
-        prompt: finalPrompt,
-        vendor: videoVendor,
-        modelKey: videoModelValue,
-        taskKind: 'text_to_video',
-      })
+        const mergedReferenceSheet = await uploadMergedReferenceSheet({
+          id,
+          entries: referenceEntries,
+          prompt: finalPrompt,
+          vendor: 'auto',
+          modelKey: videoModelValue,
+          taskKind: 'text_to_video',
+        })
       if (mergedReferenceSheet) {
         referenceSheet = mergedReferenceSheet
         autoReferenceImages = [mergedReferenceSheet.url]
@@ -2819,7 +2790,7 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
       referenceImages: autoReferenceImages,
       aspectRatio: aspectRatioSetting,
       size: videoSize,
-      vendor: videoVendor,
+      vendor: 'auto',
       modelKey: videoModelValue,
       prompt: finalPrompt,
       taskKind: 'text_to_video',
@@ -2833,7 +2804,6 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
     appendLog(id, `[${nowLabel()}] 已收集参考图 ${autoReferenceImages.length} 张`)
   }
   return {
-    videoVendor,
     videoModelValue,
     finalPrompt,
     videoDurationSeconds,
@@ -2913,13 +2883,12 @@ async function finalizeGenericVideoSuccess(input: {
   prompt: string
   durationSeconds: number
   modelKey: string
-  vendor: string
 }) {
-  const { snapshot, taskId, ctx, prompt, durationSeconds, modelKey, vendor } = input
+  const { snapshot, taskId, ctx, prompt, durationSeconds, modelKey } = input
   const { id, data, kind, setNodeStatus, appendLog, isCanceled } = ctx
   const resolvedAsset = resolveGenericVideoAsset(snapshot)
   if (!resolvedAsset?.url) {
-    const msg = `${vendor} 视频任务执行失败：未返回有效视频地址`
+    const msg = '视频任务执行失败：未返回有效视频地址'
     setNodeStatus(id, 'error', { progress: 0, lastError: msg })
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
     return
@@ -2955,10 +2924,10 @@ async function finalizeGenericVideoSuccess(input: {
     videoPrimaryIndex: updatedVideoResults.length - 1,
     ...buildVideoDurationPatch(durationSeconds),
     videoModel: modelKey,
-    videoModelVendor: vendor,
+    videoModelVendor: null,
     videoTaskId: taskId,
   })
-  appendLog(id, `[${nowLabel()}] ${vendor} 视频生成完成。`)
+  appendLog(id, `[${nowLabel()}] 视频生成完成。`)
   try {
     const semanticResult = await persistSemanticAssetMetadata({
       nodeId: id,
@@ -2970,7 +2939,7 @@ async function finalizeGenericVideoSuccess(input: {
         videoThumbnailUrl: resolvedAsset.thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
         ...buildVideoDurationPatch(durationSeconds),
         videoModel: modelKey,
-        videoModelVendor: vendor,
+        videoModelVendor: null,
         videoTaskId: taskId,
       },
       mediaKind: 'video',
@@ -3092,7 +3061,6 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
   taskId: string
   prompt: string
   model: string
-  vendor: string
   durationSeconds: number
 }) {
   const { id, data, setNodeStatus, appendLog, isCanceled } = ctx
@@ -3104,13 +3072,13 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
   while (Date.now() - startedAt < pollTimeoutMs) {
     if (isCanceled(id)) {
       setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
-      appendLog(id, `[${nowLabel()}] 已取消 ${options.vendor} 视频任务`)
+      appendLog(id, `[${nowLabel()}] 已取消视频任务`)
       return
     }
 
     let snapshot: TaskResultDto
     try {
-      snapshot = await fetchTaskResult(options.taskId, 'text_to_video', options.prompt, options.vendor)
+      snapshot = await fetchTaskResult(options.taskId, 'text_to_video', options.prompt)
     } catch (error: unknown) {
       const message = error instanceof Error && error.message ? error.message : '查询视频任务进度失败'
       appendLog(id, `[${nowLabel()}] error: ${message}`)
@@ -3125,7 +3093,7 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
         statusPatch: {
           videoTaskId: options.taskId,
           videoModel: options.model,
-          videoModelVendor: options.vendor,
+          videoModelVendor: null,
         },
       })
       await sleep(pollIntervalMs)
@@ -3133,7 +3101,7 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
     }
 
     if (snapshot.status === 'failed') {
-      const msg = resolveGenericVideoFailureMessage(snapshot, options.vendor)
+      const msg = resolveGenericVideoFailureMessage(snapshot, '视频')
       setNodeStatus(id, 'error', { progress: 0, lastError: msg })
       appendLog(id, `[${nowLabel()}] error: ${msg}`)
       return
@@ -3146,12 +3114,11 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
       prompt: options.prompt,
       durationSeconds: options.durationSeconds,
       modelKey: options.model,
-      vendor: options.vendor,
     })
     return
   }
 
-  const timeoutMsg = `${options.vendor} 视频任务查询超时，请稍后在控制台确认结果`
+  const timeoutMsg = '视频任务查询超时，请稍后在控制台确认结果'
   setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
   appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
 }
@@ -3175,7 +3142,6 @@ async function runVideoTask(ctx: RunnerContext) {
     }
     await runGenericVideoTask(ctx, {
       prompt: prepared.finalPrompt,
-      vendor: prepared.videoVendor,
       model: prepared.videoModelValue,
       aspectRatio: prepared.aspectRatioSetting,
       size: prepared.videoSize,
@@ -3206,17 +3172,13 @@ export async function syncImageNodeOnce(_id: string, _get: Getter) {
 async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTaskOptions) {
   const { id, data, kind, setNodeStatus, appendLog, endRunToken } = ctx
   try {
-    const normalizedVendor = normalizeVideoVendor(options.vendor)
-    if (!normalizedVendor) {
-      throw new Error('视频模型厂商未配置')
-    }
     const modelKey = options.model.trim() || String((data as any)?.videoModel || '').trim()
     if (!modelKey) {
       throw new Error('视频模型未配置')
     }
 
     setNodeStatus(id, 'running', { progress: 5 })
-    appendLog(id, `[${nowLabel()}] 调用 ${normalizedVendor} 视频模型 ${modelKey}…`)
+    appendLog(id, `[${nowLabel()}] 调用自动路由视频模型 ${modelKey}…`)
 
     const extras = buildVeoTaskExtras({
       kind,
@@ -3243,7 +3205,6 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       extras,
     }
     const { result: res, requestProgress } = await runTaskByVendorWithPendingProgress(ctx, {
-      vendor: normalizedVendor,
       request,
       startProgress: 5,
       maxProgress: 95,
@@ -3253,26 +3214,26 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       appendLog,
       nodeId: id,
       result: res,
-      fallbackVendor: normalizedVendor,
+      fallbackVendor: 'auto',
       fallbackRequest: request,
     })
 
     const pendingTaskId = resolvePendingTaskIdFromResult(res)
     if (res.status === 'queued' || res.status === 'running') {
       if (!pendingTaskId) {
-        throw new Error(`${normalizedVendor} 视频任务创建失败：未返回任务 ID`)
+        throw new Error('视频任务创建失败：未返回任务 ID')
       }
 
       setNodeStatus(id, res.status === 'queued' ? 'queued' : 'running', {
         progress: Math.max(10, requestProgress),
         videoTaskId: pendingTaskId,
         videoModel: modelKey,
-        videoModelVendor: normalizedVendor,
+        videoModelVendor: null,
         lastResult: {
           id: pendingTaskId,
           at: Date.now(),
           kind,
-          preview: { type: 'text', value: `已创建 ${normalizedVendor} 视频任务（ID: ${pendingTaskId}）` },
+          preview: { type: 'text', value: `已创建视频任务（ID: ${pendingTaskId}）` },
         },
       })
       trySilentSaveProject()
@@ -3280,7 +3241,6 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
         taskId: pendingTaskId,
         prompt: options.prompt,
         model: modelKey,
-        vendor: normalizedVendor,
         durationSeconds: options.durationSeconds,
       })
       return
@@ -3293,7 +3253,6 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       prompt: options.prompt,
       durationSeconds: options.durationSeconds,
       modelKey,
-      vendor: normalizedVendor,
     })
   } catch (error: unknown) {
     const message = error instanceof Error && error.message ? error.message : '视频任务执行失败'
@@ -3321,13 +3280,12 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
     if (isAborted()) return
     appendLogRaw(nodeId, line)
   }
-  const vendor = normalizeVideoVendor((data as any)?.videoModelVendor || (data as any)?.videoVendor || '')
   const taskId = resolveActiveVideoTaskIdByVendor(data)
-  if (!taskId || !vendor) return
+  if (!taskId) return
 
   let snapshot: TaskResultDto
   try {
-    snapshot = await fetchTaskResult(taskId, 'text_to_video', prompt, vendor)
+    snapshot = await fetchTaskResult(taskId, 'text_to_video', prompt)
   } catch (error: unknown) {
     const message = error instanceof Error && error.message ? error.message : '查询视频任务进度失败'
     appendLog(id, `[${nowLabel()}] error: ${message}`)
@@ -3343,14 +3301,14 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
       statusPatch: {
         videoTaskId: taskId,
         videoModel: String((data as any)?.videoModel || '').trim() || undefined,
-        videoModelVendor: vendor,
+        videoModelVendor: null,
       },
     })
     return
   }
 
   if (snapshot.status === 'failed') {
-    const msg = resolveGenericVideoFailureMessage(snapshot, vendor)
+    const msg = resolveGenericVideoFailureMessage(snapshot, '视频')
     setNodeStatus(id, 'error', { progress: 0, lastError: msg })
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
     return
@@ -3368,7 +3326,6 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
       videoModelValue: String((data as any)?.videoModel || '').trim(),
     }),
     modelKey: String((data as any)?.videoModel || '').trim(),
-    vendor,
   })
 }
 
@@ -3846,7 +3803,6 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       },
     }
     const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
-      vendor,
       request,
       startProgress: 5,
       maxProgress: 50,
@@ -4267,7 +4223,6 @@ async function runSingleFissionGrid(input: {
     },
   }
   const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
-    vendor,
     request,
     startProgress: progressBase,
     maxProgress: progressMax,
@@ -4598,7 +4553,6 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
         },
       }
       const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
-        vendor,
         request,
         startProgress: progressStart,
         maxProgress: Math.max(progressStart + 1, progressEnd - 3),
@@ -5067,7 +5021,6 @@ async function runGenericTask(ctx: RunnerContext) {
       )
       const pendingTask = imageRequest
         ? await runTaskByVendorWithPendingProgress(ctx, {
-            vendor,
             request: imageRequest,
             startProgress: progressBase,
             maxProgress: requestProgressCap,
@@ -5076,7 +5029,7 @@ async function runGenericTask(ctx: RunnerContext) {
         : null
       let res = imageRequest
         ? pendingTask!.result
-        : await runChatByVendor(vendor, {
+        : await runAutoChat({
             prompt,
             ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
             ...(selectedModel ? { modelAlias: selectedModel } : {}),
@@ -5140,7 +5093,7 @@ async function runGenericTask(ctx: RunnerContext) {
 
           let snapshot: TaskResultDto
           try {
-            snapshot = await fetchTaskResult(taskId, effectiveTaskKind, effectivePromptForModel, vendor)
+            snapshot = await fetchTaskResult(taskId, effectiveTaskKind, effectivePromptForModel)
           } catch (err: any) {
             const msg = err?.message || '查询图像任务进度失败'
             appendLog(id, `[${nowLabel()}] error: ${msg}`)
