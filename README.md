@@ -239,6 +239,7 @@ pnpm -w install
 
 - `-w` 表示在 workspace 根目录安装
 - 这一步会把前端、API、共享 packages、agents-cli 需要的依赖统一装好
+- 安装过程中会自动为 `apps/hono-api` 生成 Prisma Client，无需再手动执行 `prisma generate`
 - 不需要再手动分别去 `apps/web`、`apps/hono-api`、`apps/agents-cli` 里单独 `install`
 
 ## 5. 配置后端 API
@@ -365,6 +366,12 @@ pnpm --filter agents dev -- serve --port 8799
 
 ```bash
 pnpm dev:api
+```
+
+如果你的本地环境或容器环境对文件监听数量有限制，`pnpm dev:api` 可能会因为 `node --watch` 触发 `EMFILE`。这时请改用不带 watch 的稳定模式：
+
+```bash
+pnpm dev:api:stable
 ```
 
 默认地址：

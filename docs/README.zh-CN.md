@@ -175,6 +175,8 @@ pnpm dev:web
 pnpm dev:api
 ```
 
+安装阶段会自动为 `apps/hono-api` 生成 Prisma Client。若本地环境对文件监听数量有限制，可改用 `pnpm dev:api:stable`。
+
 ### Docker 一键启动（推荐给新手 / 跨平台）
 
 根目录提供 `docker-compose.yml`：Web + API
