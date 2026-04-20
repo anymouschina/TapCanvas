@@ -612,3 +612,7 @@ TapCanvas Pro 基于 Apache-2.0 协议开源发布，并附有补充商业协议
 如需合作或问题沟通，可联系作者：
 
 ![联系作者](./assets/author.jpg)
+
+如有部署问题需要答疑，可扫码添加微信：
+
+![部署答疑](./assets/connect/wecaht.jpg)
