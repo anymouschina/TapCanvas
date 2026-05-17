@@ -606,8 +606,7 @@ TapCanvas Pro 基于 Apache-2.0 协议开源发布，并附有补充商业协议
 邮箱：beq.li@qq.com
 
 欢迎加入交流群交流反馈与共创：
-
-![交流群](./assets/group.jpg)
+q群已满，暂不公开
 
 如需合作或问题沟通，可联系作者：
 
