@@ -12,6 +12,8 @@ import {
 	upsertModelCreditCost,
 } from "./billing.repo";
 import { listCatalogModels } from "../model-catalog/model-catalog.repo";
+import { getNewApiPricingSnapshot } from "./new-api-pricing";
+import { listNewApiModels } from "../new-api-models/new-api-models.service";
 
 function requireAdmin(c: AppContext): void {
 	if (!isAdminRequest(c)) {
@@ -42,6 +44,64 @@ function inferSpecCandidates(modelKey?: string | null): string[] {
 	return Array.from(new Set(out));
 }
 
+function imageResolutionSpecKey(specKey: string): string | null {
+	const parts = specKey.trim().toLowerCase().split(":").filter(Boolean);
+	if (parts[0] !== "image") return null;
+	const resolution = parts.find((part) => /^(?:1k|2k|4k)$/.test(part));
+	return resolution ? `image:${resolution}` : null;
+}
+
+export function resolveSyntheticImageSpecCostFromBase(input: {
+	baseCost: number | null | undefined;
+	specKey: string | null | undefined;
+}): number | null {
+	const normalizedSpecKey =
+		typeof input.specKey === "string" ? input.specKey.trim().toLowerCase() : "";
+	if (!normalizedSpecKey) return null;
+	const resolutionSpec = imageResolutionSpecKey(normalizedSpecKey);
+	if (!resolutionSpec || resolutionSpec !== normalizedSpecKey) return null;
+	const baseCost =
+		typeof input.baseCost === "number" && Number.isFinite(input.baseCost)
+			? Math.max(0, Math.floor(input.baseCost))
+			: 0;
+	if (baseCost <= 0) return null;
+	return resolutionSpec === "image:4k" ? baseCost * 2 : baseCost;
+}
+
+async function resolveDirectNewApiCreditsFallback(
+	c: AppContext,
+	normalizedModelKey: string,
+): Promise<number | null> {
+	const pricingSnapshot = await getNewApiPricingSnapshot(c.env);
+	const directCredits =
+		pricingSnapshot.directCreditsByModelKey.get(normalizedModelKey);
+	if (typeof directCredits === "number" && Number.isFinite(directCredits)) {
+		return Math.max(0, Math.floor(directCredits));
+	}
+
+	const newApiModels = await listNewApiModels(c.env, { enabled: true });
+	for (const model of newApiModels) {
+		const requestKey = normalizeBillingModelKey(model.requestModelKey);
+		const modelNameKey = normalizeBillingModelKey(model.modelName);
+		if (
+			requestKey !== normalizedModelKey &&
+			modelNameKey !== normalizedModelKey
+		) {
+			continue;
+		}
+		const translatedCredits =
+			pricingSnapshot.directCreditsByModelKey.get(requestKey) ??
+			pricingSnapshot.directCreditsByModelKey.get(modelNameKey);
+		if (
+			typeof translatedCredits === "number" &&
+			Number.isFinite(translatedCredits)
+		) {
+			return Math.max(0, Math.floor(translatedCredits));
+		}
+	}
+	return null;
+}
+
 export async function resolveTeamCreditsCostForTask(c: AppContext, input: {
 	taskKind: string | null | undefined;
 	modelKey?: string | null | undefined;
@@ -50,9 +110,71 @@ export async function resolveTeamCreditsCostForTask(c: AppContext, input: {
 	const normalizedModelKey = normalizeBillingModelKey(input.modelKey);
 	if (normalizedModelKey) {
 		const explicitSpec = typeof input.specKey === "string" ? input.specKey.trim() : "";
-		const specCandidates = explicitSpec
-			? [explicitSpec]
-			: inferSpecCandidates(input.modelKey);
+		if (explicitSpec) {
+			const specSnapshot = await (async () => {
+				const snap = await getNewApiPricingSnapshot(c.env);
+				const exact = snap.specCreditsByModelSpecKey.get(`${normalizedModelKey}:${explicitSpec}`);
+				if (typeof exact === "number") return exact;
+				const resolutionSpec = imageResolutionSpecKey(explicitSpec);
+				return resolutionSpec
+					? snap.specCreditsByModelSpecKey.get(`${normalizedModelKey}:${resolutionSpec}`)
+					: undefined;
+			})();
+			if (typeof specSnapshot === "number" && Number.isFinite(specSnapshot) && specSnapshot > 0) {
+				return specSnapshot;
+			}
+
+			// snapshot 没命中时不论是否 image spec 都先走 DB / direct fallback。
+			// Why: 2026-05-04 patch 把 gpt-image-2 的 model_credit_cost_specs 清空、
+			// 改为从 new-api /api/pricing 取价；但只要上游 new-api 部署滞后、模型 Status≠1
+			// 或 ability 缺失，snapshot 就拿不到 image:4k 这类 spec，原逻辑会硬抛 503，
+			// 现把 DB + direct credits 留作兜底，仍未命中再抛错。
+			const explicitSpecRow = await getModelCreditCost(
+				c.env.DB,
+				normalizedModelKey,
+				explicitSpec,
+			);
+			if (explicitSpecRow && Number(explicitSpecRow.enabled ?? 1) !== 0) {
+				const cost =
+					typeof explicitSpecRow.cost === "number" &&
+					Number.isFinite(explicitSpecRow.cost)
+						? explicitSpecRow.cost
+						: 0;
+				return Math.max(0, Math.floor(cost));
+			}
+			const baseRow = await getModelCreditCost(c.env.DB, normalizedModelKey);
+			if (baseRow && Number(baseRow.enabled ?? 1) !== 0) {
+				const syntheticImageSpecCost = resolveSyntheticImageSpecCostFromBase({
+					baseCost: baseRow.cost,
+					specKey: explicitSpec,
+				});
+				if (syntheticImageSpecCost !== null) {
+					return syntheticImageSpecCost;
+				}
+			}
+			const directFallbackCredits = await resolveDirectNewApiCreditsFallback(
+				c,
+				normalizedModelKey,
+			);
+			if (
+				typeof directFallbackCredits === "number" &&
+				Number.isFinite(directFallbackCredits) &&
+				directFallbackCredits > 0
+			) {
+				return directFallbackCredits;
+			}
+			throw new AppError("模型规格积分价格未配置", {
+				status: 503,
+				code: "model_spec_pricing_unavailable",
+				details: {
+					modelKey: normalizedModelKey,
+					taskKind: input.taskKind ?? null,
+					specKey: explicitSpec,
+				},
+			});
+		}
+
+		const specCandidates = inferSpecCandidates(input.modelKey);
 		for (const specKey of specCandidates) {
 			const specRow = await getModelCreditCost(c.env.DB, normalizedModelKey, specKey);
 			if (specRow && Number(specRow.enabled ?? 1) !== 0) {
@@ -60,11 +182,55 @@ export async function resolveTeamCreditsCostForTask(c: AppContext, input: {
 				return Math.max(0, Math.floor(cost));
 			}
 		}
-		const row = await getModelCreditCost(c.env.DB, normalizedModelKey, "");
-		if (row && Number(row.enabled ?? 1) !== 0) {
-			const cost = typeof row.cost === "number" && Number.isFinite(row.cost) ? row.cost : 0;
+
+		const pricingSnapshot = await getNewApiPricingSnapshot(c.env);
+		const directCredits = pricingSnapshot.creditsByModelKey.get(normalizedModelKey);
+		if (typeof directCredits === "number" && Number.isFinite(directCredits)) {
+			return Math.max(0, Math.floor(directCredits));
+		}
+
+		const baseRow = await getModelCreditCost(c.env.DB, normalizedModelKey);
+		if (baseRow && Number(baseRow.enabled ?? 1) !== 0) {
+			const cost =
+				typeof baseRow.cost === "number" && Number.isFinite(baseRow.cost)
+					? baseRow.cost
+					: 0;
 			return Math.max(0, Math.floor(cost));
 		}
+
+		const newApiModels = await listNewApiModels(c.env, { enabled: true });
+		for (const model of newApiModels) {
+			const requestKey = normalizeBillingModelKey(model.requestModelKey);
+			const modelNameKey = normalizeBillingModelKey(model.modelName);
+			if (
+				requestKey !== normalizedModelKey &&
+				modelNameKey !== normalizedModelKey
+			) {
+				continue;
+			}
+			const translatedCredits =
+				pricingSnapshot.creditsByModelKey.get(requestKey) ??
+				pricingSnapshot.creditsByModelKey.get(modelNameKey);
+			if (
+				typeof translatedCredits === "number" &&
+				Number.isFinite(translatedCredits)
+			) {
+				return Math.max(0, Math.floor(translatedCredits));
+			}
+		}
+		const fallback = fallbackCostForTaskKind(input.taskKind);
+		if (fallback > 0) {
+			return fallback;
+		}
+		throw new AppError("模型积分价格未配置", {
+			status: 503,
+			code: "model_pricing_unavailable",
+			details: {
+				modelKey: normalizedModelKey,
+				taskKind: input.taskKind ?? null,
+				specKey: null,
+			},
+		});
 	}
 	return fallbackCostForTaskKind(input.taskKind);
 }
