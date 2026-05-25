@@ -130,10 +130,24 @@ export type ModelCatalogVideoOptions = z.infer<
 	typeof ModelCatalogVideoOptionsSchema
 >;
 
+export const ModelCatalogImageResolutionOptionSchema = z
+	.object({
+		value: z.string().min(1),
+		label: z.string().min(1),
+		priceLabel: z.string().min(1).optional(),
+	})
+	.passthrough();
+
+export type ModelCatalogImageResolutionOption = z.infer<
+	typeof ModelCatalogImageResolutionOptionSchema
+>;
+
 export const ModelCatalogImageOptionsSchema = z
 	.object({
 		defaultAspectRatio: z.string().min(1).optional(),
 		defaultImageSize: z.string().min(1).optional(),
+		defaultResolution: z.string().min(1).optional(),
+		defaultQuality: z.string().min(1).optional(),
 		aspectRatioOptions: z.array(z.string().min(1)).default([]),
 		imageSizeOptions: z
 			.array(
@@ -149,7 +163,15 @@ export const ModelCatalogImageOptionsSchema = z
 				]),
 			)
 			.default([]),
-		resolutionOptions: z.array(z.string().min(1)).default([]),
+		resolutionOptions: z
+			.array(
+				z.union([
+					z.string().min(1),
+					ModelCatalogImageResolutionOptionSchema,
+				]),
+			)
+			.default([]),
+		qualityOptions: z.array(z.string().min(1)).default([]),
 		supportsReferenceImages: z.boolean().optional(),
 		supportsTextToImage: z.boolean().optional(),
 		supportsImageToImage: z.boolean().optional(),
@@ -296,3 +318,46 @@ export const ModelCatalogImportResultSchema = z.object({
 export type ModelCatalogImportResult = z.infer<
 	typeof ModelCatalogImportResultSchema
 >;
+
+// ── Unified model params (from new-api GET /api/models/params) ───────────────
+
+export const ModelParamOptionSchema = z
+	.object({
+		value: z.union([z.string(), z.number()]),
+		label: z.string(),
+	})
+	.passthrough();
+
+export type ModelParamOption = z.infer<typeof ModelParamOptionSchema>;
+
+export const ModelParamSpecSchema = z
+	.object({
+		key: z.string(),
+		type: z.enum(["float", "integer", "boolean", "string", "enum"]),
+		label: z.string().optional(),
+		required: z.boolean().optional(),
+		default: z.union([z.string(), z.number(), z.boolean()]).nullable().optional(),
+		min: z.number().optional(),
+		max: z.number().optional(),
+		step: z.number().optional(),
+		options: z.array(ModelParamOptionSchema).optional(),
+		scope: z.string().optional(),
+	})
+	.passthrough();
+
+export type ModelParamSpec = z.infer<typeof ModelParamSpecSchema>;
+
+export const ModelParamsCatalogEntrySchema = z.object({
+	kind: z.enum(["chat", "image", "video", "audio", "embedding"]),
+	capabilities: z.array(z.string()).optional(),
+	params: z.array(ModelParamSpecSchema).default([]),
+});
+
+export type ModelParamsCatalogEntry = z.infer<typeof ModelParamsCatalogEntrySchema>;
+
+export const ModelParamsCatalogSchema = z.record(
+	z.string(),
+	ModelParamsCatalogEntrySchema,
+);
+
+export type ModelParamsCatalog = z.infer<typeof ModelParamsCatalogSchema>;

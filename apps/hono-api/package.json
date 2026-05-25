@@ -20,6 +20,7 @@
 		"smoke:commerce": "node scripts/commerce-smoke.mjs",
 		"smoke:project-chapter": "node scripts/project-chapter-smoke.mjs",
 		"audit:commerce:catalog": "node scripts/audit-commerce-catalog.mjs",
+		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"credit-finalizer:worker": "node scripts/credit-finalizer-worker.mjs",
 		"prompt-evolution:worker": "node scripts/prompt-evolution-worker.mjs"
