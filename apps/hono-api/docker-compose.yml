@@ -38,7 +38,7 @@ services:
       - ./.env
     environment:
       AGENTS_PROFILE: code
-      AGENTS_API_BASE_URL: ${AGENTS_API_BASE_URL:-https://right.codes/codex/v1}
+      AGENTS_API_BASE_URL: ${AGENTS_API_BASE_URL:-http://new-api:4455/v1}
       AGENTS_API_STYLE: "responses"
       AGENTS_STREAM: "true"
       AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
@@ -134,6 +134,9 @@ services:
       AUTH_PHONE_OTP_TRACE: "1"
       AGENTS_BRIDGE_AUTOSTART: "0"
       AGENTS_BRIDGE_BASE_URL: http://agents-bridge:8799
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_BASE_URL:-http://new-api:4455}
+      NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
+      NEW_API_SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
       AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
       AGENTS_BRIDGE_MAX_CONCURRENCY: "16"
@@ -175,11 +178,15 @@ services:
     depends_on:
       agents-bridge:
         condition: service_healthy
+      new-api:
+        condition: service_healthy
+      new-api-patch:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && ( [ -d node_modules/.pnpm ] && [ -f node_modules/wechatpay-node-v3/package.json ] && [ -f node_modules/undici/package.json ] && [ -f node_modules/@alicloud/dysmsapi20170525/package.json ] && [ -f node_modules/prisma/package.json ] && [ -f node_modules/@prisma/client/package.json ] && [ -f node_modules/jsonrepair/package.json ] || pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) && pnpm db:pg:backup && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm build && exec node dist/main.js"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && ( [ -d node_modules/.pnpm ] && [ -f node_modules/wechatpay-node-v3/package.json ] && [ -f node_modules/undici/package.json ] && [ -f node_modules/@alicloud/dysmsapi20170525/package.json ] && [ -f node_modules/prisma/package.json ] && [ -f node_modules/@prisma/client/package.json ] && [ -f node_modules/jsonrepair/package.json ] || pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) && pnpm db:pg:backup && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm sync:new-api:channels && pnpm sync:new-api:catalog && pnpm build && exec node dist/main.js"
     volumes:
       - .:/app
       - ${TAPCANVAS_SHARED_ROOT:-../..}/sql:/app/sql:ro
@@ -189,6 +196,155 @@ services:
       - hono_api_db_backups:/app/backups
       - pnpm_store:/app/.pnpm-store
       - api_node_modules:/app/node_modules
+
+  new-api:
+    image: ${NEW_API_IMAGE:-tapcanvas/new-api:local}
+    restart: unless-stopped
+    build:
+      context: ../new-api
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        BUN_IMAGE: ${NEW_API_BUN_IMAGE:-docker.m.daocloud.io/oven/bun:1}
+        GO_IMAGE: ${NEW_API_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.26.1-alpine}
+        RUNTIME_IMAGE: ${NEW_API_RUNTIME_IMAGE:-docker.m.daocloud.io/library/debian:bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        GO_PROXY: ${NEW_API_GO_PROXY:-https://goproxy.cn,direct}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        SKIP_WEB_BUILD: ${NEW_API_SKIP_WEB_BUILD:-1}
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        ALL_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+        all_proxy: ""
+    ports:
+      - "${NEW_API_PORT:-4455}:4455"
+    environment:
+      PORT: ${NEW_API_INTERNAL_PORT:-4455}
+      SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      REDIS_CONN_STRING: ${NEW_API_REDIS_CONN_STRING:-redis://redis:6379}
+      TZ: ${NEW_API_TZ:-Asia/Shanghai}
+      TAPCANVAS_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
+      ERROR_LOG_ENABLED: ${NEW_API_ERROR_LOG_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${NEW_API_BATCH_UPDATE_ENABLED:-true}
+      GLOBAL_API_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_API_RATE_LIMIT_ENABLE:-false}
+      GLOBAL_WEB_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_WEB_RATE_LIMIT_ENABLE:-false}
+      CRITICAL_RATE_LIMIT_ENABLE: ${NEW_API_CRITICAL_RATE_LIMIT_ENABLE:-false}
+      SEARCH_RATE_LIMIT_ENABLE: ${NEW_API_SEARCH_RATE_LIMIT_ENABLE:-false}
+      NODE_NAME: ${NEW_API_NODE_NAME:-new-api-node-1}
+      WEB_DIST_DIR: ${NEW_API_WEB_DIST_DIR:-/runtime/web/dist}
+      RELAY_TIMEOUT: ${NEW_API_RELAY_TIMEOUT:-1200}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      all_proxy: ""
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:-}
+      CRYPTO_SECRET: ${NEW_API_CRYPTO_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ../new-api/data:/data
+      - ../new-api/logs:/app/logs
+      - ../new-api/web/dist:/runtime/web/dist:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:4455/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  new-api-patch:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      new-api:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
+      NEW_API_PATCH_ENABLED: ${NEW_API_PATCH_ENABLED:-1}
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+    command: >-
+      sh -lc '
+      set -eu;
+      if [ "$${NEW_API_PATCH_ENABLED:-1}" != "1" ]; then
+        echo "new-api patch disabled";
+        exit 0;
+      fi;
+      echo "ensuring new-api database exists: $${NEW_API_PATCH_DB_NAME}";
+      if [ "$(psql \
+        -h "$${NEW_API_PATCH_DB_HOST}" \
+        -p "$${NEW_API_PATCH_DB_PORT}" \
+        -U "$${NEW_API_PATCH_DB_USER}" \
+        -d postgres \
+        -tAc "SELECT 1 FROM pg_database WHERE datname = '\''$${NEW_API_PATCH_DB_NAME}'\''")" != "1" ]; then
+        createdb \
+          -h "$${NEW_API_PATCH_DB_HOST}" \
+          -p "$${NEW_API_PATCH_DB_PORT}" \
+          -U "$${NEW_API_PATCH_DB_USER}" \
+          "$${NEW_API_PATCH_DB_NAME}";
+      fi;
+      psql \
+        -h "$${NEW_API_PATCH_DB_HOST}" \
+        -p "$${NEW_API_PATCH_DB_PORT}" \
+        -U "$${NEW_API_PATCH_DB_USER}" \
+        -d "$${NEW_API_PATCH_DB_NAME}" \
+        -v ON_ERROR_STOP=1 \
+        -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());";
+      found_patch=0;
+      applied=0;
+      skipped=0;
+      for patch in $(find /patches -name "*.sql" | sort); do
+        found_patch=1;
+        rel="$${patch#/patches/}";
+        already=$(psql \
+          -h "$${NEW_API_PATCH_DB_HOST}" \
+          -p "$${NEW_API_PATCH_DB_PORT}" \
+          -U "$${NEW_API_PATCH_DB_USER}" \
+          -d "$${NEW_API_PATCH_DB_NAME}" \
+          -tAc "SELECT COUNT(1) FROM schema_migrations WHERE filename = '\''$${rel}'\''");
+        if [ "$${already}" = "1" ]; then
+          echo "skip (already applied): $${rel}";
+          skipped=$(( skipped + 1 ));
+          continue;
+        fi;
+        echo "applying new-api patch: $${patch}";
+        psql \
+          -h "$${NEW_API_PATCH_DB_HOST}" \
+          -p "$${NEW_API_PATCH_DB_PORT}" \
+          -U "$${NEW_API_PATCH_DB_USER}" \
+          -d "$${NEW_API_PATCH_DB_NAME}" \
+          -v ON_ERROR_STOP=1 \
+          -f "$${patch}";
+        psql \
+          -h "$${NEW_API_PATCH_DB_HOST}" \
+          -p "$${NEW_API_PATCH_DB_PORT}" \
+          -U "$${NEW_API_PATCH_DB_USER}" \
+          -d "$${NEW_API_PATCH_DB_NAME}" \
+          -c "INSERT INTO schema_migrations (filename) VALUES ('\''$${rel}'\'') ON CONFLICT DO NOTHING;";
+        applied=$(( applied + 1 ));
+      done;
+      if [ "$${found_patch}" = "0" ]; then
+        echo "no new-api patch files found under /patches";
+        exit 1;
+      fi;
+      echo "new-api patches done: applied=$${applied} skipped=$${skipped}";
+      '
+    volumes:
+      - ../new-api/patches:/patches:ro
 
   redis:
     image: ${DOCKERHUB_REGISTRY:-docker.io}/redis:7-alpine
