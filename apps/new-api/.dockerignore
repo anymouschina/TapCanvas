@@ -1,0 +1,14 @@
+.github
+.git
+*.md
+.vscode
+.gitignore
+Makefile
+docs
+.eslintcache
+.gocache
+/web/node_modules
+/data
+/logs
+/tmp
+*.log
