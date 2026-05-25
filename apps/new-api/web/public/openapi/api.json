@@ -1,0 +1,7818 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "后台管理接口",
+    "description": "",
+    "version": "1.0.0"
+  },
+  "tags": [
+    {
+      "name": "系统"
+    },
+    {
+      "name": "用户登陆注册"
+    },
+    {
+      "name": "OAuth"
+    },
+    {
+      "name": "用户管理"
+    },
+    {
+      "name": "充值"
+    },
+    {
+      "name": "两步验证"
+    },
+    {
+      "name": "安全验证"
+    },
+    {
+      "name": "渠道管理"
+    },
+    {
+      "name": "令牌管理"
+    },
+    {
+      "name": "兑换码"
+    },
+    {
+      "name": "日志"
+    },
+    {
+      "name": "数据统计"
+    },
+    {
+      "name": "分组"
+    },
+    {
+      "name": "任务"
+    },
+    {
+      "name": "供应商"
+    },
+    {
+      "name": "模型管理"
+    },
+    {
+      "name": "系统设置"
+    }
+  ],
+  "paths": {
+    "/api/setup": {
+      "get": {
+        "summary": "获取初始化状态",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "初始化系统",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/status": {
+      "get": {
+        "summary": "获取系统状态",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/status/test": {
+      "get": {
+        "summary": "测试系统状态",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/uptime/status": {
+      "get": {
+        "summary": "获取Uptime Kuma状态",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/notice": {
+      "get": {
+        "summary": "获取公告",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user-agreement": {
+      "get": {
+        "summary": "获取用户协议",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/privacy-policy": {
+      "get": {
+        "summary": "获取隐私政策",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/about": {
+      "get": {
+        "summary": "获取关于信息",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/home_page_content": {
+      "get": {
+        "summary": "获取首页内容",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/pricing": {
+      "get": {
+        "summary": "获取定价信息",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（可选登录）",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "获取模型列表",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/ratio_config": {
+      "get": {
+        "summary": "获取倍率配置",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "系统"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/verification": {
+      "get": {
+        "summary": "发送邮箱验证码",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/reset_password": {
+      "get": {
+        "summary": "发送密码重置邮件",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/reset": {
+      "post": {
+        "summary": "重置密码",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/register": {
+      "post": {
+        "summary": "用户注册",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "verification_code": {
+                    "type": "string"
+                  },
+                  "aff_code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/login": {
+      "post": {
+        "summary": "用户登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/login/2fa": {
+      "post": {
+        "summary": "两步验证登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（登录流程）",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/logout": {
+      "get": {
+        "summary": "用户登出",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/groups": {
+      "get": {
+        "summary": "获取用户分组列表",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/login/begin": {
+      "post": {
+        "summary": "开始Passkey登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/login/finish": {
+      "post": {
+        "summary": "完成Passkey登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "用户登陆注册"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/github": {
+      "get": {
+        "summary": "GitHub OAuth登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/discord": {
+      "get": {
+        "summary": "Discord OAuth登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/oidc": {
+      "get": {
+        "summary": "OIDC登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/linuxdo": {
+      "get": {
+        "summary": "LinuxDO OAuth登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/state": {
+      "get": {
+        "summary": "生成OAuth State",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/wechat": {
+      "get": {
+        "summary": "微信OAuth登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/wechat/bind": {
+      "get": {
+        "summary": "绑定微信",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/email/bind": {
+      "get": {
+        "summary": "绑定邮箱",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/telegram/login": {
+      "get": {
+        "summary": "Telegram登录",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（OAuth回调）",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/oauth/telegram/bind": {
+      "get": {
+        "summary": "绑定Telegram",
+        "deprecated": false,
+        "description": "🔓 无需鉴权",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/self/groups": {
+      "get": {
+        "summary": "获取当前用户分组",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/self": {
+      "get": {
+        "summary": "获取当前用户信息",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新当前用户信息",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "original_password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "注销当前用户",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/models": {
+      "get": {
+        "summary": "获取用户可用模型",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/token": {
+      "get": {
+        "summary": "生成访问令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey": {
+      "get": {
+        "summary": "获取Passkey状态",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/register/begin": {
+      "post": {
+        "summary": "开始注册Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/register/finish": {
+      "post": {
+        "summary": "完成注册Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/verify/begin": {
+      "post": {
+        "summary": "开始验证Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/passkey/verify/finish": {
+      "post": {
+        "summary": "完成验证Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/aff": {
+      "get": {
+        "summary": "获取邀请码",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/aff_transfer": {
+      "post": {
+        "summary": "转换邀请额度",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "quota": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/setting": {
+      "put": {
+        "summary": "更新用户设置",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "notify_type": {
+                    "type": "string"
+                  },
+                  "quota_warning_threshold": {
+                    "type": "number"
+                  },
+                  "webhook_url": {
+                    "type": "string"
+                  },
+                  "notification_email": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/topup": {
+      "get": {
+        "summary": "获取所有充值记录",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/": {
+      "get": {
+        "summary": "获取所有用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/User"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/User"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/topup/complete": {
+      "post": {
+        "summary": "管理员完成充值",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/search": {
+      "get": {
+        "summary": "搜索用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/{id}": {
+      "get": {
+        "summary": "获取指定用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除用户",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/{id}/reset_passkey": {
+      "delete": {
+        "summary": "管理员重置用户Passkey",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/{id}/2fa": {
+      "delete": {
+        "summary": "管理员禁用用户2FA",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/manage": {
+      "post": {
+        "summary": "管理用户状态",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "disable",
+                      "enable",
+                      "delete",
+                      "promote",
+                      "demote"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/topup/info": {
+      "get": {
+        "summary": "获取充值信息",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/topup/self": {
+      "get": {
+        "summary": "获取用户充值记录",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/pay": {
+      "post": {
+        "summary": "发起易支付",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/amount": {
+      "post": {
+        "summary": "获取支付金额",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/stripe/pay": {
+      "post": {
+        "summary": "发起Stripe支付",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/stripe/amount": {
+      "post": {
+        "summary": "获取Stripe支付金额",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/creem/pay": {
+      "post": {
+        "summary": "发起Creem支付",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/epay/notify": {
+      "get": {
+        "summary": "易支付回调",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（支付回调）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/stripe/webhook": {
+      "post": {
+        "summary": "Stripe Webhook",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（Webhook回调）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/creem/webhook": {
+      "post": {
+        "summary": "Creem Webhook",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（Webhook回调）",
+        "tags": [
+          "充值"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/status": {
+      "get": {
+        "summary": "获取2FA状态",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/setup": {
+      "post": {
+        "summary": "设置2FA",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/enable": {
+      "post": {
+        "summary": "启用2FA",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/disable": {
+      "post": {
+        "summary": "禁用2FA",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/backup_codes": {
+      "post": {
+        "summary": "重新生成备用码",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/user/2fa/stats": {
+      "get": {
+        "summary": "获取2FA统计",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "两步验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/verify": {
+      "post": {
+        "summary": "通用安全验证",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "安全验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/verify/status": {
+      "get": {
+        "summary": "获取验证状态",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "安全验证"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/": {
+      "get": {
+        "summary": "获取所有渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "id_sort",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "tag_mode",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "添加渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "batch",
+                      "multi_to_single"
+                    ]
+                  },
+                  "channel": {
+                    "$ref": "#/components/schemas/Channel"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Channel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/search": {
+      "get": {
+        "summary": "搜索渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/models": {
+      "get": {
+        "summary": "获取渠道模型列表",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/models_enabled": {
+      "get": {
+        "summary": "获取已启用模型列表",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/{id}": {
+      "get": {
+        "summary": "获取指定渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/{id}/key": {
+      "post": {
+        "summary": "获取渠道密钥",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）+ 安全验证",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/test": {
+      "get": {
+        "summary": "测试所有渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/test/{id}": {
+      "get": {
+        "summary": "测试指定渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/update_balance": {
+      "get": {
+        "summary": "更新所有渠道余额",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/update_balance/{id}": {
+      "get": {
+        "summary": "更新指定渠道余额",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/disabled": {
+      "delete": {
+        "summary": "删除已禁用渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/batch": {
+      "post": {
+        "summary": "批量删除渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/fix": {
+      "post": {
+        "summary": "修复渠道能力",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/fetch_models/{id}": {
+      "get": {
+        "summary": "获取上游模型列表",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/fetch_models": {
+      "post": {
+        "summary": "获取模型列表",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "base_url": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "integer"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/batch/tag": {
+      "post": {
+        "summary": "批量设置渠道标签",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "tag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/tag/models": {
+      "get": {
+        "summary": "获取标签模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/tag/disabled": {
+      "post": {
+        "summary": "禁用标签渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/tag/enabled": {
+      "post": {
+        "summary": "启用标签渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/tag": {
+      "put": {
+        "summary": "编辑标签渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string"
+                  },
+                  "new_tag": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": "integer"
+                  },
+                  "weight": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/copy/{id}": {
+      "post": {
+        "summary": "复制渠道",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "suffix",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "reset_balance",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/channel/multi_key/manage": {
+      "post": {
+        "summary": "管理多密钥",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "渠道管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "channel_id": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "get_key_status",
+                      "disable_key",
+                      "enable_key",
+                      "delete_key",
+                      "delete_disabled_keys",
+                      "enable_all_keys",
+                      "disable_all_keys"
+                    ]
+                  },
+                  "key_index": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/": {
+      "get": {
+        "summary": "获取所有令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/search": {
+      "get": {
+        "summary": "搜索令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/{id}": {
+      "get": {
+        "summary": "获取指定令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/batch": {
+      "post": {
+        "summary": "批量删除令牌",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/usage/token/": {
+      "get": {
+        "summary": "获取令牌使用情况",
+        "deprecated": false,
+        "description": "🔑 需要令牌认证（TokenAuth）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "",
+            "required": false,
+            "example": "",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/redemption/": {
+      "get": {
+        "summary": "获取所有兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Redemption"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Redemption"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/redemption/search": {
+      "get": {
+        "summary": "搜索兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/redemption/{id}": {
+      "get": {
+        "summary": "获取指定兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/redemption/invalid": {
+      "delete": {
+        "summary": "删除无效兑换码",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "兑换码"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/": {
+      "get": {
+        "summary": "获取所有日志",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除历史日志",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/stat": {
+      "get": {
+        "summary": "获取日志统计",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/self/stat": {
+      "get": {
+        "summary": "获取个人日志统计",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/search": {
+      "get": {
+        "summary": "搜索日志",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/self": {
+      "get": {
+        "summary": "获取个人日志",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/self/search": {
+      "get": {
+        "summary": "搜索个人日志",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/log/token": {
+      "get": {
+        "summary": "通过令牌获取日志",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（通过令牌查询）",
+        "tags": [
+          "日志"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/data/": {
+      "get": {
+        "summary": "获取所有额度数据",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/data/self": {
+      "get": {
+        "summary": "获取个人额度数据",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/group/": {
+      "get": {
+        "summary": "获取所有分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/prefill_group/": {
+      "get": {
+        "summary": "获取预填分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建预填分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新预填分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/prefill_group/{id}": {
+      "delete": {
+        "summary": "删除预填分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/mj/": {
+      "get": {
+        "summary": "获取所有Midjourney任务",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "任务"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/mj/self": {
+      "get": {
+        "summary": "获取个人Midjourney任务",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "任务"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/task/": {
+      "get": {
+        "summary": "获取所有任务",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "任务"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/task/self": {
+      "get": {
+        "summary": "获取个人任务",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "任务"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/vendors/": {
+      "get": {
+        "summary": "获取所有供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/vendors/search": {
+      "get": {
+        "summary": "搜索供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/vendors/{id}": {
+      "get": {
+        "summary": "获取指定供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除供应商",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "供应商"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/": {
+      "get": {
+        "summary": "获取所有模型元数据",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建模型元数据",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新模型元数据",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/search": {
+      "get": {
+        "summary": "搜索模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/{id}": {
+      "get": {
+        "summary": "获取指定模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/sync_upstream/preview": {
+      "get": {
+        "summary": "预览上游模型同步",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/sync_upstream": {
+      "post": {
+        "summary": "同步上游模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/models/missing": {
+      "get": {
+        "summary": "获取缺失模型",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "模型管理"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/option/": {
+      "get": {
+        "summary": "获取系统选项",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新系统选项",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/option/rest_model_ratio": {
+      "post": {
+        "summary": "重置模型倍率",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/option/migrate_console_setting": {
+      "post": {
+        "summary": "迁移控制台设置",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/ratio_sync/channels": {
+      "get": {
+        "summary": "获取可同步渠道",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/ratio_sync/fetch": {
+      "post": {
+        "summary": "获取上游倍率",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "系统设置"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        }
+      },
+      "PageInfo": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "Log": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "integer"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "quota": {
+            "type": "integer"
+          },
+          "used_quota": {
+            "type": "integer"
+          },
+          "request_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "Channel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "models": {
+            "type": "string"
+          },
+          "groups": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "Token": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "expired_time": {
+            "type": "integer"
+          },
+          "remain_quota": {
+            "type": "integer"
+          },
+          "unlimited_quota": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Redemption": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "quota": {
+            "type": "integer"
+          },
+          "created_time": {
+            "type": "integer"
+          },
+          "redeemed_time": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "responses": {},
+    "securitySchemes": {
+      "SessionAuth1": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "session",
+        "description": "Session认证，通过登录接口获取"
+      },
+      "AccessToken1": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Access Token认证，格式: Bearer {access_token}，通过 /api/user/token 接口生成"
+      },
+      "neoSparkMartUser1": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "New-Api-User",
+        "description": "用户ID请求头，必须与当前登录用户ID匹配，使用Session或AccessToken认证时必须提供"
+      },
+      "Combination222": {
+        "group": [
+          {
+            "id": 573666
+          },
+          {
+            "id": 573668
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1122": {
+        "group": [
+          {
+            "id": 573667
+          },
+          {
+            "id": 573668
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination223": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1123": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination224": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1124": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination225": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1125": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination226": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1126": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination227": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1127": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination228": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1128": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination229": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1129": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination230": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1130": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination231": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1131": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination232": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1132": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination233": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1133": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination234": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1134": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination235": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1135": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination236": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1136": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination237": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1137": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination238": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1138": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination239": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1139": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination240": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1140": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination241": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1141": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination242": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1142": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination243": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1143": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination244": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1144": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination245": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1145": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination246": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1146": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination247": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1147": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination248": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1148": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination249": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1149": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination250": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1150": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination251": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1151": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination252": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1152": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination253": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1153": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination254": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1154": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination255": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1155": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination256": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1156": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination257": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1157": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination258": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1158": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination259": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1159": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination260": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1160": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination261": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1161": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination262": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1162": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination263": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1163": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination264": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1164": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination265": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1165": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination266": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1166": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination267": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1167": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination268": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1168": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination269": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1169": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination270": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1170": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination271": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1171": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination272": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1172": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination273": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1173": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination274": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1174": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination275": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1175": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination276": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1176": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination277": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1177": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination278": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1178": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination279": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1179": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination280": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1180": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination281": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1181": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination282": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1182": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination283": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1183": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination284": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1184": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination285": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1185": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination286": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1186": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination287": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1187": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination288": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1188": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination289": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1189": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination290": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1190": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination291": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1191": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination292": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1192": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination293": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1193": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination294": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1194": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination295": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1195": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination296": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1196": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination297": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1197": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination298": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1198": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination299": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1199": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination300": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1200": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination301": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1201": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination302": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1202": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination303": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1203": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination304": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1204": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination305": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1205": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination306": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1206": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination307": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1207": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination308": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1208": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination309": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1209": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination310": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1210": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination311": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1211": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination312": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1212": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination313": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1213": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination314": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1214": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination315": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1215": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination316": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1216": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination317": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1217": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination318": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1218": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination319": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1219": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination320": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1220": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination321": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1221": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination322": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1222": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination323": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1223": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination324": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1224": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination325": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1225": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination326": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1226": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination327": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1227": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination328": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1228": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination329": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1229": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination330": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1230": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination331": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1231": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination332": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1232": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination333": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1233": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination334": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1234": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination335": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1235": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination336": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1236": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination337": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1237": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination338": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1238": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination339": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1239": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination340": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1240": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination341": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1241": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination342": {
+        "group": [
+          {
+            "id": "SessionAuth"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      },
+      "Combination1242": {
+        "group": [
+          {
+            "id": "AccessToken"
+          },
+          {
+            "id": "neoSparkMartUser"
+          }
+        ],
+        "type": "combination"
+      }
+    }
+  },
+  "servers": [],
+  "security": [
+    {
+      "Combination343": []
+    },
+    {
+      "Combination1243": []
+    }
+  ]
+}

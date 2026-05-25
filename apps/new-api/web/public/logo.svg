@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF6B35"/>
+      <stop offset="100%" stop-color="#FF9A3C"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <!-- fish body -->
+  <ellipse cx="30" cy="32" rx="14" ry="9" fill="white" opacity="0.95"/>
+  <!-- fish tail -->
+  <polygon points="48,22 44,32 48,42" fill="white" opacity="0.85"/>
+  <!-- fish eye -->
+  <circle cx="22" cy="30" r="2.5" fill="#FF6B35"/>
+  <circle cx="21.3" cy="29.3" r="0.8" fill="white"/>
+  <!-- M letter overlay -->
+  <text x="24" y="37" font-family="Arial,sans-serif" font-weight="900" font-size="12" fill="#FF6B35" letter-spacing="-0.5">M</text>
+</svg>
