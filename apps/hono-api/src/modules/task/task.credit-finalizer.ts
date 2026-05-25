@@ -6,19 +6,8 @@ import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 import { getVendorTaskRefByTaskId } from "./vendor-task-refs.repo";
 import { TaskResultSchema } from "./task.schemas";
 import { upsertTaskResult } from "./task-result.repo";
-import {
-	fetchGrsaiDrawTaskResult,
-	fetchApimartTaskResult,
-	fetchAsyncDataTaskResult,
-	fetchTuziTaskResult,
-	fetchMappedTaskResultForVendor,
-} from "./task.service";
+import { fetchNewApiTaskResult } from "./task.service";
 import { upsertTaskStatus } from "./task-status.repo";
-import {
-	normalizeDispatchVendor,
-	normalizeProxyVendorHint,
-	shouldUseGrsaiDrawPollingForImageTask,
-} from "./task.vendor";
 import {
 	extractBillingSpecKeyFromLedgerNote,
 	extractBillingSpecKeyFromTaskRaw,
@@ -260,168 +249,168 @@ export async function runCreditTaskFinalizer(
 			continue;
 		}
 
-		const vendorHead = vendorRef.trim().toLowerCase().split(":")[0]?.trim() || "";
-		const dispatch = normalizeDispatchVendor(vendorRef);
-		const proxyHint = normalizeProxyVendorHint(vendorRef);
-		const useGrsaiDrawImagePolling =
-			refKind === "image" && shouldUseGrsaiDrawPollingForImageTask(vendorRef);
-
 		const c = createInternalAppContext(env, {
 			apiKeyId: "internal-finalizer",
 			routingTaskKind: taskKind || undefined,
-			...(vendorHead === "direct" ? { proxyDisabled: true } : {}),
-			...(proxyHint ? { proxyVendorHint: proxyHint } : {}),
 		});
 
-			try {
-				let result: any;
-				if (dispatch === "apimart") {
-					result = await fetchApimartTaskResult(c, userId, taskId, null, {
-					taskKind: (taskKind as any) ?? null,
-				});
-			} else if (useGrsaiDrawImagePolling) {
-				result = await fetchGrsaiDrawTaskResult(c, userId, taskId, {
-					taskKind: (taskKind as any) ?? null,
-					promptFromClient: null,
-				});
-			} else if (refKind === "image") {
-				await upsertTaskStatus(env.DB, {
-					taskId,
-					provider: FINALIZER_PROVIDER,
-					userId,
-					status: "running",
-					data: {
-						reason: "polling_not_supported",
-						vendor: vendorRef,
-						dispatch,
-						pid,
-						taskKind,
-						teamId: row.teamId,
-						credits: { reserved: row.reserved, pending: pendingAmount },
-					},
-					nowIso,
-				});
-				continue;
-			} else if (dispatch === "asyncdata") {
-				result = await fetchAsyncDataTaskResult(c, userId, taskId, {
-					taskKind: (taskKind as any) ?? null,
-					promptFromClient: null,
-				});
-			} else if (dispatch === "tuzi") {
-				result = await fetchTuziTaskResult(c, userId, taskId, {
-					taskKind: (taskKind as any) ?? null,
-					promptFromClient: null,
-				});
-			} else if (vendorHead === "sora2api" || dispatch === "minimax") {
-				throw new Error(`${vendorRef} vendor_removed`);
-			} else {
-				const mapped = await fetchMappedTaskResultForVendor(c, userId, vendorRef, {
-					taskId,
-					taskKind: (taskKind as any) ?? null,
-					kindHint: refKind,
-					promptFromClient: null,
-				});
-				if (!mapped) {
-					throw new Error(`${vendorRef} mapping_not_configured`);
+		try {
+			let result: any;
+			if (refKind === "image") {
+				// Image tasks complete synchronously — no async polling needed.
+				// If a reservation is still pending after timeout, the sync settle failed
+				// (e.g. duplicate task-id rebind conflict). Release as orphan.
+				if (ageMs >= orphanReleaseMs) {
+					try {
+						const released = await tryReleaseTeamCreditsOnce(env.DB, {
+							teamId: row.teamId,
+							amount: pendingAmount,
+							taskId,
+							taskKind,
+							actorUserId: userId,
+							note: "finalizer:image_orphan_release",
+							nowIso,
+						});
+						if (released.released) {
+							orphanReleased += 1;
+							await upsertTaskStatus(env.DB, {
+								taskId,
+								provider: FINALIZER_PROVIDER,
+								userId,
+								status: "failed",
+								data: {
+									reason: "image_orphan_release",
+									vendor: vendorRef,
+									taskKind,
+									teamId: row.teamId,
+									credits: { reserved: row.reserved, pending: pendingAmount },
+								},
+								completedAt: nowIso,
+								nowIso,
+							});
+						}
+					} catch (err: any) {
+						errors += 1;
+					}
+				} else {
+					await upsertTaskStatus(env.DB, {
+						taskId,
+						provider: FINALIZER_PROVIDER,
+						userId,
+						status: "running",
+						data: {
+							reason: "image_pending_sync_settle",
+							vendor: vendorRef,
+							pid,
+							taskKind,
+							teamId: row.teamId,
+							credits: { reserved: row.reserved, pending: pendingAmount },
+						},
+						nowIso,
+					});
 				}
-				result = mapped;
+				continue;
+			}
+			result = await fetchNewApiTaskResult(c, userId, taskId, {
+				taskKind: (taskKind as any) ?? null,
+				vendor: "newapi",
+				promptFromClient: null,
+			});
+
+			polled += 1;
+
+			// Persist final task result so callers can fetch without re-polling upstream.
+			try {
+				const parsed = TaskResultSchema.safeParse(result);
+				if (parsed.success) {
+					const finalStatus = parsed.data.status;
+					if (finalStatus === "succeeded" || finalStatus === "failed") {
+						const kind =
+							typeof taskKind === "string" && taskKind.trim()
+								? taskKind.trim()
+								: typeof parsed.data.kind === "string"
+									? parsed.data.kind.trim()
+									: "";
+						const vendorForStore =
+							typeof vendorRef === "string" && vendorRef.trim()
+								? vendorRef.trim()
+								: "";
+						if (kind && vendorForStore) {
+							await upsertTaskResult(env.DB, {
+								userId,
+								taskId,
+								vendor: vendorForStore,
+								kind,
+								status: finalStatus,
+								result: parsed.data,
+								completedAt: nowIso,
+								nowIso,
+							});
+						}
+					}
+				}
+			} catch {
+				// ignore
 			}
 
-				polled += 1;
-
-				// Persist final task result so callers can fetch without re-polling upstream.
-				try {
-					const parsed = TaskResultSchema.safeParse(result);
-					if (parsed.success) {
-						const finalStatus = parsed.data.status;
-						if (finalStatus === "succeeded" || finalStatus === "failed") {
-							const kind =
-								typeof taskKind === "string" && taskKind.trim()
-									? taskKind.trim()
-									: typeof parsed.data.kind === "string"
-										? parsed.data.kind.trim()
-										: "";
-							const vendorForStore =
-								typeof vendorRef === "string" && vendorRef.trim()
-									? vendorRef.trim()
-									: "";
-							if (kind && vendorForStore) {
-								await upsertTaskResult(env.DB, {
-									userId,
-									taskId,
-									vendor: vendorForStore,
-									kind,
-									status: finalStatus,
-									result: parsed.data,
-									completedAt: nowIso,
-									nowIso,
-								});
-							}
+			const finalStatus = typeof result?.status === "string" ? result.status : "running";
+			if (finalStatus === "succeeded" || finalStatus === "failed") {
+				const normalizedTaskKind = (taskKind || "").trim();
+				if (normalizedTaskKind) {
+					const rawResult: any = result?.raw as any;
+					const resolvedModelKey = (() => {
+						const candidates = [
+							rawResult?.model,
+							rawResult?.modelKey,
+							rawResult?.model_key,
+							rawResult?.response?.model,
+							rawResult?.response?.modelKey,
+							rawResult?.response?.model_key,
+						];
+						for (const v of candidates) {
+							if (typeof v === "string" && v.trim()) return v.trim();
 						}
-					}
-				} catch {
-					// ignore
-				}
-
-				const finalStatus = typeof result?.status === "string" ? result.status : "running";
-				if (finalStatus === "succeeded" || finalStatus === "failed") {
-					const normalizedTaskKind = (taskKind || "").trim();
-					if (normalizedTaskKind) {
-						const rawResult: any = result?.raw as any;
-						const resolvedModelKey = (() => {
-							const candidates = [
-								rawResult?.model,
-								rawResult?.modelKey,
-								rawResult?.model_key,
-								rawResult?.response?.model,
-								rawResult?.response?.modelKey,
-								rawResult?.response?.model_key,
-							];
-							for (const v of candidates) {
-								if (typeof v === "string" && v.trim()) return v.trim();
-							}
-							return null;
-						})();
-						const resolvedSpecKey =
-							extractBillingSpecKeyFromTaskRaw(rawResult) ||
-							extractBillingSpecKeyFromLedgerNote(row.note);
-						if (finalStatus === "succeeded") {
-							const amount = await resolveTeamCreditsCostForTask(c, {
-								taskKind: normalizedTaskKind,
-								modelKey: resolvedModelKey || undefined,
-								specKey: resolvedSpecKey,
-							});
-							await settleTeamCreditsOnSuccess(c, userId, {
-								taskId,
-								taskKind: normalizedTaskKind,
-								amount,
-								vendor: vendorRef || undefined,
-								modelKey: resolvedModelKey,
-								specKey: resolvedSpecKey,
-							});
-						} else {
-							await releaseTeamCreditsOnFailure(c, userId, {
-								taskId,
-								taskKind: normalizedTaskKind,
-								vendor: vendorRef || undefined,
-								modelKey: resolvedModelKey,
-								specKey: resolvedSpecKey,
-							});
-						}
+						return null;
+					})();
+					const resolvedSpecKey =
+						extractBillingSpecKeyFromTaskRaw(rawResult) ||
+						extractBillingSpecKeyFromLedgerNote(row.note);
+					if (finalStatus === "succeeded") {
+						const amount = await resolveTeamCreditsCostForTask(c, {
+							taskKind: normalizedTaskKind,
+							modelKey: resolvedModelKey || undefined,
+							specKey: resolvedSpecKey,
+						});
+						await settleTeamCreditsOnSuccess(c, userId, {
+							taskId,
+							taskKind: normalizedTaskKind,
+							amount,
+							vendor: vendorRef || undefined,
+							modelKey: resolvedModelKey,
+							specKey: resolvedSpecKey,
+						});
+					} else {
+						await releaseTeamCreditsOnFailure(c, userId, {
+							taskId,
+							taskKind: normalizedTaskKind,
+							vendor: vendorRef || undefined,
+							modelKey: resolvedModelKey,
+							specKey: resolvedSpecKey,
+						});
 					}
 				}
+			}
 
-				const raw: any = result?.raw as any;
-				const hosting: any = raw?.hosting ?? null;
+			const raw: any = result?.raw as any;
+			const hosting: any = raw?.hosting ?? null;
 
-				await upsertTaskStatus(env.DB, {
+			await upsertTaskStatus(env.DB, {
 				taskId,
 				provider: FINALIZER_PROVIDER,
 				userId,
 				status: typeof result?.status === "string" ? result.status : "running",
 				data: {
 					vendor: vendorRef,
-					dispatch,
 					pid,
 					taskKind,
 					teamId: row.teamId,
@@ -456,7 +445,6 @@ export async function runCreditTaskFinalizer(
 				data: {
 					reason: "poll_failed",
 					vendor: vendorRef,
-					dispatch,
 					pid,
 					taskKind,
 					teamId: row.teamId,

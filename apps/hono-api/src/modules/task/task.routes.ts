@@ -1,7 +1,5 @@
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../../types";
-import { AppError } from "../../middleware/error";
 import { authMiddleware } from "../../middleware/auth";
 import {
 	RunTaskRequestSchema,
@@ -13,27 +11,87 @@ import {
 	VendorCallLogSchema,
 } from "./task.schemas";
 import { upsertTaskResult } from "./task-result.repo";
+import { getPrismaClient } from "../../platform/node/prisma";
 import {
-	fetchApimartTaskResult,
-	fetchGrsaiDrawTaskResult,
-	fetchMappedTaskResultForVendor,
-	enqueueStoredTaskForVendor,
+	fetchNewApiTaskResult,
 	runGenericTaskForVendor,
 } from "./task.service";
-import type { TaskProgressSnapshotDto } from "./task.schemas";
-import {
-	addTaskProgressSubscriber,
-	removeTaskProgressSubscriber,
-	type TaskProgressSubscriber,
-	getPendingTaskSnapshots,
-} from "./task.progress";
+import { normalizeImageEditRequestKind, normalizeTaskAssetBackedVideoRequest } from "../apiKey/apiKey.routes";
+import { getPendingTaskSnapshots } from "./task.progress";
 import { listVendorCallLogs } from "./vendor-call-logs.repo";
 import { fetchTaskResultForPolling } from "./task.polling";
 import { maybeWrapSyncImageResultAsStoredTask } from "./task.task-store-wrap";
 
 export const taskRouter = new Hono<AppEnv>();
 
+const LOG_PREVIEW_MAX_DEPTH = 4;
+const LOG_PREVIEW_MAX_KEYS = 24;
+const LOG_PREVIEW_MAX_ARRAY = 12;
+const LOG_PREVIEW_MAX_STRING = 400;
+
 taskRouter.use("*", authMiddleware);
+
+function buildLogPayloadPreview(raw: string | null | undefined): string | null {
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim();
+	if (!trimmed) return null;
+
+	const sanitizeString = (value: string, keyPath: string[]): string => {
+		const normalized = value.trim();
+		const lastKey = keyPath[keyPath.length - 1]?.trim().toLowerCase() || "";
+		if (/^(data|binary|bytes|base64)$/i.test(lastKey)) {
+			return `[omitted-binary-string len=${normalized.length}]`;
+		}
+		if (/^data:[^,]+,/.test(normalized)) {
+			return `[data-url len=${normalized.length}]`;
+		}
+		if (normalized.length <= LOG_PREVIEW_MAX_STRING) return normalized;
+		return `${normalized.slice(0, LOG_PREVIEW_MAX_STRING)}…(truncated, len=${normalized.length})`;
+	};
+
+	const walk = (value: unknown, depth: number, keyPath: string[]): unknown => {
+		if (value === null || value === undefined) return value;
+		if (typeof value === "string") return sanitizeString(value, keyPath);
+		if (
+			typeof value === "number" ||
+			typeof value === "boolean" ||
+			typeof value === "bigint"
+		) {
+			return value;
+		}
+		if (typeof value !== "object") return String(value);
+		if (depth >= LOG_PREVIEW_MAX_DEPTH) {
+			return `[max-depth:${LOG_PREVIEW_MAX_DEPTH}]`;
+		}
+		if (Array.isArray(value)) {
+			const items = value
+				.slice(0, LOG_PREVIEW_MAX_ARRAY)
+				.map((item, index) => walk(item, depth + 1, [...keyPath, String(index)]));
+			if (value.length > LOG_PREVIEW_MAX_ARRAY) {
+				items.push(`[...omitted ${value.length - LOG_PREVIEW_MAX_ARRAY} items]`);
+			}
+			return items;
+		}
+
+		const entries = Object.entries(value);
+		const out: Record<string, unknown> = {};
+		for (const [index, entry] of entries.entries()) {
+			if (index >= LOG_PREVIEW_MAX_KEYS) break;
+			const [key, child] = entry;
+			out[key] = walk(child, depth + 1, [...keyPath, key]);
+		}
+		if (entries.length > LOG_PREVIEW_MAX_KEYS) {
+			out.__omittedKeys = entries.length - LOG_PREVIEW_MAX_KEYS;
+		}
+		return out;
+	};
+
+	try {
+		return JSON.stringify(walk(JSON.parse(trimmed), 0, []));
+	} catch {
+		return sanitizeString(trimmed, []);
+	}
+}
 
 function isLocalDevRequest(c: any): boolean {
 	try {
@@ -126,19 +184,14 @@ taskRouter.post("/", async (c) => {
 		);
 	}
 
-	const vendor = payload.vendor.trim().toLowerCase();
-	const req = payload.request;
+	const vendor = "newapi";
+	const req = await normalizeTaskAssetBackedVideoRequest(
+		c as any,
+		userId,
+		normalizeImageEditRequestKind(payload.request),
+	) as typeof payload.request;
 
-	const isGeminiImageTask =
-		(vendor === "gemini" || vendor === "google") &&
-		(req.kind === "text_to_image" || req.kind === "image_edit");
-	const isDreaminaAsyncTask =
-		(vendor === "dreamina-cli" || vendor === "dreamina") &&
-		(req.kind === "text_to_image" || req.kind === "text_to_video");
-	const shouldUseTaskStore = isGeminiImageTask || isDreaminaAsyncTask;
-	let result = shouldUseTaskStore
-		? await enqueueStoredTaskForVendor(c as any, userId, vendor, req)
-		: await runGenericTaskForVendor(c, userId, vendor, req);
+	let result = await runGenericTaskForVendor(c, userId, vendor, req);
 
 	result = await maybeWrapSyncImageResultAsStoredTask(c as any, userId, {
 		vendor,
@@ -181,74 +234,6 @@ taskRouter.post("/", async (c) => {
 	return c.json(TaskResultSchema.parse(result));
 });
 
-// GET /tasks/stream - minimal SSE stream for task progress
-taskRouter.get("/stream", (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-
-	return streamSSE(c, async (stream) => {
-		const HEARTBEAT_MS = 15_000;
-		const POLL_MS = 250;
-		const queue: TaskProgressSnapshotDto[] = [];
-		let closed = false;
-
-		const drainQueue = async () => {
-			while (queue.length && !closed) {
-				const event = queue.shift()!;
-				await stream.writeSSE({
-					data: JSON.stringify(event),
-				});
-			}
-		};
-
-		const subscriber: TaskProgressSubscriber = {
-			push(event) {
-				if (closed) return;
-				queue.push(event);
-			},
-		};
-
-		addTaskProgressSubscriber(userId, subscriber);
-
-		const abortSignal = c.req.raw.signal as AbortSignal;
-		abortSignal.addEventListener("abort", () => {
-			closed = true;
-		});
-
-		try {
-			let lastHeartbeatAt = Date.now();
-			await stream.writeSSE({
-				data: JSON.stringify({ type: "init" }),
-			});
-
-			while (!closed) {
-				if (queue.length) {
-					await drainQueue();
-					continue;
-				}
-
-				const now = Date.now();
-				if (now - lastHeartbeatAt >= HEARTBEAT_MS) {
-					await stream.writeSSE({
-						event: "ping",
-						data: JSON.stringify({ type: "ping" }),
-					});
-					lastHeartbeatAt = now;
-					continue;
-				}
-
-				await new Promise<void>((resolve) =>
-					setTimeout(resolve, POLL_MS),
-				);
-				await drainQueue();
-			}
-		} finally {
-			closed = true;
-			removeTaskProgressSubscriber(userId, subscriber);
-		}
-	});
-});
-
 // GET /tasks/pending - placeholder implementation for now
 taskRouter.get("/pending", async (c) => {
 	const userId = c.get("userId");
@@ -267,10 +252,11 @@ taskRouter.get("/logs", async (c) => {
 	const isAdmin = isAdminRequest(c);
 
 	const limitRaw = c.req.query("limit");
-	const parsedLimit = Number(limitRaw ?? 50);
+	const parsedLimit = Number(limitRaw ?? 20);
+	const maxLimit = isAdmin ? 100 : 20;
 	const limit = Number.isFinite(parsedLimit)
-		? Math.max(1, Math.min(200, Math.floor(parsedLimit)))
-		: 50;
+		? Math.max(1, Math.min(maxLimit, Math.floor(parsedLimit)))
+		: 20;
 
 	const queryUserIdRaw = c.req.query("userId");
 	const queryUserId =
@@ -328,10 +314,8 @@ taskRouter.get("/logs", async (c) => {
 					? Math.round(r.duration_ms)
 					: null,
 			errorMessage: r.error_message ?? null,
-			requestPayload:
-				typeof r.request_json === "string" ? r.request_json : null,
-			upstreamResponse:
-				typeof r.response_json === "string" ? r.response_json : null,
+			requestPayload: buildLogPayloadPreview(r.request_json),
+			upstreamResponse: buildLogPayloadPreview(r.response_json),
 			createdAt: r.created_at,
 			updatedAt: r.updated_at,
 		}),
@@ -367,34 +351,77 @@ taskRouter.post("/result", async (c) => {
 });
 
 registerVendorResultRoute("/veo/result", async (c, userId, body) => {
-	const result = await fetchMappedTaskResultForVendor(c, userId, "veo", {
-		taskId: body.taskId,
+	const result = await fetchNewApiTaskResult(c, userId, body.taskId, {
 		taskKind: (body.taskKind as any) ?? null,
-		kindHint: "video",
+		vendor: "newapi",
 		promptFromClient: body.prompt ?? null,
 	});
-	if (result) return result;
-	throw new AppError("厂商 veo 未配置可用的视频结果映射（model_catalog_mappings）", {
-		status: 400,
-		code: "mapping_not_configured",
-		details: { vendor: "veo", taskKind: body.taskKind ?? "text_to_video" },
-	});
+	return result;
 });
 
 registerVendorResultRoute("/apimart/result", (c, userId, body) =>
-	fetchApimartTaskResult(c, userId, body.taskId, body.prompt ?? null, {
+	fetchNewApiTaskResult(c, userId, body.taskId, {
 		taskKind: (body.taskKind as any) ?? null,
+		vendor: "newapi",
+		promptFromClient: body.prompt ?? null,
 	}),
 );
 
 registerVendorResultRoute("/grsai/result", (c, userId, body) =>
-	fetchGrsaiDrawTaskResult(c, userId, body.taskId, {
-		taskKind: body.taskKind ?? null,
+	fetchNewApiTaskResult(c, userId, body.taskId, {
+		taskKind: (body.taskKind as any) ?? null,
+		vendor: "newapi",
 		promptFromClient: body.prompt ?? null,
 	}),
 );
 
-// POST /tasks/gemini/result - alias for Gemini image tasks (Banana/grsai draw result polling)
+taskRouter.get("/:taskId", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const taskId = c.req.param("taskId");
+
+	const prisma = getPrismaClient();
+	const row = await prisma.task_results.findUnique({
+		where: { user_id_task_id: { user_id: userId, task_id: taskId } },
+	});
+	if (!row) return c.json({ error: "not_found" }, 404);
+
+	const assetUri =
+		row.status === "done" || row.status === "completed" ? `tapcanvas://image/${taskId}` : null;
+
+	return c.json({
+		taskId,
+		status: row.status,
+		assetUri,
+		chapterId: row.chapter_id ?? null,
+		nodeId: row.node_id ?? null,
+	});
+});
+
+taskRouter.post("/:taskId/link", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const taskId = c.req.param("taskId");
+	const body = await c.req.json().catch(() => ({}));
+	const chapterId = typeof body.chapterId === "string" ? body.chapterId.trim() : null;
+	const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : null;
+	if (!chapterId || !nodeId) return c.json({ error: "chapterId and nodeId required" }, 400);
+
+	await upsertTaskResult(c.env.DB, {
+		userId,
+		taskId,
+		vendor: "n/a",
+		kind: "n/a",
+		status: "linked",
+		result: null,
+		nowIso: new Date().toISOString(),
+		chapterId,
+		nodeId,
+	});
+	return c.json({ ok: true });
+});
+
+// POST /tasks/gemini/result - legacy endpoint path; polling is handled by new-api.
 taskRouter.post("/gemini/result", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
@@ -412,8 +439,9 @@ taskRouter.post("/gemini/result", async (c) => {
 		);
 	}
 
-	const result = await fetchGrsaiDrawTaskResult(c, userId, parsed.data.taskId, {
-		taskKind: taskKind ?? null,
+	const result = await fetchNewApiTaskResult(c, userId, parsed.data.taskId, {
+		taskKind: (taskKind as any) ?? null,
+		vendor: "newapi",
 		promptFromClient: parsed.data.prompt ?? null,
 	});
 	return c.json(TaskResultSchema.parse(result));

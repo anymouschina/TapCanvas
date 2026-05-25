@@ -1,11 +1,15 @@
+export const NEW_API_AUTO_VENDOR = "newapi";
+
 export function normalizeDispatchVendor(vendor: string): string {
 	const raw = (vendor || "").trim().toLowerCase();
 	if (!raw) return "";
+	if (raw === "new-api") return NEW_API_AUTO_VENDOR;
 	// allow composite vendors like "comfly:veo"
 	const parts = raw.split(":").map((p) => p.trim()).filter(Boolean);
 	const last = parts.length ? parts[parts.length - 1]! : raw;
 	// Alias compatibility: google -> gemini
 	if (last === "google") return "gemini";
+	if (last === "new-api") return NEW_API_AUTO_VENDOR;
 	return last;
 }
 

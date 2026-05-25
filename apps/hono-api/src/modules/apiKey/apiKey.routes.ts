@@ -36,13 +36,8 @@ import { registerPublicFlowRoutes } from "../flow/flow.public.routes";
 import { registerPublicAgentsToolBridgeRoutes } from "../task/agents-tool-bridge.routes";
 import { createApiKey, deleteApiKey, listApiKeys, updateApiKey } from "./apiKey.service";
 import {
-	runApimartTextTask,
-	runApimartImageTask,
-	runApimartImageToPromptTask,
-	runApimartVideoTask,
 	runGenericTaskForVendor,
 	enqueueStoredTaskForVendor,
-	enqueueStoredTaskForVendorAttempts,
 	resolveVendorContext,
 } from "../task/task.service";
 import { isAgentsBridgeEnabled, runAgentsBridgeChatTask } from "../task/task.agents-bridge";
@@ -53,14 +48,13 @@ import {
 	listCatalogModelsByModelKey,
 } from "../model-catalog/model-catalog.repo";
 import { upsertTaskResult } from "../task/task-result.repo";
-import { upsertVendorTaskRef } from "../task/vendor-task-refs.repo";
 import {
 	ensureVendorCallLogsSchema,
 	upsertVendorCallLogFinal,
 	upsertVendorCallLogPayloads,
 } from "../task/vendor-call-logs.repo";
 import { fetchTaskResultForPolling } from "../task/task.polling";
-import { normalizeDispatchVendor } from "../task/task.vendor";
+import { NEW_API_AUTO_VENDOR, normalizeDispatchVendor } from "../task/task.vendor";
 import { maybeWrapSyncImageResultAsStoredTask } from "../task/task.task-store-wrap";
 import { setTraceStage } from "../../trace";
 import { createAssetRow } from "../asset/asset.repo";
@@ -417,7 +411,7 @@ function normalizeStringArray(value: unknown): string[] {
 	return out;
 }
 
-async function normalizeTaskAssetBackedVideoRequest(
+export async function normalizeTaskAssetBackedVideoRequest(
 	c: AppContext,
 	userId: string,
 	request: unknown,
@@ -430,6 +424,8 @@ async function normalizeTaskAssetBackedVideoRequest(
 	const extras = isPlainRecord(request.extras)
 		? { ...request.extras }
 		: {};
+	const nodeKind =
+		typeof extras.nodeKind === "string" ? extras.nodeKind.trim().toLowerCase() : "";
 	const origin = new URL(c.req.url).origin;
 	const normalizeSingleAssetId = async (
 		assetId: unknown,
@@ -501,8 +497,19 @@ async function normalizeTaskAssetBackedVideoRequest(
 		}
 	}
 
+	const hasReferenceImages = normalizeStringArray(extras.referenceImages).length > 0;
+	const hasFrameReference =
+		(typeof extras.firstFrameUrl === "string" && extras.firstFrameUrl.trim().length > 0) ||
+		(typeof extras.lastFrameUrl === "string" && extras.lastFrameUrl.trim().length > 0);
+	const isVideoNodeKind = nodeKind === "video" || nodeKind === "composevideo";
+	const normalizedKind =
+		isVideoNodeKind && (hasReferenceImages || hasFrameReference)
+			? "image_to_video"
+			: "text_to_video";
+
 	return {
 		...request,
+		kind: normalizedKind,
 		extras,
 	};
 }
@@ -1006,41 +1013,13 @@ function formatPublicChatThinkingFromTraceEvent(ev: TraceEventLite): string | nu
 
 	if (ev.stage === "public:run:begin") return "已接收请求，开始执行";
 
-	if (ev.stage === "public:vendors:resolved") {
-		const candidatesRaw = ev.meta?.vendorCandidates;
-		const candidates = Array.isArray(candidatesRaw)
-			? candidatesRaw
-					.map((x) => (typeof x === "string" ? x.trim() : ""))
-					.filter(Boolean)
-					.slice(0, 6)
-			: [];
-		return candidates.length ? `已解析候选通道：${candidates.join(", ")}` : "已解析候选通道";
+	if (ev.stage === "public:newapi:resolved") {
+		const modelKey = typeof ev.meta?.modelKey === "string" ? ev.meta.modelKey.trim() : "";
+		return modelKey ? `已解析 new-api 模型：${modelKey}` : "已解析 new-api 请求";
 	}
 
-	if (ev.stage === "public:vendor:attempt") {
-		const vendor =
-			typeof ev.meta?.dispatchVendor === "string"
-				? ev.meta.dispatchVendor.trim()
-				: typeof ev.meta?.vendorCandidate === "string"
-					? ev.meta.vendorCandidate.trim()
-					: "";
-		return vendor ? `正在调用通道：${vendor}` : "正在调用通道";
-	}
-
-	if (ev.stage === "public:vendor:task_failed") {
-		const vendor = typeof ev.meta?.vendor === "string" ? ev.meta.vendor.trim() : "";
-		return vendor ? `通道返回 failed：${vendor}` : "通道返回 failed";
-	}
-
-	if (ev.stage === "public:vendor:error") {
-		const vendor =
-			typeof ev.meta?.dispatchVendor === "string" ? ev.meta.dispatchVendor.trim() : "";
-		const code = typeof ev.meta?.code === "string" ? ev.meta.code.trim() : "";
-		const status = typeof ev.meta?.status === "number" ? String(ev.meta.status) : "";
-		const bits = [vendor && `通道=${vendor}`, code && `code=${code}`, status && `status=${status}`]
-			.filter(Boolean)
-			.join(", ");
-		return bits ? `通道调用出错（${bits}）` : "通道调用出错";
+	if (ev.stage === "public:newapi:task_failed") {
+		return "new-api 返回 failed";
 	}
 
 	if (ev.stage === "public:agent:todo_write") {
@@ -1275,10 +1254,44 @@ function hasImageEditSourceInExtras(extras: Record<string, any>): boolean {
 	return false;
 }
 
-function normalizeImageEditRequestKind(rawRequest: any): any {
+function isGenerationsOnlyImageModel(modelKey: string): boolean {
+	const normalized = String(modelKey || "").trim().toLowerCase();
+	if (!normalized) return false;
+	return (
+		normalized === "gpt-image-2" ||
+		normalized === "gpt-image-2-official" ||
+		normalized === "gpt-image-2-apimart"
+	);
+}
+
+function readImageEditModelKey(rawRequest: any, extras: Record<string, any>): string {
+	const extrasModelKey =
+		typeof extras?.modelKey === "string" && extras.modelKey.trim()
+			? extras.modelKey.trim()
+			: "";
+	if (extrasModelKey) return extrasModelKey;
+	const extrasModelAlias =
+		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
+			? extras.modelAlias.trim()
+			: "";
+	if (extrasModelAlias) return extrasModelAlias;
+	return typeof rawRequest?.model === "string" && rawRequest.model.trim()
+		? rawRequest.model.trim()
+		: "";
+}
+
+export function normalizeImageEditRequestKind(rawRequest: any): any {
 	if (!rawRequest || typeof rawRequest !== "object") return rawRequest;
 	if (rawRequest.kind !== "image_edit") return rawRequest;
 	const extras = { ...((rawRequest.extras || {}) as Record<string, any>) };
+	const modelKey = readImageEditModelKey(rawRequest, extras);
+	if (isGenerationsOnlyImageModel(modelKey)) {
+		return {
+			...rawRequest,
+			kind: "text_to_image",
+			extras,
+		};
+	}
 	if (hasImageEditSourceInExtras(extras)) return rawRequest;
 	return {
 		...rawRequest,
@@ -1556,7 +1569,7 @@ publicApiRouter.openapi(PublicAgentsChatOpenApiRoute, handlePublicAgentsChat);
 const DEFAULT_PUBLIC_VISION_PROMPT =
 	"请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。";
 
-const DEFAULT_PUBLIC_VISION_MODEL_ALIAS = "gemini-3.1-flash-image-preview";
+const DEFAULT_PUBLIC_VISION_MODEL_KEY = "gpt-5.5";
 
 type PublicVisionTaskExtras = {
 	imageUrl?: string;
@@ -1603,7 +1616,7 @@ export function buildPublicVisionTaskRequest(
 	};
 
 	if (!modelAlias && !modelKey) {
-		extras.modelAlias = DEFAULT_PUBLIC_VISION_MODEL_ALIAS;
+		extras.modelKey = DEFAULT_PUBLIC_VISION_MODEL_KEY;
 	}
 
 	return {
@@ -1629,7 +1642,7 @@ const PublicVisionOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "图像理解 /public/vision",
 	description:
-		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。默认使用 gemini-3.1-flash-image-preview；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
+		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。默认使用 gpt-5.5；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
 	request: {
 		body: {
 			required: true,
@@ -1637,11 +1650,10 @@ const PublicVisionOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicVisionRequestSchema,
 					example: {
-						vendor: "auto",
 						imageUrl:
 							"https://github.com/dianping/cat/raw/master/cat-home/src/main/webapp/images/logo/cat_logo03.png",
 						prompt: DEFAULT_PUBLIC_VISION_PROMPT,
-						modelAlias: DEFAULT_PUBLIC_VISION_MODEL_ALIAS,
+						modelKey: DEFAULT_PUBLIC_VISION_MODEL_KEY,
 						temperature: 0.2,
 					},
 				},
@@ -1713,8 +1725,6 @@ publicApiRouter.openapi(PublicVisionOpenApiRoute, async (c) => {
 	});
 
 	const { vendor, result } = await runPublicTask(c, userId, {
-		vendor: input.vendor ?? "auto",
-		vendorCandidates: input.vendorCandidates,
 		request,
 	});
 	const raw = result?.raw as { text?: unknown } | null | undefined;
@@ -1952,7 +1962,7 @@ const PublicVideoUnderstandOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "视频理解 /public/video/understand",
 	description:
-		"显式视频理解接口。内部走统一任务入口 kind=chat，并透传 videoFileUri/videoMimeType 到上游多模态模型。默认建议不传 vendorCandidates，由系统级动态配置决定可用厂商；只有调用方明确要锁定厂商时再传。",
+		"显式视频理解接口。内部走统一任务入口 kind=chat，并透传 videoFileUri/videoMimeType 到上游多模态模型。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。",
 	request: {
 		body: {
 			required: true,
@@ -1960,7 +1970,6 @@ const PublicVideoUnderstandOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicVideoUnderstandRequestSchema,
 					example: {
-						vendor: "auto",
 						prompt: "请总结视频内容并给出 5 道题（含答案）。",
 						videoUrl: "https://example.com/sample.mp4",
 						videoMimeType: "video/mp4",
@@ -2066,8 +2075,6 @@ publicApiRouter.openapi(PublicVideoUnderstandOpenApiRoute, async (c) => {
 	};
 
 	const { vendor, result } = await runPublicTask(c, userId, {
-		vendor: input.vendor ?? "auto",
-		vendorCandidates: input.vendorCandidates,
 		request,
 	});
 	return c.json(
@@ -2087,6 +2094,7 @@ function isPublicTaskKindSupported(kind: string): boolean {
 		k === "text_to_image" ||
 		k === "image_edit" ||
 		k === "text_to_video" ||
+		k === "image_to_video" ||
 		k === "chat" ||
 		k === "prompt_refine" ||
 		k === "image_to_prompt"
@@ -2107,16 +2115,28 @@ function pickAutoVendorsForKind(
 	const k = (kind || "").trim();
 	if (!isPublicTaskKindSupported(k)) return [];
 	const allowAgents = k === "chat" || k === "prompt_refine";
-	const preferredOrder =
-		k === "chat" && hasReferenceImages
-			? ["agents", "apimart", "gemini", "openai", "yunwu"]
-			: ["agents", "apimart", "gemini", "openai", "yunwu", "qwen", "anthropic", "veo"];
 	const enabled = enabledSystemVendors || new Set<string>();
 	const available = Array.from(enabled.values())
 		.map((v) => normalizeDispatchVendor(v))
 		.filter((v): v is string => !!v && (allowAgents || v !== "agents"))
 		.sort((a, b) => a.localeCompare(b));
 	const availableSet = new Set(available);
+	if (k === "image_to_prompt" && availableSet.has(NEW_API_AUTO_VENDOR)) {
+		return [NEW_API_AUTO_VENDOR];
+	}
+	const preferredOrder =
+		k === "chat" && hasReferenceImages
+			? ["agents", "apimart", "gemini", "openai", "yunwu"]
+			: [
+					"agents",
+					"apimart",
+					"gemini",
+					"openai",
+					"yunwu",
+					"qwen",
+					"anthropic",
+					"veo",
+			  ];
 	const prioritized = preferredOrder.filter(
 		(v) => availableSet.has(v) && (allowAgents || v !== "agents"),
 	);
@@ -2272,84 +2292,61 @@ function resolvePinnedVendorsForPublicRequest(request: any): string[] {
 	return [];
 }
 
+// Phase B: model management is delegated to new-api. hono-api no longer gates
+// requests on `model_catalog_vendors` / `model_catalog_vendor_api_keys` rows;
+// when the new-api relay is configured, every hono-api-known vendor tag is
+// treated as "enabled" for dispatch purposes. Actual channel/model routing
+// happens upstream in new-api via modelKey; hono-api's vendor tag is now
+// cosmetic (used only for billing/metrics grouping).
+//
+// Adding a new upstream provider no longer requires a hono-api DB migration —
+// configure it as a channel in new-api and use its model_name directly.
+const NEW_API_RELAY_VENDOR_TAGS: readonly string[] = [
+	NEW_API_AUTO_VENDOR,
+	"anthropic",
+	"apimart",
+	"ark",
+	"beqlee",
+	"comfly",
+	"dmxapi",
+	"gemini",
+	"openai",
+	"qwen",
+	"tuzi",
+	"veo",
+	"volcengine",
+	"wuyinkeji",
+	"yunwu",
+];
+
 async function listEnabledSystemVendors(c: any): Promise<Set<string>> {
-	const isLocalDevRequest = () => {
-		try {
-			const url = new URL(c?.req?.url);
-			const host = url.hostname;
-			return (
-				host === "localhost" ||
-				host === "127.0.0.1" ||
-				host === "0.0.0.0" ||
-				host === "::1"
-			);
-		} catch {
-			return false;
+	const enabledVendors = new Set<string>();
+
+	if (resolveNewApiRelayConfigForVendors(c)) {
+		for (const tag of NEW_API_RELAY_VENDOR_TAGS) {
+			const v = normalizeDispatchVendor(tag);
+			if (v) enabledVendors.add(v);
 		}
-	};
-
-	const agentsEnabled = isAgentsBridgeEnabled(c as any);
-
-	try {
-		await ensureModelCatalogSchema(c.env.DB);
-		const [vendorsRows, keyRows] = await Promise.all([
-			getPrismaClient().model_catalog_vendors.findMany({
-				select: { key: true, enabled: true, auth_type: true },
-			}),
-			getPrismaClient().model_catalog_vendor_api_keys.findMany({
-				select: { vendor_key: true, enabled: true, api_key: true },
-			}),
-		]);
-
-		const enabledKeyVendors = new Set<string>();
-		for (const row of keyRows) {
-			const vendorKeyRaw =
-				typeof row?.vendor_key === "string"
-					? row.vendor_key.trim()
-					: "";
-			const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
-			if (!vendorKey) continue;
-			if (Number(row?.enabled ?? 1) === 0) continue;
-
-			const apiKey =
-				typeof row?.api_key === "string"
-					? row.api_key
-					: "";
-			if (!apiKey || !String(apiKey).trim()) continue;
-
-			enabledKeyVendors.add(vendorKey);
-		}
-
-		const enabledVendors = new Set<string>();
-		for (const row of vendorsRows) {
-			const vendorKeyRaw =
-				typeof row?.key === "string"
-					? row.key.trim()
-					: "";
-			const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
-			if (!vendorKey) continue;
-			if (Number(row?.enabled ?? 1) === 0) continue;
-
-			const authType =
-				typeof row?.auth_type === "string"
-					? row.auth_type.trim().toLowerCase()
-					: "";
-			if (authType === "none" || enabledKeyVendors.has(vendorKey)) {
-				enabledVendors.add(vendorKey);
-			}
-		}
-
-		if (agentsEnabled) enabledVendors.add("agents");
-		return enabledVendors;
-	} catch (err: any) {
-		if (isLocalDevRequest()) {
-			console.warn(
-				"[public-api] listEnabledSystemVendors failed",
-				err?.message || err,
-			);
-		}
-		return agentsEnabled ? new Set(["agents"]) : new Set();
 	}
+
+	if (isAgentsBridgeEnabled(c as any)) enabledVendors.add("agents");
+
+	return enabledVendors;
+}
+
+function resolveNewApiRelayConfigForVendors(c: any): boolean {
+	const env = c?.env;
+	const processEnv = (globalThis as any)?.process?.env;
+	const pick = (key: string): string => {
+		const fromEnv = typeof env?.[key] === "string" ? String(env[key]).trim() : "";
+		if (fromEnv) return fromEnv;
+		const fromProcess =
+			typeof processEnv?.[key] === "string" ? String(processEnv[key]).trim() : "";
+		return fromProcess;
+	};
+	const baseUrl = pick("NEW_API_INTERNAL_BASE_URL").replace(/\/+$/, "");
+	const token = pick("NEW_API_INTERNAL_TOKEN");
+	return Boolean(baseUrl && token);
 }
 
 async function listEnabledUserVendors(c: any, userId: string): Promise<Set<string>> {
@@ -2670,6 +2667,7 @@ type ResolvedPublicTaskVendors = {
 	vendorCandidates: string[];
 	modelAliasRaw: string;
 	aliasMap: Map<string, string> | null;
+	exactModelKeyMap: Map<string, string>;
 };
 
 export async function resolvePublicTaskVendors(
@@ -2744,9 +2742,13 @@ export async function resolvePublicTaskVendors(
 		return out;
 	})();
 
-	const defaultAutoCandidates = modelAliasRaw
-		? Array.from(enabledVendors.values()).sort((a, b) => a.localeCompare(b))
-		: pickAutoVendorsForKind(request.kind, enabledVendors, extras);
+	const useNewApiAutoOnly =
+		taskKind === "image_to_prompt" && enabledVendors.has(NEW_API_AUTO_VENDOR);
+	const defaultAutoCandidates = useNewApiAutoOnly
+		? [NEW_API_AUTO_VENDOR]
+		: modelAliasRaw
+			? Array.from(enabledVendors.values()).sort((a, b) => a.localeCompare(b))
+			: pickAutoVendorsForKind(request.kind, enabledVendors, extras);
 	const rawCandidates = isAutoVendor
 		? vendorCandidatesHint.length
 			? vendorCandidatesHint
@@ -2841,76 +2843,44 @@ export async function resolvePublicTaskVendors(
 		}
 	}
 
+	// Model management no longer lives in hono-api — the model_catalog_models
+	// table is consulted only as a hint to narrow the auto-vendor candidate set
+	// when it happens to have matching rows. When the catalog has nothing to
+	// say (alias not registered, or modelKey unknown to hono-api), we trust
+	// the caller and let the request flow through to new-api, which is the
+	// authoritative source for channel/model routing.
 	if (modelAliasRaw) {
-		const supported =
-			aliasMap && aliasMap.size
-				? vendorCandidates.filter((candidate) => {
-						const v = normalizeDispatchVendor(candidate);
-						return !!v && aliasMap.has(v);
-					})
-				: [];
-
-		if (!supported.length) {
-			// agents bridge currently does not consume modelAlias/modelKey from /public/agents/chat extras.
-			// Keep request pass-through when caller explicitly pins vendor=agents.
-			if (explicitVendor === "agents") {
-				vendorCandidates = ["agents"];
-				return {
-					vendorRaw,
-					enabledSystemVendors,
-					rawCandidates,
-					vendorCandidates,
-					modelAliasRaw,
-					aliasMap,
-				};
-			}
-			throw new AppError(
-				"未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）",
-				{
-					status: 400,
-					code: "model_alias_not_found",
-					details: {
-						taskKind: request?.kind ?? null,
-						vendorRaw: vendorRaw || null,
-						rawCandidates,
-						systemEnabledVendors: Array.from(enabledSystemVendors.values()),
-						userEnabledVendors:
-							enabledUserVendors.size > 0 ? Array.from(enabledUserVendors.values()) : [],
-						modelAlias: modelAliasRaw,
-					},
-				},
-				);
-			}
-
-			vendorCandidates = supported;
+		// Keep the agents-bridge fast-path since that dispatch skips new-api entirely.
+		if (explicitVendor === "agents") {
+			vendorCandidates = ["agents"];
+			return {
+				vendorRaw,
+				enabledSystemVendors,
+				rawCandidates,
+				vendorCandidates,
+				modelAliasRaw,
+				aliasMap,
+				exactModelKeyMap,
+			};
+		}
+		if (aliasMap && aliasMap.size) {
+			const supported = vendorCandidates.filter((candidate) => {
+				const v = normalizeDispatchVendor(candidate);
+				return !!v && ((useNewApiAutoOnly && v === NEW_API_AUTO_VENDOR) || aliasMap.has(v));
+			});
+			if (supported.length) vendorCandidates = supported;
+		}
 	}
 
-	// When caller provides a concrete modelKey (not alias), constrain auto candidates
-	// to vendors that actually configure this modelKey in model catalog.
-	if (isAutoVendor && !modelAliasRaw && modelKeyRaw) {
-		const expectedKind = resolveCatalogKindForTaskKind(
-			typeof request?.kind === "string" ? request.kind.trim() : "",
-		);
-		if (supportedVendorsByModelKey.size) {
-			vendorCandidates = vendorCandidates.filter((candidate) => {
-				const v = normalizeDispatchVendor(candidate);
-				return !!v && supportedVendorsByModelKey.has(v);
-			});
-		} else if (expectedKind) {
-			throw new AppError(
-				`当前任务 ${String(request?.kind || "").trim() || "(unknown)"} 不支持模型 ${modelKeyRaw}。请改用 ${expectedKind} 类型模型，或传入正确的 modelKey / modelAlias。`,
-				{
-					status: 400,
-					code: "model_kind_mismatch",
-					details: {
-						taskKind: request?.kind ?? null,
-						expectedKind,
-						modelKey: modelKeyRaw,
-						vendorRaw: vendorRaw || null,
-					},
-				},
+	if (isAutoVendor && !modelAliasRaw && modelKeyRaw && supportedVendorsByModelKey.size) {
+		vendorCandidates = vendorCandidates.filter((candidate) => {
+			const v = normalizeDispatchVendor(candidate);
+			return (
+				!!v &&
+				((useNewApiAutoOnly && v === NEW_API_AUTO_VENDOR) ||
+					supportedVendorsByModelKey.has(v))
 			);
-		}
+		});
 	}
 
 	let preferredVendor: string | null = null;
@@ -3050,6 +3020,7 @@ export async function resolvePublicTaskVendors(
 		vendorCandidates,
 		modelAliasRaw,
 		aliasMap,
+		exactModelKeyMap,
 	};
 }
 
@@ -3066,9 +3037,12 @@ export async function runPublicTask(
 		normalizeImageEditRequestKind(input.request),
 	);
 	const extras = (request?.extras || {}) as Record<string, any>;
+	const externalVendor =
+		typeof input?.vendor === "string" && input.vendor.trim() ? input.vendor.trim() : null;
 	setTraceStage(c, "public:run:begin", {
 		taskKind: request?.kind ?? null,
-		vendor: typeof input?.vendor === "string" ? input.vendor : null,
+		vendor: NEW_API_AUTO_VENDOR,
+		externalVendorIgnored: externalVendor,
 		modelAlias:
 			typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
 				? extras.modelAlias.trim()
@@ -3094,320 +3068,166 @@ export async function runPublicTask(
 	// Hint proxy selector: prefer higher-success channels for this task kind.
 	if (request?.kind) c.set("routingTaskKind", request.kind);
 
-	const {
-		vendorRaw,
-		enabledSystemVendors,
-		rawCandidates,
-		vendorCandidates,
-		modelAliasRaw,
-		aliasMap,
-	} = await resolvePublicTaskVendors(
-		c,
-		userId,
-		input?.vendor,
-		request,
-		input?.vendorCandidates,
-	);
+	const requestForNewApi = (() => {
+		const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
+		const modelAliasRaw =
+			typeof cleanExtras.modelAlias === "string" && cleanExtras.modelAlias.trim()
+				? cleanExtras.modelAlias.trim()
+				: "";
+		delete (cleanExtras as any).modelAlias;
+		if (modelAliasRaw && !String(cleanExtras.modelKey || "").trim()) {
+			cleanExtras.modelKey = modelAliasRaw;
+		}
+		return { ...request, extras: cleanExtras };
+	})();
 
-	debugLog("vendor_candidates_resolved", {
+	debugLog("newapi_task_resolved", {
 		taskKind: request?.kind ?? null,
-		vendorRaw: vendorRaw || null,
-		rawCandidates,
-		vendorCandidates,
-		systemEnabledVendors: Array.from(enabledSystemVendors.values()),
-		modelAlias: modelAliasRaw || null,
+		vendor: NEW_API_AUTO_VENDOR,
+		externalVendorIgnored: externalVendor,
 		modelKey:
-			typeof extras?.modelKey === "string" && extras.modelKey.trim()
-				? extras.modelKey.trim()
+			typeof requestForNewApi.extras?.modelKey === "string" &&
+			requestForNewApi.extras.modelKey.trim()
+				? requestForNewApi.extras.modelKey.trim()
 				: null,
 	});
-	setTraceStage(c, "public:vendors:resolved", {
+	setTraceStage(c, "public:newapi:resolved", {
 		taskKind: request?.kind ?? null,
-		vendorRaw: vendorRaw || null,
-		vendorCandidates: vendorCandidates.slice(0, 12),
-		modelAlias: modelAliasRaw || null,
+		vendor: NEW_API_AUTO_VENDOR,
+		externalVendorIgnored: externalVendor,
 	});
 
-	let lastErr: any = null;
-	let lastFailed: { vendor: string; result: any } | null = null;
-	for (const vendorCandidate of vendorCandidates) {
-		throwIfAbortSignalAborted(abortSignal);
-		const v = normalizeDispatchVendor(vendorCandidate);
-		setTraceStage(c, "public:vendor:attempt", {
-			taskKind: request?.kind ?? null,
-			vendorCandidate,
-			dispatchVendor: v || null,
-		});
-			try {
-				const requestForVendor = (() => {
-					if (!modelAliasRaw) {
-						// Ensure local-only fields don't leak upstream.
-						const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
-						delete (cleanExtras as any).modelAlias;
-						return { ...request, extras: cleanExtras };
-					}
-					if (v === "agents") {
-						// agents is a capability route (agents-cli bridge), not a model-catalog vendor channel.
-						// Keep caller-provided extras as-is and let agents bridge decide how to use modelAlias/modelKey.
-						return { ...request };
-					}
+	let result = await runGenericTaskForVendor(
+		c,
+		userId,
+		NEW_API_AUTO_VENDOR,
+		requestForNewApi,
+	);
 
-					const mappedModelKey = aliasMap?.get(v || "");
-					if (!mappedModelKey) {
-						// vendorCandidates should already be filtered, but keep a defensive guard.
-						throw new AppError("未找到别名对应的模型 Key", {
-							status: 400,
-						code: "model_alias_not_found",
-						details: {
-							taskKind: request?.kind ?? null,
-							vendor: v || null,
-							modelAlias: modelAliasRaw,
-						},
-					});
-				}
-
-				const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
-				delete (cleanExtras as any).modelAlias;
-				cleanExtras.modelKey = mappedModelKey;
-				return { ...request, extras: cleanExtras };
-			})();
-
-			let result: any;
-				if (v === "apimart") {
-					if (requestForVendor.kind === "text_to_video") {
-						result = await runApimartVideoTask(c, userId, requestForVendor);
-						const nowIso = new Date().toISOString();
-						await upsertVendorTaskRef(
-						c.env.DB,
-						userId,
-						{ kind: "video", taskId: result.id, vendor: "apimart" },
-						nowIso,
-					);
-					} else if (
-						requestForVendor.kind === "text_to_image" ||
-						requestForVendor.kind === "image_edit"
-					) {
-						result = await runApimartImageTask(c, userId, requestForVendor);
-						const nowIso = new Date().toISOString();
-						await upsertVendorTaskRef(
-						c.env.DB,
-						userId,
-						{ kind: "image", taskId: result.id, vendor: "apimart" },
-							nowIso,
-						);
-					} else if (requestForVendor.kind === "image_to_prompt") {
-						result = await runApimartImageToPromptTask(c, userId, requestForVendor);
-					} else if (
-						requestForVendor.kind === "chat" ||
-						requestForVendor.kind === "prompt_refine"
-					) {
-						result = await runApimartTextTask(c, userId, requestForVendor);
-				} else {
-					throw Object.assign(new Error("invalid task kind"), {
-						status: 400,
-						code: "invalid_task_kind",
-						details: { vendor: "apimart", kind: request.kind },
-					});
-				}
-			} else if (v === "veo") {
-				result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
-			} else if (v === "minimax" || v === "sora2api") {
-				throw Object.assign(new Error(`${v} 已下线，不再支持调用`), {
-					status: 410,
-					code: "vendor_removed",
-					details: { vendor: v },
+	if (result?.status === "failed") {
+		const sanitizedFailedResult = sanitizePublicTaskResult(result);
+		try {
+			const taskId =
+				typeof sanitizedFailedResult === "object" &&
+				sanitizedFailedResult &&
+				typeof (sanitizedFailedResult as Record<string, unknown>)?.id === "string"
+					? String((sanitizedFailedResult as Record<string, unknown>).id).trim()
+					: String(result?.id || "").trim();
+			const status =
+				typeof sanitizedFailedResult === "object" &&
+				sanitizedFailedResult &&
+				typeof (sanitizedFailedResult as Record<string, unknown>)?.status === "string"
+					? String((sanitizedFailedResult as Record<string, unknown>).status).trim()
+					: typeof result?.status === "string"
+						? result.status.trim()
+						: "";
+			const kind =
+				typeof sanitizedFailedResult === "object" &&
+				sanitizedFailedResult &&
+				typeof (sanitizedFailedResult as Record<string, unknown>)?.kind === "string"
+					? String((sanitizedFailedResult as Record<string, unknown>).kind).trim()
+					: String(requestForNewApi.kind || "").trim();
+			if (taskId && kind && status === "failed") {
+				const nowIso = new Date().toISOString();
+				await upsertTaskResult(c.env.DB, {
+					userId,
+					taskId,
+					vendor: NEW_API_AUTO_VENDOR,
+					kind,
+					status,
+					result: sanitizedFailedResult,
+					completedAt: nowIso,
+					nowIso,
 				});
-			} else if (v === "agents") {
-				result = await runAgentsBridgeChatTask(c as any, userId, requestForVendor, {
-					abortSignal,
-					onStreamEvent:
-						typeof input?.onAgentsStreamEvent === "function"
-							? input.onAgentsStreamEvent
-							: undefined,
-				});
-			} else {
-				result = await runGenericTaskForVendor(c, userId, v, requestForVendor);
 			}
-
-			// For public endpoints, a failed TaskResult should trigger vendor fallback
-			// (e.g. missing token / upstream transient issues).
-			if (result?.status === "failed") {
-				const sanitizedFailedResult = sanitizePublicTaskResult(result);
-				// Persist failed result so callers can poll /public/tasks/result for error details,
-				// and keep behavior consistent with succeeded results for sync vendors.
-				try {
-					const taskId =
-						typeof sanitizedFailedResult === "object" &&
-						sanitizedFailedResult &&
-						typeof (sanitizedFailedResult as Record<string, unknown>)?.id === "string"
-							? String((sanitizedFailedResult as Record<string, unknown>).id).trim()
-							: String(result?.id || "").trim();
-					const status =
-						typeof sanitizedFailedResult === "object" &&
-						sanitizedFailedResult &&
-						typeof (sanitizedFailedResult as Record<string, unknown>)?.status === "string"
-							? String((sanitizedFailedResult as Record<string, unknown>).status).trim()
-							: typeof result?.status === "string"
-								? result.status.trim()
-								: "";
-					const kind =
-						typeof sanitizedFailedResult === "object" &&
-						sanitizedFailedResult &&
-						typeof (sanitizedFailedResult as Record<string, unknown>)?.kind === "string"
-							? String((sanitizedFailedResult as Record<string, unknown>).kind).trim()
-							: String(requestForVendor.kind || "").trim();
-					if (taskId && kind && status === "failed") {
-						const nowIso = new Date().toISOString();
-						await upsertTaskResult(c.env.DB, {
-							userId,
-							taskId,
-							vendor: v,
-							kind,
-							status,
-							result: sanitizedFailedResult,
-							completedAt: nowIso,
-							nowIso,
-						});
-					}
-				} catch (err: any) {
-					console.warn(
-						"[task-store] persist public failed result failed",
-						err?.message || err,
-					);
-				}
-
-				setTraceStage(c, "public:vendor:task_failed", {
-					taskKind: request?.kind ?? null,
-					vendor: v || null,
-					resultStatus: "failed",
-				});
-				lastFailed = { vendor: v, result: sanitizedFailedResult };
-				continue;
-			}
-
-			result = await maybeWrapSyncImageResultAsStoredTask(c as any, userId, {
-				vendor: v,
-				requestKind: requestForVendor.kind,
-				result: result as any,
-			});
-			const sanitizedResult = sanitizePublicTaskResult(result);
-			const hostingGap = detectPublicTaskAssetHostingGap({
-				originalResult: result,
-				sanitizedResult,
-			});
-			if (hostingGap) {
-				throw new AppError(
-					"任务已生成内联图片，但对象存储托管失败，无法返回公开 URL",
-					{
-						status: 502,
-						code: "public_asset_hosting_failed",
-						details: {
-							vendor: v,
-							taskKind: requestForVendor.kind,
-							taskId:
-								typeof (result as any)?.id === "string"
-									? String((result as any).id).trim()
-									: null,
-							...hostingGap,
-						},
-					},
-				);
-			}
-
-			// Persist snapshot so callers can safely poll /public/tasks/result (and see queued/running tasks in storage).
-			try {
-				const taskId =
-					typeof sanitizedResult === "object" &&
-					sanitizedResult &&
-					typeof (sanitizedResult as Record<string, unknown>)?.id === "string"
-						? String((sanitizedResult as Record<string, unknown>).id).trim()
-						: String(result?.id || "").trim();
-				const status =
-					typeof sanitizedResult === "object" &&
-					sanitizedResult &&
-					typeof (sanitizedResult as Record<string, unknown>)?.status === "string"
-						? String((sanitizedResult as Record<string, unknown>).status).trim()
-						: typeof result?.status === "string"
-							? result.status.trim()
-							: "";
-				const kind =
-					typeof sanitizedResult === "object" &&
-					sanitizedResult &&
-					typeof (sanitizedResult as Record<string, unknown>)?.kind === "string"
-						? String((sanitizedResult as Record<string, unknown>).kind).trim()
-						: String(requestForVendor.kind || "").trim();
-				if (
-					taskId &&
-					kind &&
-					(status === "queued" ||
-						status === "running" ||
-						status === "succeeded" ||
-						status === "failed")
-				) {
-					const nowIso = new Date().toISOString();
-					const completedAt =
-						status === "succeeded" || status === "failed" ? nowIso : null;
-					await upsertTaskResult(c.env.DB, {
-						userId,
-						taskId,
-						vendor: v,
-						kind,
-						status,
-						result: sanitizedResult,
-						completedAt,
-						nowIso,
-					});
-				}
-			} catch (err: any) {
-				console.warn(
-					"[task-store] persist public result failed",
-					err?.message || err,
-				);
-			}
-
-			return { vendor: v, result: sanitizedResult };
 		} catch (err: any) {
-			setTraceStage(c, "public:vendor:error", {
-				taskKind: request?.kind ?? null,
-				vendorCandidate,
-				dispatchVendor: v || null,
-				code: typeof err?.code === "string" ? err.code : null,
-				status:
-					typeof err?.status === "number"
-						? err.status
-						: Number.isFinite(Number(err?.status))
-							? Number(err.status)
-							: null,
-				message:
-					typeof err?.message === "string"
-						? err.message.slice(0, 300)
-						: String(err).slice(0, 300),
-			});
-			debugLog("vendor_candidate_failed", {
-				taskKind: request?.kind ?? null,
-				vendorCandidate,
-				dispatchVendor: v || null,
-				error: {
-					name: typeof err?.name === "string" ? err.name : undefined,
-					message: typeof err?.message === "string" ? err.message : String(err),
-					status:
-						typeof err?.status === "number"
-							? err.status
-							: Number.isFinite(Number(err?.status))
-								? Number(err.status)
-								: undefined,
-					code: typeof err?.code === "string" ? err.code : undefined,
-					details: err?.details ?? undefined,
-				},
-			});
-			lastErr = err;
-			throwIfAbortSignalAborted(abortSignal);
-			continue;
+			console.warn(
+				"[task-store] persist public failed result failed",
+				err?.message || err,
+			);
 		}
+
+		setTraceStage(c, "public:newapi:task_failed", {
+			taskKind: request?.kind ?? null,
+			vendor: NEW_API_AUTO_VENDOR,
+			resultStatus: "failed",
+		});
+		return { vendor: NEW_API_AUTO_VENDOR, result: sanitizedFailedResult };
 	}
 
-	if (lastFailed) return lastFailed;
-	throw lastErr || new Error("run public task failed");
+	result = await maybeWrapSyncImageResultAsStoredTask(c as any, userId, {
+		vendor: NEW_API_AUTO_VENDOR,
+		requestKind: requestForNewApi.kind,
+		result: result as any,
+	});
+	const sanitizedResult = sanitizePublicTaskResult(result);
+	const hostingGap = detectPublicTaskAssetHostingGap({
+		originalResult: result,
+		sanitizedResult,
+	});
+	if (hostingGap) {
+		throw new AppError("任务已生成内联图片，但对象存储托管失败，无法返回公开 URL", {
+			status: 502,
+			code: "public_asset_hosting_failed",
+			details: {
+				vendor: NEW_API_AUTO_VENDOR,
+				taskKind: requestForNewApi.kind,
+				taskId:
+					typeof (result as any)?.id === "string"
+						? String((result as any).id).trim()
+						: null,
+				...hostingGap,
+			},
+		});
+	}
+
+	try {
+		const taskId =
+			typeof sanitizedResult === "object" &&
+			sanitizedResult &&
+			typeof (sanitizedResult as Record<string, unknown>)?.id === "string"
+				? String((sanitizedResult as Record<string, unknown>).id).trim()
+				: String(result?.id || "").trim();
+		const status =
+			typeof sanitizedResult === "object" &&
+			sanitizedResult &&
+			typeof (sanitizedResult as Record<string, unknown>)?.status === "string"
+				? String((sanitizedResult as Record<string, unknown>).status).trim()
+				: typeof result?.status === "string"
+					? result.status.trim()
+					: "";
+		const kind =
+			typeof sanitizedResult === "object" &&
+			sanitizedResult &&
+			typeof (sanitizedResult as Record<string, unknown>)?.kind === "string"
+				? String((sanitizedResult as Record<string, unknown>).kind).trim()
+				: String(requestForNewApi.kind || "").trim();
+		if (
+			taskId &&
+			kind &&
+			(status === "queued" ||
+				status === "running" ||
+				status === "succeeded" ||
+				status === "failed")
+		) {
+			const nowIso = new Date().toISOString();
+			const completedAt = status === "succeeded" || status === "failed" ? nowIso : null;
+			await upsertTaskResult(c.env.DB, {
+				userId,
+				taskId,
+				vendor: NEW_API_AUTO_VENDOR,
+				kind,
+				status,
+				result: sanitizedResult,
+				completedAt,
+				nowIso,
+			});
+		}
+	} catch (err: any) {
+		console.warn("[task-store] persist public result failed", err?.message || err);
+	}
+
+	return { vendor: NEW_API_AUTO_VENDOR, result: sanitizedResult };
 }
 
 // Unified public task API: supports image/video/chat via API key.
@@ -3417,7 +3237,7 @@ const PublicRunTaskOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "统一任务入口 /public/tasks",
 	description:
-		"统一任务入口：当你希望完全复用内部 TaskRequest 结构时使用（支持 image/video/chat 等）。",
+		"统一任务入口：当你希望完全复用内部 TaskRequest 结构时使用（支持 image/video/chat 等）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。",
 	request: {
 		body: {
 			required: true,
@@ -3425,7 +3245,6 @@ const PublicRunTaskOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicRunTaskRequestSchema,
 					example: {
-						vendor: "auto",
 						request: {
 							kind: "text_to_video",
 							prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
@@ -3443,7 +3262,7 @@ const PublicRunTaskOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicRunTaskResponseSchema,
 					example: {
-						vendor: "veo",
+						vendor: "newapi",
 						result: {
 							id: "task_01HXYZ...",
 							kind: "text_to_video",
@@ -3463,7 +3282,7 @@ const PublicRunTaskOpenApiRoute = createRoute({
 					example: {
 						error: "Unsupported task kind for public API",
 						code: "unsupported_task_kind",
-						details: { kind: "image_to_video" },
+						details: { kind: "unknown_kind" },
 					},
 				},
 			},
@@ -3481,7 +3300,9 @@ publicApiRouter.openapi(PublicRunTaskOpenApiRoute, async (c) => {
 	const input = c.req.valid("json");
 
 	try {
-		const { vendor, result } = await runPublicTask(c, userId, input);
+		const { vendor, result } = await runPublicTask(c, userId, {
+			request: input.request,
+		});
 		return c.json(
 			PublicRunTaskResponseSchema.parse({
 				vendor,
@@ -3511,7 +3332,7 @@ const PublicDrawOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "绘图 /public/draw",
 	description:
-		"便捷绘图接口：创建 text_to_image 或 image_edit 任务（vendor=auto 会在系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽）。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率，但不同 vendor 支持不一致；如需严格像素宽高，建议指定 vendor=qwen。",
+		"便捷绘图接口：创建 text_to_image 或 image_edit 任务。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。支持通过 width/height 或 extras.aspectRatio/extras.resolution 配置尺寸/分辨率。",
 	request: {
 		body: {
 			required: true,
@@ -3519,7 +3340,6 @@ const PublicDrawOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicDrawRequestSchema,
 					example: {
-						vendor: "auto",
 						kind: "text_to_image",
 						prompt: "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
 						extras: { modelAlias: "nano-banana-pro", aspectRatio: "1:1" },
@@ -3535,7 +3355,7 @@ const PublicDrawOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicRunTaskResponseSchema,
 					example: {
-						vendor: "gemini",
+						vendor: "newapi",
 						result: {
 							id: "task_01HXYZ...",
 							kind: "text_to_image",
@@ -3586,10 +3406,6 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 	};
 	const normalizedRequest = normalizeImageEditRequestKind(request);
 
-	const vendorRaw = (input.vendor || "auto").trim().toLowerCase();
-	let dispatchVendor =
-		vendorRaw && vendorRaw !== "auto" ? normalizeDispatchVendor(vendorRaw) : "";
-
 	const extras = (normalizedRequest?.extras || {}) as Record<string, any>;
 	const modelAliasRaw =
 		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
@@ -3598,192 +3414,32 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 	const looksLikeNanoBananaAlias = /^nano-banana/i.test(modelAliasRaw);
 
 	const preferAsync =
-		input.async === true ||
-		(input.async !== false && dispatchVendor === "tuzi") ||
-		(input.async !== false && vendorRaw === "auto" && looksLikeNanoBananaAlias);
+		input.async === true || (input.async !== false && looksLikeNanoBananaAlias);
 
 	if (preferAsync) {
-		if (vendorRaw === "auto") {
-			const resolved = await resolvePublicTaskVendors(c, userId, input.vendor, normalizedRequest);
-
-			const attempts = resolved.vendorCandidates
-				.map((candidate) => {
-					const v = normalizeDispatchVendor(candidate);
-					if (!v) return null;
-
-					const requestForVendor = (() => {
-						const cleanExtras = { ...(extras || {}) } as Record<string, any>;
-						delete (cleanExtras as any).modelAlias;
-						if (!modelAliasRaw) return { ...normalizedRequest, extras: cleanExtras };
-
-						const mappedModelKey = resolved.aliasMap?.get(v || "");
-						if (!mappedModelKey) return null;
-						cleanExtras.modelKey = mappedModelKey;
-						return { ...normalizedRequest, extras: cleanExtras };
-					})();
-
-					if (!requestForVendor) return null;
-					return { vendor: v, request: requestForVendor as any };
-				})
-				.filter(Boolean) as Array<{ vendor: string; request: any }>;
-
-			if (!attempts.length) {
-				throw new AppError(
-					"没有可用的全局厂商配置（请在 /stats -> 模型管理（系统级）启用并配置 API Key）",
-					{
-						status: 400,
-						code: "no_enabled_vendor",
-						details: {
-							kind: normalizedRequest?.kind,
-							vendorRaw: vendorRaw || null,
-							vendorCandidates: resolved.vendorCandidates,
-							systemEnabledVendors: Array.from(resolved.enabledSystemVendors.values()),
-							modelAlias: modelAliasRaw || null,
-						},
-					},
-				);
-			}
-
-			try {
-				// Hint proxy selector: prefer higher-success channels for this task kind.
-					if (normalizedRequest?.kind) c.set("routingTaskKind", normalizedRequest.kind);
-			} catch {
-				// ignore
-			}
-
-			const result = await enqueueStoredTaskForVendorAttempts(c as any, userId, attempts);
-			const firstVendor = normalizeDispatchVendor(attempts[0]?.vendor || "");
-
-			return c.json(
-				PublicRunTaskResponseSchema.parse({
-					vendor: firstVendor || "auto",
-					result,
-				}),
-				200,
-			);
+		try {
+			// Hint proxy selector: prefer higher-success channels for this task kind.
+			if (normalizedRequest?.kind) c.set("routingTaskKind", normalizedRequest.kind);
+		} catch {
+			// ignore
 		}
 
-		const enabledSystemVendors = await listEnabledSystemVendors(c);
-
-		if (!dispatchVendor) {
-			return c.json(
-				{
-					error: "vendor is required for async draw",
-					code: "vendor_required",
-				},
-				400,
-			);
+		const cleanExtras = { ...(extras || {}) } as Record<string, any>;
+		delete (cleanExtras as any).modelAlias;
+		if (modelAliasRaw && !String(cleanExtras.modelKey || "").trim()) {
+			cleanExtras.modelKey = modelAliasRaw;
 		}
-
-		if (!enabledSystemVendors.has(dispatchVendor)) {
-			throw new AppError("该厂商已禁用或未配置（系统级）", {
-				status: 400,
-				code: "vendor_disabled",
-				details: {
-					vendorRaw: vendorRaw || null,
-					vendor: dispatchVendor,
-					systemEnabledVendors: Array.from(enabledSystemVendors.values()),
-				},
-			});
-		}
-
-		// Map modelAlias -> modelKey for this explicit vendor (keeps behavior aligned with /public/tasks).
-		const requestForVendor = await (async () => {
-			if (!modelAliasRaw) {
-				const cleanExtras = { ...(extras || {}) } as Record<string, any>;
-				delete (cleanExtras as any).modelAlias;
-				return { ...request, extras: cleanExtras };
-			}
-
-			const expectedKind = resolveCatalogKindForTaskKind(normalizedRequest?.kind ?? null);
-			let mappedModelKey: string | null = null;
-			try {
-				const rows = await listCatalogModelsByModelAlias(c.env.DB, modelAliasRaw);
-				for (const row of rows) {
-					if (!row) continue;
-					if (Number((row as any).enabled ?? 1) === 0) continue;
-					const kindRaw =
-						typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
-					if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
-					const vendorKeyRaw =
-						typeof (row as any).vendor_key === "string"
-							? (row as any).vendor_key.trim()
-							: "";
-					const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
-					if (!vendorKey || vendorKey !== dispatchVendor) continue;
-					const mk =
-						typeof (row as any).model_key === "string"
-							? (row as any).model_key.trim()
-							: "";
-					if (!mk) continue;
-					mappedModelKey = mk;
-					break;
-				}
-				if (!mappedModelKey) {
-					const rowsByModelKey = await listCatalogModelsByModelKey(c.env.DB, modelAliasRaw);
-					for (const row of rowsByModelKey) {
-						if (!row) continue;
-						if (Number((row as any).enabled ?? 1) === 0) continue;
-						const kindRaw =
-							typeof (row as any).kind === "string" ? (row as any).kind.trim() : "";
-						if (expectedKind && kindRaw && kindRaw !== expectedKind) continue;
-						const vendorKeyRaw =
-							typeof (row as any).vendor_key === "string"
-								? (row as any).vendor_key.trim()
-								: "";
-						const vendorKey = normalizeDispatchVendor(vendorKeyRaw);
-						if (!vendorKey || vendorKey !== dispatchVendor) continue;
-						const mk =
-							typeof (row as any).model_key === "string"
-								? (row as any).model_key.trim()
-								: "";
-						if (!mk) continue;
-						mappedModelKey = mk;
-						break;
-					}
-				}
-			} catch {
-				mappedModelKey = null;
-			}
-
-			if (!mappedModelKey) {
-				throw new AppError(
-					"未找到可用的模型别名配置（请在 /stats -> 模型管理（系统级）为该别名配置并启用模型）",
-					{
-						status: 400,
-						code: "model_alias_not_found",
-						details: {
-							taskKind: normalizedRequest?.kind ?? null,
-							vendor: dispatchVendor,
-							modelAlias: modelAliasRaw,
-						},
-					},
-				);
-			}
-
-			const cleanExtras = { ...(extras || {}) } as Record<string, any>;
-			delete (cleanExtras as any).modelAlias;
-			cleanExtras.modelKey = mappedModelKey;
-				return { ...normalizedRequest, extras: cleanExtras };
-		})();
-
-			try {
-				// Hint proxy selector: prefer higher-success channels for this task kind.
-				if (requestForVendor?.kind) c.set("routingTaskKind", requestForVendor.kind);
-			} catch {
-				// ignore
-			}
-
-			const result = await enqueueStoredTaskForVendor(
-				c as any,
-				userId,
-				dispatchVendor,
-				requestForVendor as any,
+		const requestForNewApi = { ...normalizedRequest, extras: cleanExtras };
+		const result = await enqueueStoredTaskForVendor(
+			c as any,
+			userId,
+			NEW_API_AUTO_VENDOR,
+			requestForNewApi,
 		);
 
 		return c.json(
 			PublicRunTaskResponseSchema.parse({
-				vendor: dispatchVendor,
+				vendor: NEW_API_AUTO_VENDOR,
 				result,
 			}),
 			200,
@@ -3791,8 +3447,6 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 	}
 
 	const { vendor, result } = await runPublicTask(c, userId, {
-		vendor: input.vendor,
-		vendorCandidates: input.vendorCandidates,
 		request: normalizedRequest,
 	});
 
@@ -3811,7 +3465,7 @@ const PublicVideoOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "生成视频 /public/video",
 	description:
-		"便捷视频接口：创建 text_to_video 任务（vendor=auto 会在系统级已启用且已配置的厂商列表中依次重试，直到成功或候选耗尽；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey））。",
+		"便捷视频接口：创建 text_to_video 任务。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略；可通过 extras.modelAlias 指定模型（推荐；兼容 extras.modelKey）。",
 	request: {
 		body: {
 			required: true,
@@ -3819,7 +3473,6 @@ const PublicVideoOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicVideoRequestSchema,
 					example: {
-						vendor: "auto",
 						prompt: "雨夜霓虹街头，一只白猫缓慢走过…",
 						durationSeconds: 10,
 						extras: { modelAlias: "<YOUR_VIDEO_MODEL_ALIAS>" },
@@ -3835,7 +3488,7 @@ const PublicVideoOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicRunTaskResponseSchema,
 					example: {
-						vendor: "veo",
+						vendor: "newapi",
 						result: {
 							id: "task_01HXYZ...",
 							kind: "text_to_video",
@@ -3879,8 +3532,6 @@ publicApiRouter.openapi(PublicVideoOpenApiRoute, async (c) => {
 	};
 
 	const { vendor, result } = await runPublicTask(c, userId, {
-		vendor: input.vendor,
-		vendorCandidates: input.vendorCandidates,
 		request,
 	});
 
@@ -3899,7 +3550,7 @@ const PublicFetchTaskResultOpenApiRoute = createRoute({
 	path: "/tasks/result",
 	tags: [PUBLIC_TAG],
 	summary: "查询任务结果 /public/tasks/result",
-	description: "轮询任务状态与结果；支持 vendor=auto 自动基于 taskId 推断。",
+	description: "轮询任务状态与结果；优先基于 taskId 记录推断任务来源，new-api 任务不需要传 vendor。",
 	request: {
 		body: {
 			required: true,
@@ -3918,7 +3569,7 @@ const PublicFetchTaskResultOpenApiRoute = createRoute({
 				"application/json": {
 					schema: PublicFetchTaskResultResponseSchema,
 					example: {
-						vendor: "veo",
+						vendor: "newapi",
 						result: {
 							id: "task_01HXYZ...",
 							kind: "text_to_video",
