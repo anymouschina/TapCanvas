@@ -40,6 +40,7 @@ import {
 	updateUserAgentPipelineRunStatus,
 	upsertAdminAgentSkill,
 } from "./agents.service";
+import { handleAgentsLlmChatCompletions, handleAgentsLlmVideoUnderstand } from "./agents-llm-proxy";
 
 export const agentsRouter = new Hono<AppEnv>();
 export const adminAgentsRouter = new Hono<AppEnv>();
@@ -47,6 +48,16 @@ export const adminAgentsRouter = new Hono<AppEnv>();
 // Public skill listing should work for both end-user JWT and external API keys.
 agentsRouter.use("*", apiKeyAuthMiddleware);
 adminAgentsRouter.use("*", authMiddleware);
+
+// LLM proxy: agents-cli uses this endpoint with the user's API key so that
+// each inference call goes through hono-api's credit-deduction layer.
+agentsRouter.post("/llm/v1/chat/completions", (c) =>
+	handleAgentsLlmChatCompletions(c as any),
+);
+
+agentsRouter.post("/llm/v1/video-understand", (c) =>
+	handleAgentsLlmVideoUnderstand(c as any),
+);
 
 agentsRouter.get("/skill", async (c) => {
 	const userId = c.get("userId");
