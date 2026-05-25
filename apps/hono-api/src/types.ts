@@ -56,6 +56,9 @@ export type WorkerEnv = Record<string, unknown> & {
 	AGENTS_BRIDGE_BASE_URL?: string;
 	AGENTS_BRIDGE_TOKEN?: string;
 	AGENTS_BRIDGE_TIMEOUT_MS?: string;
+	NEW_API_INTERNAL_BASE_URL?: string;
+	NEW_API_INTERNAL_TOKEN?: string;
+	NEW_API_SQL_DSN?: string;
 	// Optional: TapCanvas upstream config for agents bridge tools
 	TAPCANVAS_API_BASE_URL?: string;
 	TAPCANVAS_API_KEY?: string;
