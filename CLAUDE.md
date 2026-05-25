@@ -17,11 +17,13 @@ pnpm --filter ./apps/hono-api dev  # http://localhost:8788
 # Init local D1 (optional, recommended)
 pnpm --filter ./apps/hono-api db:update:local
 
-# One-command full stack (Docker)
-docker compose up -d
+# One-command full stack (Docker) — run from apps/hono-api
+# Starts: postgres, redis, agents-bridge, api, new-api
+cd apps/hono-api && docker compose up -d
 docker compose logs -f api
-docker compose logs -f web
 docker compose down
+# Then start web separately from repo root:
+pnpm dev:web
 
 # Build web (outputs to repo root `dist/`)
 pnpm build

@@ -182,9 +182,15 @@ corepack prepare pnpm@latest --activate
 
 执行目录：
 
-`TapCanvas-pro` 项目根目录
+`apps/hono-api`
 
-直接启动：
+先进入该目录：
+
+```bash
+cd apps/hono-api
+```
+
+一键启动后端全部服务：
 
 ```bash
 docker compose up -d
@@ -196,26 +202,29 @@ docker compose up -d
 docker-compose up -d
 ```
 
-也可以用仓库自带脚本：
+这一条命令会自动启动以下服务：
+
+- `postgres`：数据库
+- `redis`：缓存
+- `agents-bridge`：AI 对话桥接服务
+- `api`：后端 API（`http://localhost:8788`）
+- `new-api`：模型接入网关（`http://localhost:4455`）
+
+等后端容器启动完毕后，**再单独启动前端 Web**（另开一个终端，从仓库根目录执行）：
 
 ```bash
-./scripts/dev.sh docker
-```
-
-如果你希望第一次启动时强制重建镜像：
-
-```bash
-./scripts/dev.sh docker --build
+pnpm dev:web
 ```
 
 启动后默认地址：
 
 - Web: `http://localhost:5173`
 - API: `http://localhost:8788`
+- new-api 管理台: `http://localhost:4455`
 
 这种方式的特点：
 
-- 优点：命令少，容器里会自动处理 Web 和 API 的依赖与启动
+- 优点：命令少，后端、数据库、new-api 均由 Docker 自动管理
 - 优点：更接近容器化部署环境
 - 缺点：热更新和调试通常不如本地源码方式直接
 
@@ -420,7 +429,7 @@ pnpm dev:web
 
 你可以用这组最简单的判断方式：
 
-- 如果你用的是 Docker Compose：
+- 如果你用的是 Docker Compose（在 `apps/hono-api` 目录下执行）：
   - `docker compose ps` 能看到容器在运行
 - 如果你用的是本地源码启动：
   - 启动命令所在终端没有直接报错退出
@@ -436,9 +445,10 @@ pnpm dev:web
 
 ## 10. 常用停止命令
 
-如果你用的是 Docker Compose：
+如果你用的是 Docker Compose（需在 `apps/hono-api` 目录下执行）：
 
 ```bash
+cd apps/hono-api
 docker compose down
 ```
 
@@ -478,18 +488,24 @@ pnpm --filter @tapcanvas/api test
 
 ## 方式一：Docker Compose
 
-`apps/hono-api` 目录内提供了 Docker Compose 方案，可一并启动：
+`apps/hono-api` 目录内提供了 Docker Compose 方案，在该目录下一键启动以下全部后端服务：
 
-- `postgres`
-- `redis`
-- `agents-bridge`
-- `api`
-
-示例：
+- `postgres`：数据库
+- `redis`：缓存
+- `agents-bridge`：AI 对话桥接服务
+- `api`：后端 API
+- `new-api`：模型接入网关
+- `new-api-patch`：数据库补丁任务（一次性）
 
 ```bash
 cd apps/hono-api
-docker-compose up --build -d
+docker compose up --build -d
+```
+
+后端启动完毕后，单独启动前端（仓库根目录）：
+
+```bash
+pnpm dev:web
 ```
 
 如果你的共享目录不是默认 monorepo 布局，可先设置：

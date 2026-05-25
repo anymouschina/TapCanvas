@@ -37,13 +37,32 @@ pnpm dev:api
 
 ### One-command full stack (Docker)
 
-```bash
-docker compose up -d
+The `docker-compose.yml` lives in `apps/hono-api`. Run it from there to start the entire backend stack in one command:
 
+```bash
+cd apps/hono-api
+docker compose up -d
+```
+
+This starts:
+- `postgres` — database
+- `redis` — cache
+- `agents-bridge` — AI chat bridge
+- `api` — backend API (`http://localhost:8788`)
+- `new-api` — model gateway (`http://localhost:4455`)
+
+Then start the web frontend separately (from the repo root):
+
+```bash
+pnpm dev:web
+```
+
+Copy env files if you haven't already:
+
+```bash
 cp apps/web/.env.example apps/web/.env
 cp apps/hono-api/.env.example apps/hono-api/.env
-
-# Reload env (optional)
+# Then restart if needed
 docker compose restart
 ```
 
