@@ -37,6 +37,7 @@ import {
 } from "./openapi/docs.zh";
 import { installDomParserIfNeeded } from "./polyfills/domparser";
 import { internalRouter } from "./modules/internal/internal.routes";
+import { newApiModelsRouter } from "./modules/new-api-models/new-api-models.routes";
 
 const API_BOOT_TIME_ISO = new Date().toISOString();
 
@@ -282,6 +283,9 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 
 	// Model catalog (admin-configurable)
 	app.route("/model-catalog", modelCatalogRouter);
+
+	// New API models
+	app.route("/new-api-models", newApiModelsRouter);
 
 	// AI helper routes (prompt samples)
 	app.route("/ai", aiRouter);
