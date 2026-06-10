@@ -106,4 +106,8 @@ docker compose restart
 
 ## License
 
-Apache-2.0
+MIT
+
+This project has been forked as the TapCanvas **Community Edition**: only non-commercial capabilities will be updated going forward. From open source, for open source.
+
+> **Disclaimer**: The online website is the TapCanvas **Commercial Edition**, which is a separate product from the Community Edition in this repository — they differ in features and scope of service. This license applies only to the code in this repository, not to the online website.
