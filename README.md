@@ -28,7 +28,7 @@
     <img src="https://img.shields.io/github/stars/anymouschina/TapCanvas?style=for-the-badge&logo=github" alt="Stars Badge" />
   </a>
   <a href="./LICENSE">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
+    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License Badge" />
   </a>
 </p>
 
@@ -39,6 +39,10 @@
 ---
 
 # 🌟 项目简介
+
+> **此项目分叉为 TapCanvas「社区版」，后续仅更新非商业版能力。取自开源，服务于开源。**
+>
+> **郑重声明：在线网站为 TapCanvas 商业版，与本仓库的社区版是两个不同的版本，功能与服务范围有区别。本仓库的代码与协议不代表在线网站的能力与条款。**
 
 **本项目为在线版本 26.4.15 版本，二开不受限制，但new-api 的改造自行阅读对应 License**
 
@@ -548,7 +552,9 @@ TapCanvas-pro/
 ├── apps/
 │   ├── web/           # Vite + React + Mantine + React Flow 前端
 │   ├── hono-api/      # NestJS + Node.js API，挂载 Hono/OpenAPI 路由
-│   └── agents-cli/    # 独立 Agents CLI / HTTP bridge
+│   ├── agents-cli/    # 独立 Agents CLI / HTTP bridge
+│   ├── new-api/       # 大模型网关（new-api 改造版），统一多模型接入与计费
+│   └── task/          # 开发任务清单与架构改造 checklist（文档，非运行时服务）
 ├── packages/
 │   ├── schemas/       # 共享 schema
 │   ├── sdk/           # 共享 SDK
@@ -557,6 +563,16 @@ TapCanvas-pro/
 ├── infra/             # 可选基础设施编排
 └── assets/            # README 与演示素材
 ```
+
+## apps 子项目说明
+
+| 子项目 | 说明 |
+| --- | --- |
+| `apps/web` | 前端画布应用（Vite + React 18 + Mantine + React Flow + Zustand）。无限画布、节点编排、文本/图像/视频生成界面与项目资产管理都在这里。本地开发：`pnpm dev:web`（http://localhost:5173）。 |
+| `apps/hono-api` | 后端 API 服务（NestJS + Node.js，挂载 Hono/OpenAPI 路由，Prisma + Postgres + Redis）。提供认证、任务、AI tool schema 等核心接口，含 `docker-compose.yml` 一键起全栈。默认地址 http://localhost:8788。 |
+| `apps/agents-cli` | TypeScript 智能体执行内核与 Agents Bridge。前端经 `POST /public/agents/chat` 进入后，由它负责语义理解、技能选择、取证、规划与执行，支持 Skills、多代理协作与自学习记忆。 |
+| `apps/new-api` | 大模型网关与 AI 资产管理系统（基于开源 new-api 改造）。统一接入文本/图像/视频等多类上游模型，负责渠道管理、配额与计费。二开请自行阅读其目录内对应 License。 |
+| `apps/task` | 开发任务清单与架构改造 checklist 的文档集合，记录各模块的演进与对齐计划，不是运行时服务。 |
 
 ---
 
@@ -582,32 +598,12 @@ TapCanvas-pro/
 
 # 📜 许可证
 
-TapCanvas Pro 基于 Apache-2.0 协议开源发布，并附有补充商业协议。
+此项目分叉为 TapCanvas「社区版」，基于 **MIT 协议**开源发布，后续仅更新非商业版能力。取自开源，服务于开源。
 
-许可证详情：https://www.apache.org/licenses/LICENSE-2.0
+> **郑重声明**：在线网站为 TapCanvas **商业版**，与本仓库的社区版是两个不同的版本，功能与服务范围有区别。本协议仅适用于本仓库代码，不适用于在线网站。
 
-## 补充协议
-
-- 若将本软件以产品形式分发给 **2 个及以上独立第三方**使用，须取得作者方 **书面商业授权**。
-- **≤ 5 个法人**联合运营内部使用，不对外提供服务的，视为内部使用，**无需授权**。
-- 不得删除或修改 TapCanvas Pro 中的标识或版权信息。
-
-## 永久免费场景
-
-- ✅ 用 TapCanvas Pro 制作内容并获得平台分账
-- ✅ 二次开发供自己团队内部使用
-- ✅ ≤ 5 个法人联合运营内部使用
-- ✅ 个人学习、研究、非商业用途
-
-## 商业授权定价
-
-| 阶段      | 年销售额      | 年费                       |
-| --------- | ------------- | -------------------------- |
-| 🌱 扶持期 | < ¥10 万     | **申请即可免费授权** |
-| 🚀 初创期 | ¥10–50 万   | ¥5,000/年                 |
-| 📈 成长期 | ¥50–150 万  | ¥20,000/年                |
-| 🏢 规模期 | ¥150–500 万 | ¥80,000/年                |
-| 🌐 企业级 | > ¥500 万    | 面议                       |
+- 可自由使用、修改、分发与商用，仅需保留版权与许可声明。
+- 第三方组件（如 new-api）的改造请自行阅读其对应 License。
 
 > **不追溯条款**：若历史版本曾基于其他开源协议使用，已按当时协议合规使用的用户，继续按原协议执行，不受后续协议调整追溯影响。
 
