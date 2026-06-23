@@ -186,7 +186,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && ( [ -d node_modules/.pnpm ] && [ -f node_modules/wechatpay-node-v3/package.json ] && [ -f node_modules/undici/package.json ] && [ -f node_modules/@alicloud/dysmsapi20170525/package.json ] && [ -f node_modules/prisma/package.json ] && [ -f node_modules/@prisma/client/package.json ] && [ -f node_modules/jsonrepair/package.json ] || pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) && pnpm db:pg:backup && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm sync:new-api:channels && pnpm sync:new-api:catalog && pnpm build && exec node dist/main.js"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && ( [ -d node_modules/.pnpm ] && [ -f node_modules/wechatpay-node-v3/package.json ] && [ -f node_modules/undici/package.json ] && [ -f node_modules/@alicloud/dysmsapi20170525/package.json ] && [ -f node_modules/prisma/package.json ] && [ -f node_modules/@prisma/client/package.json ] && [ -f node_modules/jsonrepair/package.json ] || pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile ) && pnpm db:pg:backup && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm build && exec node dist/main.js"
     volumes:
       - .:/app
       - ${TAPCANVAS_SHARED_ROOT:-../..}/sql:/app/sql:ro
