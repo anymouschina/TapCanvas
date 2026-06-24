@@ -252,6 +252,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      new-api-patch:
+        condition: service_completed_successfully
     volumes:
       - ../new-api/data:/data
       - ../new-api/logs:/app/logs
@@ -267,8 +269,6 @@ services:
     restart: "no"
     depends_on:
       postgres:
-        condition: service_healthy
-      new-api:
         condition: service_healthy
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
