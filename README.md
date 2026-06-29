@@ -630,3 +630,15 @@ q群已满，暂不公开
 如需合作或问题沟通，可联系作者：
 
 ![联系作者](./assets/author.jpg)
+
+---
+
+# 🤖 关于 Claude
+
+本项目由 Claude 辅助构建。
+
+如需正规渠道充值，或购买成品号，可联系作者：
+
+![Claude 充值/成品号 1](./assets/claude/1561782733795_.pic.jpg)
+
+![Claude 充值/成品号 2](./assets/claude/1571782733795_.pic.jpg)
