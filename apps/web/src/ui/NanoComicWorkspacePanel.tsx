@@ -23,6 +23,7 @@ import {
   IconChevronDown,
   IconLayoutGrid,
   IconRefresh,
+  IconSparkles,
   IconVideo,
   IconX,
 } from '@tabler/icons-react'
@@ -519,6 +520,11 @@ type ChapterScriptRuntimeState = {
   message: string
   updatedAtLabel: string
   updatedAtMs: number
+}
+
+type IdeaDraftRuntimeState = {
+  status: 'idle' | 'running' | 'success' | 'error'
+  message: string
 }
 
 type WorkspaceAssetInput = {
@@ -1218,6 +1224,13 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
     () => readRequestedWorkspaceShotIdFromSearch(routeSearch),
     [routeSearch],
   )
+  const requestedStoryIdea = React.useMemo(() => {
+    try {
+      return new URLSearchParams(routeSearch).get('idea')?.trim().slice(0, 1200) || ''
+    } catch {
+      return ''
+    }
+  }, [routeSearch])
   const [books, setBooks] = React.useState<ProjectBookListItemDto[]>([])
   const [selectedBookId, setSelectedBookId] = React.useState<string>('')
   const [selectedBookIndex, setSelectedBookIndex] = React.useState<ProjectBookIndexDto | null>(null)
@@ -1235,6 +1248,10 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
   const [chapterDetailError, setChapterDetailError] = React.useState<string | null>(null)
   const [chatArtifactsError, setChatArtifactsError] = React.useState<string | null>(null)
   const [workspaceTextUploading, setWorkspaceTextUploading] = React.useState(false)
+  const [ideaDraftState, setIdeaDraftState] = React.useState<IdeaDraftRuntimeState>({
+    status: 'idle',
+    message: '',
+  })
   const [workspaceStyleReferenceUploading, setWorkspaceStyleReferenceUploading] = React.useState(false)
   const [workspaceMetadataEnsuring, setWorkspaceMetadataEnsuring] = React.useState(false)
   const [refreshTick, setRefreshTick] = React.useState(0)
@@ -1843,13 +1860,11 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
     workspaceTextUploadInputRef.current?.click()
   }, [currentProject?.id, workspaceTextUploading])
 
-  const handleWorkspaceTextUploadInputChange = React.useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0]
-    event.currentTarget.value = ''
-    if (!file || !currentProject?.id) return
+  const persistWorkspaceTextFile = React.useCallback(async (file: File, source: 'upload' | 'idea') => {
+    if (!currentProject?.id) return
     setWorkspaceTextUploading(true)
     try {
-      toast('小说上传成功，开始分块上传并进入异步任务队列…', 'info')
+      toast(source === 'idea' ? 'AI 创作结果已生成，正在写入项目…' : '小说上传成功，开始分块上传并进入异步任务队列…', 'info')
       const latestUploadJobResponse = await getLatestProjectBookUploadJob(currentProject.id).catch(() => null)
       const latestUploadJob = latestUploadJobResponse?.job ?? null
       const blockingUpload = latestUploadJob && (latestUploadJob.status === 'queued' || latestUploadJob.status === 'running') ? latestUploadJob : null
@@ -1866,7 +1881,7 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
         },
       })
       toast('已进入后台队列，正在拆分任务处理小说…', 'info')
-      toast('已开始处理小说', 'success')
+      toast(source === 'idea' ? 'AI 创作结果已进入章节处理队列' : '已开始处理小说', 'success')
       const nextBooks = await listProjectBooks(currentProject.id).catch(() => [])
       const normalizedBooks = sortProjectBooksByUpdatedAt(Array.isArray(nextBooks) ? nextBooks : [])
       setBooks(normalizedBooks)
@@ -1874,13 +1889,117 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
         const nextPrimaryBookId = pickPrimaryProjectBook(normalizedBooks)?.bookId || ''
         setSelectedBookId((currentValue) => currentValue || nextPrimaryBookId)
       }
+      setRefreshTick((current) => current + 1)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : '上传项目文本失败'
       toast(message, 'error')
+      throw error
     } finally {
       setWorkspaceTextUploading(false)
     }
   }, [currentProject?.id, currentProject?.name])
+
+  const handleWorkspaceTextUploadInputChange = React.useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+    await persistWorkspaceTextFile(file, 'upload').catch(() => undefined)
+  }, [persistWorkspaceTextFile])
+
+  const handleGenerateProjectTextFromIdea = React.useCallback(() => {
+    const projectId = String(currentProject?.id || '').trim()
+    const flowId = String(currentFlowId || '').trim()
+    const idea = requestedStoryIdea.trim()
+    if (!projectId || !flowId || !idea || ideaDraftState.status === 'running') return
+
+    const prompt = [
+      '用户已明确发起从创意创建短剧项目内容的操作。',
+      '请结合当前项目上下文与可用工具，自主规划并完成用户请求。',
+      `用户原始创意：\n${idea}`,
+    ].join('\n\n')
+    const sessionKey = buildEffectiveChatSessionKey({
+      persistedBaseKey: `idea-draft-${projectId}`,
+      projectId,
+      flowId,
+      skillId: 'homepage-project-creation',
+      lane: 'general',
+    })
+
+    setIdeaDraftState({ status: 'running', message: '正在将创作请求交给 Agents 处理…' })
+    let settled = false
+    void agentsChatStream({
+      vendor: 'agents',
+      prompt,
+      displayPrompt: `从创意创建项目内容：${idea}`,
+      sessionKey,
+      canvasProjectId: projectId,
+      canvasFlowId: flowId,
+      chatContext: {
+        currentProjectName: String(currentProject?.name || '当前项目'),
+      },
+      mode: 'chat',
+      stream: true,
+    }, {
+      onEvent: (event) => {
+        if (event.event === 'tool') {
+          setIdeaDraftState({ status: 'running', message: 'Agents 正在调用完成请求所需的能力…' })
+          return
+        }
+        if (event.event === 'error') {
+          settled = true
+          const message = String(event.data?.message || '项目内容生成失败').trim()
+          setIdeaDraftState({ status: 'error', message })
+          toast(message, 'error')
+          return
+        }
+        if (event.event === 'done' && !settled) {
+          settled = true
+          const message = '生成连接已结束，但没有收到可写入的项目内容'
+          setIdeaDraftState({ status: 'error', message })
+          toast(message, 'error')
+          return
+        }
+        if (event.event !== 'result' || settled) return
+        settled = true
+        const draft = String(event.data?.response?.text || '').trim()
+        if (!draft) {
+          const message = 'Agents 没有返回可写入的项目内容'
+          setIdeaDraftState({ status: 'error', message })
+          toast(message, 'error')
+          return
+        }
+        const safeName = String(currentProject?.name || '短剧项目').trim().replace(/[\\/:*?"<>|]/g, '-') || '短剧项目'
+        const file = new File([draft], `${safeName}-AI创作内容.txt`, { type: 'text/plain;charset=utf-8' })
+        void persistWorkspaceTextFile(file, 'idea')
+          .then(() => setIdeaDraftState({ status: 'success', message: 'Agents 返回内容已写入项目，正在建立索引。' }))
+          .catch((error: unknown) => {
+            setIdeaDraftState({
+              status: 'error',
+              message: error instanceof Error ? error.message : '项目内容写入失败',
+            })
+          })
+      },
+      onError: (error) => {
+        if (settled) return
+        settled = true
+        setIdeaDraftState({ status: 'error', message: error.message || '项目内容生成失败' })
+        toast(error.message || '项目内容生成失败', 'error')
+      },
+    }).catch((error: unknown) => {
+      if (settled) return
+      settled = true
+      const message = error instanceof Error ? error.message : '项目内容生成失败'
+      setIdeaDraftState({ status: 'error', message })
+      toast(message, 'error')
+    })
+  }, [
+    currentFlowId,
+    currentProject?.id,
+    currentProject?.name,
+    ideaDraftState.status,
+    persistWorkspaceTextFile,
+    requestedStoryIdea,
+  ])
 
   const selectedStyleReferenceImages = React.useMemo(() => {
     const rawStyleBible = selectedBookIndex?.assets?.styleBible
@@ -2302,11 +2421,23 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
     const items: WorkspaceChecklistItem[] = []
     const hasUploadedBook = books.length > 0
     if (!hasUploadedBook) {
+      if (requestedStoryIdea) {
+        items.push({
+          key: 'idea-draft',
+          title: '从创意生成项目内容',
+          detail: '已收到首页创意。Agents 将结合当前项目上下文自主规划产物，并把真实结果写入项目。',
+          actionLabel: ideaDraftState.status === 'error' ? '重新生成' : '开始创作',
+          actionLoading: ideaDraftState.status === 'running' || workspaceTextUploading,
+          action: handleGenerateProjectTextFromIdea,
+        })
+      }
       items.push({
         key: 'project-text',
         title: '项目文本',
-        detail: '当前工作台依赖项目文本。现在可以直接在这里上传，不必先切去素材面板找入口。',
-        actionLabel: '直接上传文本',
+        detail: requestedStoryIdea
+          ? '也可以跳过 AI 初稿，直接上传你已有的小说或剧本文本。'
+          : '当前工作台依赖项目文本。现在可以直接在这里上传，不必先切去素材面板找入口。',
+        actionLabel: requestedStoryIdea ? '上传已有文本' : '直接上传文本',
         actionLoading: workspaceTextUploading,
         action: openWorkspaceTextUpload,
       })
@@ -2351,6 +2482,8 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
     currentProject?.id,
     currentChapterMissingRoleAnchorCount,
     handleGenerateMissingRoleAnchors,
+    handleGenerateProjectTextFromIdea,
+    ideaDraftState.status,
     isWorkspaceAssetGenerating,
     openWorkspaceTextUpload,
     openWorkspaceProjectTextDependency,
@@ -2362,6 +2495,7 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
     selectedStyleReferenceImages.length,
     setActivePanel,
     useCanvasStyleReferenceFromWorkspace,
+    requestedStoryIdea,
     workspaceStyleReferenceUploading,
     workspaceTextUploading,
   ])
@@ -3346,6 +3480,46 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
         <div className="nano-comic-workspace__shell">
         {currentProject ? (
           <Stack className="nano-comic-workspace__stack" gap="md">
+            {requestedStoryIdea ? (
+              <PanelCard className="nano-comic-workspace__idea" padding="compact">
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <div>
+                    <Text size="xs" fw={700} c="dimmed">本次创作意图</Text>
+                    <Text size="sm" mt={4}>{requestedStoryIdea}</Text>
+                    {ideaDraftState.message ? (
+                      <Text
+                        size="xs"
+                        mt={6}
+                        c={ideaDraftState.status === 'error' ? 'red' : ideaDraftState.status === 'success' ? 'teal' : 'dimmed'}
+                      >
+                        {ideaDraftState.message}
+                      </Text>
+                    ) : null}
+                  </div>
+                  <Group gap="xs" wrap="nowrap">
+                    {books.length === 0 ? (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={<IconSparkles size={14} />}
+                        loading={ideaDraftState.status === 'running' || workspaceTextUploading}
+                        disabled={ideaDraftState.status === 'running' || workspaceTextUploading}
+                        onClick={handleGenerateProjectTextFromIdea}
+                      >
+                        生成项目内容
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => navigator.clipboard?.writeText(requestedStoryIdea)}
+                    >
+                      复制
+                    </Button>
+                  </Group>
+                </Group>
+              </PanelCard>
+            ) : null}
             <div className="nano-comic-workspace__toolbar">
               <Group className="nano-comic-workspace__toolbar-actions" gap="xs">
                 <Select
@@ -3697,14 +3871,18 @@ export default function NanoComicWorkspacePanel(): JSX.Element | null {
                 还没有选中项目
               </Title>
               <Text className="nano-comic-workspace__empty-text" size="sm" c="dimmed">
-                先去项目列表选择一个 `currentProject`，再回到当前页打开漫剧工作台。
+                {requestedStoryIdea
+                  ? `你的创作意图已保留：“${requestedStoryIdea}”。先创建或选择一个项目，再回到漫剧工作台继续制作。`
+                  : '先去项目列表选择一个项目，再回到当前页打开漫剧工作台。'}
               </Text>
               <Button
                 className="nano-comic-workspace__empty-action"
                 radius="sm"
                 onClick={() => {
                   setActivePanel(null)
-                  spaNavigate('/projects')
+                  const params = new URLSearchParams()
+                  if (requestedStoryIdea) params.set('idea', requestedStoryIdea)
+                  spaNavigate(params.size > 0 ? `/projects?${params.toString()}` : '/projects')
                 }}
               >
                 前往项目列表

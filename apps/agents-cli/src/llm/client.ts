@@ -225,10 +225,13 @@ export class LLMClient {
     const toolLinkage = summarizeToolLinkage(request.messages);
     const resolvedModel = this.resolveModel(request);
     const payload = {
-        model: resolvedModel,
+      model: resolvedModel,
       messages: [{ role: "system", content: request.system }, ...this.buildChatMessages(request.messages)],
       tools: this.toChatTools(request.tools),
       stream: this.config.stream,
+      ...(this.config.chatThinkingMode
+        ? { thinking: { type: this.config.chatThinkingMode } }
+        : {}),
     };
     const requestSummary = buildLlmRequestSummary({
       apiStyle: "chat",

@@ -47,6 +47,7 @@ npm run watch -- run "你好，先规划一个最小 MVP"
 - `AGENTS_API_BASE_URL`
 - `AGENTS_MODEL`
 - `AGENTS_API_STYLE`
+- `AGENTS_CHAT_THINKING_MODE`：Chat Completions 兼容接口的思考模式，可选 `enabled` 或 `disabled`；不配置时不发送 `thinking`
 - `AGENTS_STREAM=true|false`（HTTP `serve` 模式默认也会尊重它；只有显式传 `--no-stream` 才会强制关闭）
 - `AGENTS_REQUEST_TIMEOUT_MS`
 - `AGENTS_FETCH_RETRIES`（连接失败重试次数，默认 `1`，建议 `1~2`）

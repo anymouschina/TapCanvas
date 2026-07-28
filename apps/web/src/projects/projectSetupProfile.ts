@@ -16,7 +16,7 @@ export type ProjectSetupProfile = {
   kind: 'projectSetupProfile'
   version: 1
   projectType: 'nano-comic' | 'storyboard' | 'novel-adaptation' | 'serialized'
-  creationMode: 'text-upload'
+  creationMode: 'text-upload' | 'idea'
   intro: string
   artStylePresetId?: string
   artStyleName: string
@@ -27,7 +27,7 @@ export type ProjectSetupProfile = {
   imageModel: string
   videoModel: string
   imageQuality: 'draft' | 'standard' | 'high'
-  createdFrom: 'uploaded-text'
+  createdFrom: 'uploaded-text' | 'homepage-idea'
   lastTextUploadName?: string
   lastTextUploadMode?: 'book' | 'asset'
   lastTextUploadAt?: string
@@ -62,7 +62,7 @@ function normalizeProjectType(value: unknown): ProjectSetupProfile['projectType'
 }
 
 function normalizeCreationMode(value: unknown): ProjectSetupProfile['creationMode'] {
-  return 'text-upload'
+  return value === 'idea' ? 'idea' : 'text-upload'
 }
 
 function normalizeVideoRatio(value: unknown): ProjectSetupProfile['videoRatio'] {
@@ -74,7 +74,7 @@ function normalizeImageQuality(value: unknown): ProjectSetupProfile['imageQualit
 }
 
 function normalizeCreatedFrom(value: unknown): ProjectSetupProfile['createdFrom'] {
-  return 'uploaded-text'
+  return value === 'homepage-idea' ? 'homepage-idea' : 'uploaded-text'
 }
 
 export function normalizeProjectSetupProfile(value: unknown): ProjectSetupProfile {

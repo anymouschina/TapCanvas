@@ -67,7 +67,7 @@ import ProjectDefaultEntryRedirectPage from './projects/ProjectDefaultEntryRedir
 import RechargeModal from './ui/RechargeModal'
 import AgentAdminWorkbenchPanel from './ui/AgentAdminWorkbenchPanel'
 import { validateWorkflowIoForRun } from './canvas/workflowIo'
-import HomePage from './ui/HomePage'
+import HomePage from './libtvHome/HomePage'
 import { hasPendingUploads } from './ui/pendingUploadGuard'
 import { buildStudioUrl, isGithubOauthCallbackRoute, isStudioRoute, type StudioOwnerType, type StudioPanel } from './utils/appRoutes'
 import { spaReplace } from './utils/spaNavigate'
@@ -1171,7 +1171,7 @@ function CanvasApp({ routeKey }: { routeKey?: string }): JSX.Element {
           }}
           nodeLabelById={nodeLabelById}
         />
-        <NanoComicWorkspacePanel />
+        {auth.user && <NanoComicWorkspacePanel />}
         {auth.user && (<AiChatDialog className="app-ai-chat-dialog" />)}
       </BodyPortal>
       <ParamModal />
@@ -1259,43 +1259,8 @@ function matchProjectEntryRoute(): { projectId: string } | null {
 }
 
 function RootEntryPage(): JSX.Element {
-  const auth = useAuth()
-  const [loading, setLoading] = React.useState(Boolean(auth.user))
-
-  React.useEffect(() => {
-    if (!auth.user) {
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    listProjects()
-      .catch((error) => {
-        console.error('根入口加载项目失败，将直接进入画布', error)
-      })
-      .finally(() => {
-        if (cancelled) return
-        spaReplace(buildStudioUrl())
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [auth.user?.sub])
-
-  if (!auth.user) return <HomePage />
-  if (!loading) return <HomePage />
-  return (
-    <AppShell padding="md">
-      <AppShell.Main>
-        <Group justify="center" align="center" style={{ minHeight: '100vh' }}>
-          <Badge variant="light" color="gray">正在进入最近编辑章节…</Badge>
-        </Group>
-      </AppShell.Main>
-    </AppShell>
-  )
+  const openStudio = (idea?: string) => spaReplace(buildStudioUrl({ panel: 'nanoComic', idea }))
+  return <HomePage onCreate={openStudio} />
 }
 
 export default function App(): JSX.Element {

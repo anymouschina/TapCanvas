@@ -22,6 +22,7 @@ function createManualChunks(id: string): string | undefined {
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const devApiProxyTarget = (env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8788').trim();
 
   if (command === 'build' && mode !== 'production') {
     throw new Error(
@@ -87,7 +88,7 @@ export default defineConfig(({ command, mode }) => {
 	      },
 	      proxy: {
 	        '/api': {
-	          target: 'http://api:8788',
+	          target: devApiProxyTarget,
 	          changeOrigin: true,
 	          rewrite: (path) => path.replace(/^\/api/, ''),
           configure: (proxy) => {

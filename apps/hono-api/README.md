@@ -184,6 +184,8 @@ docker-compose --profile credit-worker up --build
 
 ## AI 对话架构（当前）
 
+Chat Completions 兼容模型可通过 `AGENTS_CHAT_THINKING_MODE=enabled|disabled` 显式控制思考模式。官方 DeepSeek V4 若需要直接消费最终文本，应设置为 `disabled`；桥接层不会使用旧模型别名或静默回退。
+
 本节描述当前真实运行中的 AI 对话链路。当前版本已经收敛为“前端收集上下文、后端注入作用域与协议、agents 自主决策、skills 承载方法论”的结构；当前唯一聊天入口为 `POST /public/agents/chat`；旧 `/public/chat` 系列文本入口与 `/storyboard/*`、`/agents/storyboard/workflow/*` 生产链已删除。
 
 范围说明：
@@ -216,6 +218,8 @@ docker-compose --profile credit-worker up --build
 15. 补充（2026-04-02）：`agents-cli /chat` 的 deterministic completion gate 不再只是“请求结束后给 bridge 一条诊断”。当某轮没有继续 tool call 且 completion 判定 `allowFinish=false` 时，runtime 会在同一 HTTP 请求内把 `failureReason`、`rationale`、`missingCriteria`、`requiredActions` 与 planning 状态组装成内部 `<runtime_completion_self_check>` 提示，再次回灌给主代理继续修正；该提示按 `ephemeral` user message 注入，只参与本次自修复，不会写回 JSONL 或 Redis 会话历史。最终 `trace.completion` 现在可能附带 `retryCount` 与 `recoveredAfterRetry`，用于说明这次完成态是否经过 runtime 自修复。bridge 仍只消费最终 completion/delivery 事实做验收与展示，禁止在 `hono-api` 或前端继续追加 case-specific prompt/regex 补丁替 agents 完成这次纠偏。补充（2026-04-04）：对 `workspaceAction=chapter_asset_generation`，bridge 现在会把章节缺失的角色卡/状态锚点/三视图/scene_prop 缺口结构化写入 `diagnosticContext`；`agents-cli` completion gate 会把它们视为“当前回合必须先完成的 preproduction 修复任务”，若主代理直接宣称“章节资产已完成”但 trace 中仍没有足量前置资产落到画布或生成工具成功证据，就会在同一请求里自动回灌一轮更高优先级的修复指令，要求先补资产再继续当前章节生产。这里的“前置资产”既包括 `productionLayer=preproduction` 的图片节点，也包括用于角色卡/三视图/scene_prop 的可复用 `productionLayer=anchors` 图片节点；completion gate 不再把这类明确的锁资产业务链节点误判成“仍未补资产”。补充（2026-04-04）：self-check 连续重试预算现在只会在 blocked 状态的关键证据真实前进时重置，例如 checklist 从缺失变成已建立、前置资产写回计数增加；如果代理只是反复重读 `flow/books/pipeline runs` 或做无效探测而没有改变 blocked 状态，runtime 会更快结束并保留失败事实，避免单次 `/public/agents/chat` 长时间卡在重复取证循环。
 
 补充约束：
+
+- 首页创意入口仅传递用户明确提交的原始创意、项目/画布作用域和“创建项目内容”动作；前端不固定集数、分集结构、`requiredSkills` 或温度。技能选择、规划与产物结构由 `agents-cli` 自主决定，前端只在收到非空真实结果后持久化项目文本，失败必须显式展示。
 
 - 前端执行 `<tapcanvas_canvas_plan>` 前，会先对章节追溯元数据做结构性补全与校验。只要节点是依据小说章节生成的 `image|storyboardShot|novelStoryboard|composeVideo|video`，节点 `config` 必须能落出 `sourceBookId`、`materialChapter`，并同步补齐别名 `bookId`、`chapterId`。
 - 若章节关联节点只带了半截元数据（例如只有 `sourceBookId` 没有 `materialChapter`），前端会直接拒绝执行该 canvas plan，而不是继续创建“不可续写”的脏节点。

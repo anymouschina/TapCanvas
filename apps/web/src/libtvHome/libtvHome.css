@@ -1,0 +1,310 @@
+@tailwind components;
+
+.libtv-home {
+  min-height: 100vh;
+  color: #fff;
+  background: #141414;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.libtv-home__main {
+  position: relative;
+}
+
+.libtv-home__discover {
+  position: relative;
+  z-index: 2;
+  padding-top: 28px;
+  background: #141414;
+  scroll-margin-top: 56px;
+}
+
+.libtv-video-hero {
+  position: relative;
+  display: grid;
+  min-height: clamp(680px, calc(100svh - 94px), 920px);
+  place-items: center;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.libtv-video-hero__media,
+.libtv-video-hero__scrim,
+.libtv-video-hero__light {
+  position: absolute;
+  inset: 0;
+}
+
+.libtv-video-hero__media {
+  z-index: -2;
+  overflow: hidden;
+  background: #0b0c0f;
+}
+
+.libtv-video-hero__video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.025);
+  animation: libtv-video-breathe 16s ease-in-out infinite alternate;
+}
+
+.libtv-video-hero__scrim {
+  background:
+    linear-gradient(180deg, rgba(6, 7, 10, 0.38) 0%, rgba(6, 7, 10, 0.18) 32%, rgba(6, 7, 10, 0.56) 100%),
+    radial-gradient(circle at 50% 42%, rgba(9, 11, 16, 0.06) 0%, rgba(9, 11, 16, 0.56) 82%);
+}
+
+.libtv-video-hero__light {
+  inset: auto 10% -38% 10%;
+  height: 66%;
+  background: radial-gradient(ellipse, rgba(126, 166, 255, 0.18), transparent 68%);
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+.libtv-video-hero__content {
+  width: min(860px, calc(100% - 32px));
+  padding: 76px 0 92px;
+  text-align: center;
+}
+
+.libtv-video-hero__eyebrow {
+  margin-bottom: 14px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.24em;
+}
+
+.libtv-video-hero__title {
+  color: #fff;
+  font-size: clamp(38px, 5vw, 68px);
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  line-height: 1.06;
+  text-wrap: balance;
+  text-shadow: 0 12px 44px rgba(0, 0, 0, 0.38);
+}
+
+.libtv-video-hero__description {
+  max-width: 620px;
+  margin: 18px auto 2px;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: clamp(14px, 1.5vw, 17px);
+  line-height: 1.7;
+  text-wrap: balance;
+}
+
+.libtv-video-hero .libtv-creative-input {
+  max-width: 720px;
+  padding-top: 28px;
+  padding-bottom: 8px;
+}
+
+.libtv-video-hero .libtv-creative-input__surface {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(14, 16, 21, 0.72);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.libtv-video-hero__error {
+  width: fit-content;
+  max-width: 720px;
+  margin: 16px auto 0;
+  padding: 8px 12px;
+  color: #ffd7d7;
+  background: rgba(132, 30, 30, 0.82);
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.libtv-video-hero__scroll {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  transform: translateX(-50%);
+}
+
+.libtv-video-hero__scroll-line {
+  width: 34px;
+  height: 1px;
+  background: currentColor;
+  transform-origin: left center;
+  animation: libtv-scroll-line 1.8s ease-in-out infinite;
+}
+
+@keyframes libtv-video-breathe {
+  from { transform: scale(1.025); }
+  to { transform: scale(1.065); }
+}
+
+@keyframes libtv-scroll-line {
+  0%, 100% { transform: scaleX(0.35); opacity: 0.45; }
+  50% { transform: scaleX(1); opacity: 1; }
+}
+
+:root[data-mantine-color-scheme="light"] .libtv-video-hero__scrim {
+  background:
+    linear-gradient(180deg, rgba(244, 247, 252, 0.12) 0%, rgba(235, 240, 249, 0.22) 38%, rgba(232, 237, 246, 0.5) 100%),
+    radial-gradient(circle at 50% 42%, rgba(10, 12, 18, 0.05) 0%, rgba(10, 12, 18, 0.32) 92%);
+}
+
+:root[data-mantine-color-scheme="light"] .libtv-video-hero .libtv-creative-input__surface {
+  border-color: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 20px 70px rgba(40, 52, 78, 0.18);
+}
+
+:root[data-mantine-color-scheme="light"] .libtv-video-hero .libtv-creative-input__textarea {
+  color: #17191f;
+}
+
+:root[data-mantine-color-scheme="light"] .libtv-video-hero .libtv-creative-input__textarea::placeholder {
+  color: rgba(23, 25, 31, 0.52);
+}
+
+@media (max-width: 640px) {
+  .libtv-video-hero {
+    min-height: calc(100svh - 94px);
+  }
+
+  .libtv-video-hero__content {
+    padding: 54px 0 82px;
+  }
+
+  .libtv-video-hero__description {
+    max-width: 34ch;
+  }
+
+  .libtv-video-hero__scroll-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .libtv-video-hero__video,
+  .libtv-video-hero__scroll-line {
+    animation: none;
+  }
+}
+
+/*
+ * The source homepage was built with Tailwind Preflight. TapCanvas cannot enable
+ * Preflight globally because it would change the existing canvas UI, so reproduce
+ * the relevant reset inside the landing-page boundary only.
+ */
+.libtv-home *,
+.libtv-home *::before,
+.libtv-home *::after {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: currentColor;
+  --tw-border-spacing-x: 0;
+  --tw-border-spacing-y: 0;
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  --tw-rotate: 0;
+  --tw-skew-x: 0;
+  --tw-skew-y: 0;
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+  --tw-pan-x: ;
+  --tw-pan-y: ;
+  --tw-pinch-zoom: ;
+  --tw-scroll-snap-strictness: proximity;
+  --tw-gradient-from-position: ;
+  --tw-gradient-via-position: ;
+  --tw-gradient-to-position: ;
+  --tw-ordinal: ;
+  --tw-slashed-zero: ;
+  --tw-numeric-figure: ;
+  --tw-numeric-spacing: ;
+  --tw-numeric-fraction: ;
+  --tw-ring-inset: ;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-offset-color: #fff;
+  --tw-ring-color: rgb(59 130 246 / 0.5);
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  --tw-blur: ;
+  --tw-brightness: ;
+  --tw-contrast: ;
+  --tw-grayscale: ;
+  --tw-hue-rotate: ;
+  --tw-invert: ;
+  --tw-saturate: ;
+  --tw-sepia: ;
+  --tw-drop-shadow: ;
+  --tw-backdrop-blur: ;
+  --tw-backdrop-brightness: ;
+  --tw-backdrop-contrast: ;
+  --tw-backdrop-grayscale: ;
+  --tw-backdrop-hue-rotate: ;
+  --tw-backdrop-invert: ;
+  --tw-backdrop-opacity: ;
+  --tw-backdrop-saturate: ;
+  --tw-backdrop-sepia: ;
+}
+
+.libtv-home :where(h1, h2, h3, h4, h5, h6, p) {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.libtv-home :where(a) {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+.libtv-home :where(img, svg) {
+  display: block;
+  vertical-align: middle;
+}
+
+.libtv-home :where(img) {
+  max-width: 100%;
+  height: auto;
+}
+
+.libtv-home button,
+.libtv-home input,
+.libtv-home textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+.libtv-home button {
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+  text-transform: none;
+  appearance: button;
+  cursor: pointer;
+}
+
+.libtv-home textarea {
+  padding: 0;
+}
+
+@tailwind utilities;
+
+.libtv-home .perspective-1000 { perspective: 1000px; }
+.libtv-home .preserve-3d { transform-style: preserve-3d; }

@@ -86,6 +86,20 @@ function parseProjectIdFromUrl(): string | null {
   }
 }
 
+function parseIdeaFromUrl(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return new URL(window.location.href).searchParams.get('idea')?.trim().slice(0, 1200) || ''
+  } catch {
+    return ''
+  }
+}
+
+function buildProjectNameFromIdea(idea: string): string {
+  const firstLine = idea.split(/\r?\n/, 1)[0]?.trim() || ''
+  return firstLine.slice(0, 28) || '未命名短剧'
+}
+
 function NodeIcon({ node }: { node: ProjectFsNode }) {
   if (node.kind === 'folder') return <IconFolder className="tc-pm__node-icon tc-pm__node-icon--folder" size={16} />
   return <IconLayoutGrid className="tc-pm__node-icon tc-pm__node-icon--project" size={16} />
@@ -151,6 +165,8 @@ export default function ProjectManagerPage(): JSX.Element {
   const [focusedProjectId, setFocusedProjectId] = React.useState<string | null>(null)
   const fsSaveTimerRef = React.useRef<number | null>(null)
   const [managerTourOpen, setManagerTourOpen] = React.useState(false)
+  const homepageIdea = React.useMemo(() => parseIdeaFromUrl(), [])
+  const homepageIdeaHandledRef = React.useRef(false)
 
   React.useEffect(() => {
     setExpandedFolderIds((prev) => {
@@ -159,6 +175,24 @@ export default function ProjectManagerPage(): JSX.Element {
       return next
     })
   }, [fs.rootId])
+
+  React.useEffect(() => {
+    if (!auth.user || !homepageIdea || homepageIdeaHandledRef.current) return
+    homepageIdeaHandledRef.current = true
+    setCreateKind('project')
+    setNameDraft(buildProjectNameFromIdea(homepageIdea))
+    setProjectDraft((prev) => ({
+      ...prev,
+      creationMode: 'idea',
+      intro: homepageIdea,
+    }))
+    setProjectTextFile(null)
+    setCreateStage('idle')
+    setCreateUploadProgress(null)
+    setCreateError('')
+    setCreateAdvancedOpen(false)
+    setCreateOpen(true)
+  }, [auth.user, homepageIdea])
 
   React.useEffect(() => {
     if (!contextMenu) return
@@ -417,7 +451,9 @@ export default function ProjectManagerPage(): JSX.Element {
         return
       }
 
-      if (!projectTextFile) {
+      const isIdeaCreation = createKind === 'project' && projectDraft.creationMode === 'idea' && Boolean(projectDraft.intro.trim())
+      const sourceTextFile = projectTextFile
+      if (!sourceTextFile && !isIdeaCreation) {
         toast('请先上传原文，再创建项目。', 'warning')
         return
       }
@@ -431,15 +467,30 @@ export default function ProjectManagerPage(): JSX.Element {
       setCreateStage('finalizing')
       await upsertProjectSetupProfile(p.id, {
         ...projectDraft,
-        creationMode: 'text-upload',
-        createdFrom: 'uploaded-text',
+        creationMode: isIdeaCreation ? 'idea' : 'text-upload',
+        createdFrom: isIdeaCreation ? 'homepage-idea' : 'uploaded-text',
       })
+
+      if (isIdeaCreation) {
+        setCreateStage('idle')
+        setCreateOpen(false)
+        toast('创意项目已创建，正在进入漫剧工作台。', 'success')
+        spaNavigate(buildStudioUrl({
+          projectId: p.id,
+          panel: 'nanoComic',
+          idea: projectDraft.intro,
+        }))
+        return
+      }
+      if (!sourceTextFile) {
+        throw new Error('项目原文文件缺失，无法开始上传。')
+      }
 
       setCreateStage('uploading-text')
       const uploaded = await uploadProjectText({
         projectId: p.id,
         projectName: p.name,
-        file: projectTextFile,
+        file: sourceTextFile,
         onChunkProgress: (completed, total) => {
           setCreateUploadProgress({ completed, total })
         },
@@ -448,7 +499,7 @@ export default function ProjectManagerPage(): JSX.Element {
       await upsertProjectSetupProfile(p.id, {
         creationMode: 'text-upload',
         createdFrom: 'uploaded-text',
-        lastTextUploadName: projectTextFile.name,
+        lastTextUploadName: sourceTextFile.name,
         lastTextUploadMode: uploaded.mode,
         lastTextUploadAt: new Date().toISOString(),
       })
@@ -1128,13 +1179,31 @@ export default function ProjectManagerPage(): JSX.Element {
               />
               {createKind === 'project' ? (
                 <>
-                  <Alert variant="light" color="blue" title="创建项目">
+                  <Alert variant="light" color="blue" title={projectDraft.creationMode === 'idea' ? '从首页创意创建' : '创建项目'}>
                     <Stack gap={4}>
-                      <Text size="sm">默认只填最影响结果质量的内容：项目名、原文、基础画风。</Text>
-                      <Text size="sm">创建完成后会自动补齐章节，并优先把你送进第一章。</Text>
+                      <Text size="sm">
+                        {projectDraft.creationMode === 'idea'
+                          ? '首页输入的创意已带入。确认项目名和创意后，即可进入原漫剧工作台。'
+                          : '默认只填最影响结果质量的内容：项目名、原文、基础画风。'}
+                      </Text>
+                      <Text size="sm">
+                        {projectDraft.creationMode === 'idea'
+                          ? '下一步将在工作台中把创意扩写为剧本和分镜。'
+                          : '创建完成后会自动补齐章节，并优先把你送进第一章。'}
+                      </Text>
                     </Stack>
                   </Alert>
-                  <Group grow align="stretch">
+                  {projectDraft.creationMode === 'idea' ? (
+                    <Textarea
+                      label="短剧创意"
+                      minRows={4}
+                      maxRows={8}
+                      value={projectDraft.intro}
+                      onChange={(event) => updateProjectDraft('intro', event.currentTarget.value.slice(0, 1200))}
+                      placeholder="描述题材、人物、核心冲突和希望的风格。"
+                    />
+                  ) : null}
+                  {projectDraft.creationMode !== 'idea' ? <Group grow align="stretch">
                     <InlinePanel>
                       <Text size="xs" c="dimmed">Step 1</Text>
                       <Text size="sm" fw={700} mt={4}>上传原文</Text>
@@ -1150,8 +1219,8 @@ export default function ProjectManagerPage(): JSX.Element {
                       <Text size="sm" fw={700} mt={4}>自动进入章节</Text>
                       <Text size="xs" c="dimmed" mt={4}>接下来会继续补齐目录，并尝试自动进入第一章。</Text>
                     </InlinePanel>
-                  </Group>
-                  <FileInput
+                  </Group> : null}
+                  {projectDraft.creationMode !== 'idea' ? <FileInput
                     label="原文上传"
                     description="支持 txt 等文本文件。创建后会继续自动补齐章节，并尝试进入第一章。"
                     value={projectTextFile}
@@ -1162,7 +1231,7 @@ export default function ProjectManagerPage(): JSX.Element {
                     }}
                     placeholder="先选择原文文件"
                     clearable
-                  />
+                  /> : null}
                   <ProjectArtStylePresetPicker
                     value={projectDraft.artStylePresetId}
                     description="先看风格图卡再决定，不再只靠文字下拉。选中后会自动填充画风名和视觉规则。"
@@ -1334,18 +1403,18 @@ export default function ProjectManagerPage(): JSX.Element {
                     <Text size="sm" fw={700}>创建完成后还会继续往下走</Text>
                     <Text size="xs" c="dimmed" mt={6}>这一步不是只创建空项目，后面还会继续处理：</Text>
                     <Stack gap={4} mt={8}>
-                      <Text size="xs">- 原文进入导入链路</Text>
+                      <Text size="xs">- {projectDraft.creationMode === 'idea' ? '首页创意保存为项目设定' : '原文进入导入链路'}</Text>
                       <Text size="xs">- 项目级画风与导演规则被保存</Text>
-                      <Text size="xs">- 自动补齐章节目录</Text>
-                      <Text size="xs">- 尝试自动进入第一章或最近可编辑章节</Text>
+                      <Text size="xs">- {projectDraft.creationMode === 'idea' ? '进入原漫剧工作台继续生成' : '自动补齐章节目录'}</Text>
+                      {projectDraft.creationMode !== 'idea' ? <Text size="xs">- 尝试自动进入第一章或最近可编辑章节</Text> : null}
                     </Stack>
                   </InlinePanel>
                 </>
               ) : null}
               <Group className="tc-pm__modal-actions" justify="flex-end">
                 <Button className="tc-pm__modal-cancel" variant="subtle" onClick={() => setCreateOpen(false)}>取消</Button>
-                <Button className="tc-pm__modal-create" onClick={() => void handleCreate()} loading={busy} disabled={!nameDraft.trim() || (createKind === 'project' && !projectTextFile)}>
-                  {createKind === 'project' ? '创建并进入章节' : '创建'}
+                <Button className="tc-pm__modal-create" onClick={() => void handleCreate()} loading={busy} disabled={!nameDraft.trim() || (createKind === 'project' && projectDraft.creationMode === 'idea' ? !projectDraft.intro.trim() : createKind === 'project' && !projectTextFile)}>
+                  {createKind === 'project' ? (projectDraft.creationMode === 'idea' ? '创建并进入工作台' : '创建并进入章节') : '创建'}
                 </Button>
               </Group>
             </Stack>

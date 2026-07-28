@@ -175,6 +175,7 @@ export type AgentConfig = {
   apiKey: string;
   model: string;
   apiStyle: "responses" | "chat";
+  chatThinkingMode?: "enabled" | "disabled";
   stream: boolean;
   memoryDir: string;
   skillsDir: string;

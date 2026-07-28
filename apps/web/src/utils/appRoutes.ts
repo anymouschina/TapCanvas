@@ -35,6 +35,7 @@ export function buildStudioUrl(input?: string | null | {
   panel?: StudioPanel | null
   chapter?: number | null
   shotId?: string | null
+  idea?: string | null
 }): string {
   const options = typeof input === 'string' || input == null
     ? { projectId: input }
@@ -51,6 +52,7 @@ export function buildStudioUrl(input?: string | null | {
       ? Math.trunc(options.chapter)
       : null
   const normalizedShotId = typeof options.shotId === 'string' ? options.shotId.trim() : ''
+  const normalizedIdea = typeof options.idea === 'string' ? options.idea.trim().slice(0, 1200) : ''
 
   try {
     const url = typeof window !== 'undefined'
@@ -91,6 +93,11 @@ export function buildStudioUrl(input?: string | null | {
     } else {
       url.searchParams.delete('shotId')
     }
+    if (normalizedIdea) {
+      url.searchParams.set('idea', normalizedIdea)
+    } else {
+      url.searchParams.delete('idea')
+    }
 
     return `${url.pathname}${url.search}`
   } catch {
@@ -104,6 +111,7 @@ export function buildStudioUrl(input?: string | null | {
     if (normalizedPanel) params.set('panel', normalizedPanel)
     if (normalizedChapter) params.set('chapter', String(normalizedChapter))
     if (normalizedShotId) params.set('shotId', normalizedShotId)
+    if (normalizedIdea) params.set('idea', normalizedIdea)
     const search = params.toString()
     return search ? `${STUDIO_PATH}?${search}` : STUDIO_PATH
   }

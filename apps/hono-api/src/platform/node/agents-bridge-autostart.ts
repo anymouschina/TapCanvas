@@ -170,9 +170,21 @@ export async function maybeAutostartAgentsBridge(): Promise<void> {
 	];
 
 	// eslint-disable-next-line no-console
+	const pnpmEntry =
+		typeof process.env.npm_execpath === "string"
+			? process.env.npm_execpath.trim()
+			: "";
+	if (process.platform === "win32" && !pnpmEntry) {
+		throw new Error(
+			"Windows 下自动启动 agents bridge 需要通过 pnpm 启动 hono-api，以便复用 npm_execpath。",
+		);
+	}
+	const command = process.platform === "win32" ? process.execPath : "pnpm";
+	const commandArgs =
+		process.platform === "win32" ? [pnpmEntry, ...args] : args;
 	console.log(`[api] starting agents bridge: pnpm ${args.join(" ")}`);
 
-	const child = spawn("pnpm", args, {
+	const child = spawn(command, commandArgs, {
 		cwd: repoRoot,
 		env: childEnv,
 		stdio: ["ignore", "pipe", "pipe"],

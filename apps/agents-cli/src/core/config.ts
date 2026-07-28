@@ -10,6 +10,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   // model: "gpt-5.3-codex",
   model: "gpt-5.2",
   apiStyle: "responses",
+  chatThinkingMode: undefined,
   stream: true,
   memoryDir: ".agents/memory",
   skillsDir: "skills",
@@ -62,6 +63,9 @@ export function loadConfig(cwd: string): AgentConfig {
     apiKey: process.env.AGENTS_API_KEY,
     model: process.env.AGENTS_MODEL,
     apiStyle: process.env.AGENTS_API_STYLE as AgentConfig["apiStyle"],
+    chatThinkingMode: parseChatThinkingMode(
+      process.env.AGENTS_CHAT_THINKING_MODE
+    ),
     stream: process.env.AGENTS_STREAM
       ? process.env.AGENTS_STREAM === "true"
       : undefined,
@@ -131,6 +135,19 @@ function normalizeApiBaseUrl(raw: string): string {
   return trimmed.replace(/\/+$/, "");
 }
 
+function parseChatThinkingMode(
+  value: string | undefined
+): AgentConfig["chatThinkingMode"] {
+  if (value === undefined || value.trim() === "") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "enabled" || normalized === "disabled") {
+    return normalized;
+  }
+  throw new Error(
+    "AGENTS_CHAT_THINKING_MODE 只支持 enabled 或 disabled。"
+  );
+}
+
 function loadDotEnv(cwd: string) {
   const envPath = path.join(cwd, ".env");
   if (!fs.existsSync(envPath)) return;
@@ -171,6 +188,7 @@ function tryWriteGlobalConfig(config: AgentConfig) {
           apiKey: config.apiKey,
           model: config.model,
           apiStyle: config.apiStyle,
+          chatThinkingMode: config.chatThinkingMode,
           stream: config.stream,
           worldApiUrl: config.worldApiUrl,
         }),
