@@ -617,6 +617,18 @@ TapCanvas-pro/
 
 ---
 
+# 🔗 生态与友链
+
+以下是基于 TapCanvas 二次开发的开源项目，欢迎交流与共建：
+
+| 项目 | 说明 |
+| --- | --- |
+| [JarvisHub](https://github.com/LYL1015/JarvisHub) | An Open Harness for Canvas-Native Multimodal Creative Agents。把可编辑画布作为人与 Agent 共享的项目状态，用于长流程创作（叙事媒体生成、交互式网页开发、演示文稿生成），并提供 Skills / Memory / Subagents 与轨迹回放（Trace Viewer）。Apache-2.0。 |
+
+> 如果你也基于 TapCanvas 做了二开项目，欢迎提 PR 或 Issue 加入友链。
+
+---
+
 # 🤝 联系与反馈
 
 邮箱：beq.li@qq.com

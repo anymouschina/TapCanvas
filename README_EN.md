@@ -99,6 +99,16 @@ docker compose restart
 - **Video stitching**: seamless multi-clip concatenation + transitions
 - **Basic video editing**: trim/split/merge inside TapCanvas
 
+## Built with TapCanvas
+
+Open-source projects built on top of TapCanvas:
+
+| Project | Description |
+| --- | --- |
+| [JarvisHub](https://github.com/LYL1015/JarvisHub) | An Open Harness for Canvas-Native Multimodal Creative Agents. Treats an editable canvas as shared project state between people and agents for long-horizon creative work (narrative media, interactive web dev, deck generation), with Skills / Memory / Subagents and a bundled Trace Viewer. Apache-2.0. |
+
+> Built something on TapCanvas? Open a PR or issue to get listed here.
+
 ## Contributing
 
 - Issues: https://github.com/anymouschina/TapCanvas/issues
