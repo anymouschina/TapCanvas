@@ -11,32 +11,17 @@
 
 <div align="center">
 
-# TapCanvas Pro
+## 数据回收
 
-<p align="center">
-  <b>
-    AI 可视化内容生产工作台
-    <br />
-    在一张画布里完成文本、图像、视频与分镜的连续生产
-    <br />
-    Agents 编排 × 多模型接入 × 项目化资产沉淀
-  </b>
-</p>
+项目喜提500star了，兑现下之前的flag，开源了 7月份tapcanvasPro 的核心源码，本来是5月份的，但想来ai迭代挺快了，一月一时代。感概于音视频领域天然闭源的环境，本次应该是最后一次更新了，后续待有缘人维护
+下图是我个人新开一个账号自7月6日至8月3日的数据，带数据回收的项目，独一份了，当前版本已带一键成片的能力，但效果你可以直接看对应抖音账号吧。
 
-<p align="center">
-  <a href="https://github.com/anymouschina/TapCanvas/stargazers">
-    <img src="https://img.shields.io/github/stars/anymouschina/TapCanvas?style=for-the-badge&logo=github" alt="Stars Badge" />
-  </a>
-  <a href="./LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License Badge" />
-  </a>
-</p>
+不要说项目不支持自定义 api 了，new-api 是什么可以了解下。
 
-> 一套面向长流程 AI 创作的画布式工作台：把项目、上下文、资产、Agents 和多模型执行统一到同一条生产链。
-
-</div>
-
+![数据回收](./assets/douyin-data.jpg)
 ---
+
+
 
 # 🌟 项目简介
 
@@ -566,13 +551,13 @@ TapCanvas-pro/
 
 ## apps 子项目说明
 
-| 子项目 | 说明 |
-| --- | --- |
-| `apps/web` | 前端画布应用（Vite + React 18 + Mantine + React Flow + Zustand）。无限画布、节点编排、文本/图像/视频生成界面与项目资产管理都在这里。本地开发：`pnpm dev:web`（http://localhost:5173）。 |
-| `apps/hono-api` | 后端 API 服务（NestJS + Node.js，挂载 Hono/OpenAPI 路由，Prisma + Postgres + Redis）。提供认证、任务、AI tool schema 等核心接口，含 `docker-compose.yml` 一键起全栈。默认地址 http://localhost:8788。 |
-| `apps/agents-cli` | TypeScript 智能体执行内核与 Agents Bridge。前端经 `POST /public/agents/chat` 进入后，由它负责语义理解、技能选择、取证、规划与执行，支持 Skills、多代理协作与自学习记忆。 |
-| `apps/new-api` | 大模型网关与 AI 资产管理系统（基于开源 new-api 改造）。统一接入文本/图像/视频等多类上游模型，负责渠道管理、配额与计费。二开请自行阅读其目录内对应 License。 |
-| `apps/task` | 开发任务清单与架构改造 checklist 的文档集合，记录各模块的演进与对齐计划，不是运行时服务。 |
+| 子项目              | 说明                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/web`        | 前端画布应用（Vite + React 18 + Mantine + React Flow + Zustand）。无限画布、节点编排、文本/图像/视频生成界面与项目资产管理都在这里。本地开发：`pnpm dev:web`（http://localhost:5173）。              |
+| `apps/hono-api`   | 后端 API 服务（NestJS + Node.js，挂载 Hono/OpenAPI 路由，Prisma + Postgres + Redis）。提供认证、任务、AI tool schema 等核心接口，含`docker-compose.yml` 一键起全栈。默认地址 http://localhost:8788。 |
+| `apps/agents-cli` | TypeScript 智能体执行内核与 Agents Bridge。前端经`POST /public/agents/chat` 进入后，由它负责语义理解、技能选择、取证、规划与执行，支持 Skills、多代理协作与自学习记忆。                              |
+| `apps/new-api`    | 大模型网关与 AI 资产管理系统（基于开源 new-api 改造）。统一接入文本/图像/视频等多类上游模型，负责渠道管理、配额与计费。二开请自行阅读其目录内对应 License。                                            |
+| `apps/task`       | 开发任务清单与架构改造 checklist 的文档集合，记录各模块的演进与对齐计划，不是运行时服务。                                                                                                              |
 
 ---
 
@@ -621,8 +606,8 @@ TapCanvas-pro/
 
 以下是基于 TapCanvas 二次开发的开源项目，欢迎交流与共建：
 
-| 项目 | 说明 |
-| --- | --- |
+| 项目                                             | 说明                                                                                                                                                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [JarvisHub](https://github.com/LYL1015/JarvisHub) | An Open Harness for Canvas-Native Multimodal Creative Agents。把可编辑画布作为人与 Agent 共享的项目状态，用于长流程创作（叙事媒体生成、交互式网页开发、演示文稿生成），并提供 Skills / Memory / Subagents 与轨迹回放（Trace Viewer）。Apache-2.0。 |
 
 > 如果你也基于 TapCanvas 做了二开项目，欢迎提 PR 或 Issue 加入友链。
