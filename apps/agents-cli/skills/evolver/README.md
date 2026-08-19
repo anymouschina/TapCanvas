@@ -306,7 +306,7 @@ The script automatically detects if compatible local skills (like `skills/feishu
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=autogame-17/evolver&type=Date)](https://star-history.com/#autogame-17/evolver&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=autogame-17/evolver&type=Date)](https://star-history.dera.page/#autogame-17/evolver&Date)
 
 ## Acknowledgments
 
