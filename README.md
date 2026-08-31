@@ -113,7 +113,7 @@ Bug、功能建议与贡献请通过 [Issues](https://github.com/anymouschina/Ta
 
 ## Star 趋势
 
-[![TapCanvas Star History](https://api.star-history.com/svg?repos=anymouschina/TapCanvas&type=Date)](https://www.star-history.com/#anymouschina/TapCanvas&Date)
+[![TapCanvas Star History](https://star-history.dera.page/svg?repos=anymouschina/TapCanvas&type=Date)](https://star-history.dera.page/#anymouschina/TapCanvas&Date)
 
 ## 能力完成度与待办
 
